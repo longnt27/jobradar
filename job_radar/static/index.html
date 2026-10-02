@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Job Radar</title>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">◉</span><span>Job Radar</span></div>
+      <p class="sidebar-caption">Your local job search desk</p>
+      <nav aria-label="Main navigation">
+        <button data-tab="overview" class="active">Overview</button>
+        <button data-tab="jobs">Jobs</button>
+        <button data-tab="applications">Applications</button>
+        <button data-tab="evidence">Experience</button>
+        <button data-tab="sources">Sources</button>
+        <button data-tab="employers">Employers</button>
+        <button data-tab="profile">Profile</button>
+      </nav>
+      <div class="sidebar-foot"><span class="status-dot"></span> Runs on this Mac</div>
+    </aside>
+    <main>
+      <header class="topbar">
+        <div><p class="eyebrow">PERSONAL JOB INTELLIGENCE</p><h1 id="page-title">Overview</h1></div>
+        <span id="clock"></span>
+      </header>
+      <div id="notice" role="status" aria-live="polite"></div>
+      <section id="overview" class="tab active">
+        <div class="hero"><div><p class="eyebrow">YOUR SEARCH, IN ONE PLACE</p><h2>Find the right role. Show your best work.</h2><p>Job Radar scans your sources, builds evidence from your projects, and prepares applications for your review.</p></div><button class="primary" data-tab="jobs">Review jobs →</button></div>
+        <div id="metrics" class="metrics"></div>
+        <div class="two-col"><div class="panel"><h3>Recent scans</h3><div id="recent-scans" class="stack"></div></div><div class="panel"><h3>Set up</h3><ol class="setup"><li>Complete your candidate profile</li><li>Add Facebook groups and career sources</li><li>Connect your GitHub projects</li><li>Review a job and prepare an application</li></ol></div></div>
+      </section>
+      <section id="jobs" class="tab">
+        <div class="section-head"><p>Ranked opportunities and application status</p><button class="secondary" id="scan-all">Scan due sources</button></div>
+        <div class="toolbar"><input id="job-query" type="search" placeholder="Search jobs, skills, or companies"><select id="job-state"><option value="">All states</option><option value="new">New</option><option value="interesting">Interesting</option><option value="prepare">Prepare</option><option value="ready">Ready</option><option value="applied">Applied</option><option value="ignored">Ignored</option></select><button id="job-search">Search</button></div>
+        <div class="two-col jobs-layout"><div id="job-list" class="stack"></div><div id="job-detail" class="panel detail"><div class="empty">Select a job to see details.</div></div></div>
+        <details class="panel"><summary>Import a job manually</summary><form id="job-import" class="form-grid"><label>Company<input name="company" required></label><label>Title<input name="title" required></label><label>Location<input name="location"></label><label>Application URL<input name="apply_url" type="url"></label><label class="full">Description<textarea name="description" required rows="6"></textarea></label><button class="primary" type="submit">Add job</button></form></details>
+      </section>
+      <section id="applications" class="tab"><div class="section-head"><p>Every application has a reviewed package and a recorded outcome.</p></div><div id="application-list" class="stack"></div></section>
+      <section id="evidence" class="tab"><div class="section-head"><p>Approve the claims Job Radar may use in a resume.</p></div><div class="two-col"><div class="panel"><h3>Add a GitHub repository</h3><form id="repo-form" class="form-grid"><label class="full">Repository URL<input type="url" name="url" placeholder="https://github.com/you/project" required></label><button class="primary" type="submit">Inspect repository</button></form><p class="hint">Repository inspection reads files and history without running code.</p></div><div class="panel"><h3>Add your own experience</h3><form id="evidence-form" class="form-grid"><label>Title<input name="title" required></label><label>Type<select name="kind"><option value="experience">Experience</option><option value="project">Project</option><option value="education">Education</option><option value="achievement">Achievement</option></select></label><label class="full">Claim<textarea name="claim" rows="4" required></textarea></label><button class="primary" type="submit">Save approved claim</button></form></div></div><div class="panel"><h3>Evidence library</h3><div id="evidence-list" class="stack"></div></div></section>
+      <section id="sources" class="tab"><div class="section-head"><p>LinkedIn searches run every four hours. Add groups and career pages here.</p><button class="secondary" id="scan-due">Scan due sources</button></div><div class="panel"><h3>Add a source</h3><form id="source-form" class="form-grid"><label>Type<select name="kind"><option value="facebook">Facebook group</option><option value="career">Career page</option><option value="linkedin">LinkedIn search</option></select></label><label>Name<input name="name" required></label><label class="full">URL<input name="url" type="url" required></label><button class="primary" type="submit">Add source</button></form></div><div class="panel"><div class="section-head"><h3>Configured sources</h3><select id="source-kind"><option value="">All</option><option value="linkedin">LinkedIn</option><option value="facebook">Facebook</option><option value="career">Career</option></select></div><div id="source-list" class="stack"></div></div></section>
+      <section id="employers" class="tab"><div class="section-head"><p>A broad registry, with live coverage shown separately.</p></div><div class="toolbar"><input id="employer-query" type="search" placeholder="Find an employer"><button id="employer-search">Search</button></div><div class="panel"><div id="employer-count" class="hint"></div><div id="employer-list" class="employer-grid"></div></div><details class="panel"><summary>Add an employer</summary><form id="employer-form" class="form-grid"><label>Name<input name="name" required></label><label>Category<input name="category" value="custom"></label><label class="full">Career URL<input name="career_url" type="url"></label><button class="primary" type="submit">Add employer</button></form></details></section>
+      <section id="profile" class="tab"><div class="section-head"><p>Your verified history and preferences form the basis of every draft.</p></div><form id="profile-form" class="panel form-grid"><label>Name<input name="name"></label><label>Email<input name="email" type="email"></label><label>Phone<input name="phone"></label><label>Location<input name="location"></label><label class="full">Professional summary<textarea name="summary" rows="4"></textarea></label><label class="full">Skills <span class="hint">One per line</span><textarea name="skills" rows="5"></textarea></label><label class="full">Links <span class="hint">One per line</span><textarea name="links" rows="3"></textarea></label><button class="primary" type="submit">Save profile</button></form></section>
+    </main>
+  </div>
+</body>
+</html>
