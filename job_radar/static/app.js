@@ -70,8 +70,9 @@ async function loadOverview() {
 async function loadJobs() {
   const query = new URLSearchParams({q: $('#job-query').value, state: $('#job-state').value});
   const jobs = await api(`/api/jobs?${query}`);
+  const sourceLabel = (source) => !source ? 'Manually added' : source.kind === 'career' ? 'Company career page' : source.kind === 'linkedin' ? 'LinkedIn listing' : 'Facebook group lead';
   $('#job-list').innerHTML = jobs.length ? jobs.map((job) =>
-    `<div class="item clickable" data-job="${job.id}"><span class="score">${job.score ?? '—'}</span><div class="item-title">${escapeHtml(job.title)}</div><div class="item-meta">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div><div class="item-meta">First seen ${when(job.first_seen_at)} <span class="pill muted">${escapeHtml(job.state)}</span></div></div>`
+    `<div class="item clickable" data-job="${job.id}"><span class="score">${job.score ?? '—'}</span><div class="item-title">${escapeHtml(job.title)}</div><div class="item-meta">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div><div class="item-meta">${escapeHtml(sourceLabel(job.source))}${job.source ? ` · Checked ${when(job.source.last_seen_at)} · <a href="${escapeHtml(job.source.url)}" target="_blank" rel="noopener noreferrer">Original posting ↗</a>` : ''}</div><div class="item-meta">First seen ${when(job.first_seen_at)} <span class="pill muted">${escapeHtml(job.state)}</span></div></div>`
   ).join('') : '<div class="empty">No jobs found. Run a scan or import a job.</div>';
   document.querySelectorAll('[data-job]').forEach((node) => node.addEventListener('click', () => showJob(node.dataset.job)));
   if (activeJob && jobs.some((job) => job.id === activeJob)) await showJob(activeJob);
@@ -98,6 +99,7 @@ async function showJob(id) {
     <div class="actions"><button data-state="interesting">Interesting</button><button data-state="ignored">Ignore</button></div>
     <div class="review-section"><label>Drafting provider<select id="draft-provider">${providerOptions}</select></label><div class="actions"><button data-prepare="${id}" class="primary">Prepare application</button></div></div>
     ${job.apply_url ? `<p><a href="${escapeHtml(job.apply_url)}" target="_blank" rel="noopener noreferrer">Application page ↗</a></p>` : ''}
+    ${!job.apply_url ? '<p class="hint">No application form has been verified for this posting. Check the original source for its application instructions before sending.</p>' : ''}
     ${links ? `<p class="item-meta">${links}</p>` : ''}
     ${score ? `<div class="review-section"><h4>Why it matched</h4><p>${escapeHtml(score.explanation || '')}</p></div>` : ''}
     <div class="description">${escapeHtml(job.description)}</div>`;

@@ -158,6 +158,36 @@ async def collect_facebook(context: BrowserContext, source: dict) -> list[Observ
 
 
 JOB_LINK = re.compile(r"(job|career|position|opening|vacan|recruit|tuyen-dung|viec-lam|apply)", re.I)
+NON_TARGET_TITLE = re.compile(r"\b(business development|sales|marketing|recruiter|human resources|account manager)\b", re.I)
+GENERIC_CAREER_TITLE = re.compile(r"^(career(?:s)?|jobs?|job openings?|current openings?|open positions?|join us|apply now|view jobs?|internships?|let.s create the future together!?|what you.ll do|what you.ll need|nice to have.s?)$", re.I)
+GENERIC_CAREER_PATH = {"career", "careers", "jobs", "job", "positions", "openings", "join-us", "recruitment", "apply"}
+
+
+def _specific_posting_url(url: str, source_url: str) -> bool:
+    parts = urlsplit(url)
+    source = urlsplit(source_url)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        return False
+    path = parts.path.rstrip("/").casefold()
+    return bool(path and path.split("/")[-1] not in GENERIC_CAREER_PATH and
+                (parts.hostname, path) != (source.hostname, source.path.rstrip("/").casefold()))
+
+
+def _posting_title(item: BeautifulSoup, label: str, company: str) -> str:
+    metadata = _meta(item, "og:title") or (item.title.get_text(" ", strip=True) if item.title else "")
+    if label and label.casefold() in metadata.casefold() and not GENERIC_CAREER_TITLE.fullmatch(label.strip()):
+        return label.strip()
+    for separator in (" | ", " - ", " — ", " – "):
+        if metadata.casefold().endswith((separator + company).casefold()):
+            metadata = metadata[:-(len(separator) + len(company))]
+            break
+    title = metadata.strip() or _text(item, ("h1", "h2"))
+    return title if not GENERIC_CAREER_TITLE.fullmatch(title) else ""
+
+
+def _posting_description(item: BeautifulSoup) -> str:
+    return _text(item, ("[class*=careers_detail_contents]", "[class*=job-description]", "[class*=job_description]",
+                        "[data-test*=job-description]", "article", "main", "[class*=description]"))
 
 
 async def collect_career(source: dict) -> list[ObservedJob]:
@@ -171,7 +201,7 @@ async def collect_career(source: dict) -> list[ObservedJob]:
         for anchor in soup.select("a[href]"):
             href = urljoin(str(response.url), anchor.get("href", ""))
             label = anchor.get_text(" ", strip=True)
-            if not href.startswith("http") or not JOB_LINK.search(f"{href} {label}"):
+            if not href.startswith("http") or not JOB_LINK.search(f"{href} {label}") or not _specific_posting_url(href, str(response.url)):
                 continue
             if urlsplit(href).hostname != root_host and not any(host in href for host in ("greenhouse.io", "lever.co", "ashbyhq.com", "workdayjobs.com", "smartrecruiters.com")):
                 continue
@@ -183,12 +213,16 @@ async def collect_career(source: dict) -> list[ObservedJob]:
             try:
                 detail = await client.get(url)
                 detail.raise_for_status()
+                if not _specific_posting_url(str(detail.url), str(response.url)):
+                    continue
                 item = BeautifulSoup(detail.text, "html.parser")
                 for tag in item(["script", "style", "nav", "footer", "header"]):
                     tag.decompose()
-                title = _text(item, ("h1", "h2", "title")) or label
-                description = _text(item, ("main", "article", "[class*=description]", "body"))
-                if len(description) < 100 or not ROLE.search(f"{title} {description[:1000]}"):
+                title = _posting_title(item, label, company)
+                description = _posting_description(item)
+                if (not title or len(description) < 100 or
+                        NON_TARGET_TITLE.search(title) or
+                        not ROLE.search(f"{title} {description[:1000]}")):
                     continue
                 date_node = item.select_one("time[datetime]")
                 published = date_node.get("datetime") if date_node else None
@@ -196,7 +230,7 @@ async def collect_career(source: dict) -> list[ObservedJob]:
                 jobs.append(ObservedJob(
                     url=str(detail.url), title=title[:180], company=company,
                     description=description[:30000], location=location,
-                    apply_url=str(detail.url), published_at=published,
+                    published_at=published,
                 ))
             except Exception:
                 continue

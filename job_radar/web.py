@@ -359,18 +359,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/jobs")
     def jobs(q: str = "", state: str = "", limit: int = Query(100, ge=1, le=500)):
+        def with_sources(rows: list[dict]) -> list[dict]:
+            if not rows:
+                return rows
+            placeholders = ",".join("?" for _ in rows)
+            origins = db.all(
+                "SELECT vo.vacancy_id,o.url,o.last_seen_at,s.kind,s.name FROM vacancy_observations vo "
+                "JOIN observations o ON o.id=vo.observation_id JOIN sources s ON s.id=o.source_id "
+                f"WHERE vo.vacancy_id IN ({placeholders}) ORDER BY o.last_seen_at DESC",
+                tuple(row["id"] for row in rows),
+            )
+            by_id = {}
+            for origin in origins:
+                by_id.setdefault(origin["vacancy_id"], {key: origin[key] for key in ("url", "last_seen_at", "kind", "name")})
+            for row in rows:
+                row["source"] = by_id.get(row["id"])
+            return rows
         if q.strip():
             try:
-                return db.all(
+                return with_sources(db.all(
                     "SELECT v.* FROM vacancy_fts f JOIN vacancies v ON v.id=f.vacancy_id WHERE vacancy_fts MATCH ? AND (?='' OR v.state=?) ORDER BY v.score DESC,v.first_seen_at DESC LIMIT ?",
                     (q.strip(), state, state, limit),
-                )
+                ))
             except Exception as error:
                 raise HTTPException(422, f"Invalid search: {error}") from error
-        return db.all(
+        return with_sources(db.all(
             "SELECT * FROM vacancies WHERE (?='' OR state=?) ORDER BY score DESC,first_seen_at DESC LIMIT ?",
             (state, state, limit),
-        )
+        ))
 
     @app.get("/api/jobs/{job_id}")
     def job(job_id: str):
