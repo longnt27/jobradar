@@ -49,16 +49,32 @@ async function loadSetup() {
   return data;
 }
 
-async function loadOverview() {
-  const data = await api('/api/status');
+async function loadHome() {
+  const [data, profile, setup] = await Promise.all([api('/api/status'), api('/api/profile'), api('/api/setup')]);
   const c = data.counts;
   $('#metrics').innerHTML = [
-    ['Jobs found', c.vacancies], ['Active sources', c.active_sources],
-    ['Employers tracked', c.employers], ['Applications', c.submissions],
+    ['Jobs found', c.vacancies], ['Sources enabled', c.active_sources],
+    ['Applications', c.application_drafts], ['Sent', c.submissions],
   ].map(([label, value]) => `<div class="metric"><strong>${value}</strong><span>${label}</span></div>`).join('');
+  const hasProfile = Boolean(profile.name && profile.email);
+  const steps = [
+    {label:'Choose an AI provider', detail:'One choice for resume import and application drafts', done:!!profile.drafting_provider, tab:'profile'},
+    {label:'Add your resume', detail:'Import a PDF or enter details yourself', done:hasProfile, tab:'profile'},
+    {label:'Select your projects', detail:'Choose GitHub repositories for tailored applications', done:setup.approved_evidence > 0, tab:'projects'},
+    {label:'Review live jobs', detail:`${c.vacancies} job${c.vacancies === 1 ? '' : 's'} found; check original postings`, done:false, tab:'jobs'},
+  ];
+  const next = steps.find((step) => !step.done) || steps[3];
+  $('#home-title').textContent = hasProfile ? 'Your job search is ready to move.' : 'Let’s get your search ready.';
+  $('#home-description').textContent = hasProfile ? 'Review live jobs and prepare applications from your own experience.' : 'Start with your provider and resume. Then choose projects and review jobs.';
+  $('#home-primary').textContent = `${next.label} →`;
+  $('#home-primary').dataset.tab = next.tab;
+  $('#home-steps').innerHTML = steps.map((step) =>
+    `<button class="step-row" data-home-step="${step.tab}"><span class="step-check ${step.done ? 'done' : ''}">${step.done ? '✓' : '○'}</span><span><strong>${escapeHtml(step.label)}</strong><small>${escapeHtml(step.detail)}</small></span><span class="step-arrow">→</span></button>`
+  ).join('');
+  document.querySelectorAll('[data-home-step]').forEach((button) => button.addEventListener('click', () => showTab(button.dataset.homeStep)));
   $('#recent-scans').innerHTML = data.recent_runs.length ? data.recent_runs.map((run) =>
     `<div class="item"><div class="item-title">${escapeHtml(run.source_name)} <span class="pill ${run.status === 'success' ? '' : 'warning'}">${escapeHtml(run.status)}</span></div><div class="item-meta">${when(run.started_at)} · ${run.observed_count} observed · ${run.new_count} new</div>${run.detail ? `<div class="item-meta">${escapeHtml(run.detail)}</div>` : ''}</div>`
-  ).join('') : '<div class="empty">No scans yet. Sign in to the browser profile and run a scan.</div>';
+  ).join('') : '<div class="empty">No scans yet. Your enabled sources will appear here.</div>';
 }
 
 async function loadJobs() {
@@ -68,7 +84,13 @@ async function loadJobs() {
   $('#job-list').innerHTML = jobs.length ? jobs.map((job) =>
     `<div class="item clickable" data-job="${job.id}"><span class="score">${job.score ?? '—'}</span><div class="item-title">${escapeHtml(job.title)}</div><div class="item-meta">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div><div class="item-meta">${escapeHtml(sourceLabel(job.source))}${job.source ? ` · Checked ${when(job.source.last_seen_at)} · <a href="${escapeHtml(job.source.url)}" target="_blank" rel="noopener noreferrer">Original posting ↗</a>` : ''}</div><div class="item-meta">First seen ${when(job.first_seen_at)} <span class="pill muted">${escapeHtml(job.state)}</span></div></div>`
   ).join('') : '<div class="empty">No jobs found. Run a scan or import a job.</div>';
-  document.querySelectorAll('[data-job]').forEach((node) => node.addEventListener('click', () => showJob(node.dataset.job)));
+  document.querySelectorAll('[data-job]').forEach((node) => node.addEventListener('click', async (event) => {
+    if (event.target.closest('a')) return;
+    try {
+      await showJob(node.dataset.job);
+      if (window.matchMedia('(max-width: 900px)').matches) $('#job-detail').scrollIntoView({behavior:'smooth', block:'start'});
+    } catch(error) { notice(error.message, true); }
+  }));
   if (activeJob && jobs.some((job) => job.id === activeJob)) await showJob(activeJob);
 }
 
@@ -123,7 +145,7 @@ async function loadSources() {
     catch(error) { notice(error.message, true); }
   }));
   document.querySelectorAll('[data-scan]').forEach((button) => button.addEventListener('click', async () => {
-    try { notice('Scan started'); await api(`/api/sources/${button.dataset.scan}/scan`, {method:'POST'}); await loadSources(); await loadOverview(); notice('Scan complete'); }
+    try { notice('Scan started'); await api(`/api/sources/${button.dataset.scan}/scan`, {method:'POST'}); await loadSources(); await loadHome(); notice('Scan complete'); }
     catch(error) { notice(error.message, true); }
   }));
 }
@@ -145,14 +167,28 @@ async function loadEmployers() {
 }
 
 async function loadProfile() {
-  const [profile, setup] = await Promise.all([api('/api/profile'), loadSetup()]);
+  const [profile, setup, cards] = await Promise.all([api('/api/profile'), loadSetup(), api('/api/evidence')]);
   const availability = {codex:setup.providers.codex, codex_local:setup.providers.codex && setup.providers.ollama,
     agy:setup.providers.agy, claude:setup.providers.claude};
   const providerForm = $('#provider-form');
   providerForm.querySelectorAll('option[value]').forEach((option) => { if (option.value) option.disabled = !availability[option.value]; });
   providerForm.elements.provider.value = profile.drafting_provider || '';
-  $('#provider-status').textContent = profile.drafting_provider ? `Saved provider: ${profile.drafting_provider}. Change it here whenever you need to.` : 'Choose a provider before importing a PDF or generating project content.';
+  $('#provider-panel-label').textContent = profile.drafting_provider ? 'AI provider' : 'Choose your AI provider';
+  $('#provider-status').textContent = profile.drafting_provider ? `Using ${profile.drafting_provider}` : 'Start here';
+  $('#provider-panel').open = !profile.drafting_provider;
+  const hasResume = Boolean(profile.name && profile.email);
+  $('#resume-panel-label').textContent = hasResume ? 'Your resume details' : 'Import your resume';
+  $('#resume-status').textContent = hasResume ? 'Replace or update' : 'PDF or manual entry';
+  $('#resume-panel').open = Boolean(profile.drafting_provider && !hasResume);
   $('#pdf-resume-form button[type="submit"]').disabled = !profile.drafting_provider || !availability[profile.drafting_provider];
+  const projectCount = cards.filter((card) => card.kind === 'project').length;
+  $('#profile-summary').textContent = hasResume
+    ? `${profile.name} · ${profile.email}. ${(profile.experience || []).length} previous position${profile.experience?.length === 1 ? '' : 's'} and ${projectCount} selected project${projectCount === 1 ? '' : 's'}.`
+    : 'Import a resume PDF or enter your details manually. You can review and edit every field.';
+  $('#profile-summary-status').textContent = hasResume ? 'Ready to review' : 'Needs details';
+  $('#profile-summary-status').className = `pill ${hasResume ? '' : 'warning'}`;
+  $('#position-count').textContent = `${(profile.experience || []).length} previous position${profile.experience?.length === 1 ? '' : 's'}`;
+  $('#project-count').textContent = `${projectCount} selected project${projectCount === 1 ? '' : 's'}`;
   const form = $('#profile-form');
   for (const key of ['name','email','phone','location','summary','salary_expectation','work_authorization','notice_period','relocation']) form.elements[key].value = profile[key] || '';
   form.elements.alert_min_score.value = profile.alert_min_score ?? 60;
@@ -180,20 +216,26 @@ async function loadPositions() {
   }));
 }
 
-function showTab(name) {
+function showTab(name, historyMode = 'push') {
   if (name === 'setup') name = 'profile';
-  if (!document.getElementById(name)?.classList.contains('tab')) name = 'overview';
+  if (name === 'overview') name = 'home';
+  if (!document.getElementById(name)?.classList.contains('tab')) name = 'home';
   if (name !== 'profile') clearTimeout(window.setupPoll);
   document.querySelectorAll('.tab').forEach((tab) => tab.classList.toggle('active', tab.id === name));
-  document.querySelectorAll('[data-tab]').forEach((button) => button.classList.toggle('active', button.dataset.tab === name));
-  $('#page-title').textContent = name[0].toUpperCase() + name.slice(1);
-  history.replaceState(null, '', `#${name}`);
-  ({overview:loadOverview,jobs:loadJobs,applications:loadApplications,experience:loadPositions,projects:loadEvidence,sources:loadSources,employers:loadEmployers,profile:loadProfile})[name]?.().catch((error) => notice(error.message, true));
+  const nav = ['experience','projects'].includes(name) ? 'profile' : ['sources','employers'].includes(name) ? 'jobs' : name;
+  document.querySelectorAll('.sidebar nav [data-tab]').forEach((button) => button.classList.toggle('active', button.dataset.tab === nav));
+  $('#page-title').textContent = ({home:'Home',jobs:'Jobs',applications:'Applications',profile:'My profile',
+    experience:'Work history',projects:'GitHub projects',sources:'Job sources',employers:'Employers'})[name];
+  if (historyMode === 'replace') history.replaceState({tab:name}, '', `#${name}`);
+  else if (historyMode === 'push' && location.hash !== `#${name}`) history.pushState({tab:name}, '', `#${name}`);
+  window.scrollTo(0, 0);
+  ({home:loadHome,jobs:loadJobs,applications:loadApplications,experience:loadPositions,projects:loadEvidence,sources:loadSources,employers:loadEmployers,profile:loadProfile})[name]?.().catch((error) => notice(error.message, true));
 }
 
 async function loadApplications(selectedId = null) {
   const drafts = await api('/api/applications');
-  $('#application-list').innerHTML = drafts.length ? drafts.map((draft) => `<div class="item clickable" data-application="${draft.id}"><div class="item-title">${escapeHtml(draft.job_title)} <span class="pill ${draft.status === 'sent' ? '' : 'warning'}">${escapeHtml(draft.status)}</span></div><div class="item-meta">${escapeHtml(draft.company)} · ${escapeHtml(draft.provider_mode)}</div><div class="item-meta">Updated ${when(draft.updated_at)}</div></div>`).join('') : '<div class="empty">No applications yet. Open a job and prepare one.</div>';
+  $('#application-list').innerHTML = drafts.length ? drafts.map((draft) => `<div class="item clickable" data-application="${draft.id}"><div class="item-title">${escapeHtml(draft.job_title)} <span class="pill ${draft.status === 'sent' ? '' : 'warning'}">${escapeHtml(draft.status)}</span></div><div class="item-meta">${escapeHtml(draft.company)} · ${escapeHtml(draft.provider_mode)}</div><div class="item-meta">Updated ${when(draft.updated_at)}</div></div>`).join('') : '<div class="panel empty"><p>No applications yet. Start with a job posting.</p><button id="applications-browse-jobs" class="primary">Browse jobs →</button></div>';
+  $('#applications-browse-jobs')?.addEventListener('click', () => showTab('jobs'));
   document.querySelectorAll('[data-application]').forEach((node) => node.addEventListener('click', () => showApplication(node.dataset.application)));
   if (selectedId) await showApplication(selectedId);
 }
@@ -270,6 +312,10 @@ async function loadEvidence() {
 }
 
 document.querySelectorAll('[data-tab]').forEach((button) => button.addEventListener('click', () => showTab(button.dataset.tab)));
+$('#edit-profile-button').addEventListener('click', () => {
+  $('#profile-edit-panel').open = true;
+  $('#profile-edit-panel').scrollIntoView({behavior:'smooth', block:'start'});
+});
 $('#clock').textContent = new Date().toLocaleDateString(undefined, {weekday:'long', day:'numeric', month:'long'});
 $('#job-search').addEventListener('click', () => loadJobs().catch((error) => notice(error.message, true)));
 $('#job-query').addEventListener('keydown', (event) => { if (event.key === 'Enter') loadJobs().catch((error) => notice(error.message, true)); });
@@ -340,7 +386,9 @@ $('#profile-form').addEventListener('submit', async (event) => {
     profile.education = form.elements.education.value.split('\n').map((x) => x.trim()).filter(Boolean).map((line) => { const [school, degree, dates] = line.split('|').map((x) => x.trim()); return {school, degree:degree || '', dates:dates || ''}; });
     profile.skill_groups = Object.fromEntries(form.elements.skill_groups.value.split('\n').map((x) => x.trim()).filter(Boolean).map((line) => { const colon = line.indexOf(':'); return colon < 0 ? [line, ''] : [line.slice(0, colon).trim(), line.slice(colon + 1).trim()]; }));
     await api('/api/profile', {method:'PUT', body:JSON.stringify(profile)});
-    notice('Profile saved');
+    await loadProfile();
+    $('#profile-edit-panel').open = false;
+    notice('Personal details saved');
   } catch(error) { notice(error.message, true); }
 });
 
@@ -350,7 +398,8 @@ $('#provider-form').addEventListener('submit', async (event) => {
     const provider = event.target.elements.provider.value;
     await api('/api/profile/provider', {method:'PUT', body:JSON.stringify({provider})});
     await loadProfile();
-    notice('Provider saved. You can now import a resume PDF.');
+    $('#resume-panel').scrollIntoView({behavior:'smooth', block:'start'});
+    notice('Provider saved. Add your resume next.');
   } catch(error) { notice(error.message, true); }
 });
 
@@ -364,6 +413,8 @@ $('#pdf-resume-form').addEventListener('submit', async (event) => {
     const result = await api('/api/profile/resume/pdf', {method:'POST', body:new FormData(event.target)});
     event.target.reset();
     await loadProfile();
+    $('#profile-edit-panel').open = true;
+    $('#profile-edit-panel').scrollIntoView({behavior:'smooth', block:'start'});
     $('#pdf-import-status').textContent = `Extracted ${result.positions} positions, ${result.education} education entries, and ${result.achievements} achievements. Review your details below and positions in Experience.`;
     notice('Resume details extracted. Review them before applying.');
   } catch(error) { $('#pdf-import-status').textContent = error.message; notice(error.message, true); }
@@ -377,6 +428,8 @@ $('#latex-import-form').addEventListener('submit', async (event) => {
     const result = await api('/api/profile/import-latex', {method:'POST', body:JSON.stringify({latex})});
     event.target.reset();
     await loadProfile();
+    $('#profile-edit-panel').open = true;
+    $('#profile-edit-panel').scrollIntoView({behavior:'smooth', block:'start'});
     notice(`Imported ${result.positions} positions, ${result.education} education entries, and ${result.achievements} achievements`);
   } catch(error) { notice(error.message, true); }
 });
@@ -454,10 +507,5 @@ for (const selector of ['#scan-due','#scan-all']) $(selector).addEventListener('
   catch(error) { notice(error.message, true); }
 });
 
-(async () => {
-  try {
-    const [setup, profile] = await Promise.all([api('/api/setup'), api('/api/profile')]);
-    const firstVisit = !setup.profile_complete || !profile.drafting_provider;
-    showTab(firstVisit ? 'profile' : (location.hash.slice(1) || 'overview'));
-  } catch(error) { notice(error.message, true); showTab('profile'); }
-})();
+window.addEventListener('popstate', () => showTab(location.hash.slice(1) || 'home', 'none'));
+showTab(location.hash.slice(1) || 'home', 'replace');

@@ -11,50 +11,129 @@
   <div class="shell">
     <aside class="sidebar">
       <div class="brand"><span class="brand-mark">◉</span><span>Job Radar</span></div>
-      <p class="sidebar-caption">Your local job search desk</p>
+      <p class="sidebar-caption">Your job search workspace</p>
       <nav aria-label="Main navigation">
-        <button data-tab="overview" class="active">Overview</button>
+        <button data-tab="home" class="active">Home</button>
         <button data-tab="jobs">Jobs</button>
         <button data-tab="applications">Applications</button>
-        <button data-tab="experience">Experience</button>
-        <button data-tab="projects">Projects</button>
-        <button data-tab="sources">Sources</button>
-        <button data-tab="employers">Employers</button>
-        <button data-tab="profile">Profile</button>
+        <button data-tab="profile">My profile</button>
       </nav>
-      <div class="sidebar-foot"><span class="status-dot"></span> Runs on this Mac</div>
+      <div class="sidebar-foot"><span class="status-dot"></span> Running on this Mac</div>
     </aside>
     <main>
       <header class="topbar">
-        <div><p class="eyebrow">PERSONAL JOB INTELLIGENCE</p><h1 id="page-title">Overview</h1></div>
+        <div><p class="eyebrow">JOB RADAR</p><h1 id="page-title">Home</h1></div>
         <span id="clock"></span>
       </header>
       <div id="notice" role="status" aria-live="polite"></div>
-      <section id="overview" class="tab active">
-        <div class="hero"><div><p class="eyebrow">YOUR SEARCH, IN ONE PLACE</p><h2>Find the right role. Show your best work.</h2><p>Job Radar scans your sources, builds evidence from your projects, and prepares applications for your review.</p></div><button class="primary" data-tab="jobs">Review jobs →</button></div>
+
+      <section id="home" class="tab active">
+        <div class="hero">
+          <div><p class="eyebrow">YOUR WORKSPACE</p><h2 id="home-title">Find the next good opportunity.</h2><p id="home-description">Your jobs, resume, and applications in one place.</p></div>
+          <button id="home-primary" class="primary" data-tab="jobs">Browse jobs →</button>
+        </div>
         <div id="metrics" class="metrics"></div>
-        <div class="two-col"><div class="panel"><h3>Recent scans</h3><div id="recent-scans" class="stack"></div></div><div class="panel"><h3>Ready to go?</h3><p>Choose your model provider and import a resume in Profile. Every job links to its original source.</p><button data-tab="profile">Open profile</button></div></div>
+        <div class="two-col home-grid">
+          <div class="panel"><h3>Next steps</h3><div id="home-steps" class="stack"></div></div>
+          <div class="panel"><div class="section-head"><h3>Live activity</h3><button class="text-button" data-tab="sources">Manage sources</button></div><div id="recent-scans" class="stack"></div></div>
+        </div>
       </section>
+
       <section id="jobs" class="tab">
-        <div class="section-head"><p>Ranked opportunities and application status</p><button class="secondary" id="scan-all">Scan due sources</button></div>
-        <div class="toolbar"><input id="job-query" type="search" placeholder="Search jobs, skills, or companies"><select id="job-state"><option value="">All states</option><option value="new">New</option><option value="interesting">Interesting</option><option value="prepare">Prepare</option><option value="ready">Ready</option><option value="applied">Applied</option><option value="ignored">Ignored</option></select><button id="job-search">Search</button></div>
+        <div class="section-head"><p>Open a posting, check its source, then prepare an application.</p><div class="actions"><button class="secondary" data-tab="sources">Sources</button><button class="secondary" data-tab="employers">Employers</button><button class="secondary" id="scan-all">Scan now</button></div></div>
+        <div class="toolbar"><input id="job-query" type="search" placeholder="Search jobs, skills, or companies" aria-label="Search jobs"><select id="job-state" aria-label="Job state"><option value="">All jobs</option><option value="new">New</option><option value="interesting">Interesting</option><option value="prepare">Prepare</option><option value="ready">Ready</option><option value="applied">Applied</option><option value="ignored">Ignored</option></select><button id="job-search">Search</button></div>
         <div class="two-col jobs-layout"><div id="job-list" class="stack"></div><div id="job-detail" class="panel detail"><div class="empty">Select a job to see details.</div></div></div>
-        <details class="panel"><summary>Import a job manually</summary><form id="job-import" class="form-grid"><label>Company<input name="company" required></label><label>Title<input name="title" required></label><label>Location<input name="location"></label><label>Application URL<input name="apply_url" type="url"></label><label class="full">Description<textarea name="description" required rows="6"></textarea></label><button class="primary" type="submit">Add job</button></form></details>
+        <details class="panel"><summary>Add a job from a description</summary><form id="job-import" class="form-grid"><label>Company<input name="company" required></label><label>Title<input name="title" required></label><label>Location<input name="location"></label><label>Application URL<input name="apply_url" type="url"></label><label class="full">Description<textarea name="description" required rows="6"></textarea></label><button class="primary" type="submit">Add job</button></form></details>
       </section>
-      <section id="applications" class="tab"><div class="section-head"><p>Review every field and the final resume, then send the selected application.</p></div><div class="two-col jobs-layout"><div id="application-list" class="stack"></div><div id="application-detail" class="panel detail"><div class="empty">Select a draft to review.</div></div></div></section>
-      <section id="experience" class="tab"><div class="section-head"><p>Previous job positions appear in the Experience section of your resume.</p></div><div class="panel"><h3>Add a position</h3><form id="position-form" class="form-grid"><label>Company<input name="company" required></label><label>Role<input name="role" required></label><label class="full">Dates<input name="dates" placeholder="Dec 2025 – May 2026" required></label><label class="full">Work and outcomes <span class="hint">One bullet per line</span><textarea name="bullets" rows="4" required></textarea></label><button class="primary" type="submit">Add position</button></form></div><div class="panel"><h3>Previous positions</h3><div id="position-list" class="stack"></div></div></section>
-      <section id="projects" class="tab"><div class="section-head"><p>Choose real GitHub repositories. Your saved provider drafts project content from each repo; review it before applications use it.</p></div><div class="two-col"><div class="panel"><h3>Explore your GitHub projects</h3><form id="github-form" class="form-grid"><label class="full">GitHub username<input name="username" placeholder="your-username" required></label><button class="primary" type="submit">Find repositories</button></form><div id="github-repos" class="stack"></div></div><div class="panel"><h3>Inspect a repository</h3><p class="hint">Reading files and history does not run repository code. Generated content stays in review until you approve it.</p><p id="project-provider-status" class="hint"></p><form id="repo-form" class="form-grid"><label class="full">Repository URL<input type="url" name="url" placeholder="https://github.com/you/project" required></label><button class="primary" type="submit">Inspect and draft project</button></form></div></div><div class="panel"><h3>Selected projects</h3><div id="evidence-list" class="stack"></div></div></section>
-      <section id="sources" class="tab"><div class="section-head"><p>LinkedIn searches run every four hours. Add groups and career pages here.</p><button class="secondary" id="scan-due">Scan due sources</button></div><div class="panel"><h3>Add a source</h3><form id="source-form" class="form-grid"><label>Type<select name="kind"><option value="facebook">Facebook group</option><option value="career">Career page</option><option value="linkedin">LinkedIn search</option></select></label><label>Name<input name="name" required></label><label class="full">URL<input name="url" type="url" required></label><button class="primary" type="submit">Add source</button></form></div><div class="panel"><div class="section-head"><h3>Configured sources</h3><select id="source-kind"><option value="">All</option><option value="linkedin">LinkedIn</option><option value="facebook">Facebook</option><option value="career">Career</option></select></div><div id="source-list" class="stack"></div></div></section>
-      <section id="employers" class="tab"><div class="section-head"><p>A broad registry, with live coverage shown separately.</p></div><div class="toolbar"><input id="employer-query" type="search" placeholder="Find an employer"><button id="employer-search">Search</button></div><div class="panel"><div id="employer-count" class="hint"></div><div id="employer-list" class="employer-grid"></div></div><details class="panel"><summary>Add an employer</summary><form id="employer-form" class="form-grid"><label>Name<input name="name" required></label><label>Category<input name="category" value="custom"></label><label class="full">Career URL<input name="career_url" type="url"></label><button class="primary" type="submit">Add employer</button></form></details></section>
+
+      <section id="applications" class="tab">
+        <div class="section-head"><p>Review your resume and message before you send anything.</p></div>
+        <div class="two-col jobs-layout"><div id="application-list" class="stack"></div><div id="application-detail" class="panel detail"><div class="empty">No application selected.</div></div></div>
+      </section>
+
       <section id="profile" class="tab">
-        <div class="section-head"><p>Choose a provider once, import your resume, then review the extracted details. You can change the provider here later.</p></div>
-        <div class="panel" id="provider-panel"><h3>1. Choose a drafting provider</h3><p class="hint">Codex, Antigravity, and Claude use their installed CLI on this Mac. Codex OSS can use a local Ollama model. The selected provider also writes project cards and job-specific applications.</p><form id="provider-form" class="form-grid"><label class="full">Provider<select name="provider" required><option value="">Choose a provider</option><option value="codex">Codex CLI · remote model</option><option value="codex_local">Codex OSS · local Ollama model</option><option value="agy">Antigravity CLI · remote model</option><option value="claude">Claude Code CLI · remote model</option></select></label><button class="primary" type="submit">Save provider</button></form><p id="provider-status" class="hint"></p></div>
-        <div class="panel"><h3>2. Import a resume PDF</h3><p class="hint">Upload a text-based PDF. The selected provider extracts contact details, previous job positions, education, achievements, and skills. Remote providers receive the extracted PDF text. GitHub projects are selected separately. Review every extracted field before preparing an application.</p><form id="pdf-resume-form" class="form-grid"><label class="full">Resume PDF<input name="file" type="file" accept="application/pdf,.pdf" required></label><button class="primary" type="submit" disabled>Extract resume details</button></form><p id="pdf-import-status" class="hint"></p></div>
-        <details class="panel"><summary>Import a LaTeX resume instead</summary><p class="hint">Paste the supplied template to import contact details, positions, education, achievements, and skills. Projects remain separate.</p><form id="latex-import-form"><label>LaTeX source<textarea name="latex" rows="8" required></textarea></label><button class="primary" type="submit">Import resume details</button></form></details>
-        <form id="profile-form" class="panel form-grid"><h3 class="full">3. Review and edit your details</h3><label>Name<input name="name"></label><label>Email<input name="email" type="email"></label><label>Phone<input name="phone"></label><label>Location<input name="location"></label><label class="full">Professional summary<textarea name="summary" rows="4"></textarea></label><label class="full">Skills <span class="hint">One per line for job matching</span><textarea name="skills" rows="5"></textarea></label><label class="full">Resume skill categories <span class="hint">One per line: Programming: Python, C++</span><textarea name="skill_groups" rows="4"></textarea></label><label class="full">Education <span class="hint">One per line: University | Degree | Dates</span><textarea name="education" rows="3"></textarea></label><label class="full">Achievements <span class="hint">One per line</span><textarea name="achievements" rows="3"></textarea></label><label class="full">Links <span class="hint">One per line; LinkedIn and GitHub appear in the header</span><textarea name="links" rows="3"></textarea></label><label>Salary expectation<input name="salary_expectation" placeholder="Leave blank to answer manually"></label><label>Work authorization<input name="work_authorization" placeholder="Leave blank to answer manually"></label><label>Notice period<input name="notice_period" placeholder="Leave blank to answer manually"></label><label>Relocation preference<input name="relocation" placeholder="Leave blank to answer manually"></label><label>Telegram alert minimum score<input name="alert_min_score" type="number" min="0" max="100" value="60"></label><button class="primary" type="submit">Save profile</button><p class="hint full">Previous job positions can be edited in <button class="text-button" type="button" data-tab="experience">Experience</button>.</p></form>
-        <details class="panel"><summary>Job site connections</summary><p class="hint">Sign in once to the separate browser used for LinkedIn and Facebook scans. Each enabled source runs every four hours.</p><div class="actions"><button id="setup-browser-start" class="primary">Open sign-in browser</button><button id="setup-browser-finish" disabled>I've finished signing in</button></div><p id="setup-browser-detail" class="hint"></p><form id="setup-facebook-form" class="form-grid"><label>Name<input name="name" placeholder="AI jobs Vietnam" required></label><label class="full">Facebook group URL<input name="url" type="url" placeholder="https://www.facebook.com/groups/..." required></label><button class="secondary" type="submit">Add group</button></form><button class="text-button" data-tab="sources">Manage all sources →</button></details>
-        <details class="panel"><summary>Email application settings <span id="setup-smtp-status" class="pill muted">Optional</span></summary><p class="hint">Add SMTP details to send a reviewed email application.</p><form id="setup-smtp-form" class="form-grid"><label>SMTP host<input name="host" placeholder="smtp.example.com" required></label><label>Port<select name="port"><option value="587">587 (STARTTLS)</option><option value="465">465 (TLS)</option></select></label><label>Username<input name="user" autocomplete="username"></label><label>Password or app password<input name="password" type="password" autocomplete="new-password" placeholder="Leave blank to keep saved password"></label><label class="full">From address<input name="from_address" type="email" required></label><button class="primary" type="submit">Save email settings</button><button id="setup-smtp-remove" class="secondary" type="button">Remove settings</button></form></details>
-        <details class="panel"><summary>Telegram alert settings <span id="setup-telegram-status" class="pill muted">Optional</span></summary><p class="hint">New high-scoring jobs can be sent to your private Telegram chat.</p><form id="setup-telegram-form" class="form-grid"><label>Bot token<input name="token" type="password" placeholder="Leave blank to keep saved token"></label><label>Chat ID<input name="chat_id" required></label><button class="primary" type="submit">Save alert settings</button><button id="setup-telegram-remove" class="secondary" type="button">Remove settings</button></form></details>
+        <p class="section-intro">Build your resume once. Job Radar uses it to prepare drafts you review.</p>
+        <details class="panel flow-panel" id="provider-panel">
+          <summary><span><span class="step-number">1</span><strong id="provider-panel-label">Choose your AI provider</strong></span><span id="provider-status" class="hint"></span></summary>
+          <p class="hint">Choose an installed CLI. Remote providers receive resume text when you import a PDF. Codex OSS with Ollama runs locally. You can change this later.</p>
+          <form id="provider-form" class="form-grid"><label class="full">Provider<select name="provider" required><option value="">Choose a provider</option><option value="codex">Codex CLI · remote model</option><option value="codex_local">Codex OSS · local Ollama model</option><option value="agy">Antigravity CLI · remote model</option><option value="claude">Claude Code CLI · remote model</option></select></label><button class="primary" type="submit">Save provider</button></form>
+        </details>
+        <details class="panel flow-panel" id="resume-panel">
+          <summary><span><span class="step-number">2</span><strong id="resume-panel-label">Import your resume</strong></span><span id="resume-status" class="hint">PDF or manual entry</span></summary>
+          <p class="hint">Upload a text-based PDF. Your provider extracts contact details, past positions, education, achievements, and skills. Projects come from GitHub separately.</p>
+          <form id="pdf-resume-form" class="form-grid"><label class="full">Resume PDF<input name="file" type="file" accept="application/pdf,.pdf" required></label><button class="primary" type="submit" disabled>Extract resume details</button></form>
+          <p id="pdf-import-status" class="hint" role="status"></p>
+          <details class="inline-details"><summary>Have a LaTeX resume instead?</summary><form id="latex-import-form"><label>LaTeX source<textarea name="latex" rows="8" required></textarea></label><button class="secondary" type="submit">Import details</button></form></details>
+        </details>
+        <div class="panel" id="profile-summary-panel">
+          <div class="section-head"><h3>Your resume</h3><span id="profile-summary-status" class="pill warning">Needs details</span></div>
+          <p id="profile-summary" class="hint">Add your resume or enter your details manually.</p>
+          <div class="action-cards">
+            <button id="edit-profile-button" class="action-card" type="button"><strong>Personal details</strong><span>Contact, education, skills</span></button>
+            <button data-tab="experience" class="action-card" type="button"><strong>Work history</strong><span id="position-count">Previous positions</span></button>
+            <button data-tab="projects" class="action-card" type="button"><strong>GitHub projects</strong><span id="project-count">Selected repositories</span></button>
+          </div>
+        </div>
+        <details class="panel" id="profile-edit-panel">
+          <summary>Edit personal details</summary>
+          <form id="profile-form" class="form-grid">
+            <label>Name<input name="name"></label><label>Email<input name="email" type="email"></label>
+            <label>Phone<input name="phone"></label><label>Location<input name="location"></label>
+            <label class="full">Professional summary<textarea name="summary" rows="4"></textarea></label>
+            <label class="full">Skills <span class="hint">One per line for job matching</span><textarea name="skills" rows="4"></textarea></label>
+            <label class="full">Resume skill categories <span class="hint">One per line: Programming: Python, C++</span><textarea name="skill_groups" rows="3"></textarea></label>
+            <label class="full">Education <span class="hint">One per line: University | Degree | Dates</span><textarea name="education" rows="3"></textarea></label>
+            <label class="full">Achievements <span class="hint">One per line</span><textarea name="achievements" rows="3"></textarea></label>
+            <label class="full">Links <span class="hint">One per line</span><textarea name="links" rows="3"></textarea></label>
+            <div class="full"><details class="inline-details"><summary>Application preferences</summary><div class="form-grid preferences-grid">
+              <label>Salary expectation<input name="salary_expectation" placeholder="Leave blank to answer manually"></label>
+              <label>Work authorization<input name="work_authorization" placeholder="Leave blank to answer manually"></label>
+              <label>Notice period<input name="notice_period" placeholder="Leave blank to answer manually"></label>
+              <label>Relocation preference<input name="relocation" placeholder="Leave blank to answer manually"></label>
+              <label>Telegram alert minimum score<input name="alert_min_score" type="number" min="0" max="100" value="60"></label>
+            </div></details></div>
+            <button class="primary" type="submit">Save details</button>
+          </form>
+        </details>
+        <details class="panel" id="connections-panel">
+          <summary>Connections and notifications</summary>
+          <div class="connection-stack">
+            <details class="inline-details"><summary>LinkedIn and Facebook sign-in</summary><p class="hint">Use the separate browser profile for scans every four hours.</p><div class="actions"><button id="setup-browser-start" class="primary">Open sign-in browser</button><button id="setup-browser-finish" disabled>I've finished signing in</button></div><p id="setup-browser-detail" class="hint"></p><form id="setup-facebook-form" class="form-grid"><label>Name<input name="name" placeholder="AI jobs Vietnam" required></label><label class="full">Facebook group URL<input name="url" type="url" placeholder="https://www.facebook.com/groups/..." required></label><button class="secondary" type="submit">Add group</button></form><button class="text-button" data-tab="sources">Manage all sources →</button></details>
+            <details class="inline-details"><summary>Email applications <span id="setup-smtp-status" class="pill muted">Optional</span></summary><form id="setup-smtp-form" class="form-grid"><label>SMTP host<input name="host" placeholder="smtp.example.com" required></label><label>Port<select name="port"><option value="587">587 (STARTTLS)</option><option value="465">465 (TLS)</option></select></label><label>Username<input name="user" autocomplete="username"></label><label>Password or app password<input name="password" type="password" autocomplete="new-password" placeholder="Leave blank to keep saved password"></label><label class="full">From address<input name="from_address" type="email" required></label><button class="primary" type="submit">Save email settings</button><button id="setup-smtp-remove" class="secondary" type="button">Remove settings</button></form></details>
+            <details class="inline-details"><summary>Telegram alerts <span id="setup-telegram-status" class="pill muted">Optional</span></summary><form id="setup-telegram-form" class="form-grid"><label>Bot token<input name="token" type="password" placeholder="Leave blank to keep saved token"></label><label>Chat ID<input name="chat_id" required></label><button class="primary" type="submit">Save alert settings</button><button id="setup-telegram-remove" class="secondary" type="button">Remove settings</button></form></details>
+          </div>
+        </details>
+      </section>
+
+      <section id="experience" class="tab subpage">
+        <button class="back-link" data-tab="profile">← My profile</button>
+        <div class="section-head"><p>Previous jobs appear in the Experience section of your resume.</p></div>
+        <div class="two-col">
+          <div class="panel"><h3>Add a position</h3><form id="position-form" class="form-grid"><label>Company<input name="company" required></label><label>Role<input name="role" required></label><label class="full">Dates<input name="dates" placeholder="Dec 2025 – May 2026" required></label><label class="full">Work and outcomes <span class="hint">One bullet per line</span><textarea name="bullets" rows="4" required></textarea></label><button class="primary" type="submit">Add position</button></form></div>
+          <div class="panel"><h3>Previous positions</h3><div id="position-list" class="stack"></div></div>
+        </div>
+      </section>
+
+      <section id="projects" class="tab subpage">
+        <button class="back-link" data-tab="profile">← My profile</button>
+        <div class="section-head"><p>Select real GitHub repositories. Review drafted project claims before approval.</p></div>
+        <div class="two-col"><div class="panel"><h3>Find your repositories</h3><form id="github-form" class="form-grid"><label class="full">GitHub username<input name="username" placeholder="your-username" required></label><button class="primary" type="submit">Find repositories</button></form><div id="github-repos" class="stack"></div></div><div class="panel"><h3>Import one repository</h3><p class="hint">Inspection reads files and history without running repository code.</p><p id="project-provider-status" class="hint"></p><form id="repo-form" class="form-grid"><label class="full">Repository URL<input type="url" name="url" placeholder="https://github.com/you/project" required></label><button class="primary" type="submit">Inspect and draft project</button></form></div></div>
+        <div class="panel"><h3>Selected projects</h3><div id="evidence-list" class="stack"></div></div>
+      </section>
+
+      <section id="sources" class="tab subpage">
+        <button class="back-link" data-tab="jobs">← Jobs</button>
+        <div class="section-head"><p>Manage where jobs come from. Enabled sources scan every four hours.</p><button class="secondary" id="scan-due">Scan due sources</button></div>
+        <details class="panel"><summary>Add a source</summary><form id="source-form" class="form-grid"><label>Type<select name="kind"><option value="facebook">Facebook group</option><option value="career">Career page</option><option value="linkedin">LinkedIn search</option></select></label><label>Name<input name="name" required></label><label class="full">URL<input name="url" type="url" required></label><button class="primary" type="submit">Add source</button></form></details>
+        <div class="panel"><div class="section-head"><h3>Configured sources</h3><select id="source-kind" aria-label="Source type"><option value="">All</option><option value="linkedin">LinkedIn</option><option value="facebook">Facebook</option><option value="career">Career</option></select></div><div id="source-list" class="stack"></div></div>
+      </section>
+
+      <section id="employers" class="tab subpage">
+        <button class="back-link" data-tab="jobs">← Jobs</button>
+        <div class="section-head"><p>A company is actively scanned only when it has an enabled source.</p></div>
+        <div class="toolbar"><input id="employer-query" type="search" placeholder="Find an employer" aria-label="Search employers"><button id="employer-search">Search</button></div>
+        <div class="panel"><div id="employer-count" class="hint"></div><div id="employer-list" class="employer-grid"></div></div>
+        <details class="panel"><summary>Add an employer</summary><form id="employer-form" class="form-grid"><label>Name<input name="name" required></label><label>Category<input name="category" value="custom"></label><label class="full">Career URL<input name="career_url" type="url"></label><button class="primary" type="submit">Add employer</button></form></details>
       </section>
     </main>
   </div>
