@@ -19,10 +19,10 @@ from .mail_config import smtp_config
 from .settings import Settings
 
 
-def _field_signature(fields: list[dict]) -> str:
+def _field_signature(fields: list[dict], action: str, method: str) -> str:
     stable = [{key: field.get(key) for key in ("index", "name", "id", "type", "required", "label", "options", "accept", "max_length")}
               for field in fields]
-    return hashlib.sha256(json.dumps(stable, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    return hashlib.sha256(json.dumps({"fields": stable, "action": action, "method": method}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
 async def _form_structure(page: Page) -> dict:
@@ -31,6 +31,7 @@ async def _form_structure(page: Page) -> dict:
     candidates = []
     for form_index in range(count):
         form = forms.nth(form_index)
+        metadata = await form.evaluate("node => ({action:node.action,method:node.method,submit:(node.querySelector('button[type=submit],input[type=submit]')?.innerText || node.querySelector('input[type=submit]')?.value || '').trim()})")
         fields = await form.locator("input,select,textarea").evaluate_all("""nodes => nodes.map((node, index) => {
           const type = (node.getAttribute('type') || node.tagName.toLowerCase()).toLowerCase();
           if (['hidden','submit','button','reset','image'].includes(type)) return null;
@@ -42,12 +43,16 @@ async def _form_structure(page: Page) -> dict:
               [...node.options].map(option => ({value:option.value,text:option.text.trim()})) : [],
             accept:node.getAttribute('accept') || '', max_length:node.maxLength > 0 ? node.maxLength : null};
         }).filter(Boolean)""")
-        if fields:
-            candidates.append((form_index, fields))
+        if fields and not any(field["type"] == "password" for field in fields):
+            description = " ".join([metadata["submit"], *(field["label"] for field in fields)]).casefold()
+            if not any(field["type"] == "file" for field in fields) and not re.search(r"apply|application|resume|curriculum vitae|cover letter|ứng tuyển|nộp hồ sơ", description):
+                continue
+            candidates.append((form_index, fields, metadata))
     if not candidates:
-        raise ValueError("No application form was found at this URL")
-    form_index, fields = max(candidates, key=lambda item: sum(3 if field["type"] == "file" else 2 if field["required"] else 1 for field in item[1]))
-    return {"form_index": form_index, "fields": fields, "signature": _field_signature(fields), "final_url": page.url}
+        raise ValueError("No recognizable application form was found at this URL")
+    form_index, fields, metadata = max(candidates, key=lambda item: sum(3 if field["type"] == "file" else 2 if field["required"] else 1 for field in item[1]))
+    return {"form_index": form_index, "fields": fields, "action": metadata["action"], "method": metadata["method"],
+            "signature": _field_signature(fields, metadata["action"], metadata["method"]), "final_url": page.url}
 
 
 def _default_answer(field: dict, profile: dict, message: dict) -> str:

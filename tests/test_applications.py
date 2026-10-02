@@ -40,10 +40,11 @@ def test_email_send_is_explicit_and_duplicate_protected(tmp_path: Path, monkeypa
 
 def test_web_form_inspection_and_one_click_submit(tmp_path: Path) -> None:
     posted = []
+    action = [""]
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
-            body = b'<html><body><form method="post"><label>Name <input name="name" required></label><label>Email <input type="email" name="email" required></label><label>Cover letter <textarea name="cover_letter" required></textarea></label><input type="file" name="resume" accept="application/pdf"><button type="submit">Apply</button></form></body></html>'
+            body = f'<html><body><form method="post" action="{action[0]}"><label>Name <input name="name" required></label><label>Email <input type="email" name="email" required></label><label>Cover letter <textarea name="cover_letter" required></textarea></label><input type="file" name="resume" accept="application/pdf"><button type="submit">Apply</button></form></body></html>'.encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/html")
             self.end_headers()
@@ -71,6 +72,11 @@ def test_web_form_inspection_and_one_click_submit(tmp_path: Path) -> None:
         answers = inspected.json()["form_data"]["answers"]
         assert "Alex Example" in answers.values()
         assert any("I am applying" in value for value in answers.values())
+        action[0] = "/changed"
+        changed = client.post(f"/api/applications/{draft['id']}/send", json={"package_hash": inspected.json()["package_hash"]})
+        assert changed.json()["status"] == "needs_user_attention"
+        assert not posted
+        action[0] = ""
         result = client.post(f"/api/applications/{draft['id']}/send", json={"package_hash": inspected.json()["package_hash"]})
         assert result.status_code == 200, result.text
         assert result.json()["status"] == "submitted_confirmed"
