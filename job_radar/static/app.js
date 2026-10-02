@@ -34,6 +34,8 @@ async function loadSetup() {
   badge('#setup-smtp-status', data.smtp_configured ? 'Configured' : 'Optional', data.smtp_configured);
   badge('#setup-telegram-status', data.telegram_configured ? 'Configured' : 'Optional', data.telegram_configured);
   $('#setup-service-status').textContent = data.service_installed ? 'Background scanning is installed and runs while this Mac is on.' : 'Run the installer to keep scans active when the browser window is closed.';
+  const installed = ['codex','agy','claude'].filter((name) => data.providers[name]);
+  $('#setup-provider-status').textContent = installed.length ? `Drafting agents available: ${installed.join(', ')}.` : 'No drafting agent CLI found. The local template is available in every job.';
   $('#setup-browser-start').disabled = ['opening','open'].includes(data.browser.state);
   $('#setup-browser-finish').disabled = data.browser.state !== 'open';
   $('#setup-browser-detail').textContent = data.browser.error || (data.browser.state === 'opening' ? 'Opening the sign-in window…' : data.browser.state === 'open' ? 'Sign in to both sites, then click “I’ve finished signing in”.' : data.browser.state === 'saved' ? 'Session saved. Upcoming scans will verify site access.' : 'Social scans start after you save the sign-in session.');
@@ -78,6 +80,15 @@ async function loadJobs() {
 async function showJob(id) {
   activeJob = id;
   const job = await api(`/api/jobs/${id}`);
+  const setup = await api('/api/setup');
+  const choices = [
+    ['codex','Codex CLI (remote model)',setup.providers.codex],
+    ['agy','Antigravity CLI (remote model)',setup.providers.agy],
+    ['claude','Claude Code CLI (remote model)',setup.providers.claude],
+    ['codex_local','Codex OSS + local Ollama model',setup.providers.codex && setup.providers.ollama],
+    ['template','Local template (no AI)',true],
+  ];
+  const providerOptions = choices.map(([value,label,available]) => `<option value="${value}" ${available ? '' : 'disabled'}>${escapeHtml(label)}${available ? '' : ' · unavailable'}</option>`).join('');
   const links = job.observations.length ? job.observations.map((source) =>
     `<a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(source.kind)}: ${escapeHtml(source.name)}</a>`
   ).join('<br>') : '';
@@ -85,11 +96,12 @@ async function showJob(id) {
   $('#job-detail').innerHTML = `<h2>${escapeHtml(job.title)}</h2><div class="item-meta">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div>
     <div class="item-meta">${escapeHtml(job.work_mode || '')} · First seen ${when(job.first_seen_at)}</div>
     <div class="actions"><button data-state="interesting">Interesting</button><button data-state="ignored">Ignore</button></div>
-    <div class="review-section"><label>Drafting provider<select id="draft-provider"><option value="codex">Codex CLI (remote model)</option><option value="agy">Antigravity CLI (remote model)</option><option value="claude">Claude Code CLI (remote model)</option><option value="codex_local">Codex OSS + local Ollama model</option><option value="template">Local template (no AI)</option></select></label><div class="actions"><button data-prepare="${id}" class="primary">Prepare application</button></div></div>
+    <div class="review-section"><label>Drafting provider<select id="draft-provider">${providerOptions}</select></label><div class="actions"><button data-prepare="${id}" class="primary">Prepare application</button></div></div>
     ${job.apply_url ? `<p><a href="${escapeHtml(job.apply_url)}" target="_blank" rel="noopener noreferrer">Application page ↗</a></p>` : ''}
     ${links ? `<p class="item-meta">${links}</p>` : ''}
     ${score ? `<div class="review-section"><h4>Why it matched</h4><p>${escapeHtml(score.explanation || '')}</p></div>` : ''}
     <div class="description">${escapeHtml(job.description)}</div>`;
+  $('#draft-provider').value = choices.find((choice) => choice[2])[0];
   $('#job-detail').querySelectorAll('[data-state]').forEach((button) => button.addEventListener('click', async () => {
     try { await api(`/api/jobs/${id}/state`, {method:'POST', body: JSON.stringify({state:button.dataset.state})}); notice('Job updated'); await loadJobs(); }
     catch(error) { notice(error.message, true); }
