@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, HttpUrl
 
 from .db import Database, new_id, now
+from .apply import inspect_form, send_application
 from .drafting import PROVIDERS, get_draft, prepare_draft, update_draft
 from .evidence import inspect_repository
 from .seeds import seed
@@ -313,5 +314,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not path.is_file():
             raise HTTPException(404, "Resume file not found")
         return FileResponse(path, media_type="application/pdf", filename=f"resume-{draft_id[:8]}.pdf")
+
+    @app.post("/api/applications/{draft_id}/inspect")
+    async def inspect_application(draft_id: str):
+        try:
+            async with scan_manager.browser_lock:
+                return await inspect_form(db, settings, draft_id)
+        except KeyError as error:
+            raise HTTPException(404, str(error)) from error
+        except (ValueError, RuntimeError) as error:
+            raise HTTPException(422, str(error)) from error
+
+    @app.post("/api/applications/{draft_id}/send")
+    async def send(draft_id: str):
+        try:
+            async with scan_manager.browser_lock:
+                return await send_application(db, settings, draft_id)
+        except KeyError as error:
+            raise HTTPException(404, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+
+    @app.get("/api/submissions")
+    def submissions():
+        return db.all("SELECT * FROM submissions ORDER BY sent_at DESC LIMIT 100")
 
     return app

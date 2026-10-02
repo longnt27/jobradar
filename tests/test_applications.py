@@ -1,0 +1,74 @@
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from threading import Thread
+
+from fastapi.testclient import TestClient
+
+from job_radar.settings import Settings
+from job_radar.web import create_app
+
+
+def _prepared(client: TestClient, url: str) -> dict:
+    profile = client.get("/api/profile").json()
+    profile.update({"name": "Alex Example", "email": "alex@example.org"})
+    client.put("/api/profile", json=profile)
+    client.post("/api/evidence", json={"kind": "experience", "title": "Engineer", "claim": "Built Python search systems.", "approved": True})
+    job = client.post("/api/jobs/import", json={"company": "Example", "title": "Engineer", "description": "Build Python search systems.", "apply_url": url}).json()
+    response = client.post(f"/api/jobs/{job['id']}/prepare", json={"provider": "template"})
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_email_send_is_explicit_and_duplicate_protected(tmp_path: Path, monkeypatch) -> None:
+    client = TestClient(create_app(Settings(tmp_path)))
+    draft = _prepared(client, "https://example.org/apply")
+    client.patch(f"/api/applications/{draft['id']}", json={"destination": {"kind": "email", "email": "jobs@example.org"}})
+    sent = []
+    monkeypatch.setattr("job_radar.apply._send_email", lambda item: sent.append(item["id"]) or "message-123")
+    result = client.post(f"/api/applications/{draft['id']}/send")
+    assert result.status_code == 200, result.text
+    assert result.json()["status"] == "sent_confirmed"
+    assert sent == [draft["id"]]
+    assert client.post(f"/api/applications/{draft['id']}/send").status_code == 422
+    assert len(client.get("/api/submissions").json()) == 1
+
+
+def test_web_form_inspection_and_one_click_submit(tmp_path: Path) -> None:
+    posted = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = b'<html><body><form method="post"><label>Name <input name="name" required></label><label>Email <input type="email" name="email" required></label><input type="file" name="resume" accept="application/pdf"><button type="submit">Apply</button></form></body></html>'
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self):
+            posted.append(self.rfile.read(int(self.headers["Content-Length"])))
+            body = b"<html><body>Thank you. Application received.</body></html>"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        client = TestClient(create_app(Settings(tmp_path)))
+        draft = _prepared(client, f"http://127.0.0.1:{server.server_port}/apply")
+        inspected = client.post(f"/api/applications/{draft['id']}/inspect")
+        assert inspected.status_code == 200, inspected.text
+        answers = inspected.json()["form_data"]["answers"]
+        assert "Alex Example" in answers.values()
+        result = client.post(f"/api/applications/{draft['id']}/send")
+        assert result.status_code == 200, result.text
+        assert result.json()["status"] == "submitted_confirmed"
+        assert len(posted) == 1
+    finally:
+        server.shutdown()
+        server.server_close()

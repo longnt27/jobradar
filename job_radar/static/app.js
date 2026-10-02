@@ -65,7 +65,14 @@ async function showJob(id) {
     catch(error) { notice(error.message, true); }
   }));
   $('#job-detail').querySelector('[data-prepare]').addEventListener('click', async () => {
-    try { const draft = await api(`/api/jobs/${id}/prepare`, {method:'POST', body:JSON.stringify({provider:$('#draft-provider').value})}); notice('Application draft ready for review'); showTab('applications'); await loadApplications(draft.id); }
+    try {
+      const draft = await api(`/api/jobs/${id}/prepare`, {method:'POST', body:JSON.stringify({provider:$('#draft-provider').value})});
+      if (draft.destination.kind === 'web') {
+        try { await api(`/api/applications/${draft.id}/inspect`, {method:'POST'}); }
+        catch(error) { notice(`Draft ready; form inspection needs attention: ${error.message}`, true); }
+      }
+      showTab('applications'); await loadApplications(draft.id);
+    }
     catch(error) { notice(error.message, true); }
   });
 }
@@ -128,10 +135,14 @@ async function showApplication(id) {
     <div class="review-section"><h4>Destination</h4><label>Channel<select id="draft-destination-kind"><option value="web" ${destination.kind === 'web' ? 'selected' : ''}>Web form</option><option value="email" ${destination.kind === 'email' ? 'selected' : ''}>Email</option></select></label><label>URL or email address<input id="draft-destination" value="${escapeHtml(destination.url || destination.email || '')}"></label></div>
     <div class="review-section"><h4>Resume</h4><p><a href="/api/applications/${id}/resume" target="_blank">Preview or download PDF ↗</a></p><label>Professional summary<textarea id="draft-summary" rows="3">${escapeHtml(resume.summary || '')}</textarea></label><p class="item-meta">Selected evidence: ${cards.map((card) => escapeHtml(card.title)).join(', ')}</p></div>
     <div class="review-section"><h4>Application message</h4><label>Subject<input id="draft-subject" value="${escapeHtml(message.subject || '')}"></label><label>Body<textarea id="draft-body" rows="10">${escapeHtml(message.body || '')}</textarea></label></div>
-    <div id="draft-form-fields" class="review-section"><h4>Form answers</h4>${Object.entries(draft.form_data.answers || {}).map(([key,value]) => `<label>${escapeHtml(key)}<textarea data-answer="${escapeHtml(key)}" rows="2">${escapeHtml(value)}</textarea></label>`).join('') || '<p class="hint">No custom questions detected yet.</p>'}</div>
+    <div id="draft-form-fields" class="review-section"><h4>Form answers</h4>${(draft.form_data.fields || []).filter((field) => field.type !== 'file').map((field) => `<label>${escapeHtml(field.label || field.name || `Field ${field.index}`)}${field.required ? ' *' : ''}<textarea data-answer="${field.index}" rows="2">${escapeHtml(draft.form_data.answers?.[String(field.index)] || '')}</textarea>${field.options?.length ? `<span class="hint">Options: ${field.options.map((option) => escapeHtml(option.value)).join(', ')}</span>` : ''}</label>`).join('') || '<p class="hint">No form fields inspected yet. Inspect the final application URL before sending.</p>'}</div>
     ${draft.warnings.length ? `<div class="review-section"><h4>Review notes</h4>${draft.warnings.map((warning) => `<p class="hint">${escapeHtml(warning)}</p>`).join('')}</div>` : ''}
-    <div class="actions"><button id="save-draft" class="primary">Save changes</button><button id="send-draft" ${draft.status === 'sent' ? 'disabled' : ''}>Send application</button></div><div id="application-outcome" class="hint"></div>`;
+    <div class="actions"><button id="save-draft" class="primary">Save changes</button><button id="inspect-draft">Inspect form</button><button id="send-draft" ${draft.status === 'sent' ? 'disabled' : ''}>Send application</button></div><div id="application-outcome" class="hint"></div>`;
   $('#save-draft').addEventListener('click', () => saveApplication(id, draft));
+  $('#inspect-draft').addEventListener('click', async () => {
+    try { await saveApplication(id, draft); await api(`/api/applications/${id}/inspect`, {method:'POST'}); await showApplication(id); notice('Form fields inspected'); }
+    catch(error) { notice(error.message, true); }
+  });
   $('#send-draft').addEventListener('click', async () => {
     try { await saveApplication(id, draft); const result = await api(`/api/applications/${id}/send`, {method:'POST'}); $('#application-outcome').textContent = `${result.status}: ${result.receipt || result.error || ''}`; await loadApplications(); notice(`Application outcome: ${result.status}`); }
     catch(error) { notice(error.message, true); }
