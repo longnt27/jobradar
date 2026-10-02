@@ -141,7 +141,7 @@ def seed(db: Database) -> None:
                     )
     if db.get_setting("profile") is None:
         db.set_setting("profile", {
-            "name": "", "email": "", "phone": "", "location": "Hanoi, Vietnam",
+            "name": "", "email": "", "phone": "", "location": "", "drafting_provider": "",
             "summary": "", "skills": [], "experience": [], "education": [],
             "links": [], "preferences": {"roles": list(ROLE_TERMS), "remote": True},
         })

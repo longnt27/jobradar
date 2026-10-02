@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import shutil
 from contextlib import asynccontextmanager
@@ -8,7 +9,7 @@ from typing import Any, Literal
 from urllib.parse import urlsplit
 
 import httpx
-from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, HttpUrl
 
@@ -21,6 +22,7 @@ from .github import list_public_repositories
 from .mail_config import save_smtp, smtp_config
 from .notifications import save_telegram, telegram_config
 from .resume_import import parse_resume_template
+from .resume_extract import extract_resume
 from .seeds import seed
 from .settings import Settings
 from .scanner import ScanManager
@@ -76,17 +78,21 @@ class ResumeImportInput(BaseModel):
     latex: str = Field(min_length=100, max_length=100_000)
 
 
+class ProviderInput(BaseModel):
+    provider: Literal["codex_local", "codex", "agy", "claude"]
+
+
 class ProjectGenerationInput(BaseModel):
-    provider: Literal["template", "codex_local", "codex", "agy", "claude"] = "codex"
+    provider: Literal["template", "codex_local", "codex", "agy", "claude"] | None = None
 
 
 class RepositoryInput(BaseModel):
     url: HttpUrl
-    provider: Literal["template", "codex_local", "codex", "agy", "claude"] = "codex"
+    provider: Literal["template", "codex_local", "codex", "agy", "claude"] | None = None
 
 
 class PrepareInput(BaseModel):
-    provider: Literal["template", "codex_local", "codex", "agy", "claude"] = "codex"
+    provider: Literal["template", "codex_local", "codex", "agy", "claude"] | None = None
 
 
 class SendInput(BaseModel):
@@ -129,6 +135,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.scan_manager = scan_manager
     app.state.login_manager = login_manager
 
+    def provider_available(provider: str) -> bool:
+        command = "codex" if provider.startswith("codex") else provider
+        return bool(shutil.which(command)) and (provider != "codex_local" or bool(shutil.which("ollama")))
+
+    def configured_provider() -> str:
+        provider = db.get_setting("profile", {}).get("drafting_provider", "")
+        if not provider:
+            raise HTTPException(409, "Choose a drafting provider in Profile first")
+        if not provider_available(provider):
+            raise HTTPException(422, f"{provider} is not available on this Mac; change it in Profile")
+        return provider
+
     def attach_career_source(employer_id: str, name: str, url: str) -> None:
         parts = urlsplit(url)
         if parts.scheme not in ("http", "https") or not parts.hostname:
@@ -166,6 +184,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         telegram = telegram_config(settings)
         return {
             "profile_complete": bool(profile.get("name") and profile.get("email")),
+            "selected_provider": profile.get("drafting_provider", ""),
             "approved_evidence": db.one("SELECT COUNT(*) AS count FROM evidence WHERE approved=1 AND kind='project'")["count"],
             "facebook_groups": db.one("SELECT COUNT(*) AS count FROM sources WHERE kind='facebook' AND enabled=1")["count"],
             "linkedin_searches": db.one("SELECT COUNT(*) AS count FROM sources WHERE kind='linkedin' AND enabled=1")["count"],
@@ -223,8 +242,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def put_profile(profile: dict[str, Any] = Body(...)):
         if not isinstance(profile.get("name", ""), str) or not isinstance(profile.get("skills", []), list):
             raise HTTPException(422, "Profile must include a name and skills list")
+        if profile.get("drafting_provider") and profile["drafting_provider"] not in {"codex_local", "codex", "agy", "claude"}:
+            raise HTTPException(422, "Unsupported drafting provider")
         db.set_setting("profile", profile)
         return profile
+
+    @app.put("/api/profile/provider")
+    def set_provider(payload: ProviderInput):
+        if not provider_available(payload.provider):
+            raise HTTPException(422, f"{payload.provider} is not available on this Mac")
+        profile = db.get_setting("profile", {})
+        profile["drafting_provider"] = payload.provider
+        db.set_setting("profile", profile)
+        return {"provider": payload.provider, "mode": PROVIDERS[payload.provider]}
+
+    @app.post("/api/profile/resume/pdf")
+    async def import_pdf_resume(file: UploadFile = File(...)):
+        provider = configured_provider()
+        data = await file.read(10_000_001)
+        try:
+            extracted = await asyncio.to_thread(extract_resume, data, provider)
+        except (ValueError, RuntimeError) as error:
+            raise HTTPException(422, str(error)) from error
+        profile = {**db.get_setting("profile", {}), **extracted}
+        db.set_setting("profile", profile)
+        return {"positions": len(profile["experience"]), "education": len(profile["education"]),
+                "achievements": len(profile["achievements"]), "provider": provider,
+                "review": "Review the extracted fields and positions before preparing an application"}
 
     @app.post("/api/profile/import-latex")
     def import_latex(payload: ResumeImportInput):
@@ -455,9 +499,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/repositories/inspect")
     def inspect_repo(payload: RepositoryInput):
         try:
+            provider = payload.provider or configured_provider()
             result = inspect_repository(db, settings, str(payload.url))
             try:
-                result["project_content"] = generate_project_content(db, result["evidence_id"], payload.provider)
+                result["project_content"] = generate_project_content(db, result["evidence_id"], provider)
             except RuntimeError as error:
                 result["generation_warning"] = str(error)
             return result
@@ -467,7 +512,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/evidence/{evidence_id}/generate")
     def generate_project(evidence_id: str, payload: ProjectGenerationInput):
         try:
-            return generate_project_content(db, evidence_id, payload.provider)
+            return generate_project_content(db, evidence_id, payload.provider or configured_provider())
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
         except (ValueError, RuntimeError) as error:
@@ -493,7 +538,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/jobs/{job_id}/prepare")
     def prepare(job_id: str, payload: PrepareInput):
         try:
-            return prepare_draft(db, settings, job_id, payload.provider)
+            return prepare_draft(db, settings, job_id, payload.provider or configured_provider())
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
         except (ValueError, RuntimeError) as error:
