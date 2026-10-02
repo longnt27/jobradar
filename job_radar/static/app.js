@@ -30,7 +30,7 @@ async function loadSetup() {
   badge('#setup-profile-status', data.profile_complete ? 'Ready' : 'Needs details', data.profile_complete);
   badge('#setup-browser-status', data.browser.state === 'saved' ? 'Session saved' : data.browser.state === 'open' ? 'Browser open' : data.browser.state === 'failed' ? 'Needs attention' : 'Not connected', data.browser.state === 'saved');
   badge('#setup-sources-status', `${data.linkedin_searches} LinkedIn · ${data.facebook_groups} Facebook`, data.linkedin_searches > 0);
-  badge('#setup-evidence-status', `${data.approved_evidence} approved claim${data.approved_evidence === 1 ? '' : 's'}`, data.approved_evidence > 0);
+  badge('#setup-evidence-status', `${data.approved_evidence} approved project${data.approved_evidence === 1 ? '' : 's'}`, data.approved_evidence > 0);
   badge('#setup-smtp-status', data.smtp_configured ? 'Configured' : 'Optional', data.smtp_configured);
   badge('#setup-telegram-status', data.telegram_configured ? 'Configured' : 'Optional', data.telegram_configured);
   $('#setup-service-status').textContent = data.service_installed ? 'Background scanning is installed and runs while this Mac is on.' : 'Run the installer to keep scans active when the browser window is closed.';
@@ -162,6 +162,26 @@ async function loadProfile() {
   form.elements.alert_min_score.value = profile.alert_min_score ?? 60;
   form.elements.skills.value = (profile.skills || []).join('\n');
   form.elements.links.value = (profile.links || []).join('\n');
+  form.elements.education.value = (profile.education || []).map((item) => typeof item === 'string' ? item : [item.school || '', item.degree || '', item.dates || ''].join(' | ')).join('\n');
+  form.elements.achievements.value = (profile.achievements || []).join('\n');
+  form.elements.skill_groups.value = Object.entries(profile.skill_groups || {}).map(([label, value]) => `${label}: ${Array.isArray(value) ? value.join(', ') : value}`).join('\n');
+}
+
+async function loadPositions() {
+  const positions = await api('/api/positions');
+  $('#position-list').innerHTML = positions.length ? positions.map((item) => `<div class="item" data-position="${item.id}">
+    <div class="form-grid"><label>Company<input data-field="company" value="${escapeHtml(item.company)}"></label><label>Role<input data-field="role" value="${escapeHtml(item.role)}"></label><label class="full">Dates<input data-field="dates" value="${escapeHtml(item.dates)}"></label><label class="full">Work and outcomes<textarea data-field="bullets" rows="4">${escapeHtml((item.bullets || []).join('\n'))}</textarea></label></div>
+    <div class="actions"><button data-save-position="${item.id}">Save position</button><button data-delete-position="${item.id}">Remove</button></div></div>`).join('') : '<div class="empty">No positions yet. Add your previous jobs above.</div>';
+  document.querySelectorAll('[data-save-position]').forEach((button) => button.addEventListener('click', async () => {
+    const row = button.closest('[data-position]');
+    const field = (name) => row.querySelector(`[data-field="${name}"]`).value.trim();
+    try { await api(`/api/positions/${button.dataset.savePosition}`, {method:'PUT', body:JSON.stringify({company:field('company'),role:field('role'),dates:field('dates'),bullets:field('bullets').split('\n').map((x) => x.trim()).filter(Boolean)})}); notice('Position saved'); await loadPositions(); }
+    catch(error) { notice(error.message, true); }
+  }));
+  document.querySelectorAll('[data-delete-position]').forEach((button) => button.addEventListener('click', async () => {
+    try { await api(`/api/positions/${button.dataset.deletePosition}`, {method:'DELETE'}); await loadPositions(); notice('Position removed'); }
+    catch(error) { notice(error.message, true); }
+  }));
 }
 
 function showTab(name) {
@@ -171,7 +191,7 @@ function showTab(name) {
   document.querySelectorAll('[data-tab]').forEach((button) => button.classList.toggle('active', button.dataset.tab === name));
   $('#page-title').textContent = name[0].toUpperCase() + name.slice(1);
   history.replaceState(null, '', `#${name}`);
-  ({setup:loadSetup,overview:loadOverview,jobs:loadJobs,applications:loadApplications,evidence:loadEvidence,sources:loadSources,employers:loadEmployers,profile:loadProfile})[name]?.().catch((error) => notice(error.message, true));
+  ({setup:loadSetup,overview:loadOverview,jobs:loadJobs,applications:loadApplications,experience:loadPositions,projects:loadEvidence,sources:loadSources,employers:loadEmployers,profile:loadProfile})[name]?.().catch((error) => notice(error.message, true));
 }
 
 async function loadApplications(selectedId = null) {
@@ -186,10 +206,10 @@ async function showApplication(id) {
   const resume = draft.resume_data;
   const message = draft.message_data;
   const destination = draft.destination;
-  const cards = resume.evidence || [];
+  const projects = resume.projects || [];
   $('#application-detail').innerHTML = `<h2>${escapeHtml(draft.job_title)}</h2><div class="item-meta">${escapeHtml(draft.company)} · ${escapeHtml(draft.provider_mode)}</div>
     <div class="review-section"><h4>Destination</h4><label>Channel<select id="draft-destination-kind"><option value="web" ${destination.kind === 'web' ? 'selected' : ''}>Web form</option><option value="email" ${destination.kind === 'email' ? 'selected' : ''}>Email</option></select></label><label>URL or email address<input id="draft-destination" value="${escapeHtml(destination.url || destination.email || '')}"></label></div>
-    <div class="review-section"><h4>Resume</h4><p><a href="/api/applications/${id}/resume" target="_blank">Preview or download PDF ↗</a></p><label>Professional summary<textarea id="draft-summary" rows="3">${escapeHtml(resume.summary || '')}</textarea></label><p class="item-meta">Selected evidence: ${cards.map((card) => escapeHtml(card.title)).join(', ')}</p></div>
+    <div class="review-section"><h4>Resume</h4><p><a href="/api/applications/${id}/resume" target="_blank">Preview or download PDF ↗</a></p><label>Professional summary<textarea id="draft-summary" rows="3">${escapeHtml(resume.summary || '')}</textarea></label><p class="item-meta">Experience: ${(resume.experience || []).map((item) => escapeHtml(item.company || item.title)).join(', ') || 'None'} · Projects: ${projects.length}</p>${projects.map((project, index) => `<label>${escapeHtml(project.title)} — tailored bullets<textarea data-project-bullets="${index}" rows="4">${escapeHtml((project.bullets || []).join('\n'))}</textarea></label>`).join('')}</div>
     <div class="review-section"><h4>Application message</h4><label>Subject<input id="draft-subject" value="${escapeHtml(message.subject || '')}"></label><label>Body<textarea id="draft-body" rows="10">${escapeHtml(message.body || '')}</textarea></label></div>
     <div id="draft-form-fields" class="review-section"><h4>Form answers</h4>${draft.form_data.action ? `<p class="hint">Form submits to: ${escapeHtml(draft.form_data.action)} (${escapeHtml(draft.form_data.method)})</p>` : ''}${(draft.form_data.fields || []).filter((field) => field.type !== 'file').map((field) => `<label>${escapeHtml(field.label || field.name || `Field ${field.index}`)}${field.required ? ' *' : ''}<textarea data-answer="${field.index}" rows="2">${escapeHtml(draft.form_data.answers?.[String(field.index)] || '')}</textarea>${field.options?.length ? `<span class="hint">Options: ${field.options.map((option) => escapeHtml(option.value)).join(', ')}</span>` : ''}</label>`).join('') || '<p class="hint">No form fields inspected yet. Inspect the final application URL before sending.</p>'}</div>
     ${draft.warnings.length ? `<div class="review-section"><h4>Review notes</h4>${draft.warnings.map((warning) => `<p class="hint">${escapeHtml(warning)}</p>`).join('')}</div>` : ''}
@@ -219,25 +239,37 @@ async function saveApplication(id, draft) {
   const kind = $('#draft-destination-kind').value;
   const value = $('#draft-destination').value.trim();
   const destination = kind === 'email' ? {kind, email:value} : {kind, url:value};
-  const payload = {resume_data:{...draft.resume_data, summary:$('#draft-summary').value}, message_data:{subject:$('#draft-subject').value, body:$('#draft-body').value}, form_data:{...draft.form_data, answers}, destination};
+  const projects = (draft.resume_data.projects || []).map((project, index) => ({...project, bullets:document.querySelector(`[data-project-bullets="${index}"]`).value.split('\n').map((x) => x.trim()).filter(Boolean)}));
+  const payload = {resume_data:{...draft.resume_data, summary:$('#draft-summary').value, projects}, message_data:{subject:$('#draft-subject').value, body:$('#draft-body').value}, form_data:{...draft.form_data, answers}, destination};
   await api(`/api/applications/${id}`, {method:'PATCH', body:JSON.stringify(payload)});
   notice('Application saved');
 }
 async function loadEvidence() {
-  const cards = await api('/api/evidence');
+  const cards = (await api('/api/evidence')).filter((card) => card.kind === 'project');
+  const setup = await api('/api/setup');
+  const available = [['codex',setup.providers.codex],['codex_local',setup.providers.codex && setup.providers.ollama],['agy',setup.providers.agy],['claude',setup.providers.claude],['template',true]];
+  $('#project-provider').querySelectorAll('option').forEach((option) => { option.disabled = !available.find((item) => item[0] === option.value)?.[1]; });
+  $('#project-provider').value = available.find((item) => item[1])[0];
   $('#evidence-list').innerHTML = cards.length ? cards.map((card) => `<div class="item">
     <div class="item-title">${escapeHtml(card.title)} <span class="pill ${card.approved ? '' : 'warning'}">${card.approved ? 'Approved' : 'Needs review'}</span></div>
-    <div class="item-meta">${escapeHtml(card.kind)} ${card.repository_url ? `· <a href="${escapeHtml(card.repository_url)}" target="_blank" rel="noopener noreferrer">Repository ↗</a>` : ''}</div>
-    <label class="full">Claim<textarea data-claim="${card.id}" rows="3">${escapeHtml(card.claim)}</textarea></label>
-    <div class="actions"><button data-save-evidence="${card.id}">Save wording</button><button data-approve-evidence="${card.id}" data-approved="${!!card.approved}">${card.approved ? 'Revoke approval' : 'Approve claim'}</button></div>
-  </div>`).join('') : '<div class="empty">No evidence yet. Add experience or inspect a repository.</div>';
+    <div class="item-meta">${card.repository_url ? `<a href="${escapeHtml(card.repository_url)}" target="_blank" rel="noopener noreferrer">Repository ↗</a> · Commit ${escapeHtml(card.commit_sha?.slice(0, 8))}` : 'Manual project'}</div>
+    <label>Project title<input data-project-title="${card.id}" value="${escapeHtml(card.title)}"></label>
+    <label>Technologies<input data-project-stack="${card.id}" value="${escapeHtml((JSON.parse(card.details || '{}').tech_stack || []).join(', '))}"></label>
+    <label class="full">Project bullets <span class="hint">One per line. Review contribution and outcome claims before approval.</span><textarea data-project-claims="${card.id}" rows="5">${escapeHtml((JSON.parse(card.details || '{}').bullets || [card.claim]).join('\n'))}</textarea></label>
+    <div class="actions"><button data-save-evidence="${card.id}">Save project</button><button data-approve-evidence="${card.id}" data-approved="${!!card.approved}">${card.approved ? 'Revoke approval' : 'Approve project'}</button>${card.repository_url && !card.approved ? `<button data-generate-project="${card.id}">Generate again</button>` : ''}</div>
+  </div>`).join('') : '<div class="empty">No selected projects yet. Choose a GitHub repository above.</div>';
+  const content = (id) => { const bullets = $(`[data-project-claims="${id}"]`).value.split('\n').map((x) => x.trim()).filter(Boolean); return {title:$(`[data-project-title="${id}"]`).value.trim(), claim:bullets[0] || '', details:{tech_stack:$(`[data-project-stack="${id}"]`).value.split(',').map((x) => x.trim()).filter(Boolean), bullets}}; };
   document.querySelectorAll('[data-save-evidence]').forEach((button) => button.addEventListener('click', async () => {
-    try { await api(`/api/evidence/${button.dataset.saveEvidence}`, {method:'PATCH', body:JSON.stringify({claim:$(`[data-claim="${button.dataset.saveEvidence}"]`).value})}); notice('Claim saved'); await loadEvidence(); }
+    try { await api(`/api/evidence/${button.dataset.saveEvidence}`, {method:'PATCH', body:JSON.stringify(content(button.dataset.saveEvidence))}); notice('Project saved'); await loadEvidence(); }
     catch(error) { notice(error.message, true); }
   }));
   document.querySelectorAll('[data-approve-evidence]').forEach((button) => button.addEventListener('click', async () => {
-    try { await api(`/api/evidence/${button.dataset.approveEvidence}`, {method:'PATCH', body:JSON.stringify({approved:button.dataset.approved !== 'true', claim:$(`[data-claim="${button.dataset.approveEvidence}"]`).value})}); notice('Evidence updated'); await loadEvidence(); }
+    try { await api(`/api/evidence/${button.dataset.approveEvidence}`, {method:'PATCH', body:JSON.stringify({...content(button.dataset.approveEvidence), approved:button.dataset.approved !== 'true'})}); notice('Project updated'); await loadEvidence(); }
     catch(error) { notice(error.message, true); }
+  }));
+  document.querySelectorAll('[data-generate-project]').forEach((button) => button.addEventListener('click', async () => {
+    try { button.disabled = true; notice('Generating project content'); await api(`/api/evidence/${button.dataset.generateProject}/generate`, {method:'POST',body:JSON.stringify({provider:$('#project-provider').value})}); await loadEvidence(); notice('Project draft ready for review'); }
+    catch(error) { notice(error.message, true); button.disabled = false; }
   }));
 }
 
@@ -308,8 +340,22 @@ $('#profile-form').addEventListener('submit', async (event) => {
     profile.alert_min_score = Number(form.elements.alert_min_score.value || 60);
     profile.skills = form.elements.skills.value.split('\n').map((x) => x.trim()).filter(Boolean);
     profile.links = form.elements.links.value.split('\n').map((x) => x.trim()).filter(Boolean);
+    profile.achievements = form.elements.achievements.value.split('\n').map((x) => x.trim()).filter(Boolean);
+    profile.education = form.elements.education.value.split('\n').map((x) => x.trim()).filter(Boolean).map((line) => { const [school, degree, dates] = line.split('|').map((x) => x.trim()); return {school, degree:degree || '', dates:dates || ''}; });
+    profile.skill_groups = Object.fromEntries(form.elements.skill_groups.value.split('\n').map((x) => x.trim()).filter(Boolean).map((line) => { const colon = line.indexOf(':'); return colon < 0 ? [line, ''] : [line.slice(0, colon).trim(), line.slice(colon + 1).trim()]; }));
     await api('/api/profile', {method:'PUT', body:JSON.stringify(profile)});
     notice('Profile saved');
+  } catch(error) { notice(error.message, true); }
+});
+
+$('#latex-import-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  try {
+    const latex = event.target.elements.latex.value;
+    const result = await api('/api/profile/import-latex', {method:'POST', body:JSON.stringify({latex})});
+    event.target.reset();
+    await loadProfile();
+    notice(`Imported ${result.positions} positions, ${result.education} education entries, and ${result.achievements} achievements`);
   } catch(error) { notice(error.message, true); }
 });
 
@@ -342,23 +388,29 @@ $('#job-import').addEventListener('submit', async (event) => {
   } catch(error) { notice(error.message, true); }
 });
 
-$('#evidence-form').addEventListener('submit', async (event) => {
+$('#position-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   try {
     const data = Object.fromEntries(new FormData(event.target));
-    data.approved = true;
-    await api('/api/evidence', {method:'POST', body:JSON.stringify(data)});
-    event.target.reset(); await loadEvidence(); notice('Experience saved');
+    data.bullets = data.bullets.split('\n').map((x) => x.trim()).filter(Boolean);
+    await api('/api/positions', {method:'POST', body:JSON.stringify(data)});
+    event.target.reset(); await loadPositions(); notice('Position added');
   } catch(error) { notice(error.message, true); }
 });
+
+async function inspectSelectedRepository(url) {
+  notice('Inspecting repository and drafting project content…');
+  const result = await api('/api/repositories/inspect', {method:'POST', body:JSON.stringify({url, provider:$('#project-provider').value})});
+  await loadEvidence();
+  notice(result.generation_warning ? `Repository inspected. Project writing needs attention: ${result.generation_warning}` : 'Project draft ready. Review and approve it before preparing applications.', !!result.generation_warning);
+}
 
 $('#repo-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   try {
     const data = Object.fromEntries(new FormData(event.target));
-    notice('Inspecting repository');
-    await api('/api/repositories/inspect', {method:'POST', body:JSON.stringify(data)});
-    event.target.reset(); await loadEvidence(); notice('Repository inspected. Review and approve its claim.');
+    await inspectSelectedRepository(data.url);
+    event.target.reset();
   } catch(error) { notice(error.message, true); }
 });
 
@@ -369,7 +421,7 @@ $('#github-form').addEventListener('submit', async (event) => {
     const repos = await api(`/api/github/${encodeURIComponent(username)}/repositories`);
     $('#github-repos').innerHTML = repos.length ? repos.map((repo) => `<div class="item"><div class="item-title">${escapeHtml(repo.name)} ${repo.fork ? '<span class="pill muted">Fork</span>' : ''}</div><div class="item-meta">${escapeHtml(repo.description || 'No description')} · ${escapeHtml(repo.language || 'Unknown language')}</div><div class="actions"><button data-inspect-repo="${escapeHtml(repo.url)}">Inspect</button><a href="${escapeHtml(repo.url)}" target="_blank" rel="noopener noreferrer">Open ↗</a></div></div>`).join('') : '<div class="empty">No public repositories found.</div>';
     document.querySelectorAll('[data-inspect-repo]').forEach((button) => button.addEventListener('click', async () => {
-      try { notice('Inspecting repository'); await api('/api/repositories/inspect', {method:'POST', body:JSON.stringify({url:button.dataset.inspectRepo})}); await loadEvidence(); notice('Repository inspected. Review its claim before approval.'); }
+      try { await inspectSelectedRepository(button.dataset.inspectRepo); }
       catch(error) { notice(error.message, true); }
     }));
   } catch(error) { notice(error.message, true); }
