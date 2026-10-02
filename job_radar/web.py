@@ -67,6 +67,10 @@ class PrepareInput(BaseModel):
     provider: Literal["template", "codex_local", "codex", "agy", "claude"] = "template"
 
 
+class SendInput(BaseModel):
+    package_hash: str = Field(min_length=64, max_length=64)
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     settings.ensure_dirs()
@@ -367,10 +371,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(422, str(error)) from error
 
     @app.post("/api/applications/{draft_id}/send")
-    async def send(draft_id: str):
+    async def send(draft_id: str, payload: SendInput):
         try:
             async with scan_manager.browser_lock:
-                return await send_application(db, settings, draft_id)
+                return await send_application(db, settings, draft_id, payload.package_hash)
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
         except ValueError as error:

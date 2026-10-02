@@ -22,14 +22,16 @@ def _prepared(client: TestClient, url: str) -> dict:
 def test_email_send_is_explicit_and_duplicate_protected(tmp_path: Path, monkeypatch) -> None:
     client = TestClient(create_app(Settings(tmp_path)))
     draft = _prepared(client, "https://example.org/apply")
-    client.patch(f"/api/applications/{draft['id']}", json={"destination": {"kind": "email", "email": "jobs@example.org"}})
+    draft = client.patch(f"/api/applications/{draft['id']}", json={"destination": {"kind": "email", "email": "jobs@example.org"}}).json()
     sent = []
     monkeypatch.setattr("job_radar.apply._send_email", lambda item: sent.append(item["id"]) or "message-123")
-    result = client.post(f"/api/applications/{draft['id']}/send")
+    assert client.post(f"/api/applications/{draft['id']}/send", json={"package_hash": "0" * 64}).status_code == 422
+    assert not sent
+    result = client.post(f"/api/applications/{draft['id']}/send", json={"package_hash": draft["package_hash"]})
     assert result.status_code == 200, result.text
     assert result.json()["status"] == "sent_confirmed"
     assert sent == [draft["id"]]
-    assert client.post(f"/api/applications/{draft['id']}/send").status_code == 422
+    assert client.post(f"/api/applications/{draft['id']}/send", json={"package_hash": draft["package_hash"]}).status_code == 422
     assert len(client.get("/api/submissions").json()) == 1
 
 
@@ -65,7 +67,7 @@ def test_web_form_inspection_and_one_click_submit(tmp_path: Path) -> None:
         assert inspected.status_code == 200, inspected.text
         answers = inspected.json()["form_data"]["answers"]
         assert "Alex Example" in answers.values()
-        result = client.post(f"/api/applications/{draft['id']}/send")
+        result = client.post(f"/api/applications/{draft['id']}/send", json={"package_hash": inspected.json()["package_hash"]})
         assert result.status_code == 200, result.text
         assert result.json()["status"] == "submitted_confirmed"
         assert len(posted) == 1

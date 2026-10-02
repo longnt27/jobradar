@@ -211,7 +211,13 @@ def get_draft(db: Database, identifier: str) -> dict:
         raise KeyError("Draft not found")
     for key in ("evidence_ids", "resume_data", "message_data", "form_data", "destination", "warnings"):
         row[key] = json.loads(row[key])
+    row["package_hash"] = package_hash(row)
     return row
+
+
+def package_hash(draft: dict) -> str:
+    package = {key: draft[key] for key in ("vacancy_id", "resume_data", "message_data", "form_data", "destination", "resume_hash")}
+    return hashlib.sha256(json.dumps(package, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
 def update_draft(db: Database, settings: Settings, identifier: str, updates: dict) -> dict:

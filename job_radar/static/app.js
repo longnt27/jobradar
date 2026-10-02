@@ -144,14 +144,18 @@ async function showApplication(id) {
     <div class="review-section"><h4>Application message</h4><label>Subject<input id="draft-subject" value="${escapeHtml(message.subject || '')}"></label><label>Body<textarea id="draft-body" rows="10">${escapeHtml(message.body || '')}</textarea></label></div>
     <div id="draft-form-fields" class="review-section"><h4>Form answers</h4>${(draft.form_data.fields || []).filter((field) => field.type !== 'file').map((field) => `<label>${escapeHtml(field.label || field.name || `Field ${field.index}`)}${field.required ? ' *' : ''}<textarea data-answer="${field.index}" rows="2">${escapeHtml(draft.form_data.answers?.[String(field.index)] || '')}</textarea>${field.options?.length ? `<span class="hint">Options: ${field.options.map((option) => escapeHtml(option.value)).join(', ')}</span>` : ''}</label>`).join('') || '<p class="hint">No form fields inspected yet. Inspect the final application URL before sending.</p>'}</div>
     ${draft.warnings.length ? `<div class="review-section"><h4>Review notes</h4>${draft.warnings.map((warning) => `<p class="hint">${escapeHtml(warning)}</p>`).join('')}</div>` : ''}
-    <div class="actions"><button id="save-draft" class="primary">Save changes</button><button id="inspect-draft">Inspect form</button><button id="send-draft" ${draft.status === 'sent' ? 'disabled' : ''}>Send application</button></div><div id="application-outcome" class="hint"></div>`;
-  $('#save-draft').addEventListener('click', () => saveApplication(id, draft));
+    <div class="actions"><button id="save-draft" class="primary">Save changes</button><button id="inspect-draft">Inspect form</button><button id="send-draft" ${draft.status === 'sent' ? 'disabled' : ''}>Send application</button></div><p class="hint">Package fingerprint: <span class="mono">${escapeHtml(draft.package_hash.slice(0, 16))}</span>. Open the PDF after saving changes.</p><div id="application-outcome" class="hint"></div>`;
+  $('#application-detail').querySelectorAll('input,select,textarea').forEach((field) => field.addEventListener('input', () => { $('#send-draft').disabled = true; $('#application-outcome').textContent = 'Save and review your changes before sending.'; }));
+  $('#save-draft').addEventListener('click', async () => {
+    try { await saveApplication(id, draft); await showApplication(id); }
+    catch(error) { notice(error.message, true); }
+  });
   $('#inspect-draft').addEventListener('click', async () => {
     try { await saveApplication(id, draft); await api(`/api/applications/${id}/inspect`, {method:'POST'}); await showApplication(id); notice('Form fields inspected'); }
     catch(error) { notice(error.message, true); }
   });
   $('#send-draft').addEventListener('click', async () => {
-    try { await saveApplication(id, draft); const result = await api(`/api/applications/${id}/send`, {method:'POST'}); $('#application-outcome').textContent = `${result.status}: ${result.receipt || result.error || ''}`; await loadApplications(); notice(`Application outcome: ${result.status}`); }
+    try { const result = await api(`/api/applications/${id}/send`, {method:'POST', body:JSON.stringify({package_hash:draft.package_hash})}); $('#application-outcome').textContent = `${result.status}: ${result.receipt || result.error || ''}`; await loadApplications(); notice(`Application outcome: ${result.status}`); }
     catch(error) { notice(error.message, true); }
   });
 }

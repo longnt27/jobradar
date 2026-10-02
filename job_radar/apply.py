@@ -14,13 +14,8 @@ from urllib.parse import urlsplit
 from playwright.async_api import BrowserContext, Page, async_playwright
 
 from .db import Database, new_id, now
-from .drafting import get_draft
+from .drafting import get_draft, package_hash
 from .settings import Settings
-
-
-def package_hash(draft: dict) -> str:
-    package = {key: draft[key] for key in ("vacancy_id", "resume_data", "message_data", "form_data", "destination", "resume_hash")}
-    return hashlib.sha256(json.dumps(package, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
 def _field_signature(fields: list[dict]) -> str:
@@ -200,8 +195,10 @@ async def _send_web(settings: Settings, draft: dict) -> tuple[str, str]:
             await context.close()
 
 
-async def send_application(db: Database, settings: Settings, draft_id: str) -> dict:
+async def send_application(db: Database, settings: Settings, draft_id: str, expected_hash: str) -> dict:
     draft = get_draft(db, draft_id)
+    if not expected_hash or expected_hash != package_hash(draft):
+        raise ValueError("Application changed since review. Reload and review the package before sending")
     _validate_destination(draft["destination"])
     if not draft["message_data"].get("body") or not draft["resume_data"].get("name"):
         raise ValueError("Complete the message and resume before sending")
