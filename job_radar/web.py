@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
 
@@ -11,6 +12,7 @@ from pydantic import BaseModel, Field, HttpUrl
 from .db import Database, new_id, now
 from .seeds import seed
 from .settings import Settings
+from .scanner import ScanManager
 
 
 class SourceInput(BaseModel):
@@ -48,9 +50,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings.ensure_dirs()
     db = Database(settings.database_path)
     seed(db)
-    app = FastAPI(title="Job Radar", version="0.1.0")
+    scan_manager = ScanManager(db, settings)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        await scan_manager.start()
+        try:
+            yield
+        finally:
+            await scan_manager.stop()
+
+    app = FastAPI(title="Job Radar", version="0.1.0", lifespan=lifespan)
     app.state.db = db
     app.state.settings = settings
+    app.state.scan_manager = scan_manager
 
     @app.get("/")
     def index():
@@ -121,6 +134,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
              validated.interval_minutes, json.dumps(validated.config), source_id),
         )
         return {"id": source_id}
+
+    @app.post("/api/sources/{source_id}/scan")
+    async def scan_one(source_id: str):
+        if not db.one("SELECT id FROM sources WHERE id=?", (source_id,)):
+            raise HTTPException(404, "Source not found")
+        return await scan_manager.run_source(source_id)
+
+    @app.post("/api/scan/due")
+    def scan_due():
+        return {"queued": scan_manager.queue_due()}
 
     @app.get("/api/employers")
     def employers(q: str = "", category: str = "", limit: int = Query(300, ge=1, le=2000)):

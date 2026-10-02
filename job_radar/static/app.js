@@ -164,7 +164,7 @@ $('#job-import').addEventListener('submit', async (event) => {
 });
 
 for (const selector of ['#scan-due','#scan-all']) $(selector).addEventListener('click', async () => {
-  try { notice('Scanning due sources'); await api('/api/scan/due', {method:'POST'}); await loadOverview(); if ($('#sources').classList.contains('active')) await loadSources(); notice('Due-source scan complete'); }
+  try { const result = await api('/api/scan/due', {method:'POST'}); notice(`${result.queued} due sources queued for scanning`); }
   catch(error) { notice(error.message, true); }
 });
 
