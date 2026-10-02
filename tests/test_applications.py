@@ -24,7 +24,7 @@ def test_email_send_is_explicit_and_duplicate_protected(tmp_path: Path, monkeypa
     draft = _prepared(client, "https://example.org/apply")
     draft = client.patch(f"/api/applications/{draft['id']}", json={"destination": {"kind": "email", "email": "jobs@example.org"}}).json()
     sent = []
-    monkeypatch.setattr("job_radar.apply._send_email", lambda item: sent.append(item["id"]) or "message-123")
+    monkeypatch.setattr("job_radar.apply._send_email", lambda item, _settings: sent.append(item["id"]) or "message-123")
     assert client.post(f"/api/applications/{draft['id']}/send", json={"package_hash": "0" * 64}).status_code == 422
     assert not sent
     result = client.post(f"/api/applications/{draft['id']}/send", json={"package_hash": draft["package_hash"]})

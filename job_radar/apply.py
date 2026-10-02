@@ -15,6 +15,7 @@ from playwright.async_api import BrowserContext, Page, async_playwright
 
 from .db import Database, new_id, now
 from .drafting import get_draft, package_hash
+from .mail_config import smtp_config
 from .settings import Settings
 
 
@@ -109,14 +110,15 @@ def _validate_destination(destination: dict) -> None:
         raise ValueError("Choose an email or web application destination")
 
 
-def _send_email(draft: dict) -> str:
-    host = os.environ.get("JOB_RADAR_SMTP_HOST", "")
-    user = os.environ.get("JOB_RADAR_SMTP_USER", "")
-    password = os.environ.get("JOB_RADAR_SMTP_PASSWORD", "")
-    sender = os.environ.get("JOB_RADAR_SMTP_FROM", user)
-    port = int(os.environ.get("JOB_RADAR_SMTP_PORT", "587"))
+def _send_email(draft: dict, settings: Settings) -> str:
+    config = smtp_config(settings)
+    host = config.get("host", "")
+    user = config.get("user", "")
+    password = config.get("password", "")
+    sender = config.get("from", user)
+    port = int(config.get("port", 587))
     if not host or not sender:
-        raise ValueError("Set JOB_RADAR_SMTP_HOST and JOB_RADAR_SMTP_FROM before sending email applications")
+        raise ValueError("Run job-radar configure-smtp before sending email applications")
     if port not in (465, 587):
         raise ValueError("SMTP port must be 465 or 587")
     message = EmailMessage()
@@ -214,7 +216,7 @@ async def send_application(db: Database, settings: Settings, draft_id: str, expe
                (identifier, draft_id, draft["vacancy_id"], digest, json.dumps(draft["destination"]), "sending", now(), now()))
     try:
         if draft["destination"]["kind"] == "email":
-            receipt = await asyncio.to_thread(_send_email, draft)
+            receipt = await asyncio.to_thread(_send_email, draft, settings)
             status = "sent_confirmed"
         else:
             status, receipt = await _send_web(settings, draft)
