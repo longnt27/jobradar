@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, HttpUrl
 
 from .db import Database, new_id, now
+from .drafting import PROVIDERS, get_draft, prepare_draft, update_draft
 from .evidence import inspect_repository
 from .seeds import seed
 from .settings import Settings
@@ -56,6 +57,10 @@ class EvidenceInput(BaseModel):
 
 class RepositoryInput(BaseModel):
     url: HttpUrl
+
+
+class PrepareInput(BaseModel):
+    provider: Literal["template", "codex_local", "codex", "agy", "claude"] = "template"
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -263,5 +268,50 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/repositories")
     def repositories():
         return db.all("SELECT id,url,commit_sha,owner_context,summary,inspected_at FROM repository_snapshots ORDER BY inspected_at DESC")
+
+    @app.get("/api/providers")
+    def providers():
+        return PROVIDERS
+
+    @app.post("/api/jobs/{job_id}/prepare")
+    def prepare(job_id: str, payload: PrepareInput):
+        try:
+            return prepare_draft(db, settings, job_id, payload.provider)
+        except KeyError as error:
+            raise HTTPException(404, str(error)) from error
+        except (ValueError, RuntimeError) as error:
+            raise HTTPException(422, str(error)) from error
+
+    @app.get("/api/applications")
+    def applications():
+        rows = db.all("SELECT id FROM application_drafts ORDER BY created_at DESC LIMIT 100")
+        return [get_draft(db, row["id"]) for row in rows]
+
+    @app.get("/api/applications/{draft_id}")
+    def application(draft_id: str):
+        try:
+            return get_draft(db, draft_id)
+        except KeyError as error:
+            raise HTTPException(404, str(error)) from error
+
+    @app.patch("/api/applications/{draft_id}")
+    def edit_application(draft_id: str, updates: dict[str, Any] = Body(...)):
+        try:
+            return update_draft(db, settings, draft_id, updates)
+        except KeyError as error:
+            raise HTTPException(404, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+
+    @app.get("/api/applications/{draft_id}/resume")
+    def resume_file(draft_id: str):
+        try:
+            draft = get_draft(db, draft_id)
+        except KeyError as error:
+            raise HTTPException(404, str(error)) from error
+        path = Path(draft["resume_path"])
+        if not path.is_file():
+            raise HTTPException(404, "Resume file not found")
+        return FileResponse(path, media_type="application/pdf", filename=f"resume-{draft_id[:8]}.pdf")
 
     return app

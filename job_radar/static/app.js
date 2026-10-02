@@ -54,7 +54,8 @@ async function showJob(id) {
   const score = job.score_detail ? JSON.parse(job.score_detail) : null;
   $('#job-detail').innerHTML = `<h2>${escapeHtml(job.title)}</h2><div class="item-meta">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div>
     <div class="item-meta">${escapeHtml(job.work_mode || '')} · First seen ${when(job.first_seen_at)}</div>
-    <div class="actions"><button data-state="interesting">Interesting</button><button data-state="ignored">Ignore</button><button data-prepare="${id}" class="primary">Prepare application</button></div>
+    <div class="actions"><button data-state="interesting">Interesting</button><button data-state="ignored">Ignore</button></div>
+    <div class="review-section"><label>Drafting provider<select id="draft-provider"><option value="template">Local template (no AI)</option><option value="codex_local">Codex OSS + local Ollama model</option><option value="codex">Codex CLI (remote model)</option><option value="agy">Antigravity CLI (remote model)</option><option value="claude">Claude Code CLI (remote model)</option></select></label><div class="actions"><button data-prepare="${id}" class="primary">Prepare application</button></div></div>
     ${job.apply_url ? `<p><a href="${escapeHtml(job.apply_url)}" target="_blank" rel="noopener noreferrer">Application page ↗</a></p>` : ''}
     ${links ? `<p class="item-meta">${links}</p>` : ''}
     ${score ? `<div class="review-section"><h4>Why it matched</h4><p>${escapeHtml(score.explanation || '')}</p></div>` : ''}
@@ -64,7 +65,7 @@ async function showJob(id) {
     catch(error) { notice(error.message, true); }
   }));
   $('#job-detail').querySelector('[data-prepare]').addEventListener('click', async () => {
-    try { const draft = await api(`/api/jobs/${id}/prepare`, {method:'POST'}); notice('Application draft ready for review'); showTab('applications'); await loadApplications(draft.id); }
+    try { const draft = await api(`/api/jobs/${id}/prepare`, {method:'POST', body:JSON.stringify({provider:$('#draft-provider').value})}); notice('Application draft ready for review'); showTab('applications'); await loadApplications(draft.id); }
     catch(error) { notice(error.message, true); }
   });
 }
@@ -110,7 +111,43 @@ function showTab(name) {
   ({overview:loadOverview,jobs:loadJobs,applications:loadApplications,evidence:loadEvidence,sources:loadSources,employers:loadEmployers,profile:loadProfile})[name]?.().catch((error) => notice(error.message, true));
 }
 
-async function loadApplications() { $('#application-list').innerHTML = '<div class="empty">Application drafting is loading.</div>'; }
+async function loadApplications(selectedId = null) {
+  const drafts = await api('/api/applications');
+  $('#application-list').innerHTML = drafts.length ? drafts.map((draft) => `<div class="item clickable" data-application="${draft.id}"><div class="item-title">${escapeHtml(draft.job_title)} <span class="pill ${draft.status === 'sent' ? '' : 'warning'}">${escapeHtml(draft.status)}</span></div><div class="item-meta">${escapeHtml(draft.company)} · ${escapeHtml(draft.provider_mode)}</div><div class="item-meta">Updated ${when(draft.updated_at)}</div></div>`).join('') : '<div class="empty">No applications yet. Open a job and prepare one.</div>';
+  document.querySelectorAll('[data-application]').forEach((node) => node.addEventListener('click', () => showApplication(node.dataset.application)));
+  if (selectedId) await showApplication(selectedId);
+}
+
+async function showApplication(id) {
+  const draft = await api(`/api/applications/${id}`);
+  const resume = draft.resume_data;
+  const message = draft.message_data;
+  const destination = draft.destination;
+  const cards = resume.evidence || [];
+  $('#application-detail').innerHTML = `<h2>${escapeHtml(draft.job_title)}</h2><div class="item-meta">${escapeHtml(draft.company)} · ${escapeHtml(draft.provider_mode)}</div>
+    <div class="review-section"><h4>Destination</h4><label>Channel<select id="draft-destination-kind"><option value="web" ${destination.kind === 'web' ? 'selected' : ''}>Web form</option><option value="email" ${destination.kind === 'email' ? 'selected' : ''}>Email</option></select></label><label>URL or email address<input id="draft-destination" value="${escapeHtml(destination.url || destination.email || '')}"></label></div>
+    <div class="review-section"><h4>Resume</h4><p><a href="/api/applications/${id}/resume" target="_blank">Preview or download PDF ↗</a></p><label>Professional summary<textarea id="draft-summary" rows="3">${escapeHtml(resume.summary || '')}</textarea></label><p class="item-meta">Selected evidence: ${cards.map((card) => escapeHtml(card.title)).join(', ')}</p></div>
+    <div class="review-section"><h4>Application message</h4><label>Subject<input id="draft-subject" value="${escapeHtml(message.subject || '')}"></label><label>Body<textarea id="draft-body" rows="10">${escapeHtml(message.body || '')}</textarea></label></div>
+    <div id="draft-form-fields" class="review-section"><h4>Form answers</h4>${Object.entries(draft.form_data.answers || {}).map(([key,value]) => `<label>${escapeHtml(key)}<textarea data-answer="${escapeHtml(key)}" rows="2">${escapeHtml(value)}</textarea></label>`).join('') || '<p class="hint">No custom questions detected yet.</p>'}</div>
+    ${draft.warnings.length ? `<div class="review-section"><h4>Review notes</h4>${draft.warnings.map((warning) => `<p class="hint">${escapeHtml(warning)}</p>`).join('')}</div>` : ''}
+    <div class="actions"><button id="save-draft" class="primary">Save changes</button><button id="send-draft" ${draft.status === 'sent' ? 'disabled' : ''}>Send application</button></div><div id="application-outcome" class="hint"></div>`;
+  $('#save-draft').addEventListener('click', () => saveApplication(id, draft));
+  $('#send-draft').addEventListener('click', async () => {
+    try { await saveApplication(id, draft); const result = await api(`/api/applications/${id}/send`, {method:'POST'}); $('#application-outcome').textContent = `${result.status}: ${result.receipt || result.error || ''}`; await loadApplications(); notice(`Application outcome: ${result.status}`); }
+    catch(error) { notice(error.message, true); }
+  });
+}
+
+async function saveApplication(id, draft) {
+  const answers = {};
+  document.querySelectorAll('[data-answer]').forEach((field) => { answers[field.dataset.answer] = field.value; });
+  const kind = $('#draft-destination-kind').value;
+  const value = $('#draft-destination').value.trim();
+  const destination = kind === 'email' ? {kind, email:value} : {kind, url:value};
+  const payload = {resume_data:{...draft.resume_data, summary:$('#draft-summary').value}, message_data:{subject:$('#draft-subject').value, body:$('#draft-body').value}, form_data:{...draft.form_data, answers}, destination};
+  await api(`/api/applications/${id}`, {method:'PATCH', body:JSON.stringify(payload)});
+  notice('Application saved');
+}
 async function loadEvidence() {
   const cards = await api('/api/evidence');
   $('#evidence-list').innerHTML = cards.length ? cards.map((card) => `<div class="item">
