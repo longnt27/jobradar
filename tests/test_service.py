@@ -14,6 +14,7 @@ def test_background_service_reuses_local_data_directory(tmp_path: Path) -> None:
     assert definition["KeepAlive"] is True
     assert definition["ProgramArguments"][:2] == [sys.executable, "-m"]
     assert definition["EnvironmentVariables"]["JOB_RADAR_DATA_DIR"] == str(tmp_path)
+    assert str(Path.home() / ".local" / "bin") in definition["EnvironmentVariables"]["PATH"]
 
 
 def test_smtp_configuration_reads_restricted_local_file(tmp_path: Path, monkeypatch) -> None:

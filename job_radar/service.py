@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import plistlib
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -16,10 +17,12 @@ def service_path() -> Path:
 
 
 def service_definition(settings: Settings) -> dict:
+    paths = [str(Path.home() / ".local" / "bin"), str(Path(sys.executable).parent), os.environ.get("PATH", ""), "/usr/bin", "/bin"]
     return {
         "Label": LABEL,
         "ProgramArguments": [sys.executable, "-m", "job_radar.cli", "serve"],
-        "EnvironmentVariables": {"JOB_RADAR_DATA_DIR": str(settings.data_dir), "JOB_RADAR_PORT": str(settings.port)},
+        "EnvironmentVariables": {"JOB_RADAR_DATA_DIR": str(settings.data_dir), "JOB_RADAR_PORT": str(settings.port),
+                                 "PATH": os.pathsep.join(dict.fromkeys(part for value in paths for part in value.split(os.pathsep) if part))},
         "RunAtLoad": True,
         "KeepAlive": True,
         "StandardOutPath": str(settings.data_dir / "service.stdout.log"),
