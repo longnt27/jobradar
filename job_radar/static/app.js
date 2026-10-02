@@ -112,7 +112,7 @@ async function loadEmployers() {
 async function loadProfile() {
   const profile = await api('/api/profile');
   const form = $('#profile-form');
-  for (const key of ['name','email','phone','location','summary']) form.elements[key].value = profile[key] || '';
+  for (const key of ['name','email','phone','location','summary','salary_expectation','work_authorization','notice_period','relocation']) form.elements[key].value = profile[key] || '';
   form.elements.skills.value = (profile.skills || []).join('\n');
   form.elements.links.value = (profile.links || []).join('\n');
 }
@@ -201,7 +201,7 @@ $('#profile-form').addEventListener('submit', async (event) => {
   try {
     const profile = await api('/api/profile');
     const form = event.target;
-    for (const key of ['name','email','phone','location','summary']) profile[key] = form.elements[key].value.trim();
+    for (const key of ['name','email','phone','location','summary','salary_expectation','work_authorization','notice_period','relocation']) profile[key] = form.elements[key].value.trim();
     profile.skills = form.elements.skills.value.split('\n').map((x) => x.trim()).filter(Boolean);
     profile.links = form.elements.links.value.split('\n').map((x) => x.trim()).filter(Boolean);
     await api('/api/profile', {method:'PUT', body:JSON.stringify(profile)});

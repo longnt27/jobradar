@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 from playwright.async_api import BrowserContext, Page, async_playwright
 
 from .db import Database, new_id, now
-from .drafting import get_draft, package_hash
+from .drafting import draft_custom_answers, get_draft, package_hash
 from .mail_config import smtp_config
 from .settings import Settings
 
@@ -50,10 +50,16 @@ async def _form_structure(page: Page) -> dict:
     return {"form_index": form_index, "fields": fields, "signature": _field_signature(fields), "final_url": page.url}
 
 
-def _default_answer(field: dict, profile: dict) -> str:
+def _default_answer(field: dict, profile: dict, message: dict) -> str:
     text = f"{field['name']} {field['id']} {field['label']}".casefold()
     if field["type"] in ("file", "checkbox", "radio"):
         return ""
+    if re.search(r"cover.?letter|motivation|why (this|you|us)|message to|additional information", text):
+        return message.get("body", "")
+    for pattern, key in ((r"salary|compensation", "salary_expectation"), (r"visa|work.?authori", "work_authorization"),
+                         (r"notice.?period|start.?date", "notice_period"), (r"relocat", "relocation")):
+        if re.search(pattern, text):
+            return str(profile.get(key, ""))
     patterns = [
         (r"e.?mail", "email"), (r"phone|mobile|telephone", "phone"),
         (r"first.?name|given.?name", "first_name"), (r"last.?name|sur.?name|family.?name", "last_name"),
@@ -84,15 +90,28 @@ async def inspect_form(db: Database, settings: Settings, draft_id: str) -> dict:
             page = await context.new_page()
             await page.goto(destination["url"], wait_until="domcontentloaded", timeout=45000)
             structure = await _form_structure(page)
-            profile = db.get_setting("profile", {})
-            existing = draft["form_data"].get("answers", {})
-            structure["answers"] = {str(field["index"]): existing.get(str(field["index"]), _default_answer(field, profile)) for field in structure["fields"] if field["type"] != "file"}
-            structure["destination_url"] = destination["url"]
-            db.execute("UPDATE application_drafts SET form_data=?,updated_at=? WHERE id=?",
-                       (json.dumps(structure, ensure_ascii=False), now(), draft_id))
-            return get_draft(db, draft_id)
         finally:
             await context.close()
+    profile = db.get_setting("profile", {})
+    existing = draft["form_data"].get("answers", {})
+    answers = {str(field["index"]): existing.get(str(field["index"]), _default_answer(field, profile, draft["message_data"]))
+               for field in structure["fields"] if field["type"] != "file"}
+    if draft["provider"] != "template":
+        cards = [card for card in draft["resume_data"].get("evidence", []) if card.get("id") in draft["evidence_ids"]]
+        job = db.one("SELECT title,company,description FROM vacancies WHERE id=?", (draft["vacancy_id"],))
+        try:
+            generated = await asyncio.to_thread(draft_custom_answers, draft["provider"], job, profile, cards, structure["fields"])
+            for key, value in generated.items():
+                if key not in existing and value:
+                    answers[key] = value
+        except Exception as error:
+            warnings = [*draft["warnings"], f"Form answer drafting failed: {str(error)[:200]}"]
+            db.execute("UPDATE application_drafts SET warnings=? WHERE id=?", (json.dumps(warnings), draft_id))
+    structure["answers"] = answers
+    structure["destination_url"] = destination["url"]
+    db.execute("UPDATE application_drafts SET form_data=?,updated_at=? WHERE id=?",
+               (json.dumps(structure, ensure_ascii=False), now(), draft_id))
+    return get_draft(db, draft_id)
 
 
 def _validate_destination(destination: dict) -> None:
