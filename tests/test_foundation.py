@@ -14,6 +14,8 @@ def test_first_run_seeds_employers_and_four_hour_linkedin_searches(tmp_path: Pat
     assert len(searches) == 27
     assert all(source["interval_minutes"] == 240 for source in searches)
     assert not client.get("/api/sources?kind=facebook").json()
+    gsm = next(row for row in client.get("/api/employers?q=GSM").json() if row["name"] == "GSM / Xanh SM")
+    assert "GreenSM" in gsm["aliases"]
 
 
 def test_manual_job_search_and_state_history(tmp_path: Path) -> None:

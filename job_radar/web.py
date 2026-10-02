@@ -43,7 +43,7 @@ class JobInput(BaseModel):
     title: str = Field(min_length=2)
     description: str = Field(min_length=10)
     location: str = ""
-    apply_url: str | None = None
+    apply_url: HttpUrl | None = None
 
 
 class StateInput(BaseModel):
@@ -254,7 +254,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             conn.execute(
                 "INSERT INTO vacancies(id,employer_id,company,title,location,description,apply_url,first_seen_at,last_seen_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                 (identifier, employer["id"] if employer else None, payload.company, payload.title,
-                 payload.location, payload.description, payload.apply_url, timestamp, timestamp, timestamp, timestamp),
+                 payload.location, payload.description, str(payload.apply_url) if payload.apply_url else None, timestamp, timestamp, timestamp, timestamp),
             )
             conn.execute("INSERT INTO vacancy_fts(vacancy_id,title,company,description) VALUES(?,?,?,?)",
                          (identifier, payload.title, payload.company, payload.description))

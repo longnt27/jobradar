@@ -31,7 +31,7 @@ async function loadOverview() {
     ['Employers tracked', c.employers], ['Applications', c.submissions],
   ].map(([label, value]) => `<div class="metric"><strong>${value}</strong><span>${label}</span></div>`).join('');
   $('#recent-scans').innerHTML = data.recent_runs.length ? data.recent_runs.map((run) =>
-    `<div class="item"><div class="item-title">${escapeHtml(run.source_name)} <span class="pill ${run.status === 'success' ? '' : 'warning'}">${escapeHtml(run.status)}</span></div><div class="item-meta">${when(run.started_at)} · ${run.observed_count} observed · ${run.new_count} new</div></div>`
+    `<div class="item"><div class="item-title">${escapeHtml(run.source_name)} <span class="pill ${run.status === 'success' ? '' : 'warning'}">${escapeHtml(run.status)}</span></div><div class="item-meta">${when(run.started_at)} · ${run.observed_count} observed · ${run.new_count} new</div>${run.detail ? `<div class="item-meta">${escapeHtml(run.detail)}</div>` : ''}</div>`
   ).join('') : '<div class="empty">No scans yet. Sign in to the browser profile and run a scan.</div>';
 }
 

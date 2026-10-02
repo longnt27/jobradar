@@ -99,6 +99,14 @@ ROLE_TERMS = (
     "Agentic AI Engineer", "Computer Vision Engineer", "Generative AI Engineer",
 )
 
+EMPLOYER_ALIASES = {
+    "GSM / Xanh SM": ["GreenSM", "Green SM", "Xanh SM", "GSM"],
+    "Viettel Cyber Security": ["Viettel CyberSec", "Viettel Cyber Security Company"],
+    "VinSmart Future": ["VinSmart Future JSC"],
+    "FPT Smart Cloud": ["FPT Smart Cloud and AI"],
+    "VNPT AI": ["VNPT-AI"],
+}
+
 
 def seed(db: Database) -> None:
     timestamp = now()
@@ -108,6 +116,9 @@ def seed(db: Database) -> None:
                 "INSERT OR IGNORE INTO employers(id,name,category,created_at,updated_at) VALUES(?,?,?,?,?)",
                 (new_id(), name, category, timestamp, timestamp),
             )
+        for name, aliases in EMPLOYER_ALIASES.items():
+            conn.execute("UPDATE employers SET aliases=? WHERE name=? AND aliases='[]'",
+                         (json.dumps(aliases, ensure_ascii=False), name))
         vinai = conn.execute("SELECT id FROM employers WHERE name='VinAI'").fetchone()
         if vinai:
             career_url = "https://www.vinai.io/careers/"

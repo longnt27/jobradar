@@ -93,10 +93,15 @@ async def collect_linkedin(context: BrowserContext, source: dict) -> list[Observ
                 if not title or len(description) < 30:
                     continue
                 job_id = re.search(r"/jobs/view/(\d+)", url)
+                apply_links = await detail.locator("a[href]").evaluate_all(r"""links => links
+                  .filter(a => /apply|ứng tuyển/i.test(`${a.innerText} ${a.href}`))
+                  .map(a => a.href)
+                  .filter(h => /^https?:\/\//i.test(h) && !/linkedin\.com/i.test(h))""")
                 jobs.append(ObservedJob(
                     url=url, external_id=job_id.group(1) if job_id else None,
                     title=title, company=company or "Unknown employer", description=description[:30000],
-                    location=location[:250], published_at=_date_from_age(body[:1800]), raw_text=body[:30000],
+                    location=location[:250], apply_url=apply_links[0] if apply_links else None,
+                    published_at=_date_from_age(body[:1800]), raw_text=body[:30000],
                 ))
             except AuthRequired:
                 raise
@@ -128,6 +133,8 @@ async def collect_facebook(context: BrowserContext, source: dict) -> list[Observ
             url: [...node.querySelectorAll('a[href]')].map(a => a.href).find(h => /\\/groups\\/[^/]+\\/(posts|permalink)\\//.test(h)) || '',
             links: [...node.querySelectorAll('a[href]')].map(a => a.href).filter(h => h.startsWith('http'))
         }))""")
+        if not posts:
+            raise RuntimeError("No group posts were visible; check group access or sign-in")
         jobs: list[ObservedJob] = []
         for post in posts[:max_posts]:
             text = post["text"].strip()
@@ -138,9 +145,11 @@ async def collect_facebook(context: BrowserContext, source: dict) -> list[Observ
                 continue
             lines = [line.strip() for line in text.splitlines() if line.strip()]
             title = next((line for line in lines[:8] if ROLE.search(line) and len(line) < 160), lines[0][:120])
+            company_match = re.search(r"^(?:company|employer|công ty|đơn vị)\s*[:：-]\s*(.{3,100})$", text[:1000], re.I | re.M)
+            company = company_match.group(1).strip() if company_match else "Facebook post"
             external = next((link for link in post["links"] if "facebook.com" not in link), None)
             jobs.append(ObservedJob(
-                url=url, title=title[:180], company="Facebook post", description=text[:30000],
+                url=url, title=title[:180], company=company, description=text[:30000],
                 apply_url=external, raw_text=text[:30000],
             ))
         return jobs
