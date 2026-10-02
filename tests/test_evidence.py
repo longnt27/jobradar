@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from job_radar.db import Database
 from job_radar.evidence import canonical_github_url, inspect_repository
+from job_radar.evidence import ProjectContent, generate_project_content
 from job_radar.settings import Settings
 from job_radar.web import create_app
 
@@ -34,3 +35,25 @@ def test_repository_inspection_requires_claim_review(tmp_path: Path, monkeypatch
     assert card["approved"] == 0
     assert "Useful project" in card["claim"]
     assert canonical_github_url("https://github.com/test/project.git")[0] == "https://github.com/test/project"
+
+
+def test_codex_project_content_stays_unapproved_until_review(tmp_path: Path, monkeypatch) -> None:
+    client = TestClient(create_app(Settings(tmp_path)))
+    db = client.app.state.db
+    from job_radar.db import new_id, now
+    repository_id, evidence_id = new_id(), new_id()
+    db.execute("INSERT INTO repository_snapshots(id,url,local_path,commit_sha,summary,inspected_at) VALUES(?,?,?,?,?,?)",
+               (repository_id, "https://github.com/alex/search", "/tmp/search", "abc123", '{"readme":"# Search\\nIndexes documents with Python.","files":["main.py"]}', now()))
+    db.execute("INSERT INTO evidence(id,kind,title,claim,repository_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+               (evidence_id, "project", "search", "Repository available for review.", repository_id, now(), now()))
+    captured = []
+    def fake_provider(provider, prompt, response_type):
+        captured.append((provider, prompt, response_type))
+        return ProjectContent(title="Document search", summary="Python document search system.", tech_stack=["Python"], bullets=["Indexes documents with Python."])
+    monkeypatch.setattr("job_radar.drafting._provider_json", fake_provider)
+    result = generate_project_content(db, evidence_id, "codex")
+    card = db.one("SELECT * FROM evidence WHERE id=?", (evidence_id,))
+    assert result["details"]["bullets"] == ["Indexes documents with Python."]
+    assert card["approved"] == 0
+    assert captured[0][0] == "codex"
+    assert "Indexes documents with Python" in captured[0][1]

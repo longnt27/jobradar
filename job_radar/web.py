@@ -16,10 +16,11 @@ from .db import Database, new_id, now
 from .apply import inspect_form, send_application
 from .browser_login import BrowserLoginManager
 from .drafting import PROVIDERS, get_draft, prepare_draft, update_draft
-from .evidence import inspect_repository
+from .evidence import generate_project_content, inspect_repository
 from .github import list_public_repositories
 from .mail_config import save_smtp, smtp_config
 from .notifications import save_telegram, telegram_config
+from .resume_import import parse_resume_template
 from .seeds import seed
 from .settings import Settings
 from .scanner import ScanManager
@@ -64,8 +65,24 @@ class EvidenceInput(BaseModel):
     support: list[str] = Field(default_factory=list)
 
 
+class PositionInput(BaseModel):
+    company: str = Field(min_length=2)
+    role: str = Field(min_length=2)
+    dates: str = Field(min_length=2)
+    bullets: list[str] = Field(min_length=1)
+
+
+class ResumeImportInput(BaseModel):
+    latex: str = Field(min_length=100, max_length=100_000)
+
+
+class ProjectGenerationInput(BaseModel):
+    provider: Literal["template", "codex_local", "codex", "agy", "claude"] = "codex"
+
+
 class RepositoryInput(BaseModel):
     url: HttpUrl
+    provider: Literal["template", "codex_local", "codex", "agy", "claude"] = "codex"
 
 
 class PrepareInput(BaseModel):
@@ -149,7 +166,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         telegram = telegram_config(settings)
         return {
             "profile_complete": bool(profile.get("name") and profile.get("email")),
-            "approved_evidence": db.one("SELECT COUNT(*) AS count FROM evidence WHERE approved=1")["count"],
+            "approved_evidence": db.one("SELECT COUNT(*) AS count FROM evidence WHERE approved=1 AND kind='project'")["count"],
             "facebook_groups": db.one("SELECT COUNT(*) AS count FROM sources WHERE kind='facebook' AND enabled=1")["count"],
             "linkedin_searches": db.one("SELECT COUNT(*) AS count FROM sources WHERE kind='linkedin' AND enabled=1")["count"],
             "browser": login_manager.status(),
@@ -208,6 +225,50 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(422, "Profile must include a name and skills list")
         db.set_setting("profile", profile)
         return profile
+
+    @app.post("/api/profile/import-latex")
+    def import_latex(payload: ResumeImportInput):
+        try:
+            imported = parse_resume_template(payload.latex)
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+        profile = {**db.get_setting("profile", {}), **imported}
+        db.set_setting("profile", profile)
+        return {"positions": len(imported["experience"]), "education": len(imported["education"]),
+                "achievements": len(imported["achievements"]), "skill_groups": len(imported["skill_groups"])}
+
+    @app.get("/api/positions")
+    def positions():
+        return db.get_setting("profile", {}).get("experience", [])
+
+    @app.post("/api/positions", status_code=201)
+    def add_position(payload: PositionInput):
+        profile = db.get_setting("profile", {})
+        item = {"id": new_id(), **payload.model_dump()}
+        profile.setdefault("experience", []).append(item)
+        db.set_setting("profile", profile)
+        return item
+
+    @app.put("/api/positions/{position_id}")
+    def edit_position(position_id: str, payload: PositionInput):
+        profile = db.get_setting("profile", {})
+        for item in profile.get("experience", []):
+            if item.get("id") == position_id:
+                item.update(payload.model_dump())
+                db.set_setting("profile", profile)
+                return item
+        raise HTTPException(404, "Position not found")
+
+    @app.delete("/api/positions/{position_id}")
+    def delete_position(position_id: str):
+        profile = db.get_setting("profile", {})
+        items = profile.get("experience", [])
+        kept = [item for item in items if item.get("id") != position_id]
+        if len(kept) == len(items):
+            raise HTTPException(404, "Position not found")
+        profile["experience"] = kept
+        db.set_setting("profile", profile)
+        return {"deleted": True}
 
     @app.get("/api/sources")
     def sources(kind: str | None = None):
@@ -365,17 +426,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         row = db.one("SELECT * FROM evidence WHERE id=?", (evidence_id,))
         if not row:
             raise HTTPException(404, "Evidence not found")
-        if not updates or set(updates) - {"kind", "title", "claim", "support", "approved"}:
+        if not updates or set(updates) - {"kind", "title", "claim", "support", "approved", "details"}:
             raise HTTPException(422, "Unsupported evidence fields")
         validated = EvidenceInput(**{**row, "support": json.loads(row["support"]), **updates})
-        db.execute("UPDATE evidence SET kind=?,title=?,claim=?,support=?,approved=?,updated_at=? WHERE id=?",
-                   (validated.kind, validated.title, validated.claim, json.dumps(validated.support), int(validated.approved), now(), evidence_id))
+        details = updates.get("details", json.loads(row["details"]))
+        if not isinstance(details, dict) or not isinstance(details.get("bullets", [validated.claim]), list) or not isinstance(details.get("tech_stack", []), list):
+            raise HTTPException(422, "Project details must contain bullet and technology lists")
+        db.execute("UPDATE evidence SET kind=?,title=?,claim=?,details=?,support=?,approved=?,updated_at=? WHERE id=?",
+                   (validated.kind, validated.title, validated.claim, json.dumps(details, ensure_ascii=False), json.dumps(validated.support), int(validated.approved), now(), evidence_id))
         return {"id": evidence_id}
 
     @app.post("/api/repositories/inspect")
     def inspect_repo(payload: RepositoryInput):
         try:
-            return inspect_repository(db, settings, str(payload.url))
+            result = inspect_repository(db, settings, str(payload.url))
+            try:
+                result["project_content"] = generate_project_content(db, result["evidence_id"], payload.provider)
+            except RuntimeError as error:
+                result["generation_warning"] = str(error)
+            return result
+        except (ValueError, RuntimeError) as error:
+            raise HTTPException(422, str(error)) from error
+
+    @app.post("/api/evidence/{evidence_id}/generate")
+    def generate_project(evidence_id: str, payload: ProjectGenerationInput):
+        try:
+            return generate_project_content(db, evidence_id, payload.provider)
+        except KeyError as error:
+            raise HTTPException(404, str(error)) from error
         except (ValueError, RuntimeError) as error:
             raise HTTPException(422, str(error)) from error
 

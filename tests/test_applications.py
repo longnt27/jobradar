@@ -13,7 +13,7 @@ def _prepared(client: TestClient, url: str) -> dict:
     profile = client.get("/api/profile").json()
     profile.update({"name": "Alex Example", "email": "alex@example.org"})
     client.put("/api/profile", json=profile)
-    client.post("/api/evidence", json={"kind": "experience", "title": "Engineer", "claim": "Built Python search systems.", "approved": True})
+    client.post("/api/positions", json={"company": "Example Labs", "role": "Engineer", "dates": "2024 – 2026", "bullets": ["Built Python search systems."]})
     job = client.post("/api/jobs/import", json={"company": "Example", "title": "Engineer", "description": "Build Python search systems.", "apply_url": url}).json()
     response = client.post(f"/api/jobs/{job['id']}/prepare", json={"provider": "template"})
     assert response.status_code == 200, response.text
