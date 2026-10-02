@@ -25,6 +25,9 @@ def test_draft_uses_approved_evidence_and_renders_resume(tmp_path: Path) -> None
     pdf = client.get(f"/api/applications/{draft['id']}/resume")
     assert pdf.status_code == 200
     assert "Alex Example" in PdfReader(Path(draft["resume_path"])).pages[0].extract_text()
+    revised = client.patch(f"/api/applications/{draft['id']}", json={"resume_data": {**draft["resume_data"], "summary": "Python search engineer"}}).json()
+    assert revised["resume_path"] != draft["resume_path"]
+    assert Path(draft["resume_path"]).exists()
 
 
 def test_codex_provider_uses_scoped_cli_and_schema(monkeypatch) -> None:

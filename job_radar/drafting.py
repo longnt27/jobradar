@@ -149,7 +149,8 @@ def render_resume(settings: Settings, draft_id: str, resume: dict) -> tuple[str,
             font = "JobRadarUnicode"
         except Exception:
             pass
-    path = settings.artifact_dir / f"resume-{draft_id}.pdf"
+    revision = hashlib.sha256(json.dumps(resume, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:16]
+    path = settings.artifact_dir / f"resume-{draft_id}-{revision}.pdf"
     page_w, page_h = 595.28, 841.89
     doc = canvas.Canvas(str(path), pagesize=(page_w, page_h))
     y = page_h - 54

@@ -231,8 +231,9 @@ async def send_application(db: Database, settings: Settings, draft_id: str, expe
         raise ValueError(f"This vacancy already has a {prior['status']} application; review the existing submission before retrying")
     identifier = new_id()
     digest = package_hash(draft)
-    db.execute("INSERT INTO submissions(id,draft_id,vacancy_id,package_hash,destination,status,sent_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
-               (identifier, draft_id, draft["vacancy_id"], digest, json.dumps(draft["destination"]), "sending", now(), now()))
+    snapshot = {key: draft[key] for key in ("vacancy_id", "provider", "provider_mode", "evidence_ids", "resume_data", "message_data", "form_data", "destination", "resume_path", "resume_hash")}
+    db.execute("INSERT INTO submissions(id,draft_id,vacancy_id,package_hash,package_data,destination,status,sent_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+               (identifier, draft_id, draft["vacancy_id"], digest, json.dumps(snapshot, ensure_ascii=False), json.dumps(draft["destination"]), "sending", now(), now()))
     try:
         if draft["destination"]["kind"] == "email":
             receipt = await asyncio.to_thread(_send_email, draft, settings)

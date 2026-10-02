@@ -1,4 +1,5 @@
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
 from pathlib import Path
 from threading import Thread
 
@@ -33,6 +34,8 @@ def test_email_send_is_explicit_and_duplicate_protected(tmp_path: Path, monkeypa
     assert sent == [draft["id"]]
     assert client.post(f"/api/applications/{draft['id']}/send", json={"package_hash": draft["package_hash"]}).status_code == 422
     assert len(client.get("/api/submissions").json()) == 1
+    snapshot = json.loads(client.get("/api/submissions").json()[0]["package_data"])
+    assert snapshot["message_data"]["body"] == draft["message_data"]["body"]
 
 
 def test_web_form_inspection_and_one_click_submit(tmp_path: Path) -> None:

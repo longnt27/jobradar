@@ -141,6 +141,7 @@ CREATE TABLE IF NOT EXISTS submissions (
   draft_id TEXT NOT NULL REFERENCES application_drafts(id),
   vacancy_id TEXT NOT NULL REFERENCES vacancies(id),
   package_hash TEXT NOT NULL,
+  package_data TEXT NOT NULL DEFAULT '{}',
   destination TEXT NOT NULL,
   status TEXT NOT NULL,
   receipt TEXT,
@@ -165,6 +166,9 @@ class Database:
         path.parent.mkdir(parents=True, exist_ok=True)
         with self.connection() as conn:
             conn.executescript(SCHEMA)
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(submissions)")}
+            if "package_data" not in columns:
+                conn.execute("ALTER TABLE submissions ADD COLUMN package_data TEXT NOT NULL DEFAULT '{}'")
             conn.execute("PRAGMA journal_mode=WAL")
 
     @contextmanager
