@@ -65,6 +65,9 @@ async function showJob(id) {
     catch(error) { notice(error.message, true); }
   }));
   $('#job-detail').querySelector('[data-prepare]').addEventListener('click', async () => {
+    const button = $('#job-detail').querySelector('[data-prepare]');
+    button.disabled = true;
+    button.textContent = 'Preparing…';
     try {
       const draft = await api(`/api/jobs/${id}/prepare`, {method:'POST', body:JSON.stringify({provider:$('#draft-provider').value})});
       if (draft.destination.kind === 'web') {
@@ -74,6 +77,7 @@ async function showJob(id) {
       showTab('applications'); await loadApplications(draft.id);
     }
     catch(error) { notice(error.message, true); }
+    finally { button.disabled = false; button.textContent = 'Prepare application'; }
   });
 }
 
@@ -156,8 +160,12 @@ async function showApplication(id) {
     catch(error) { notice(error.message, true); }
   });
   $('#send-draft').addEventListener('click', async () => {
+    const button = $('#send-draft');
+    button.disabled = true;
+    button.textContent = 'Sending…';
     try { const result = await api(`/api/applications/${id}/send`, {method:'POST', body:JSON.stringify({package_hash:draft.package_hash})}); $('#application-outcome').textContent = `${result.status}: ${result.receipt || result.error || ''}`; await loadApplications(); notice(`Application outcome: ${result.status}`); }
     catch(error) { notice(error.message, true); }
+    finally { button.textContent = 'Send application'; }
   });
 }
 
