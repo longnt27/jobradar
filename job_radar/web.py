@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, HttpUrl
 
 from .db import Database, new_id, now
+from .evidence import inspect_repository
 from .seeds import seed
 from .settings import Settings
 from .scanner import ScanManager
@@ -43,6 +44,18 @@ class JobInput(BaseModel):
 class StateInput(BaseModel):
     state: Literal["new", "interesting", "ignored", "prepare", "ready", "applied", "interview", "rejected", "offer"]
     reason: str | None = None
+
+
+class EvidenceInput(BaseModel):
+    kind: Literal["experience", "project", "education", "achievement", "certification"]
+    title: str = Field(min_length=2)
+    claim: str = Field(min_length=5)
+    approved: bool = False
+    support: list[str] = Field(default_factory=list)
+
+
+class RepositoryInput(BaseModel):
+    url: HttpUrl
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -214,5 +227,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             conn.execute("INSERT INTO feedback(id,vacancy_id,state,reason,created_at) VALUES(?,?,?,?,?)",
                          (new_id(), job_id, payload.state, payload.reason, now()))
         return {"state": payload.state}
+
+    @app.get("/api/evidence")
+    def evidence_list():
+        return db.all("SELECT evidence.*,repository_snapshots.url AS repository_url,repository_snapshots.commit_sha FROM evidence LEFT JOIN repository_snapshots ON repository_snapshots.id=evidence.repository_id ORDER BY evidence.created_at DESC")
+
+    @app.post("/api/evidence", status_code=201)
+    def add_evidence(payload: EvidenceInput):
+        identifier = new_id()
+        db.execute(
+            "INSERT INTO evidence(id,kind,title,claim,support,approved,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+            (identifier, payload.kind, payload.title, payload.claim, json.dumps(payload.support), int(payload.approved), now(), now()),
+        )
+        return {"id": identifier}
+
+    @app.patch("/api/evidence/{evidence_id}")
+    def edit_evidence(evidence_id: str, updates: dict[str, Any] = Body(...)):
+        row = db.one("SELECT * FROM evidence WHERE id=?", (evidence_id,))
+        if not row:
+            raise HTTPException(404, "Evidence not found")
+        if not updates or set(updates) - {"kind", "title", "claim", "support", "approved"}:
+            raise HTTPException(422, "Unsupported evidence fields")
+        validated = EvidenceInput(**{**row, "support": json.loads(row["support"]), **updates})
+        db.execute("UPDATE evidence SET kind=?,title=?,claim=?,support=?,approved=?,updated_at=? WHERE id=?",
+                   (validated.kind, validated.title, validated.claim, json.dumps(validated.support), int(validated.approved), now(), evidence_id))
+        return {"id": evidence_id}
+
+    @app.post("/api/repositories/inspect")
+    def inspect_repo(payload: RepositoryInput):
+        try:
+            return inspect_repository(db, settings, str(payload.url))
+        except (ValueError, RuntimeError) as error:
+            raise HTTPException(422, str(error)) from error
+
+    @app.get("/api/repositories")
+    def repositories():
+        return db.all("SELECT id,url,commit_sha,owner_context,summary,inspected_at FROM repository_snapshots ORDER BY inspected_at DESC")
 
     return app

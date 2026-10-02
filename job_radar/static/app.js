@@ -111,7 +111,23 @@ function showTab(name) {
 }
 
 async function loadApplications() { $('#application-list').innerHTML = '<div class="empty">Application drafting is loading.</div>'; }
-async function loadEvidence() { $('#evidence-list').innerHTML = '<div class="empty">Evidence intake is loading.</div>'; }
+async function loadEvidence() {
+  const cards = await api('/api/evidence');
+  $('#evidence-list').innerHTML = cards.length ? cards.map((card) => `<div class="item">
+    <div class="item-title">${escapeHtml(card.title)} <span class="pill ${card.approved ? '' : 'warning'}">${card.approved ? 'Approved' : 'Needs review'}</span></div>
+    <div class="item-meta">${escapeHtml(card.kind)} ${card.repository_url ? `· <a href="${escapeHtml(card.repository_url)}" target="_blank" rel="noopener noreferrer">Repository ↗</a>` : ''}</div>
+    <label class="full">Claim<textarea data-claim="${card.id}" rows="3">${escapeHtml(card.claim)}</textarea></label>
+    <div class="actions"><button data-save-evidence="${card.id}">Save wording</button><button data-approve-evidence="${card.id}" data-approved="${!!card.approved}">${card.approved ? 'Revoke approval' : 'Approve claim'}</button></div>
+  </div>`).join('') : '<div class="empty">No evidence yet. Add experience or inspect a repository.</div>';
+  document.querySelectorAll('[data-save-evidence]').forEach((button) => button.addEventListener('click', async () => {
+    try { await api(`/api/evidence/${button.dataset.saveEvidence}`, {method:'PATCH', body:JSON.stringify({claim:$(`[data-claim="${button.dataset.saveEvidence}"]`).value})}); notice('Claim saved'); await loadEvidence(); }
+    catch(error) { notice(error.message, true); }
+  }));
+  document.querySelectorAll('[data-approve-evidence]').forEach((button) => button.addEventListener('click', async () => {
+    try { await api(`/api/evidence/${button.dataset.approveEvidence}`, {method:'PATCH', body:JSON.stringify({approved:button.dataset.approved !== 'true', claim:$(`[data-claim="${button.dataset.approveEvidence}"]`).value})}); notice('Evidence updated'); await loadEvidence(); }
+    catch(error) { notice(error.message, true); }
+  }));
+}
 
 document.querySelectorAll('[data-tab]').forEach((button) => button.addEventListener('click', () => showTab(button.dataset.tab)));
 $('#clock').textContent = new Date().toLocaleDateString(undefined, {weekday:'long', day:'numeric', month:'long'});
@@ -160,6 +176,26 @@ $('#job-import').addEventListener('submit', async (event) => {
     if (!data.apply_url) data.apply_url = null;
     const result = await api('/api/jobs/import', {method:'POST', body:JSON.stringify(data)});
     event.target.reset(); await loadJobs(); await showJob(result.id); notice('Job added');
+  } catch(error) { notice(error.message, true); }
+});
+
+$('#evidence-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  try {
+    const data = Object.fromEntries(new FormData(event.target));
+    data.approved = true;
+    await api('/api/evidence', {method:'POST', body:JSON.stringify(data)});
+    event.target.reset(); await loadEvidence(); notice('Experience saved');
+  } catch(error) { notice(error.message, true); }
+});
+
+$('#repo-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  try {
+    const data = Object.fromEntries(new FormData(event.target));
+    notice('Inspecting repository');
+    await api('/api/repositories/inspect', {method:'POST', body:JSON.stringify(data)});
+    event.target.reset(); await loadEvidence(); notice('Repository inspected. Review and approve its claim.');
   } catch(error) { notice(error.message, true); }
 });
 
