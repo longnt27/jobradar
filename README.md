@@ -40,11 +40,13 @@ The draft selects approved evidence, builds a text-readable PDF resume, drafts a
 
 To configure email submission, run `uv run job-radar configure-smtp`. It prompts for SMTP host, port, username, app password, and From address. Credentials are saved in `smtp.json` inside the app data directory with owner-only file permissions, so the background service can access them. Environment overrides `JOB_RADAR_SMTP_HOST`, `JOB_RADAR_SMTP_PORT`, `JOB_RADAR_SMTP_USER`, `JOB_RADAR_SMTP_PASSWORD`, and `JOB_RADAR_SMTP_FROM` are also supported. You can set `JOB_RADAR_GITHUB_TOKEN` to raise GitHub API limits for public repository discovery.
 
+For optional Telegram alerts, create a bot, get your chat ID, and run `uv run job-radar configure-telegram`. The token and chat ID are saved in an owner-only file in the app data directory. Only newly found jobs at or above the profile's alert score are sent. Alerts contain title, company, score, location, and a source or application link. `JOB_RADAR_TELEGRAM_TOKEN` and `JOB_RADAR_TELEGRAM_CHAT_ID` can override the saved settings.
+
 ## Current limits
 
 - Career-page scanning handles static links and descriptions; JavaScript-only boards and some applicant tracking systems need dedicated adapters.
 - Form submission supports a stable single-page form. Changed fields, extra steps, CAPTCHA, verification, and unknown required answers need manual attention. A submit click without a clear receipt is marked unconfirmed, and the app will not automatically retry it.
-- The baseline ranking is deterministic. The current build has no embeddings, Telegram alerts, or automatic discovery of every employer's career URL. The employer registry shows which companies have an active source.
+- The baseline ranking is deterministic. The current build has no embeddings or automatic discovery of every employer's career URL. The employer registry shows which companies have an active source.
 - Repository inspection reads the selected repository's README, manifests, file list, and recent commits. It does not run repository code or infer your personal contribution; you approve that claim.
 
 ## Development

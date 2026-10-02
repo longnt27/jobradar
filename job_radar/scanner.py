@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from .collectors import AuthRequired, collect_source
 from .db import Database, new_id, now
 from .ingest import ingest
+from .notifications import notify_new_jobs
 from .settings import Settings
 
 
@@ -89,14 +90,22 @@ class ScanManager:
             else:
                 jobs = await collect_source(self.settings, source)
             new_count = 0
+            new_ids = []
             for job in jobs:
-                _, is_new = ingest(self.db, source_id, job)
+                vacancy_id, is_new = ingest(self.db, source_id, job)
                 new_count += int(is_new)
+                if is_new:
+                    new_ids.append(vacancy_id)
             finished = now()
             status = "success" if jobs else "empty"
             self.db.execute("UPDATE scan_runs SET finished_at=?,status=?,observed_count=?,new_count=? WHERE id=?",
                             (finished, status, len(jobs), new_count, run_id))
             self.db.execute("UPDATE sources SET last_success_at=?,last_status=? WHERE id=?", (finished, status, source_id))
+            if new_ids:
+                try:
+                    await notify_new_jobs(self.db, self.settings, new_ids)
+                except Exception as error:
+                    log.warning("Job alerts failed after scan %s: %s", source["name"], error)
             return {"run_id": run_id, "status": status, "observed": len(jobs), "new": new_count}
         except Exception as error:
             status = "auth_required" if isinstance(error, AuthRequired) else "failed"

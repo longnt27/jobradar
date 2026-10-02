@@ -9,6 +9,7 @@ from .settings import Settings
 from .collectors import login_browser
 from .service import install_service, uninstall_service
 from .mail_config import configure_smtp
+from .notifications import configure_telegram
 
 
 def main() -> None:
@@ -19,6 +20,7 @@ def main() -> None:
     sub.add_parser("install-service", help="Start Job Radar in the background at macOS login")
     sub.add_parser("uninstall-service", help="Stop and remove the macOS background service")
     sub.add_parser("configure-smtp", help="Save SMTP credentials in a restricted local file")
+    sub.add_parser("configure-telegram", help="Save Telegram bot settings for job alerts")
     args = parser.parse_args()
     settings = Settings.from_env()
     if args.command in (None, "serve"):
@@ -32,6 +34,8 @@ def main() -> None:
         print("Background service removed")
     elif args.command == "configure-smtp":
         configure_smtp(settings)
+    elif args.command == "configure-telegram":
+        configure_telegram(settings)
 
 
 if __name__ == "__main__":
