@@ -31,7 +31,7 @@ async def _form_structure(page: Page) -> dict:
     candidates = []
     for form_index in range(count):
         form = forms.nth(form_index)
-        metadata = await form.evaluate("node => ({action:node.action,method:node.method,submit:(node.querySelector('button[type=submit],input[type=submit]')?.innerText || node.querySelector('input[type=submit]')?.value || '').trim()})")
+        metadata = await form.evaluate("node => ({action:node.action,method:node.method,submit:(node.querySelector('button:not([type]),button[type=submit],input[type=submit]')?.innerText || node.querySelector('input[type=submit]')?.value || '').trim()})")
         fields = await form.locator("input,select,textarea").evaluate_all("""nodes => nodes.map((node, index) => {
           const type = (node.getAttribute('type') || node.tagName.toLowerCase()).toLowerCase();
           if (['hidden','submit','button','reset','image'].includes(type)) return null;
@@ -205,7 +205,7 @@ async def _send_web(settings: Settings, draft: dict) -> tuple[str, str]:
                     await locator.fill(answer)
                 elif field["required"]:
                     return "needs_user_attention", f"Answer required: {field['label']}"
-            submit = form.locator('button[type="submit"],input[type="submit"]').first
+            submit = form.locator('button:not([type]),button[type="submit"],input[type="submit"]').first
             if not await submit.count():
                 return "needs_user_attention", "No submit control was found on the reviewed form"
             before = page.url
