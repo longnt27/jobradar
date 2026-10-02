@@ -81,8 +81,10 @@ def ingest(db: Database, source_id: str, job: ObservedJob) -> tuple[str, bool]:
 
         vacancy = None
         if job.apply_url:
-            vacancy = conn.execute("SELECT id FROM vacancies WHERE apply_url=?", (normalize_url(job.apply_url),)).fetchone()
-        if not vacancy and job.company and job.title:
+            candidate = conn.execute("SELECT id,company,title FROM vacancies WHERE apply_url=?", (normalize_url(job.apply_url),)).fetchone()
+            if candidate and normalize_text(candidate[1]) == normalize_text(job.company) and normalize_text(candidate[2]) == normalize_text(job.title):
+                vacancy = candidate
+        if not vacancy and job.company and job.title and job.company not in {"Facebook post", "Unknown employer"}:
             candidates = conn.execute(
                 "SELECT id,title,location FROM vacancies WHERE lower(company)=lower(?) ORDER BY first_seen_at DESC LIMIT 40", (job.company,)
             ).fetchall()

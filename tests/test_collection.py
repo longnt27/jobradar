@@ -37,3 +37,12 @@ def test_scan_records_observations(monkeypatch, tmp_path: Path) -> None:
     assert result["status"] == "success"
     assert result["new"] == 1
     assert db.one("SELECT status FROM scan_runs WHERE id=?", (result["run_id"],))["status"] == "success"
+
+
+def test_generic_group_posts_do_not_merge_by_title(tmp_path: Path) -> None:
+    db = Database(tmp_path / "db.sqlite3")
+    seed(db)
+    source = db.one("SELECT id FROM sources LIMIT 1")["id"]
+    first = ObservedJob("https://facebook.com/groups/1/posts/10", "AI Engineer", "Facebook post", "Hiring AI engineer for vision models.")
+    second = ObservedJob("https://facebook.com/groups/1/posts/11", "AI Engineer", "Facebook post", "Hiring AI engineer for language models.")
+    assert ingest(db, source, first)[0] != ingest(db, source, second)[0]
