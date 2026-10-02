@@ -13,15 +13,18 @@ EMPLOYERS: dict[str, str] = {
     "VinAI": "vingroup", "GSM / Xanh SM": "vingroup", "V-GREEN": "vingroup",
     "VinBus": "vingroup", "VinUni": "vingroup", "Vinmec": "vingroup",
     "Vinschool": "vingroup", "Vinhomes": "vingroup", "Vinpearl": "vingroup",
+    "VinHMS": "vingroup", "VinID": "vingroup", "MovianAI": "technology",
     "One Mount": "technology", "Viettel Group": "viettel", "Viettel High Tech": "viettel",
     "Viettel Cyber Security": "viettel", "Viettel Solutions": "viettel",
     "Viettel Digital": "viettel", "Viettel Software": "viettel",
-    "Viettel Telecom": "viettel", "Viettel IDC": "viettel",
+    "Viettel Telecom": "viettel", "Viettel IDC": "viettel", "Viettel AI": "viettel",
+    "Viettel Research and Development": "viettel",
     "VNPT Group": "vnpt", "VNPT AI": "vnpt", "VNPT IT": "vnpt",
-    "VNPT Technology": "vnpt", "VNPT Net": "vnpt",
+    "VNPT Technology": "vnpt", "VNPT Net": "vnpt", "VNPT Media": "vnpt",
     "FPT Corporation": "fpt", "FPT Software": "fpt", "FPT Smart Cloud": "fpt",
     "FPT Digital": "fpt", "FPT IS": "fpt", "FPT Telecom": "fpt",
     "FPT Online": "fpt", "FPT Education": "fpt", "FPT Semiconductor": "fpt",
+    "FPT University": "fpt", "FPT.AI": "fpt",
     "CMC Corporation": "cmc", "CMC Global": "cmc", "CMC TS": "cmc",
     "CMC Telecom": "cmc", "CMC Cloud": "cmc", "CMC University": "cmc",
     "Agribank": "bank", "Vietcombank": "bank", "BIDV": "bank",
@@ -45,6 +48,7 @@ EMPLOYERS: dict[str, str] = {
     "KEB Hana": "foreign_bank", "BNP Paribas": "foreign_bank",
     "Deutsche Bank": "foreign_bank", "Maybank": "foreign_bank",
     "Bangkok Bank": "foreign_bank", "MoMo": "fintech", "ZaloPay": "fintech",
+    "MCredit": "finance", "MB Ageas Life": "insurance",
     "VNPAY": "fintech", "NAPAS": "fintech", "Payoo": "fintech",
     "OnePay": "fintech", "SmartPay": "fintech", "9Pay": "fintech",
     "Moca": "fintech", "Trusting Social": "fintech", "Cake by VPBank": "fintech",
@@ -53,12 +57,14 @@ EMPLOYERS: dict[str, str] = {
     "FE Credit": "finance", "Home Credit Vietnam": "finance", "HD SAISON": "finance",
     "FWD Vietnam": "insurance", "Prudential Vietnam": "insurance",
     "Manulife Vietnam": "insurance", "AIA Vietnam": "insurance",
+    "Chubb Life Vietnam": "insurance", "Mirae Asset Vietnam": "finance", "Bao Viet": "finance",
     "Shopee": "commerce", "SeaMoney": "commerce", "SPX Express": "commerce",
     "Lazada": "commerce", "Tiki": "commerce", "Grab": "commerce",
     "Be Group": "commerce", "Traveloka": "commerce", "Agoda": "commerce",
     "Booking.com": "commerce", "NAVER Vietnam": "technology", "Zalo AI": "technology",
     "VNG": "technology", "VNG Cloud": "technology", "Cinnamon AI": "technology",
     "Rikkeisoft": "technology", "TMA Solutions": "technology",
+    "Rikkei AI": "technology", "Gear Inc": "technology",
     "KMS Technology": "technology", "NashTech Vietnam": "technology",
     "Axon Active": "technology", "NTQ Solution": "technology",
     "Sun Asterisk": "technology", "VMO": "technology", "Sotatek": "technology",
@@ -77,7 +83,7 @@ EMPLOYERS: dict[str, str] = {
     "Intel Products Vietnam": "global_tech", "NXP Vietnam": "global_tech",
     "Renesas Vietnam": "global_tech", "Synopsys Vietnam": "global_tech",
     "Cadence Vietnam": "global_tech", "Marvell Vietnam": "global_tech",
-    "MediaTek Vietnam": "global_tech", "ARM": "global_tech",
+    "MediaTek Vietnam": "global_tech", "ARM": "global_tech", "Ampere": "global_tech",
     "Microsoft Vietnam": "global_tech", "Google Vietnam": "global_tech",
     "Amazon / AWS Vietnam": "global_tech", "IBM Vietnam": "global_tech",
     "Oracle Vietnam": "global_tech", "SAP Vietnam": "global_tech",
@@ -102,6 +108,13 @@ def seed(db: Database) -> None:
                 "INSERT OR IGNORE INTO employers(id,name,category,created_at,updated_at) VALUES(?,?,?,?,?)",
                 (new_id(), name, category, timestamp, timestamp),
             )
+        vinai = conn.execute("SELECT id FROM employers WHERE name='VinAI'").fetchone()
+        if vinai:
+            career_url = "https://www.vinai.io/careers/"
+            conn.execute("UPDATE employers SET career_url=COALESCE(career_url,?) WHERE id=?", (career_url, vinai[0]))
+            if not conn.execute("SELECT id FROM sources WHERE kind='career' AND employer_id=? AND url=?", (vinai[0], career_url)).fetchone():
+                conn.execute("INSERT INTO sources(id,kind,name,url,employer_id,interval_minutes,created_at) VALUES(?,?,?,?,?,?,?)",
+                             (new_id(), "career", "VinAI careers", career_url, vinai[0], 240, timestamp))
         existing = conn.execute("SELECT COUNT(*) FROM sources WHERE kind='linkedin'").fetchone()[0]
         if not existing:
             for role in ROLE_TERMS:

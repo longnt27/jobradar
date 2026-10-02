@@ -4,7 +4,9 @@ import json
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
+import httpx
 from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, HttpUrl
@@ -13,6 +15,7 @@ from .db import Database, new_id, now
 from .apply import inspect_form, send_application
 from .drafting import PROVIDERS, get_draft, prepare_draft, update_draft
 from .evidence import inspect_repository
+from .github import list_public_repositories
 from .seeds import seed
 from .settings import Settings
 from .scanner import ScanManager
@@ -83,6 +86,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.db = db
     app.state.settings = settings
     app.state.scan_manager = scan_manager
+
+    def attach_career_source(employer_id: str, name: str, url: str) -> None:
+        parts = urlsplit(url)
+        if parts.scheme not in ("http", "https") or not parts.hostname:
+            raise HTTPException(422, "Career page must be an HTTP or HTTPS URL")
+        if not db.one("SELECT id FROM sources WHERE employer_id=? AND kind='career' AND url=?", (employer_id, url)):
+            db.execute("INSERT INTO sources(id,kind,name,url,employer_id,interval_minutes,created_at) VALUES(?,?,?,?,?,?,?)",
+                       (new_id(), "career", f"{name} careers", url, employer_id, 240, now()))
 
     @app.get("/")
     def index():
@@ -167,7 +178,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/employers")
     def employers(q: str = "", category: str = "", limit: int = Query(300, ge=1, le=2000)):
         return db.all(
-            "SELECT * FROM employers WHERE name LIKE ? AND (?='' OR category=?) ORDER BY name LIMIT ?",
+            "SELECT e.*,CASE WHEN EXISTS(SELECT 1 FROM sources s WHERE s.employer_id=e.id AND s.enabled=1) THEN 'active_scan' ELSE 'source_discovery' END AS live_coverage FROM employers e WHERE name LIKE ? AND (?='' OR category=?) ORDER BY name LIMIT ?",
             (f"%{q}%", category, category, limit),
         )
 
@@ -176,12 +187,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if db.one("SELECT id FROM employers WHERE lower(name)=lower(?)", (employer.name,)):
             raise HTTPException(409, "Employer already exists")
         identifier = new_id()
+        if employer.career_url:
+            parts = urlsplit(employer.career_url)
+            if parts.scheme not in ("http", "https") or not parts.hostname:
+                raise HTTPException(422, "Career page must be an HTTP or HTTPS URL")
         db.execute(
             "INSERT INTO employers(id,name,category,aliases,career_url,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
             (identifier, employer.name, employer.category,
              json.dumps(employer.aliases, ensure_ascii=False), employer.career_url, now(), now()),
         )
+        if employer.career_url:
+            attach_career_source(identifier, employer.name, employer.career_url)
         return {"id": identifier}
+
+    @app.patch("/api/employers/{employer_id}")
+    def edit_employer(employer_id: str, updates: dict[str, Any] = Body(...)):
+        employer = db.one("SELECT * FROM employers WHERE id=?", (employer_id,))
+        if not employer:
+            raise HTTPException(404, "Employer not found")
+        if set(updates) != {"career_url"} or not isinstance(updates["career_url"], str):
+            raise HTTPException(422, "Provide a career_url")
+        url = updates["career_url"].strip()
+        parts = urlsplit(url)
+        if parts.scheme not in ("http", "https") or not parts.hostname:
+            raise HTTPException(422, "Career page must be an HTTP or HTTPS URL")
+        db.execute("UPDATE employers SET career_url=?,updated_at=? WHERE id=?", (url, now(), employer_id))
+        attach_career_source(employer_id, employer["name"], url)
+        return {"id": employer_id, "career_url": url}
 
     @app.get("/api/jobs")
     def jobs(q: str = "", state: str = "", limit: int = Query(100, ge=1, le=500)):
@@ -269,6 +301,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/repositories")
     def repositories():
         return db.all("SELECT id,url,commit_sha,owner_context,summary,inspected_at FROM repository_snapshots ORDER BY inspected_at DESC")
+
+    @app.get("/api/github/{username}/repositories")
+    def github_repositories(username: str):
+        try:
+            return list_public_repositories(username)
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+        except httpx.HTTPError as error:
+            raise HTTPException(502, f"GitHub could not be reached: {error}") from error
 
     @app.get("/api/providers")
     def providers():

@@ -98,8 +98,15 @@ async function loadEmployers() {
   const employers = await api(`/api/employers?q=${encodeURIComponent(q)}&limit=2000`);
   $('#employer-count').textContent = `${employers.length} employers shown`;
   $('#employer-list').innerHTML = employers.map((employer) =>
-    `<div class="employer"><strong>${escapeHtml(employer.name)}</strong><small>${escapeHtml(employer.category)} · ${escapeHtml(employer.coverage_status)}</small></div>`
+    `<div class="employer"><strong>${escapeHtml(employer.name)}</strong><small>${escapeHtml(employer.category)} · ${escapeHtml(employer.live_coverage)}</small>${employer.career_url ? `<small><a href="${escapeHtml(employer.career_url)}" target="_blank" rel="noopener noreferrer">Career page ↗</a></small>` : ''}<button data-employer-source="${employer.id}">Set career page</button></div>`
   ).join('');
+  document.querySelectorAll('[data-employer-source]').forEach((button) => button.addEventListener('click', async () => {
+    const row = employers.find((employer) => employer.id === button.dataset.employerSource);
+    const url = window.prompt(`Career page URL for ${row.name}`, row.career_url || '');
+    if (!url) return;
+    try { await api(`/api/employers/${row.id}`, {method:'PATCH', body:JSON.stringify({career_url:url})}); await loadEmployers(); notice('Career page added to four-hour scans'); }
+    catch(error) { notice(error.message, true); }
+  }));
 }
 
 async function loadProfile() {
@@ -244,6 +251,19 @@ $('#repo-form').addEventListener('submit', async (event) => {
     notice('Inspecting repository');
     await api('/api/repositories/inspect', {method:'POST', body:JSON.stringify(data)});
     event.target.reset(); await loadEvidence(); notice('Repository inspected. Review and approve its claim.');
+  } catch(error) { notice(error.message, true); }
+});
+
+$('#github-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  try {
+    const username = new FormData(event.target).get('username').trim();
+    const repos = await api(`/api/github/${encodeURIComponent(username)}/repositories`);
+    $('#github-repos').innerHTML = repos.length ? repos.map((repo) => `<div class="item"><div class="item-title">${escapeHtml(repo.name)} ${repo.fork ? '<span class="pill muted">Fork</span>' : ''}</div><div class="item-meta">${escapeHtml(repo.description || 'No description')} · ${escapeHtml(repo.language || 'Unknown language')}</div><div class="actions"><button data-inspect-repo="${escapeHtml(repo.url)}">Inspect</button><a href="${escapeHtml(repo.url)}" target="_blank" rel="noopener noreferrer">Open ↗</a></div></div>`).join('') : '<div class="empty">No public repositories found.</div>';
+    document.querySelectorAll('[data-inspect-repo]').forEach((button) => button.addEventListener('click', async () => {
+      try { notice('Inspecting repository'); await api('/api/repositories/inspect', {method:'POST', body:JSON.stringify({url:button.dataset.inspectRepo})}); await loadEvidence(); notice('Repository inspected. Review its claim before approval.'); }
+      catch(error) { notice(error.message, true); }
+    }));
   } catch(error) { notice(error.message, true); }
 });
 
