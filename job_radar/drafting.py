@@ -91,10 +91,10 @@ def _provider_json(provider: str, prompt: str, response_type: type[BaseModel]) -
             if provider == "codex_local":
                 args.extend(["--oss", "--local-provider", "ollama"])
         elif provider == "agy":
-            args = [command, "--print", "--json-schema", str(schema_file), "--disable-slash-commands"]
+            args = [command, "--print", "--json-schema", str(schema_file), "--disable-slash-commands", prompt]
         else:
-            args = [command, "--print", "--json-schema", json.dumps(schema), "--tools", ""]
-        result = subprocess.run(args, input=prompt, cwd=temp, text=True, capture_output=True, timeout=240, check=False)
+            args = [command, "--print", "--json-schema", json.dumps(schema), "--tools", "", prompt]
+        result = subprocess.run(args, input=prompt if provider.startswith("codex") else "", cwd=temp, text=True, capture_output=True, timeout=240, check=False)
         if result.returncode:
             raise RuntimeError(f"{command} drafting failed: {(result.stderr or result.stdout).strip()[-700:]}")
         raw = output_file.read_text() if output_file.exists() else result.stdout
@@ -197,7 +197,7 @@ def render_resume(settings: Settings, draft_id: str, resume: dict) -> tuple[str,
     return str(path), hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def prepare_draft(db: Database, settings: Settings, vacancy_id: str, provider: str = "template") -> dict:
+def prepare_draft(db: Database, settings: Settings, vacancy_id: str, provider: str = "codex") -> dict:
     if provider not in PROVIDERS:
         raise ValueError("Unsupported drafting provider")
     job = db.one("SELECT * FROM vacancies WHERE id=?", (vacancy_id,))

@@ -5,6 +5,7 @@ from pypdf import PdfReader
 
 from job_radar.settings import Settings
 from job_radar.web import create_app
+from job_radar.drafting import _run_provider
 
 
 def test_draft_uses_approved_evidence_and_renders_resume(tmp_path: Path) -> None:
@@ -24,3 +25,20 @@ def test_draft_uses_approved_evidence_and_renders_resume(tmp_path: Path) -> None
     pdf = client.get(f"/api/applications/{draft['id']}/resume")
     assert pdf.status_code == 200
     assert "Alex Example" in PdfReader(Path(draft["resume_path"])).pages[0].extract_text()
+
+
+def test_codex_provider_uses_scoped_cli_and_schema(monkeypatch) -> None:
+    monkeypatch.setattr("job_radar.drafting.shutil.which", lambda name: f"/usr/bin/{name}")
+    captured = []
+
+    def fake_run(args, **kwargs):
+        captured.extend(args)
+        Path(args[args.index("-o") + 1]).write_text('{"selected_evidence_ids":["one"],"summary":"Engineer","email_subject":"Application","email_body":"I built a search system."}')
+        return type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr("job_radar.drafting.subprocess.run", fake_run)
+    result = _run_provider("codex_local", {"company": "Example", "title": "Engineer", "description": "Search", "location": "Hanoi"},
+                           {"name": "Alex", "skills": ["Python"]}, [{"id": "one", "kind": "project", "title": "Search", "claim": "Built a search system."}])
+    assert result.selected_evidence_ids == ["one"]
+    assert "--oss" in captured and "--local-provider" in captured
+    assert "--output-schema" in captured and "read-only" in captured

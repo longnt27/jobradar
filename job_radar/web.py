@@ -64,7 +64,7 @@ class RepositoryInput(BaseModel):
 
 
 class PrepareInput(BaseModel):
-    provider: Literal["template", "codex_local", "codex", "agy", "claude"] = "template"
+    provider: Literal["template", "codex_local", "codex", "agy", "claude"] = "codex"
 
 
 class SendInput(BaseModel):

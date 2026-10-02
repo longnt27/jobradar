@@ -34,7 +34,7 @@ The service starts at login and keeps the four-hour schedule active with the bro
 
 ## Prepare and send
 
-Open a job, choose a drafting provider, and click **Prepare application**. The default local template does not call a model. `codex_local` invokes Codex OSS with an Ollama model on the Mac; `codex`, `agy`, and `claude` invoke installed local CLIs that may send the job and selected evidence to remote models. The app labels the chosen mode. Provider errors leave the job unsent.
+Open a job, choose a drafting provider, and click **Prepare application**. Codex CLI is the default and uses remote inference through a CLI running on your Mac. `codex_local` invokes Codex OSS with an Ollama model on the Mac; `agy` and `claude` invoke installed local CLIs that may send the job and selected evidence to remote models. The local template does not call a model. The app labels the chosen mode. Provider errors leave the job unsent.
 
 The draft selects approved evidence, builds a text-readable PDF resume, drafts a message, and tries to inspect the destination form. Review the PDF, destination, message, and every answer. Save edits and review the regenerated PDF. **Send application** passes the displayed package fingerprint to the server; a changed package is rejected. Email sends through configured SMTP. A supported web form is filled and submitted in the saved browser profile. The app records confirmation text or an unresolved status and prevents duplicate sending when a send may have completed.
 
