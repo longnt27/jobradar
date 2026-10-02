@@ -41,5 +41,5 @@ if [[ "$ready" != "1" ]]; then
   exit 1
 fi
 
-open "http://127.0.0.1:${port}/#setup"
+open "http://127.0.0.1:${port}/#profile"
 echo "Job Radar is ready at http://127.0.0.1:${port}/"

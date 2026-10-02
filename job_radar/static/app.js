@@ -5,7 +5,7 @@ let activeJob = null;
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
-    headers: {'Content-Type': 'application/json', ...(options.headers || {})},
+    headers: options.body instanceof FormData ? (options.headers || {}) : {'Content-Type': 'application/json', ...(options.headers || {})},
     ...options,
   });
   const raw = await response.text();
@@ -27,15 +27,8 @@ async function loadSetup() {
   clearTimeout(window.setupPoll);
   const data = await api('/api/setup');
   const badge = (selector, label, ready) => { const node = $(selector); node.textContent = label; node.className = `pill ${ready ? '' : 'warning'}`; };
-  badge('#setup-profile-status', data.profile_complete ? 'Ready' : 'Needs details', data.profile_complete);
-  badge('#setup-browser-status', data.browser.state === 'saved' ? 'Session saved' : data.browser.state === 'open' ? 'Browser open' : data.browser.state === 'failed' ? 'Needs attention' : 'Not connected', data.browser.state === 'saved');
-  badge('#setup-sources-status', `${data.linkedin_searches} LinkedIn · ${data.facebook_groups} Facebook`, data.linkedin_searches > 0);
-  badge('#setup-evidence-status', `${data.approved_evidence} approved project${data.approved_evidence === 1 ? '' : 's'}`, data.approved_evidence > 0);
   badge('#setup-smtp-status', data.smtp_configured ? 'Configured' : 'Optional', data.smtp_configured);
   badge('#setup-telegram-status', data.telegram_configured ? 'Configured' : 'Optional', data.telegram_configured);
-  $('#setup-service-status').textContent = data.service_installed ? 'Background scanning is installed and runs while this Mac is on.' : 'Run the installer to keep scans active when the browser window is closed.';
-  const installed = ['codex','agy','claude'].filter((name) => data.providers[name]);
-  $('#setup-provider-status').textContent = installed.length ? `Drafting agents available: ${installed.join(', ')}.` : 'No drafting agent CLI found. The local template is available in every job.';
   $('#setup-browser-start').disabled = ['opening','open'].includes(data.browser.state);
   $('#setup-browser-finish').disabled = data.browser.state !== 'open';
   $('#setup-browser-detail').textContent = data.browser.error || (data.browser.state === 'opening' ? 'Opening the sign-in window…' : data.browser.state === 'open' ? 'Sign in to both sites, then click “I’ve finished signing in”.' : data.browser.state === 'saved' ? 'Session saved. Upcoming scans will verify site access.' : 'Social scans start after you save the sign-in session.');
@@ -52,7 +45,8 @@ async function loadSetup() {
     alertForm.elements.chat_id.value = data.telegram_chat_id || '';
     alertForm.dataset.initialized = 'true';
   }
-  if (data.browser.state === 'opening' && $('#setup').classList.contains('active')) window.setupPoll = setTimeout(() => loadSetup().catch((error) => notice(error.message, true)), 1000);
+  if (data.browser.state === 'opening' && $('#profile').classList.contains('active')) window.setupPoll = setTimeout(() => loadSetup().catch((error) => notice(error.message, true)), 1000);
+  return data;
 }
 
 async function loadOverview() {
@@ -81,15 +75,8 @@ async function loadJobs() {
 async function showJob(id) {
   activeJob = id;
   const job = await api(`/api/jobs/${id}`);
-  const setup = await api('/api/setup');
-  const choices = [
-    ['codex','Codex CLI (remote model)',setup.providers.codex],
-    ['agy','Antigravity CLI (remote model)',setup.providers.agy],
-    ['claude','Claude Code CLI (remote model)',setup.providers.claude],
-    ['codex_local','Codex OSS + local Ollama model',setup.providers.codex && setup.providers.ollama],
-    ['template','Local template (no AI)',true],
-  ];
-  const providerOptions = choices.map(([value,label,available]) => `<option value="${value}" ${available ? '' : 'disabled'}>${escapeHtml(label)}${available ? '' : ' · unavailable'}</option>`).join('');
+  const profile = await api('/api/profile');
+  const provider = profile.drafting_provider || '';
   const links = job.observations.length ? job.observations.map((source) =>
     `<a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(source.kind)}: ${escapeHtml(source.name)}</a>`
   ).join('<br>') : '';
@@ -97,13 +84,13 @@ async function showJob(id) {
   $('#job-detail').innerHTML = `<h2>${escapeHtml(job.title)}</h2><div class="item-meta">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div>
     <div class="item-meta">${escapeHtml(job.work_mode || '')} · First seen ${when(job.first_seen_at)}</div>
     <div class="actions"><button data-state="interesting">Interesting</button><button data-state="ignored">Ignore</button></div>
-    <div class="review-section"><label>Drafting provider<select id="draft-provider">${providerOptions}</select></label><div class="actions"><button data-prepare="${id}" class="primary">Prepare application</button></div></div>
+    <div class="review-section"><p class="hint">Drafting provider: ${escapeHtml(provider || 'Choose one in Profile first')} · <button class="text-button" data-tab="profile">Change provider</button></p><div class="actions"><button data-prepare="${id}" class="primary" ${provider ? '' : 'disabled'}>Prepare application</button></div></div>
     ${job.apply_url ? `<p><a href="${escapeHtml(job.apply_url)}" target="_blank" rel="noopener noreferrer">Application page ↗</a></p>` : ''}
     ${!job.apply_url ? '<p class="hint">No application form has been verified for this posting. Check the original source for its application instructions before sending.</p>' : ''}
     ${links ? `<p class="item-meta">${links}</p>` : ''}
     ${score ? `<div class="review-section"><h4>Why it matched</h4><p>${escapeHtml(score.explanation || '')}</p></div>` : ''}
     <div class="description">${escapeHtml(job.description)}</div>`;
-  $('#draft-provider').value = choices.find((choice) => choice[2])[0];
+  $('#job-detail').querySelector('[data-tab="profile"]').addEventListener('click', () => showTab('profile'));
   $('#job-detail').querySelectorAll('[data-state]').forEach((button) => button.addEventListener('click', async () => {
     try { await api(`/api/jobs/${id}/state`, {method:'POST', body: JSON.stringify({state:button.dataset.state})}); notice('Job updated'); await loadJobs(); }
     catch(error) { notice(error.message, true); }
@@ -113,7 +100,7 @@ async function showJob(id) {
     button.disabled = true;
     button.textContent = 'Preparing…';
     try {
-      const draft = await api(`/api/jobs/${id}/prepare`, {method:'POST', body:JSON.stringify({provider:$('#draft-provider').value})});
+      const draft = await api(`/api/jobs/${id}/prepare`, {method:'POST', body:'{}'});
       if (draft.destination.kind === 'web') {
         try { await api(`/api/applications/${draft.id}/inspect`, {method:'POST'}); }
         catch(error) { notice(`Draft ready; form inspection needs attention: ${error.message}`, true); }
@@ -158,7 +145,14 @@ async function loadEmployers() {
 }
 
 async function loadProfile() {
-  const profile = await api('/api/profile');
+  const [profile, setup] = await Promise.all([api('/api/profile'), loadSetup()]);
+  const availability = {codex:setup.providers.codex, codex_local:setup.providers.codex && setup.providers.ollama,
+    agy:setup.providers.agy, claude:setup.providers.claude};
+  const providerForm = $('#provider-form');
+  providerForm.querySelectorAll('option[value]').forEach((option) => { if (option.value) option.disabled = !availability[option.value]; });
+  providerForm.elements.provider.value = profile.drafting_provider || '';
+  $('#provider-status').textContent = profile.drafting_provider ? `Saved provider: ${profile.drafting_provider}. Change it here whenever you need to.` : 'Choose a provider before importing a PDF or generating project content.';
+  $('#pdf-resume-form button[type="submit"]').disabled = !profile.drafting_provider || !availability[profile.drafting_provider];
   const form = $('#profile-form');
   for (const key of ['name','email','phone','location','summary','salary_expectation','work_authorization','notice_period','relocation']) form.elements[key].value = profile[key] || '';
   form.elements.alert_min_score.value = profile.alert_min_score ?? 60;
@@ -187,13 +181,14 @@ async function loadPositions() {
 }
 
 function showTab(name) {
+  if (name === 'setup') name = 'profile';
   if (!document.getElementById(name)?.classList.contains('tab')) name = 'overview';
-  if (name !== 'setup') clearTimeout(window.setupPoll);
+  if (name !== 'profile') clearTimeout(window.setupPoll);
   document.querySelectorAll('.tab').forEach((tab) => tab.classList.toggle('active', tab.id === name));
   document.querySelectorAll('[data-tab]').forEach((button) => button.classList.toggle('active', button.dataset.tab === name));
   $('#page-title').textContent = name[0].toUpperCase() + name.slice(1);
   history.replaceState(null, '', `#${name}`);
-  ({setup:loadSetup,overview:loadOverview,jobs:loadJobs,applications:loadApplications,experience:loadPositions,projects:loadEvidence,sources:loadSources,employers:loadEmployers,profile:loadProfile})[name]?.().catch((error) => notice(error.message, true));
+  ({overview:loadOverview,jobs:loadJobs,applications:loadApplications,experience:loadPositions,projects:loadEvidence,sources:loadSources,employers:loadEmployers,profile:loadProfile})[name]?.().catch((error) => notice(error.message, true));
 }
 
 async function loadApplications(selectedId = null) {
@@ -248,10 +243,9 @@ async function saveApplication(id, draft) {
 }
 async function loadEvidence() {
   const cards = (await api('/api/evidence')).filter((card) => card.kind === 'project');
-  const setup = await api('/api/setup');
-  const available = [['codex',setup.providers.codex],['codex_local',setup.providers.codex && setup.providers.ollama],['agy',setup.providers.agy],['claude',setup.providers.claude],['template',true]];
-  $('#project-provider').querySelectorAll('option').forEach((option) => { option.disabled = !available.find((item) => item[0] === option.value)?.[1]; });
-  $('#project-provider').value = available.find((item) => item[1])[0];
+  const profile = await api('/api/profile');
+  $('#project-provider-status').textContent = profile.drafting_provider ? `Using ${profile.drafting_provider}. Change it in Profile.` : 'Choose a drafting provider in Profile first.';
+  $('#repo-form button[type="submit"]').disabled = !profile.drafting_provider;
   $('#evidence-list').innerHTML = cards.length ? cards.map((card) => `<div class="item">
     <div class="item-title">${escapeHtml(card.title)} <span class="pill ${card.approved ? '' : 'warning'}">${card.approved ? 'Approved' : 'Needs review'}</span></div>
     <div class="item-meta">${card.repository_url ? `<a href="${escapeHtml(card.repository_url)}" target="_blank" rel="noopener noreferrer">Repository ↗</a> · Commit ${escapeHtml(card.commit_sha?.slice(0, 8))}` : 'Manual project'}</div>
@@ -270,7 +264,7 @@ async function loadEvidence() {
     catch(error) { notice(error.message, true); }
   }));
   document.querySelectorAll('[data-generate-project]').forEach((button) => button.addEventListener('click', async () => {
-    try { button.disabled = true; notice('Generating project content'); await api(`/api/evidence/${button.dataset.generateProject}/generate`, {method:'POST',body:JSON.stringify({provider:$('#project-provider').value})}); await loadEvidence(); notice('Project draft ready for review'); }
+    try { button.disabled = true; notice('Generating project content'); await api(`/api/evidence/${button.dataset.generateProject}/generate`, {method:'POST',body:'{}'}); await loadEvidence(); notice('Project draft ready for review'); }
     catch(error) { notice(error.message, true); button.disabled = false; }
   }));
 }
@@ -350,6 +344,32 @@ $('#profile-form').addEventListener('submit', async (event) => {
   } catch(error) { notice(error.message, true); }
 });
 
+$('#provider-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  try {
+    const provider = event.target.elements.provider.value;
+    await api('/api/profile/provider', {method:'PUT', body:JSON.stringify({provider})});
+    await loadProfile();
+    notice('Provider saved. You can now import a resume PDF.');
+  } catch(error) { notice(error.message, true); }
+});
+
+$('#pdf-resume-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const button = event.target.querySelector('button[type="submit"]');
+  button.disabled = true;
+  button.textContent = 'Extracting…';
+  $('#pdf-import-status').textContent = 'Reading the PDF and asking your selected provider to extract resume details.';
+  try {
+    const result = await api('/api/profile/resume/pdf', {method:'POST', body:new FormData(event.target)});
+    event.target.reset();
+    await loadProfile();
+    $('#pdf-import-status').textContent = `Extracted ${result.positions} positions, ${result.education} education entries, and ${result.achievements} achievements. Review your details below and positions in Experience.`;
+    notice('Resume details extracted. Review them before applying.');
+  } catch(error) { $('#pdf-import-status').textContent = error.message; notice(error.message, true); }
+  finally { button.textContent = 'Extract resume details'; const selected = $('#provider-form').elements.provider.selectedOptions[0]; button.disabled = !selected?.value || selected.disabled; }
+});
+
 $('#latex-import-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   try {
@@ -402,7 +422,7 @@ $('#position-form').addEventListener('submit', async (event) => {
 
 async function inspectSelectedRepository(url) {
   notice('Inspecting repository and drafting project content…');
-  const result = await api('/api/repositories/inspect', {method:'POST', body:JSON.stringify({url, provider:$('#project-provider').value})});
+  const result = await api('/api/repositories/inspect', {method:'POST', body:JSON.stringify({url})});
   await loadEvidence();
   notice(result.generation_warning ? `Repository inspected. Project writing needs attention: ${result.generation_warning}` : 'Project draft ready. Review and approve it before preparing applications.', !!result.generation_warning);
 }
@@ -436,8 +456,8 @@ for (const selector of ['#scan-due','#scan-all']) $(selector).addEventListener('
 
 (async () => {
   try {
-    const setup = await api('/api/setup');
-    const firstVisit = !setup.profile_complete || !setup.browser.last_saved_at || !setup.approved_evidence;
-    showTab(location.hash.slice(1) || (firstVisit ? 'setup' : 'overview'));
-  } catch(error) { notice(error.message, true); showTab('setup'); }
+    const [setup, profile] = await Promise.all([api('/api/setup'), api('/api/profile')]);
+    const firstVisit = !setup.profile_complete || !profile.drafting_provider;
+    showTab(firstVisit ? 'profile' : (location.hash.slice(1) || 'overview'));
+  } catch(error) { notice(error.message, true); showTab('profile'); }
 })();
