@@ -23,6 +23,7 @@ from .notifications import save_telegram, telegram_config
 from .seeds import seed
 from .settings import Settings
 from .scanner import ScanManager
+from .service import service_path
 
 
 class SourceInput(BaseModel):
@@ -84,7 +85,7 @@ class SmtpInput(BaseModel):
 
 
 class TelegramInput(BaseModel):
-    token: str = Field(min_length=10)
+    token: str = ""
     chat_id: str = Field(min_length=1)
 
 
@@ -154,8 +155,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "browser": login_manager.status(),
             "smtp_configured": bool(mail.get("host") and mail.get("from")),
             "smtp_host": mail.get("host", ""),
+            "smtp_port": mail.get("port", 587),
+            "smtp_user": mail.get("user", ""),
             "smtp_from": mail.get("from", ""),
             "telegram_configured": bool(telegram.get("token") and telegram.get("chat_id")),
+            "telegram_chat_id": telegram.get("chat_id", ""),
+            "service_installed": service_path().exists(),
             "providers": {name: bool(shutil.which(name)) for name in ("codex", "agy", "claude", "ollama")},
         }
 
@@ -175,7 +180,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/setup/smtp")
     def configure_mail(payload: SmtpInput):
         save_smtp(settings, {"host": payload.host, "port": payload.port, "user": payload.user,
-                             "password": payload.password, "from": payload.from_address})
+                             "password": payload.password or smtp_config(settings).get("password", ""), "from": payload.from_address})
         return {"configured": True}
 
     @app.delete("/api/setup/smtp")
@@ -185,7 +190,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/setup/telegram")
     def configure_alerts(payload: TelegramInput):
-        save_telegram(settings, payload.model_dump())
+        save_telegram(settings, {"token": payload.token or telegram_config(settings).get("token", ""), "chat_id": payload.chat_id})
         return {"configured": True}
 
     @app.delete("/api/setup/telegram")

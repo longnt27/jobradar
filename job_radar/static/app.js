@@ -23,6 +23,36 @@ function notice(message, error = false) {
   window.noticeTimeout = setTimeout(() => { node.textContent = ''; node.classList.remove('error'); }, 6000);
 }
 
+async function loadSetup() {
+  clearTimeout(window.setupPoll);
+  const data = await api('/api/setup');
+  const badge = (selector, label, ready) => { const node = $(selector); node.textContent = label; node.className = `pill ${ready ? '' : 'warning'}`; };
+  badge('#setup-profile-status', data.profile_complete ? 'Ready' : 'Needs details', data.profile_complete);
+  badge('#setup-browser-status', data.browser.state === 'saved' ? 'Session saved' : data.browser.state === 'open' ? 'Browser open' : data.browser.state === 'failed' ? 'Needs attention' : 'Not connected', data.browser.state === 'saved');
+  badge('#setup-sources-status', `${data.linkedin_searches} LinkedIn · ${data.facebook_groups} Facebook`, data.linkedin_searches > 0);
+  badge('#setup-evidence-status', `${data.approved_evidence} approved claim${data.approved_evidence === 1 ? '' : 's'}`, data.approved_evidence > 0);
+  badge('#setup-smtp-status', data.smtp_configured ? 'Configured' : 'Optional', data.smtp_configured);
+  badge('#setup-telegram-status', data.telegram_configured ? 'Configured' : 'Optional', data.telegram_configured);
+  $('#setup-service-status').textContent = data.service_installed ? 'Background scanning is installed and runs while this Mac is on.' : 'Run the installer to keep scans active when the browser window is closed.';
+  $('#setup-browser-start').disabled = ['opening','open'].includes(data.browser.state);
+  $('#setup-browser-finish').disabled = data.browser.state !== 'open';
+  $('#setup-browser-detail').textContent = data.browser.error || (data.browser.state === 'opening' ? 'Opening the sign-in window…' : data.browser.state === 'open' ? 'Sign in to both sites, then click “I’ve finished signing in”.' : data.browser.state === 'saved' ? 'Session saved. Upcoming scans will verify site access.' : 'Social scans start after you save the sign-in session.');
+  const mailForm = $('#setup-smtp-form');
+  if (!mailForm.dataset.initialized) {
+    mailForm.elements.host.value = data.smtp_host || '';
+    mailForm.elements.port.value = data.smtp_port || 587;
+    mailForm.elements.user.value = data.smtp_user || '';
+    mailForm.elements.from_address.value = data.smtp_from || '';
+    mailForm.dataset.initialized = 'true';
+  }
+  const alertForm = $('#setup-telegram-form');
+  if (!alertForm.dataset.initialized) {
+    alertForm.elements.chat_id.value = data.telegram_chat_id || '';
+    alertForm.dataset.initialized = 'true';
+  }
+  if (data.browser.state === 'opening' && $('#setup').classList.contains('active')) window.setupPoll = setTimeout(() => loadSetup().catch((error) => notice(error.message, true)), 1000);
+}
+
 async function loadOverview() {
   const data = await api('/api/status');
   const c = data.counts;
@@ -123,11 +153,13 @@ async function loadProfile() {
 }
 
 function showTab(name) {
+  if (!document.getElementById(name)?.classList.contains('tab')) name = 'overview';
+  if (name !== 'setup') clearTimeout(window.setupPoll);
   document.querySelectorAll('.tab').forEach((tab) => tab.classList.toggle('active', tab.id === name));
   document.querySelectorAll('[data-tab]').forEach((button) => button.classList.toggle('active', button.dataset.tab === name));
   $('#page-title').textContent = name[0].toUpperCase() + name.slice(1);
   history.replaceState(null, '', `#${name}`);
-  ({overview:loadOverview,jobs:loadJobs,applications:loadApplications,evidence:loadEvidence,sources:loadSources,employers:loadEmployers,profile:loadProfile})[name]?.().catch((error) => notice(error.message, true));
+  ({setup:loadSetup,overview:loadOverview,jobs:loadJobs,applications:loadApplications,evidence:loadEvidence,sources:loadSources,employers:loadEmployers,profile:loadProfile})[name]?.().catch((error) => notice(error.message, true));
 }
 
 async function loadApplications(selectedId = null) {
@@ -204,6 +236,56 @@ $('#job-query').addEventListener('keydown', (event) => { if (event.key === 'Ente
 $('#job-state').addEventListener('change', () => loadJobs().catch((error) => notice(error.message, true)));
 $('#source-kind').addEventListener('change', () => loadSources().catch((error) => notice(error.message, true)));
 $('#employer-search').addEventListener('click', () => loadEmployers().catch((error) => notice(error.message, true)));
+
+$('#setup-browser-start').addEventListener('click', async () => {
+  try { await api('/api/setup/browser/start', {method:'POST'}); await loadSetup(); }
+  catch(error) { notice(error.message, true); }
+});
+
+$('#setup-browser-finish').addEventListener('click', async () => {
+  try { await api('/api/setup/browser/finish', {method:'POST'}); await loadSetup(); notice('Browser session saved. LinkedIn and Facebook scans are queued.'); }
+  catch(error) { notice(error.message, true); }
+});
+
+$('#setup-facebook-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  try {
+    const data = Object.fromEntries(new FormData(event.target));
+    await api('/api/sources', {method:'POST', body:JSON.stringify({...data, kind:'facebook'})});
+    event.target.reset(); await loadSetup(); notice('Facebook group added to four-hour scans');
+  } catch(error) { notice(error.message, true); }
+});
+
+$('#setup-smtp-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  try {
+    const data = Object.fromEntries(new FormData(event.target));
+    data.port = Number(data.port);
+    await api('/api/setup/smtp', {method:'POST', body:JSON.stringify(data)});
+    event.target.elements.password.value = '';
+    await loadSetup(); notice('Email settings saved');
+  } catch(error) { notice(error.message, true); }
+});
+
+$('#setup-smtp-remove').addEventListener('click', async () => {
+  try { await api('/api/setup/smtp', {method:'DELETE'}); $('#setup-smtp-form').reset(); delete $('#setup-smtp-form').dataset.initialized; await loadSetup(); notice('Email settings removed'); }
+  catch(error) { notice(error.message, true); }
+});
+
+$('#setup-telegram-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  try {
+    const data = Object.fromEntries(new FormData(event.target));
+    await api('/api/setup/telegram', {method:'POST', body:JSON.stringify(data)});
+    event.target.elements.token.value = '';
+    await loadSetup(); notice('Telegram alerts configured');
+  } catch(error) { notice(error.message, true); }
+});
+
+$('#setup-telegram-remove').addEventListener('click', async () => {
+  try { await api('/api/setup/telegram', {method:'DELETE'}); $('#setup-telegram-form').reset(); delete $('#setup-telegram-form').dataset.initialized; await loadSetup(); notice('Telegram alerts removed'); }
+  catch(error) { notice(error.message, true); }
+});
 
 $('#profile-form').addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -286,4 +368,10 @@ for (const selector of ['#scan-due','#scan-all']) $(selector).addEventListener('
   catch(error) { notice(error.message, true); }
 });
 
-showTab(location.hash.slice(1) || 'overview');
+(async () => {
+  try {
+    const setup = await api('/api/setup');
+    const firstVisit = !setup.profile_complete || !setup.browser.last_saved_at || !setup.approved_evidence;
+    showTab(location.hash.slice(1) || (firstVisit ? 'setup' : 'overview'));
+  } catch(error) { notice(error.message, true); showTab('setup'); }
+})();
