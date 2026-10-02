@@ -3,7 +3,6 @@ from __future__ import annotations
 import getpass
 import json
 import os
-from pathlib import Path
 
 from .settings import Settings
 
@@ -17,14 +16,19 @@ def configure_smtp(settings: Settings) -> None:
         "password": getpass.getpass("SMTP password or app password: "),
         "from": input("From address: ").strip(),
     }
-    if not config["host"] or not config["from"] or config["port"] not in (465, 587):
+    save_smtp(settings, config)
+    print(f"SMTP configuration saved to {settings.data_dir / 'smtp.json'}")
+
+
+def save_smtp(settings: Settings, config: dict) -> None:
+    if not config.get("host") or not config.get("from") or int(config.get("port", 0)) not in (465, 587):
         raise ValueError("SMTP host, from address, and port 465 or 587 are required")
+    settings.ensure_dirs()
     path = settings.data_dir / "smtp.json"
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(descriptor, "w", encoding="utf-8") as file:
         json.dump(config, file)
     path.chmod(0o600)
-    print(f"SMTP configuration saved to {path}")
 
 
 def smtp_config(settings: Settings) -> dict:

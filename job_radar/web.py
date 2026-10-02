@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
@@ -13,9 +14,12 @@ from pydantic import BaseModel, Field, HttpUrl
 
 from .db import Database, new_id, now
 from .apply import inspect_form, send_application
+from .browser_login import BrowserLoginManager
 from .drafting import PROVIDERS, get_draft, prepare_draft, update_draft
 from .evidence import inspect_repository
 from .github import list_public_repositories
+from .mail_config import save_smtp, smtp_config
+from .notifications import save_telegram, telegram_config
 from .seeds import seed
 from .settings import Settings
 from .scanner import ScanManager
@@ -71,12 +75,26 @@ class SendInput(BaseModel):
     package_hash: str = Field(min_length=64, max_length=64)
 
 
+class SmtpInput(BaseModel):
+    host: str = Field(min_length=2)
+    port: Literal[465, 587] = 587
+    user: str = ""
+    password: str = ""
+    from_address: str = Field(min_length=3)
+
+
+class TelegramInput(BaseModel):
+    token: str = Field(min_length=10)
+    chat_id: str = Field(min_length=1)
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     settings.ensure_dirs()
     db = Database(settings.database_path)
     seed(db)
     scan_manager = ScanManager(db, settings)
+    login_manager = BrowserLoginManager(db, settings, scan_manager.browser_lock)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -84,12 +102,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             yield
         finally:
+            await login_manager.stop()
             await scan_manager.stop()
 
     app = FastAPI(title="Job Radar", version="0.1.0", lifespan=lifespan)
     app.state.db = db
     app.state.settings = settings
     app.state.scan_manager = scan_manager
+    app.state.login_manager = login_manager
 
     def attach_career_source(employer_id: str, name: str, url: str) -> None:
         parts = urlsplit(url)
@@ -120,6 +140,58 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             counts["active_sources"] = conn.execute("SELECT COUNT(*) FROM sources WHERE enabled=1").fetchone()[0]
         recent = db.all("SELECT scan_runs.*, sources.name AS source_name FROM scan_runs JOIN sources ON sources.id=scan_runs.source_id ORDER BY started_at DESC LIMIT 10")
         return {"counts": counts, "recent_runs": recent, "data_dir": str(settings.data_dir)}
+
+    @app.get("/api/setup")
+    def setup_status():
+        profile = db.get_setting("profile", {})
+        mail = smtp_config(settings)
+        telegram = telegram_config(settings)
+        return {
+            "profile_complete": bool(profile.get("name") and profile.get("email")),
+            "approved_evidence": db.one("SELECT COUNT(*) AS count FROM evidence WHERE approved=1")["count"],
+            "facebook_groups": db.one("SELECT COUNT(*) AS count FROM sources WHERE kind='facebook' AND enabled=1")["count"],
+            "linkedin_searches": db.one("SELECT COUNT(*) AS count FROM sources WHERE kind='linkedin' AND enabled=1")["count"],
+            "browser": login_manager.status(),
+            "smtp_configured": bool(mail.get("host") and mail.get("from")),
+            "smtp_host": mail.get("host", ""),
+            "smtp_from": mail.get("from", ""),
+            "telegram_configured": bool(telegram.get("token") and telegram.get("chat_id")),
+            "providers": {name: bool(shutil.which(name)) for name in ("codex", "agy", "claude", "ollama")},
+        }
+
+    @app.post("/api/setup/browser/start")
+    async def start_browser_login():
+        return login_manager.start()
+
+    @app.post("/api/setup/browser/finish")
+    async def finish_browser_login():
+        try:
+            result = await login_manager.finish()
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
+        scan_manager.queue_due()
+        return result
+
+    @app.post("/api/setup/smtp")
+    def configure_mail(payload: SmtpInput):
+        save_smtp(settings, {"host": payload.host, "port": payload.port, "user": payload.user,
+                             "password": payload.password, "from": payload.from_address})
+        return {"configured": True}
+
+    @app.delete("/api/setup/smtp")
+    def remove_mail():
+        (settings.data_dir / "smtp.json").unlink(missing_ok=True)
+        return {"configured": False}
+
+    @app.post("/api/setup/telegram")
+    def configure_alerts(payload: TelegramInput):
+        save_telegram(settings, payload.model_dump())
+        return {"configured": True}
+
+    @app.delete("/api/setup/telegram")
+    def remove_alerts():
+        (settings.data_dir / "telegram.json").unlink(missing_ok=True)
+        return {"configured": False}
 
     @app.get("/api/profile")
     def get_profile():

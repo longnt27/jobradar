@@ -15,14 +15,19 @@ def configure_telegram(settings: Settings) -> None:
     settings.ensure_dirs()
     token = getpass.getpass("Telegram bot token: ").strip()
     chat_id = input("Your Telegram chat ID: ").strip()
-    if not token or not chat_id:
+    save_telegram(settings, {"token": token, "chat_id": chat_id})
+    print(f"Telegram settings saved to {settings.data_dir / 'telegram.json'}")
+
+
+def save_telegram(settings: Settings, config: dict) -> None:
+    if not config.get("token") or not config.get("chat_id"):
         raise ValueError("Bot token and chat ID are required")
+    settings.ensure_dirs()
     path = settings.data_dir / "telegram.json"
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(descriptor, "w", encoding="utf-8") as file:
-        json.dump({"token": token, "chat_id": chat_id}, file)
+        json.dump(config, file)
     path.chmod(0o600)
-    print(f"Telegram settings saved to {path}")
 
 
 def telegram_config(settings: Settings) -> dict:

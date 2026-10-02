@@ -47,10 +47,13 @@ class ScanManager:
     def queue_due(self) -> int:
         if self._due_task and not self._due_task.done():
             return 0
-        sources = self.db.all("SELECT id,last_attempt_at,interval_minutes FROM sources WHERE enabled=1")
+        browser_ready = bool(self.db.get_setting("browser_login_completed_at"))
+        sources = self.db.all("SELECT id,last_attempt_at,interval_minutes,kind FROM sources WHERE enabled=1")
         current = datetime.now(timezone.utc)
         due = []
         for source in sources:
+            if source["kind"] in ("linkedin", "facebook") and not browser_ready:
+                continue
             try:
                 last = datetime.fromisoformat(source["last_attempt_at"]) if source["last_attempt_at"] else None
             except ValueError:
