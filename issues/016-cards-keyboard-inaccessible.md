@@ -1,6 +1,6 @@
 # Job and application cards are not keyboard accessible
 
-- **Status:** Open
+- **Status:** Closed
 - **Severity:** Medium
 - **Labels:** `bug`, `accessibility`, `ui`
 
@@ -28,3 +28,7 @@ Accessibility inspection exposed the cards as containers rather than buttons or 
 ## Acceptance criteria
 
 Render semantic buttons or links for selection and preserve focus styling.
+
+## Resolution
+
+Job selection and application selection now use native buttons with visible focus outlines. The original posting link remains a separate link. Browser keyboard verification focused a job card, pressed Enter, and opened its detail.

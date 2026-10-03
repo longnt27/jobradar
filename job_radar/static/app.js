@@ -108,10 +108,9 @@ async function loadJobs() {
   const jobs = await api(`/api/jobs?${query}`);
   const sourceLabel = (source) => !source ? 'Manually added' : source.kind === 'career' ? 'Company career page' : source.kind === 'linkedin' ? 'LinkedIn listing' : 'Facebook group lead';
   $('#job-list').innerHTML = jobs.length ? jobs.map((job) =>
-    `<div class="item clickable" data-job="${job.id}"><span class="score">${job.score ?? '—'}</span><div class="item-title">${escapeHtml(job.title)}</div><div class="item-meta">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div><div class="item-meta">${escapeHtml(sourceLabel(job.source))}${job.source ? ` · Checked ${when(job.source.last_seen_at)} · <a href="${escapeHtml(job.source.url)}" target="_blank" rel="noopener noreferrer">Original posting ↗</a>` : ''}</div><div class="item-meta">First seen ${when(job.first_seen_at)} <span class="pill muted">${escapeHtml(job.state)}</span></div></div>`
+    `<div class="item job-card"><button type="button" class="card-select" data-job="${job.id}" aria-label="Open ${escapeHtml(job.title)} at ${escapeHtml(job.company)}"><span class="score">${job.score ?? '—'}</span><div class="item-title">${escapeHtml(job.title)}</div><div class="item-meta">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div><div class="item-meta">${escapeHtml(sourceLabel(job.source))}${job.source ? ` · Checked ${when(job.source.last_seen_at)}` : ''}</div><div class="item-meta">First seen ${when(job.first_seen_at)} <span class="pill muted">${escapeHtml(job.state)}</span></div></button>${job.source ? `<a href="${escapeHtml(job.source.url)}" target="_blank" rel="noopener noreferrer">Original posting ↗</a>` : ''}</div>`
   ).join('') : '<div class="empty">No jobs found. Run a scan or import a job.</div>';
-  document.querySelectorAll('[data-job]').forEach((node) => node.addEventListener('click', async (event) => {
-    if (event.target.closest('a')) return;
+  document.querySelectorAll('[data-job]').forEach((node) => node.addEventListener('click', async () => {
     try {
       await showJob(node.dataset.job);
       if (window.matchMedia('(max-width: 900px)').matches) $('#job-detail').scrollIntoView({behavior:'smooth', block:'start'});
@@ -126,7 +125,7 @@ async function loadJobs() {
 
 async function showJob(id) {
   activeJob = id;
-  document.querySelectorAll('[data-job]').forEach((node) => node.classList.toggle('is-selected', node.dataset.job === id));
+  document.querySelectorAll('[data-job]').forEach((node) => node.closest('.item').classList.toggle('is-selected', node.dataset.job === id));
   const job = await api(`/api/jobs/${id}`);
   const profile = await api('/api/profile');
   const provider = profile.drafting_provider || '';
@@ -276,7 +275,7 @@ function showTab(name, historyMode = 'push') {
 
 async function loadApplications(selectedId = null) {
   const drafts = await api('/api/applications');
-  $('#application-list').innerHTML = drafts.length ? drafts.map((draft) => `<div class="item clickable" data-application="${draft.id}"><div class="item-title">${escapeHtml(draft.job_title)} <span class="pill ${draft.status === 'sent' ? '' : 'warning'}">${escapeHtml(draft.status)}</span></div><div class="item-meta">${escapeHtml(draft.company)} · ${escapeHtml(draft.provider_mode)}</div><div class="item-meta">Updated ${when(draft.updated_at)}</div></div>`).join('') : '<div class="panel empty"><p>No applications yet. Start with a job posting.</p><button id="applications-browse-jobs" class="primary">Browse jobs →</button></div>';
+  $('#application-list').innerHTML = drafts.length ? drafts.map((draft) => `<button type="button" class="item clickable application-card" data-application="${draft.id}"><div class="item-title">${escapeHtml(draft.job_title)} <span class="pill ${draft.status === 'sent' ? '' : 'warning'}">${escapeHtml(draft.status)}</span></div><div class="item-meta">${escapeHtml(draft.company)} · ${escapeHtml(draft.provider_mode)}</div><div class="item-meta">Updated ${when(draft.updated_at)}</div></button>`).join('') : '<div class="panel empty"><p>No applications yet. Start with a job posting.</p><button id="applications-browse-jobs" class="primary">Browse jobs →</button></div>';
   $('#applications-browse-jobs')?.addEventListener('click', () => showTab('jobs'));
   document.querySelectorAll('[data-application]').forEach((node) => node.addEventListener('click', () => showApplication(node.dataset.application)));
   if (selectedId) await showApplication(selectedId);

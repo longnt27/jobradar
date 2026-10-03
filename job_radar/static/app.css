@@ -87,3 +87,8 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .review-section > h4:not(:first-child){margin-top:22px}
 .review-subsection{border:1px solid #e3eae6;border-radius:10px;padding:14px;margin:12px 0;display:grid;gap:12px}
 .toolbar #job-query{min-width:min(220px,100%)}
+.card-select{display:block;width:100%;border:0;background:transparent;padding:0;text-align:left;color:inherit;font:inherit;cursor:pointer}
+.job-card>a{display:inline-block;margin-top:8px;font-size:12px}
+.application-card{display:block;width:100%;text-align:left;color:inherit;font:inherit}
+.card-select:focus-visible,.application-card:focus-visible{outline:3px solid #4aab78;outline-offset:3px}
+.job-card:focus-within,.application-card:hover{border-color:#71bd9a}
