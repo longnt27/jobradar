@@ -139,7 +139,7 @@ async def collect_linkedin(context: BrowserContext, source: dict) -> list[Observ
 
 
 RECRUITING = re.compile(r"\b(hiring|recruit|vacancy|apply|tuyển dụng|tuyển|cần tìm|cần tuyển|job opening|we are looking)\b", re.I)
-ROLE = re.compile(r"\b(ai|ml|machine learning|engineer|engineering|developer|devops|research|data scientist|data analyst|data architect|llm|computer vision|software|architect|fullstack|backend|frontend|technical lead|tech lead|kỹ sư|lập trình|trí tuệ nhân tạo|công nghệ thông tin|khoa học dữ liệu)\b", re.I)
+ROLE = re.compile(r"\b(ai|ml|machine learning|engineer|engineering|developer|devops|research|data scientist|data analyst|data analytics|data architect|business analyst|llm|computer vision|software|architect|fullstack|backend|frontend|technical lead|tech lead|cloud|security|cyber|database|network|kỹ sư|lập trình|trí tuệ nhân tạo|công nghệ thông tin|khoa học dữ liệu|phần mềm|phầm mềm|an ninh|bảo mật|quản trị ứng dụng|cơ sở dữ liệu|phân tích nghiệp vụ|chuyển đổi số|kiểm thử)\b", re.I)
 
 
 async def collect_facebook(context: BrowserContext, source: dict) -> list[ObservedJob]:
@@ -283,15 +283,15 @@ def _target_title(title: str) -> bool:
 
 def _expired_posting(text: str) -> bool:
     """Skip a posting only when its own page shows an explicit past deadline."""
-    match = re.search(
-        r"(?:Application deadline|Hạn nộp hồ sơ|Thời gian ứng tuyển|Deadline)\s*:?\s*"
-        r"(?:\d{1,2}/\d{1,2}\s*[—–-]\s*)?(\d{1,2})/(\d{1,2})/(20\d{2})",
-        text[:3000], re.I,
-    )
-    if not match:
+    label = re.search(r"(?:Application deadline|Hạn nộp hồ sơ|Hạn nộp|Thời gian ứng tuyển|Deadline)\s*:?", text[:3000], re.I)
+    if not label:
         return False
+    dates = re.findall(r"\b(\d{1,2})/(\d{1,2})/(20\d{2})\b", text[label.end():label.end() + 65])
+    if not dates:
+        return False
+    day, month, year = dates[-1]
     try:
-        return datetime(int(match[3]), int(match[2]), int(match[1])).date() < datetime.now(timezone.utc).date()
+        return datetime(int(year), int(month), int(day)).date() < datetime.now(timezone.utc).date()
     except ValueError:
         return False
 
@@ -309,6 +309,10 @@ def _detail_description(soup: BeautifulSoup, preferred: str = "") -> str:
 
 def _detail_title(soup: BeautifulSoup, label: str) -> str:
     headings = [node.get_text(" ", strip=True) for node in soup.select("h1")]
+    title = next((value for value in headings if _target_title(value)), "")
+    if title:
+        return title
+    headings = [node.get_text(" ", strip=True) for node in soup.select("h2")]
     title = next((value for value in headings if _target_title(value)), "")
     if title:
         return title
@@ -333,6 +337,8 @@ async def collect_html_board(source: dict) -> list[ObservedJob]:
             if page:
                 if config.get("pagination") == "wordpress":
                     listing_url = urljoin(source["url"].rstrip("/") + "/", f"page/{page + 1}/")
+                elif config.get("pagination") == "vnpt":
+                    listing_url = source["url"].removesuffix(".html") + f"/p{page + 1}.html"
                 else:
                     parts = urlsplit(source["url"])
                     query = dict(parse_qsl(parts.query))
@@ -345,15 +351,17 @@ async def collect_html_board(source: dict) -> list[ObservedJob]:
             soup = BeautifulSoup(response.text, "html.parser")
             before = len(links)
             for anchor in soup.select("a[href]"):
-                url = urljoin(str(response.url), anchor.get("href", ""))
+                url = urljoin(str(response.url), anchor.get("href", "").strip())
                 parts = urlsplit(url)
                 if parts.hostname not in allowed_hosts or not pattern.fullmatch(parts.path):
                     continue
                 label = anchor.get_text(" ", strip=True)
                 if not label or len(label) > 180 or label.casefold() in {"apply", "apply now", "ứng tuyển", "ứng tuyển ngay", "learn more", "xem chi tiết"}:
                     label = ""
-                clean_url = url.split("?")[0].split("#")[0]
-                if clean_url not in links or label:
+                clean_url = url.split("#")[0]
+                if not config.get("keep_query"):
+                    clean_url = clean_url.split("?")[0]
+                if clean_url not in links or (label and _target_title(label)):
                     links[clean_url] = label
             if len(links) == before:
                 break
@@ -375,10 +383,155 @@ async def collect_html_board(source: dict) -> list[ObservedJob]:
                     continue
                 location = _text(item, ("[class*=job-location]", "[class*=location]", "[data-test*=location]"))[:250]
                 jobs.append(ObservedJob(
-                    url=str(detail.url).split("?")[0], title=title[:180],
+                    url=str(detail.url) if config.get("keep_query") else str(detail.url).split("?")[0], title=title[:180],
                     company=source.get("employer_name") or source["name"],
                     description=description[:30000], location=location,
                     raw_text=description[:30000],
+                ))
+            except httpx.HTTPError:
+                continue
+        return jobs
+
+
+async def collect_browser_board(source: dict) -> list[ObservedJob]:
+    """Read a company-owned board that renders its listings in the browser."""
+    config = source["config"]
+    pattern = re.compile(config["link_path"])
+    links: dict[str, str] = {}
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            detail = await browser.new_page()
+            await page.goto(source["url"], wait_until="domcontentloaded", timeout=45000)
+            listing_selector = config.get("listing_selector", "a[href*='/jobs/']")
+            await page.locator(config.get("listing_ready_selector", listing_selector)).first.wait_for(state="attached", timeout=20000)
+            for index in range(min(int(config.get("max_pages", 1)), 20)):
+                found = await page.locator(listing_selector).evaluate_all(
+                    "elements => elements.map(a => ({url: a.href, label: (a.innerText || a.getAttribute('title') || '').split('\\n')[0].trim()}))"
+                )
+                before = len(links)
+                for item in found:
+                    url = item["url"].split("?")[0].split("#")[0]
+                    if urlsplit(url).hostname == urlsplit(source["url"]).hostname and pattern.fullmatch(urlsplit(url).path):
+                        links[url] = item["label"]
+                next_button = page.locator(config.get("next_selector", ".ant-pagination-next:not(.ant-pagination-disabled)"))
+                if index + 1 >= int(config.get("max_pages", 1)) or not await next_button.count() or len(links) == before:
+                    break
+                first_url = found[0]["url"] if found else ""
+                await next_button.first.click()
+                try:
+                    await page.wait_for_function(
+                        "([selector, previous]) => !!document.querySelector(selector)?.href && document.querySelector(selector).href !== previous",
+                        arg=[listing_selector, first_url], timeout=10000,
+                    )
+                except Exception:
+                    break
+            jobs = []
+            for url, label in list(links.items())[:int(config.get("max_results", 120))]:
+                if label and not _target_title(label):
+                    continue
+                try:
+                    await detail.goto(url, wait_until="domcontentloaded", timeout=30000)
+                    if config.get("detail_ready_min_chars"):
+                        await detail.wait_for_function(
+                            "minimum => (document.querySelector('main')?.innerText.length || 0) >= minimum",
+                            arg=int(config["detail_ready_min_chars"]), timeout=12000,
+                        )
+                    else:
+                        await detail.locator("h1").first.wait_for(state="attached", timeout=12000)
+                    soup = BeautifulSoup(await detail.content(), "html.parser")
+                    title = _detail_title(soup, label)
+                    if not _target_title(title):
+                        continue
+                    for tag in soup(["script", "style", "nav", "footer", "header"]):
+                        tag.decompose()
+                    description = _detail_description(soup, config.get("description_selector", "main"))
+                    if len(description) < 100 or _expired_posting(description):
+                        continue
+                    jobs.append(ObservedJob(
+                        url=detail.url, title=title[:180],
+                        company=source.get("employer_name") or source["name"],
+                        description=description[:30000], raw_text=description[:30000],
+                    ))
+                except Exception:
+                    continue
+            return jobs
+        finally:
+            await browser.close()
+
+
+async def collect_bidv(source: dict) -> list[ObservedJob]:
+    """BIDV's public career API supplies full descriptions and live deadlines."""
+    async with _career_client() as client:
+        response = await client.get("https://tuyendung.bidv.com.vn/GetAllTinTuyenDung")
+        response.raise_for_status()
+        rows = response.json().get("rows")
+    if not isinstance(rows, list):
+        raise RuntimeError("BIDV career API returned an unexpected response")
+    jobs = []
+    for item in rows:
+        title = str(item.get("title") or "").strip()
+        identifier = str(item.get("id") or "")
+        if not _target_title(title) or not identifier.isdigit():
+            continue
+        try:
+            deadline = datetime.strptime(str(item.get("enddateapply")), "%d/%m/%Y").date()
+            if deadline < datetime.now(timezone.utc).date():
+                continue
+        except ValueError:
+            continue
+        description = _structured_text(BeautifulSoup(item.get("descriptionjob") or "", "html.parser"))
+        if len(description) < 100:
+            continue
+        jobs.append(ObservedJob(
+            url=f"https://tuyendung.bidv.com.vn/tin-tuyen-dung/{identifier}/bidv.html",
+            external_id=identifier, title=title[:180],
+            company=source.get("employer_name") or "BIDV",
+            description=description[:30000], raw_text=description[:30000],
+        ))
+    return jobs
+
+
+async def collect_vietinbank(source: dict) -> list[ObservedJob]:
+    """The VietinBank board puts titles and deadlines outside its Apply links."""
+    async with _career_client() as client:
+        response = await client.get(source["url"])
+        response.raise_for_status()
+        board = BeautifulSoup(response.text, "html.parser")
+        links = {}
+        for card in board.select(".c-card"):
+            anchor = card.select_one('a[href*="/thong-tin-tuyen-dung/"]')
+            title_node = card.select_one(".c-line-jobtitle")
+            if not anchor or not title_node:
+                continue
+            title = title_node.get_text(" ", strip=True)
+            if not _target_title(title):
+                continue
+            deadline_node = card.select_one(".c-line-date-expired .date-expired")
+            if deadline_node:
+                try:
+                    deadline = datetime.strptime(deadline_node.get_text(" ", strip=True), "%d/%m/%Y").date()
+                    if deadline < datetime.now(timezone.utc).date():
+                        continue
+                except ValueError:
+                    continue
+            links[urljoin(str(response.url), anchor["href"])] = title
+        jobs = []
+        for url, title in links.items():
+            try:
+                detail = await client.get(url)
+                detail.raise_for_status()
+                soup = BeautifulSoup(detail.text, "html.parser")
+                for tag in soup(["script", "style", "nav", "footer", "header"]):
+                    tag.decompose()
+                description = _detail_description(soup, ".job_jd")
+                if len(description) < 100:
+                    continue
+                jobs.append(ObservedJob(
+                    url=str(detail.url), title=title[:180],
+                    company=source.get("employer_name") or "VietinBank",
+                    description=description[:30000], raw_text=description[:30000],
                 ))
             except httpx.HTTPError:
                 continue
@@ -584,6 +737,9 @@ async def collect_mbbank(source: dict) -> list[ObservedJob]:
 CAREER_ADAPTERS = {
     "legacy": collect_career,
     "html_board": collect_html_board,
+    "browser_board": collect_browser_board,
+    "bidv": collect_bidv,
+    "vietinbank": collect_vietinbank,
     "successfactors": collect_successfactors,
     "vindynamics": collect_vindynamics,
     "vinrobotics": collect_vinrobotics,

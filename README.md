@@ -20,11 +20,11 @@ My profile guides you through the one-time personal steps:
 
 1. Choose a drafting provider once. You can change it later in My profile. The app shows whether each provider is installed and whether it uses a local or remote model.
 2. Upload a text-based resume PDF. The selected provider extracts contact details, previous positions, education, achievements, and skills. Review the result in My profile and Work history. You can also paste a LaTeX resume. A remote provider receives the extracted PDF text; Codex OSS with Ollama runs locally.
-3. Open **Connections and notifications** in My profile if you also want LinkedIn searches or Facebook groups. The 31 company career feeds work without social sign-in. Enabled sources are checked every four hours while your Mac is on.
+3. Open **Connections and notifications** in My profile if you also want LinkedIn searches or Facebook groups. The 43 company career feeds work without social sign-in. Enabled sources are checked every four hours while your Mac is on.
 4. Open **GitHub projects** from My profile and select repositories. The saved provider drafts each project description from repository files and history; edit and approve it before it can appear on a resume.
 5. Optionally add email application or Telegram alert settings under **Connections and notifications**.
 
-The registry contains more than 200 employers, including Vingroup entities, banks, Viettel, VNPT, FPT, CMC, and technology companies. The app starts with 31 verified company career feeds, listed in [CAREER_FEEDS.md](CAREER_FEEDS.md). Some companies use a dedicated recruiting portal hosted by an application platform; those feeds still point to the company's own job listings and direct postings. An employer appears as actively scanned only when it has an enabled source. Add a career page from its employer card.
+The registry contains 181 employers after removing those [based in HCMC](EMPLOYER_SCOPE.md), including Vingroup entities, banks, Viettel, VNPT, FPT, CMC, and technology companies. The app starts with 43 verified direct company career feeds, listed in [CAREER_FEEDS.md](CAREER_FEEDS.md). Some companies use a dedicated recruiting portal hosted by an application platform; those feeds still point to the company's own job listings and direct postings. An employer appears as actively scanned only when it has an enabled source. Add a career page from its employer card.
 
 ## Apply
 
@@ -36,8 +36,8 @@ Review the tailored project bullets, PDF resume, destination, message, and form 
 
 ## Current limits
 
-- The 31 initial feeds cover verified company career listings; some may have no currently matching roles. A successful empty scan does not mean the company has no jobs anywhere.
-- Other career pages and stable single-page application forms work best when their job links are present in the page HTML. JavaScript-only boards, multi-step forms, CAPTCHA, verification, and changed form fields can need manual attention.
+- The 43 built-in feeds cover verified company career listings; some may have no currently matching roles. A successful empty scan does not mean the company has no jobs anywhere.
+- Built-in browser adapters cover some JavaScript-rendered career boards. Other career pages and stable single-page application forms work best when their job links are present in the page HTML. Multi-step forms, CAPTCHA, verification, and changed form fields can need manual attention.
 - The employer registry is broader than the initial feeds. A registry entry alone does not mean live scan coverage.
 - The baseline ranking is deterministic; embeddings are not yet included.
 - Repository inspection reads selected files and history without running repository code. You must confirm what you personally contributed.

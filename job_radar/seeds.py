@@ -5,9 +5,10 @@ from urllib.parse import urlencode
 
 from .db import Database, new_id, now
 from .feed_catalog import CAREER_FEEDS
+from .employer_scope import HCMC_BASED
 
 
-EMPLOYERS: dict[str, str] = {
+EMPLOYER_DIRECTORY: dict[str, str] = {
     "Vingroup": "vingroup", "VinFast": "vingroup", "VinSmart Future": "vingroup",
     "VinRobotics": "vingroup", "VinMotion": "vingroup", "VinDynamics": "vingroup",
     "VinSpace": "vingroup", "VinSOC": "vingroup", "VinCSS": "vingroup",
@@ -97,6 +98,8 @@ EMPLOYERS: dict[str, str] = {
     "Innovature BPO": "technology", "TARA JSC": "commerce",
 }
 
+EMPLOYERS = {name: category for name, category in EMPLOYER_DIRECTORY.items() if name not in HCMC_BASED}
+
 ROLE_TERMS = (
     "AI Engineer", "Applied AI Engineer", "Machine Learning Engineer",
     "Research Engineer", "AI Researcher", "LLM Engineer",
@@ -115,6 +118,11 @@ EMPLOYER_ALIASES = {
 def seed(db: Database) -> None:
     timestamp = now()
     with db.connection() as conn:
+        # Keep historical scans for audit, but remove HCMC-based employers and
+        # their sources from the active discovery surface on upgrade.
+        for name in HCMC_BASED:
+            conn.execute("UPDATE employers SET coverage_status='excluded_hcm',updated_at=? WHERE name=?", (timestamp, name))
+            conn.execute("UPDATE sources SET enabled=0 WHERE employer_id IN (SELECT id FROM employers WHERE name=?)", (name,))
         for name, category in EMPLOYERS.items():
             conn.execute(
                 "INSERT OR IGNORE INTO employers(id,name,category,created_at,updated_at) VALUES(?,?,?,?,?)",
@@ -134,7 +142,7 @@ def seed(db: Database) -> None:
                 (employer[0], feed.url),
             ).fetchone()
             if existing_feed:
-                if json.loads(existing_feed[1]).get("adapter") != feed.adapter:
+                if existing_feed[1] != config:
                     conn.execute("UPDATE sources SET config=? WHERE id=?", (config, existing_feed[0]))
             else:
                 conn.execute(

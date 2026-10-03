@@ -171,8 +171,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def status():
         counts = {}
         with db.connection() as conn:
-            for table in ("employers", "sources", "vacancies", "evidence", "application_drafts", "submissions"):
+            for table in ("sources", "evidence", "application_drafts", "submissions"):
                 counts[table] = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            counts["employers"] = conn.execute("SELECT COUNT(*) FROM employers WHERE coverage_status!='excluded_hcm'").fetchone()[0]
+            counts["vacancies"] = conn.execute("SELECT COUNT(*) FROM vacancies v WHERE NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm')").fetchone()[0]
             counts["active_sources"] = conn.execute("SELECT COUNT(*) FROM sources WHERE enabled=1").fetchone()[0]
         recent = db.all("SELECT scan_runs.*, sources.name AS source_name FROM scan_runs JOIN sources ON sources.id=scan_runs.source_id ORDER BY started_at DESC LIMIT 10")
         return {"counts": counts, "recent_runs": recent, "data_dir": str(settings.data_dir)}
@@ -316,7 +318,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/sources")
     def sources(kind: str | None = None):
-        rows = db.all("SELECT * FROM sources WHERE (? IS NULL OR kind=?) ORDER BY kind,name", (kind, kind))
+        rows = db.all("SELECT s.* FROM sources s WHERE (? IS NULL OR s.kind=?) AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=s.employer_id AND e.coverage_status='excluded_hcm') ORDER BY s.kind,s.name", (kind, kind))
         for row in rows:
             row["config"] = json.loads(row["config"])
             row["enabled"] = bool(row["enabled"])
@@ -364,7 +366,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/employers")
     def employers(q: str = "", category: str = "", limit: int = Query(300, ge=1, le=2000)):
         return db.all(
-            "SELECT e.*,CASE WHEN EXISTS(SELECT 1 FROM sources s WHERE s.employer_id=e.id AND s.enabled=1) THEN 'active_scan' ELSE 'source_discovery' END AS live_coverage FROM employers e WHERE name LIKE ? AND (?='' OR category=?) ORDER BY name LIMIT ?",
+            "SELECT e.*,CASE WHEN EXISTS(SELECT 1 FROM sources s WHERE s.employer_id=e.id AND s.enabled=1) THEN 'active_scan' ELSE 'source_discovery' END AS live_coverage FROM employers e WHERE e.coverage_status!='excluded_hcm' AND name LIKE ? AND (?='' OR category=?) ORDER BY name LIMIT ?",
             (f"%{q}%", category, category, limit),
         )
 
@@ -422,13 +424,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if q.strip():
             try:
                 return with_sources(db.all(
-                    "SELECT v.* FROM vacancy_fts f JOIN vacancies v ON v.id=f.vacancy_id WHERE vacancy_fts MATCH ? AND (?='' OR v.state=?) ORDER BY v.score DESC,v.first_seen_at DESC LIMIT ?",
+                    "SELECT v.* FROM vacancy_fts f JOIN vacancies v ON v.id=f.vacancy_id WHERE vacancy_fts MATCH ? AND (?='' OR v.state=?) AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm') ORDER BY v.score DESC,v.first_seen_at DESC LIMIT ?",
                     (q.strip(), state, state, limit),
                 ))
             except Exception as error:
                 raise HTTPException(422, f"Invalid search: {error}") from error
         return with_sources(db.all(
-            "SELECT * FROM vacancies WHERE (?='' OR state=?) ORDER BY score DESC,first_seen_at DESC LIMIT ?",
+            "SELECT v.* FROM vacancies v WHERE (?='' OR v.state=?) AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm') ORDER BY v.score DESC,v.first_seen_at DESC LIMIT ?",
             (state, state, limit),
         ))
 

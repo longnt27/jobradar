@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 from .collectors import AuthRequired, collect_source
 from .db import Database, new_id, now
+from .employer_scope import HCMC_NAMES
 from .ingest import ingest
 from .notifications import notify_new_jobs
 from .settings import Settings
@@ -78,6 +79,8 @@ class ScanManager:
         )
         if not source:
             raise KeyError("Source not found")
+        if source["employer_id"] and self.db.one("SELECT id FROM employers WHERE id=? AND coverage_status='excluded_hcm'", (source["employer_id"],)):
+            raise ValueError("HCMC-based employer is outside the crawl scope")
         if source_id in self.active:
             return {"status": "already_running"}
         source["config"] = json.loads(source["config"])
@@ -95,6 +98,8 @@ class ScanManager:
             new_count = 0
             new_ids = []
             for job in jobs:
+                if job.company.casefold() in HCMC_NAMES:
+                    continue
                 vacancy_id, is_new = ingest(self.db, source_id, job)
                 new_count += int(is_new)
                 if is_new:

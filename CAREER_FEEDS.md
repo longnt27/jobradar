@@ -1,39 +1,53 @@
-# Company career feeds
+# Direct company career feeds
 
-Job Radar registers these 31 company-specific career listings. Each source runs every four hours. The collector follows only that company's posting links and stores the original posting URL. A company-branded recruiting portal is included when it is the company's application site; general job aggregators and social posts are not part of this catalog.
+Job Radar checks these 43 verified company career listings every four hours. Each entry points to an employer career page or its dedicated recruiting portal. A listing is stored only when its own job posting has a relevant title and description. An empty scan means no matching open posting was found by that adapter at scan time; it does not imply the company has no vacancies.
 
-| Company | Career listing | Collector |
+| Company | Career page | Adapter |
 | --- | --- | --- |
-| VinAI | [VinAI careers](https://www.vinai.io/careers/) | HTML |
-| VinDynamics | [VinDynamics careers](https://vindynamics.net/career) | Company career API |
-| VinRobotics | [VinRobotics careers](https://vinrobotics.net/career) | Company career API |
-| VinUni | [VinUni careers](https://vinuni.talent.vn/jobs) | Company recruiting portal |
-| Viettel Group | [Viettel careers](https://jobs.viettel.vn/search/?q=AI) | SuccessFactors |
-| FPT Education | [FPT Education careers](https://career.fpt.edu.vn/Job/Search) | HTML |
-| Techcombank | [Techcombank Data & Analytics](https://www.techcombankjobs.com/go/Data-%26-Analytics/549144/) and Technology | SuccessFactors |
-| Vietcombank | [Vietcombank IT](https://tuyendung.vietcombank.com.vn/go/IT/572944/) and branch IT | SuccessFactors |
-| MB Bank | [MB Bank careers](https://careers.mbbank.com.vn/list-of-posts) | Company career API |
-| VPBank | [VPBank data and analytics careers](https://vpbank.talent.vn/jobs?dept=3326) | Company recruiting portal |
-| GPBank | [GPBank technology careers](https://gpbank.talent.vn/jobs?dept=1538) | Company recruiting portal |
-| ACB | [ACB careers](https://acbjobs.talent.vn/jobs) | Company recruiting portal |
-| MoMo | [MoMo careers](https://momo.careers/jobs-opening) | HTML |
-| Katalon | [Katalon careers](https://careers.katalon.com/) | HTML |
-| ELSA | [ELSA careers](https://elsaspeak.com/en/career) | Company recruiting portal |
-| CMC Global | [CMC Global careers](https://cmcglobal.com.vn/career/) | HTML with pagination |
-| CMC TS | [CMC TS careers](https://careers.cmcts.com.vn/) | Company recruiting portal |
-| TMA Solutions | [TMA careers](https://www.tma.vn/tuyen-dung/viec-lam) | HTML |
-| NTQ Solution | [NTQ careers](https://career.ntq.com.vn/careers) | HTML |
-| Axon Active | [Axon Active careers](https://www.careers.axonactive.com/) | HTML |
-| VNPAY | [VNPAY careers](https://tuyendung.vnpay.vn/) | HTML |
-| Base.vn | [Base careers](https://baseinc.talent.vn/alljobs?dept=9) | Company recruiting portal |
-| VNDIRECT | [VNDIRECT careers](https://vndirect.talent.vn/jobs) | Company recruiting portal |
-| TeenCare | [TeenCare careers](https://teencare.talent.vn/) | Company recruiting portal |
-| Golden Gate | [Golden Gate careers](https://ggg.talent.vn/) | Company recruiting portal |
-| Cloud Ace | [Cloud Ace careers](https://cloudace.talent.vn/) | Company recruiting portal |
-| Eastgate Software | [Eastgate careers](https://eastgatesoftware.talent.vn/jobs) | Company recruiting portal |
-| Innovature BPO | [Innovature careers](https://innovaturebpo.talent.vn/jobs) | Company recruiting portal |
-| TARA JSC | [TARA careers](https://tara.talent.vn/jobs) | Company recruiting portal |
-| KMS Technology | [KMS careers](https://careers.smartrecruiters.com/kmstechnology1) | SmartRecruiters company feed |
-| SmartOSC | [SmartOSC careers](https://careers.smartrecruiters.com/SmartOSC) | SmartRecruiters company feed |
+| VinAI | [Open careers](https://www.vinai.io/careers/) | HTML links |
+| VinDynamics | [Open careers](https://vindynamics.net/career) | Company career API |
+| VinRobotics | [Open careers](https://vinrobotics.net/career) | Company career API |
+| VinMotion | [Open careers](https://vinmotion.net/vi/career) | HTML board |
+| VinUni | [Open careers](https://vinuni.talent.vn/jobs) | HTML board |
+| Viettel Group | [Open careers](https://jobs.viettel.vn/search/?q=AI) | SuccessFactors |
+| FPT Education | [Open careers](https://career.fpt.edu.vn/Job/Search) | HTML board |
+| FPT Telecom | [Open careers](https://fptjobs.com/tuyen-dung) | Browser board |
+| Techcombank | [Open careers](https://www.techcombankjobs.com/go/Data-%26-Analytics/549144/) | SuccessFactors |
+| Vietcombank | [Open careers](https://tuyendung.vietcombank.com.vn/go/IT/572944/) | SuccessFactors |
+| MB Bank | [Open careers](https://careers.mbbank.com.vn/list-of-posts) | Company career API |
+| BIDV | [Open careers](https://tuyendung.bidv.com.vn/danh-sach-viec-lam-moi.html) | Company career API |
+| VietinBank | [Open careers](https://tuyendung.vietinbank.vn/tuyendung/tuyen-dung) | Company career API |
+| TPBank | [Open careers](https://tuyendung.tpb.vn/vi/jobs) | Browser board |
+| LPBank | [Open careers](https://tuyendung.lpbank.com.vn/vi/jobs) | Browser board |
+| MSB | [Open careers](https://jobs.msb.com.vn/latest-jobs) | HTML board |
+| SeABank | [Open careers](https://tuyendung.seabank.com.vn/jobs?page=1) | HTML board |
+| BaoViet Bank | [Open careers](https://www.baovietbank.vn/tuyen-dung/) | HTML board |
+| ABBank | [Open careers](https://careers.abbank.vn/jobs) | HTML board |
+| PGBank | [Open careers](https://tuyendung.pgbank.com.vn/) | HTML board |
+| VietABank | [Open careers](https://tuyendung.vietabank.com.vn/vi/jobs) | Browser board |
+| MBV | [Open careers](https://www.mbv.com.vn/tuyen-dung/co-hoi-nghe-nghiep) | Browser board |
+| VPBank | [Open careers](https://vpbank.talent.vn/jobs?dept=3326) | HTML board |
+| GPBank | [Open careers](https://gpbank.talent.vn/jobs?dept=1538) | HTML board |
+| CMC Global | [Open careers](https://cmcglobal.com.vn/career/) | HTML board |
+| CMC TS | [Open careers](https://careers.cmcts.com.vn/) | HTML board |
+| CMC Telecom | [Open careers](https://cmctelecom.vn/danh-sach-tuyen-dung/) | HTML board |
+| NTQ Solution | [Open careers](https://career.ntq.com.vn/careers) | HTML board |
+| VNPAY | [Open careers](https://tuyendung.vnpay.vn/) | HTML board |
+| Base.vn | [Open careers](https://baseinc.talent.vn/alljobs?dept=9) | HTML board |
+| VNDIRECT | [Open careers](https://vndirect.talent.vn/jobs) | HTML board |
+| TeenCare | [Open careers](https://teencare.talent.vn/) | HTML board |
+| Golden Gate | [Open careers](https://ggg.talent.vn/) | HTML board |
+| Eastgate Software | [Open careers](https://eastgatesoftware.talent.vn/jobs) | HTML board |
+| SmartOSC | [Open careers](https://careers.smartrecruiters.com/SmartOSC) | Company recruiting portal |
+| KiotViet | [Open careers](https://about.kiotviet.vn/cong-viec/) | HTML board |
+| MISA | [Open careers](https://www.misa.vn/tuyen-dung/) | HTML board |
+| Sapo | [Open careers](https://tuyendung.sapo.vn/) | HTML board |
+| Cốc Cốc | [Open careers](https://careers.coccoc.com/jobs) | Browser board |
+| VNPT AI | [Open careers](https://tuyendung.vnpt.vn/viec-lam/don-vi-cong-ty-vnpt-ai-d3678304.html) | HTML board |
+| VNPT IT | [Open careers](https://tuyendung.vnpt.vn/viec-lam/don-vi-cong-ty-cong-nghe-thong-tin-vnpt-d9621.html) | HTML board |
+| VNPT Net | [Open careers](https://tuyendung.vnpt.vn/viec-lam/don-vi-tong-cong-ty-ha-tang-mang-d8381.html) | HTML board |
+| VNPT Media | [Open careers](https://tuyendung.vnpt.vn/viec-lam/don-vi-tong-cong-ty-truyen-thong-d8606.html) | HTML board |
 
-The source catalog and adapter settings live in [job_radar/feed_catalog.py](job_radar/feed_catalog.py). A feed can be empty when there are no current matching roles. Postings with an explicit past application deadline are skipped. SmartRecruiters postings older than 180 days are skipped. The app does not create placeholder vacancies.
+The [employer directory](job_radar/seeds.py) contains 181 companies after the [HCMC-based exclusions](EMPLOYER_SCOPE.md). Its other 138 entries are leads without an active built-in feed. Their presence in the directory is not a claim that their jobs are collected. Add a verified direct career page from an employer card. General job aggregators are not part of this catalog.
+
+Feed definitions and selectors: [job_radar/feed_catalog.py](job_radar/feed_catalog.py). Collector implementations: [job_radar/collectors.py](job_radar/collectors.py). Older postings with an explicit past deadline are skipped. The app creates no placeholder vacancies.
