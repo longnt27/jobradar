@@ -92,3 +92,4 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .application-card{display:block;width:100%;text-align:left;color:inherit;font:inherit}
 .card-select:focus-visible,.application-card:focus-visible{outline:3px solid #4aab78;outline-offset:3px}
 .job-card:focus-within,.application-card:hover{border-color:#71bd9a}
+.error-text{color:#a13a23}

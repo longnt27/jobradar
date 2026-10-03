@@ -1,6 +1,6 @@
 # Failed project generation exposes raw README HTML as an approvable bullet
 
-- **Status:** Open
+- **Status:** Closed
 - **Severity:** Medium
 - **Labels:** `bug`, `projects`, `ui`
 
@@ -29,3 +29,7 @@ The bullet textarea contained `Project: pronunciation-assessment. <div align="ce
 ## Acceptance criteria
 
 Strip README markup for fallback text, expose the generation failure on the card, and block approval of placeholder claims.
+
+## Resolution
+
+README HTML is stripped before fallback text is stored. Project generation errors are persisted and shown on the card. A repository placeholder cannot be approved until the user replaces it with a specific reviewed bullet; both UI and API enforce this. Tests cover HTML cleanup, blocked placeholder approval, manual correction, and recorded generation failure.

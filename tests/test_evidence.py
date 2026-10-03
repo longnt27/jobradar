@@ -37,6 +37,43 @@ def test_repository_inspection_requires_claim_review(tmp_path: Path, monkeypatch
     assert canonical_github_url("https://github.com/test/project.git")[0] == "https://github.com/test/project"
 
 
+def test_html_readme_placeholder_cannot_be_approved(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "source"
+    root.mkdir()
+    subprocess.run(["git", "init", str(root)], check=True, capture_output=True)
+    (root / "README.md").write_text('<div align="center">\n# Useful project\n</div>\nThis indexes documents.')
+    subprocess.run(["git", "-C", str(root), "add", "README.md"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(root), "-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-m", "Initial"], check=True, capture_output=True)
+    monkeypatch.setattr("job_radar.evidence.canonical_github_url", lambda _: (str(root), "test__project"))
+    settings = Settings(tmp_path / "app")
+    client = TestClient(create_app(settings))
+    result = inspect_repository(client.app.state.db, settings, "https://github.com/test/project")
+    card = next(item for item in client.get("/api/evidence").json() if item["id"] == result["evidence_id"])
+    assert "<div" not in card["claim"]
+    blocked = client.patch(f"/api/evidence/{card['id']}", json={"approved": True, "details": {"bullets": [card["claim"]]}})
+    assert blocked.status_code == 422
+    reviewed = client.patch(f"/api/evidence/{card['id']}", json={"approved": True, "claim": "Built a Python document indexing pipeline.", "details": {"bullets": ["Built a Python document indexing pipeline."]}})
+    assert reviewed.status_code == 200
+
+
+def test_project_generation_failure_is_recorded_on_card(tmp_path: Path, monkeypatch) -> None:
+    client = TestClient(create_app(Settings(tmp_path)))
+    db = client.app.state.db
+    from job_radar.db import new_id, now
+    repository_id, evidence_id = new_id(), new_id()
+    db.execute("INSERT INTO repository_snapshots(id,url,local_path,commit_sha,summary,inspected_at) VALUES(?,?,?,?,?,?)",
+               (repository_id, "https://github.com/alex/search", "/tmp/search", "abc123", '{"readme":"Python search project"}', now()))
+    db.execute("INSERT INTO evidence(id,kind,title,claim,repository_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+               (evidence_id, "project", "search", "Review required", repository_id, now(), now()))
+    monkeypatch.setattr("job_radar.drafting._provider_json", lambda *_args: (_ for _ in ()).throw(RuntimeError("Provider unavailable")))
+    import pytest
+    with pytest.raises(RuntimeError):
+        generate_project_content(db, evidence_id, "codex")
+    details = __import__("json").loads(db.one("SELECT details FROM evidence WHERE id=?", (evidence_id,))["details"])
+    assert details["generation_status"] == "failed"
+    assert "Provider unavailable" in details["generation_error"]
+
+
 def test_codex_project_content_stays_unapproved_until_review(tmp_path: Path, monkeypatch) -> None:
     client = TestClient(create_app(Settings(tmp_path)))
     db = client.app.state.db

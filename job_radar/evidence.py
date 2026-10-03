@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from bs4 import BeautifulSoup
 from pydantic import BaseModel, Field
 
 from .db import Database, new_id, now
@@ -51,10 +52,15 @@ def generate_project_content(db: Database, evidence_id: str, provider: str = "co
             "This is a draft that the candidate must review before approval.\n\n"
             + json.dumps({"url": card["url"], "commit": card["commit_sha"], "snapshot": snapshot}, ensure_ascii=False)[:35_000]
         )
-        generated = _provider_json(provider, prompt, ProjectContentRaw)
-        content = ProjectContent(title=generated.title.strip()[:160], summary=generated.summary.strip()[:500],
-                                 tech_stack=[item.strip() for item in generated.tech_stack if item.strip()][:12],
-                                 bullets=[item.strip() for item in generated.bullets if item.strip()][:5])
+        try:
+            generated = _provider_json(provider, prompt, ProjectContentRaw)
+            content = ProjectContent(title=generated.title.strip()[:160], summary=generated.summary.strip()[:500],
+                                     tech_stack=[item.strip() for item in generated.tech_stack if item.strip()][:12],
+                                     bullets=[item.strip() for item in generated.bullets if item.strip()][:5])
+        except (RuntimeError, ValueError) as error:
+            db.execute("UPDATE evidence SET details=?,approved=0,updated_at=? WHERE id=?",
+                       (json.dumps({"contribution": "unverified", "generation_status": "failed", "generation_error": str(error)[:300]}, ensure_ascii=False), now(), evidence_id))
+            raise
     details = {"summary": content.summary, "tech_stack": content.tech_stack,
                "bullets": content.bullets, "source_commit": card["commit_sha"], "generated_by": provider}
     db.execute("UPDATE evidence SET title=?,claim=?,details=?,approved=0,updated_at=? WHERE id=?",
@@ -120,7 +126,10 @@ def inspect_repository(db: Database, settings: Settings, value: str) -> dict:
         "files": files,
         "recent_commits": history,
     }
-    claim = f"Project: {title}. " + (re.sub(r"\s+", " ", excerpt.splitlines()[0]).strip("# ")[:240] if excerpt else "Repository available for review; describe your contribution before approving.")
+    clean_readme = BeautifulSoup(excerpt, "html.parser").get_text("\n", strip=True)
+    first = next((re.sub(r"\s+", " ", line).strip("# *- ") for line in clean_readme.splitlines()
+                  if len(line.strip("# *- ")) >= 10 and not line.strip().startswith("![")), "")
+    claim = f"Repository summary: {first[:240]}" if first else "Describe your contribution before approving this project."
     timestamp = now()
     with db.connection() as conn:
         existing = conn.execute("SELECT id FROM repository_snapshots WHERE url=?", (url,)).fetchone()
@@ -135,5 +144,5 @@ def inspect_repository(db: Database, settings: Settings, value: str) -> dict:
         evidence_id = card[0] if card else new_id()
         if not card:
             conn.execute("INSERT INTO evidence(id,kind,title,claim,details,support,repository_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
-                         (evidence_id, "project", title, claim, json.dumps({"contribution": "unverified"}), json.dumps(support), repository_id, timestamp, timestamp))
+                         (evidence_id, "project", title, claim, json.dumps({"contribution": "unverified", "generation_status": "pending"}), json.dumps(support), repository_id, timestamp, timestamp))
     return {"repository_id": repository_id, "evidence_id": evidence_id, "commit_sha": commit, "summary": summary}

@@ -442,8 +442,11 @@ async function loadEvidence(focusId = null) {
     return;
   }
   const details = JSON.parse(card.details || '{}');
+  const needsOriginalClaim = !details.generated_by && (details.contribution === 'unverified' || ['pending','failed'].includes(details.generation_status));
   $('#project-editor').innerHTML = `<div class="project-editor-head"><div><p class="eyebrow">REVIEW PROJECT</p><h3>${escapeHtml(card.title)}</h3></div><span class="pill ${card.approved ? '' : 'warning'}">${card.approved ? 'Ready for resume' : 'Needs review'}</span></div>
     <p class="hint">Check the generated claims against your own work. Only projects marked ready can be used in an application.</p>
+    ${details.generation_status === 'failed' ? `<p class="hint error-text">Project draft generation failed: ${escapeHtml(details.generation_error || 'Try generating again or write your own project bullet.')}</p>` : ''}
+    ${needsOriginalClaim ? '<p class="hint">Write a specific bullet about your contribution before adding this project to resumes.</p>' : ''}
     ${card.repository_url ? `<p class="item-meta"><a href="${escapeHtml(card.repository_url)}" target="_blank" rel="noopener noreferrer">Open repository ↗</a> · Commit ${escapeHtml(card.commit_sha?.slice(0, 8))}</p>` : ''}
     <div class="project-fields"><label>Project title<input id="project-edit-title" value="${escapeHtml(card.title)}"></label>
       <label>Project summary<textarea id="project-edit-summary" rows="3" placeholder="What the project does">${escapeHtml(details.summary || '')}</textarea></label>
@@ -451,12 +454,13 @@ async function loadEvidence(focusId = null) {
       <label>What this project demonstrates <span class="hint">One resume bullet per line</span><textarea id="project-edit-bullets" rows="7">${escapeHtml((details.bullets || [card.claim]).join('\n'))}</textarea></label></div>
     <p id="project-review-status" class="hint" role="status" aria-live="polite"></p>
     <div class="actions"><button id="project-save" class="secondary">${card.approved ? 'Save changes' : 'Save draft'}</button>
-      <button id="project-approval" class="${card.approved ? 'secondary' : 'primary'}">${card.approved ? 'Remove from resumes' : 'Save and use on resumes'}</button>
+      <button id="project-approval" class="${card.approved ? 'secondary' : 'primary'}" ${needsOriginalClaim ? 'disabled' : ''}>${card.approved ? 'Remove from resumes' : 'Save and use on resumes'}</button>
       ${card.repository_url && !card.approved ? '<button id="project-regenerate" class="secondary">Generate again</button>' : ''}</div>`;
   const content = () => {
     const bullets = $('#project-edit-bullets').value.split('\n').map((line) => line.trim()).filter(Boolean);
     const title = $('#project-edit-title').value.trim();
     if (title.length < 2 || !bullets.length || bullets[0].length < 5) throw new Error('Add a project title and at least one specific bullet before saving.');
+    if (needsOriginalClaim && (bullets[0] === card.claim || bullets[0].length < 20 || /<[^>]+>|^(project:|repository summary:|describe your contribution)/i.test(bullets[0]))) throw new Error('Replace the repository placeholder with a specific project bullet before approval.');
     return {title, claim:bullets[0], details:{...details, summary:$('#project-edit-summary').value.trim(), tech_stack:$('#project-edit-stack').value.split(',').map((item) => item.trim()).filter(Boolean), bullets}};
   };
   const save = async (approved) => {
@@ -469,6 +473,12 @@ async function loadEvidence(focusId = null) {
     } catch(error) { status.textContent = error.message; notice(error.message, true); }
   };
   $('#project-save').addEventListener('click', () => save(Boolean(card.approved)));
+  $('#project-edit-bullets').addEventListener('input', () => {
+    if (needsOriginalClaim) {
+      const first = $('#project-edit-bullets').value.split('\n')[0].trim();
+      $('#project-approval').disabled = first === card.claim || first.length < 20 || /<[^>]+>|^(project:|repository summary:|describe your contribution)/i.test(first);
+    }
+  });
   $('#project-approval').addEventListener('click', () => save(!card.approved));
   $('#project-regenerate')?.addEventListener('click', async (event) => {
     const button = event.target;
@@ -478,7 +488,7 @@ async function loadEvidence(focusId = null) {
       await api(`/api/evidence/${card.id}/generate`, {method:'POST', body:'{}'});
       await loadEvidence(card.id);
       $('#project-review-status').textContent = 'New draft ready. Review it before using it in resumes.';
-    } catch(error) { $('#project-review-status').textContent = error.message; button.disabled = false; }
+    } catch(error) { await loadEvidence(card.id); $('#project-review-status').textContent = error.message; }
   });
   renderRepositoryResults($('#repo-filter')?.value || '');
 }

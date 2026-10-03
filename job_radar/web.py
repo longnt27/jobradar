@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 import shutil
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -504,6 +505,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         details = updates.get("details", json.loads(row["details"]))
         if not isinstance(details, dict) or not isinstance(details.get("bullets", [validated.claim]), list) or not isinstance(details.get("tech_stack", []), list):
             raise HTTPException(422, "Project details must contain bullet and technology lists")
+        if validated.approved and row["repository_id"]:
+            bullets = [str(item).strip() for item in details.get("bullets", []) if str(item).strip()]
+            if (not bullets or len(bullets[0]) < 20 or
+                    re.search(r"<[^>]+>|^(?:project:|repository summary:|describe your contribution|repository available)", bullets[0], re.I) or
+                    (not details.get("generated_by") and validated.claim == row["claim"])):
+                raise HTTPException(422, "Replace the repository placeholder with a specific reviewed project bullet before approval")
+            details = {**details, "generation_status": "reviewed"}
+            details.pop("generation_error", None)
         db.execute("UPDATE evidence SET kind=?,title=?,claim=?,details=?,support=?,approved=?,updated_at=? WHERE id=?",
                    (validated.kind, validated.title, validated.claim, json.dumps(details, ensure_ascii=False), json.dumps(validated.support), int(validated.approved), now(), evidence_id))
         return {"id": evidence_id}
