@@ -9,7 +9,7 @@ import shutil
 import subprocess
 
 from .db import Database, now
-from .local_analysis import RECOMMENDED_MODEL, analyze_job, validate_local_model
+from .local_analysis import LocalModelUnavailable, RECOMMENDED_MODEL, analyze_job, validate_local_model
 from .notifications import notify_new_jobs
 from .settings import Settings
 
@@ -26,6 +26,7 @@ class MatchManager:
         self.pull_task: asyncio.Task | None = None
         self.pull_state = "idle"
         self.pull_error: str | None = None
+        self.service_error: str | None = None
         self.wake_event = asyncio.Event()
         self.loop: asyncio.AbstractEventLoop | None = None
 
@@ -35,7 +36,8 @@ class MatchManager:
         return {"model": self.db.get_setting("matching_model", ""), "recommended": RECOMMENDED_MODEL,
                 "pending": counts.get("pending", 0) + counts.get("running", 0),
                 "completed": counts.get("done", 0), "failed": counts.get("failed", 0),
-                "download_state": self.pull_state, "download_error": self.pull_error}
+                "download_state": self.pull_state, "download_error": self.pull_error,
+                "service_error": self.service_error}
 
     async def start(self) -> None:
         self.loop = asyncio.get_running_loop()
@@ -135,6 +137,7 @@ class MatchManager:
                     project["details"] = {}
             try:
                 score, detail = await asyncio.to_thread(analyze_job, job, profile, projects, model)
+                self.service_error = None
                 if model != self.db.get_setting("matching_model", ""):
                     self.db.execute("UPDATE vacancies SET analysis_status='pending' WHERE id=? AND analysis_status='running'", (job["id"],))
                     continue
@@ -155,6 +158,10 @@ class MatchManager:
             except asyncio.CancelledError:
                 self.db.execute("UPDATE vacancies SET analysis_status='pending' WHERE id=? AND analysis_status='running'", (job["id"],))
                 raise
+            except LocalModelUnavailable as error:
+                self.service_error = str(error)
+                self.db.execute("UPDATE vacancies SET analysis_status='pending' WHERE id=? AND analysis_status='running'", (job["id"],))
+                await asyncio.sleep(15)
             except Exception as error:
                 log.warning("Local analysis failed for job %s: %s", job["id"], error)
                 self.db.execute("UPDATE vacancies SET analysis_status='failed',analysis_error=? WHERE id=? AND analysis_status='running'",

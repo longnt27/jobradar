@@ -5,7 +5,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from job_radar.ingest import ObservedJob, ingest
-from job_radar.local_analysis import Criterion, JobFacts, MatchJudgment, _ground_facts, analyze_job
+from job_radar.local_analysis import Criterion, JobFacts, LocalModelUnavailable, MatchJudgment, _ground_facts, analyze_job, validate_local_model
 from job_radar.settings import Settings
 from job_radar.web import create_app
 
@@ -32,11 +32,28 @@ def test_local_analysis_extracts_facts_and_sums_ten_scores(monkeypatch) -> None:
         [{"title": "Vision", "claim": "Built a model", "details": {"bullets": ["Built a model"], "tech_stack": ["Python"]}}],
         "test:small",
     )
-    assert score == 80
+    assert score == 62
     assert len(detail["criteria"]) == 10
     assert detail["facts"]["required_skills"] == ["Python"]
     assert detail["method"] == "local_llm"
     assert "ML Engineer" in prompts[1] and "Vision" in prompts[1]
+
+
+def test_unstated_requirements_get_neutral_score(monkeypatch) -> None:
+    def generate(_model, _prompt, result_type):
+        if result_type is JobFacts:
+            return JobFacts(role="AI Engineer", seniority="", required_skills=["Python"],
+                            preferred_skills=[], years_required=None, location="Hanoi", work_mode="",
+                            responsibilities=["Build models"], education=[], languages=[], summary="")
+        return MatchJudgment(**{name: Criterion(score=1, reason="Missing")
+                                for name in MatchJudgment.model_fields if name != "summary"}, summary="Weak fit")
+    monkeypatch.setattr("job_radar.local_analysis._generate", generate)
+    score, detail = analyze_job({"title": "AI Engineer", "description": "Build Python models in Hanoi.",
+                                 "location": "Hanoi"}, {}, [], "test:small")
+    assert detail["criteria"]["education"] == {"score": 5, "reason": "Not stated in the posting; neutral."}
+    assert detail["criteria"]["preferred_skills"]["score"] == 5
+    assert detail["criteria"]["research"]["score"] == 5
+    assert score == 34
 
 
 def test_extraction_discards_unsupported_language_seniority_and_years() -> None:
@@ -75,6 +92,25 @@ def test_model_setting_backfills_jobs_without_changing_drafting_provider(tmp_pat
         assert json.loads(job["score_detail"])["facts"]["responsibilities"] == ["Build models"]
         assert client.get("/api/profile").json()["drafting_provider"] == ""
         assert client.get("/api/setup").json()["matching"]["completed"] == 1
+
+
+def test_ollama_outage_keeps_jobs_queued(tmp_path: Path, monkeypatch) -> None:
+    app = create_app(Settings(tmp_path))
+    app.state.db.execute("UPDATE sources SET enabled=0")
+    monkeypatch.setattr("job_radar.matching.validate_local_model", lambda model: model)
+    def unavailable(*_args):
+        raise LocalModelUnavailable("Ollama is offline")
+    monkeypatch.setattr("job_radar.matching.analyze_job", unavailable)
+    with TestClient(app) as client:
+        identifier = client.post("/api/jobs/import", json={"company": "Example", "title": "AI Engineer",
+            "description": "Build Python models in Hanoi."}).json()["id"]
+        client.put("/api/matching/model", json={"model": "test:small"})
+        for _ in range(100):
+            if client.get("/api/setup").json()["matching"]["service_error"]:
+                break
+            time.sleep(.02)
+        assert client.get(f"/api/jobs/{identifier}").json()["analysis_status"] == "pending"
+        assert client.get("/api/setup").json()["matching"]["failed"] == 0
 
 
 def test_unchanged_rescan_preserves_local_score(tmp_path: Path) -> None:
@@ -119,3 +155,12 @@ def test_model_picker_excludes_embedding_only_models(tmp_path: Path, monkeypatch
     response = client.get("/api/matching/models")
     assert response.status_code == 200
     assert response.json()["models"] == [{"name": "small:latest", "size": 200}]
+
+
+def test_cloud_tag_is_rejected_for_local_matching() -> None:
+    try:
+        validate_local_model("example:cloud")
+    except ValueError as error:
+        assert "this Mac" in str(error)
+    else:
+        assert False, "Cloud model should not be accepted for local matching"

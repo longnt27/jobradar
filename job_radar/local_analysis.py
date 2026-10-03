@@ -17,6 +17,10 @@ OLLAMA_URL = "http://127.0.0.1:11434"
 RECOMMENDED_MODEL = "qwen2.5:3b"
 
 
+class LocalModelUnavailable(RuntimeError):
+    pass
+
+
 class JobFacts(BaseModel):
     role: str
     seniority: str
@@ -63,6 +67,8 @@ def list_local_models() -> list[dict[str, Any]]:
 
 
 def validate_local_model(model: str) -> str:
+    if model.casefold().endswith(":cloud"):
+        raise ValueError("Choose a model stored on this Mac, not an Ollama cloud model")
     names = {item["name"] for item in list_local_models()}
     canonical = model if model in names else f"{model}:latest" if f"{model}:latest" in names else ""
     if not canonical:
@@ -89,6 +95,8 @@ def _generate(model: str, prompt: str, result_type: type[BaseModel]) -> BaseMode
             response.raise_for_status()
             raw = response.json()["response"]
         return result_type.model_validate_json(raw)
+    except (httpx.ConnectError, httpx.ConnectTimeout) as error:
+        raise LocalModelUnavailable("Ollama is offline. Start it to continue local job analysis") from error
     except (httpx.HTTPError, ValueError, KeyError) as error:
         raise RuntimeError(f"Local model {model} could not produce valid job analysis") from error
 
@@ -114,6 +122,9 @@ def _ground_facts(facts: JobFacts, posting: dict) -> JobFacts:
         return bool(item.strip() and re.search(r"(?<!\w)" + re.escape(item.casefold()) + r"(?!\w)", source))
     for key in ("required_skills", "preferred_skills", "languages", "education"):
         values[key] = [item for item in values[key] if mentioned(item)]
+    for key in ("location", "work_mode"):
+        if values[key] and not mentioned(values[key]):
+            values[key] = ""
     if not any(word in source for word in ("junior", "mid", "senior", "lead", "principal", "intern", "entry")):
         values["seniority"] = ""
     year_numbers = {int(value) for value in re.findall(r"\b(\d{1,2})\s*\+?\s*(?:years?|năm)\b", source)}
@@ -164,6 +175,21 @@ def analyze_job(job: dict, profile: dict, projects: list[dict], model: str) -> t
     judgment = _generate(model, scoring_prompt, MatchJudgment)
     criteria = {name: getattr(judgment, name).model_dump()
                 for name in MatchJudgment.model_fields if name != "summary"}
+    unspecified = {
+        "required_skills": not facts.required_skills,
+        "preferred_skills": not facts.preferred_skills,
+        "experience": facts.years_required is None and not facts.seniority,
+        "responsibilities": not facts.responsibilities,
+        "research": not any(term in (job.get("description") or "").casefold()
+                            for term in ("research", "nghiên cứu", "model development")),
+        "location": not facts.location,
+        "work_mode": not facts.work_mode,
+        "education": not facts.education,
+        "freshness": _age_days(job) is None,
+    }
+    for name, absent in unspecified.items():
+        if absent:
+            criteria[name] = {"score": 5, "reason": "Not stated in the posting; neutral."}
     raw_score = sum(item["score"] for item in criteria.values())
     title = (job.get("title") or "").casefold()
     excluded = next((term for term in NEGATIVE_WORDS if re.search(r"\b" + re.escape(term) + r"\b", title)), None)
