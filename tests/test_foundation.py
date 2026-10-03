@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from job_radar.settings import Settings
+from job_radar.ingest import ObservedJob, ingest
 from job_radar.web import create_app
 
 
@@ -51,3 +52,18 @@ def test_status_separates_company_feeds_from_social_searches(tmp_path: Path) -> 
     counts = client.get("/api/status").json()["counts"]
     assert counts["career_sources_enabled"] == 42
     assert counts["active_sources"] == 69
+
+
+def test_profile_skill_edit_rescores_existing_jobs(tmp_path: Path) -> None:
+    client = TestClient(create_app(Settings(tmp_path)))
+    db = client.app.state.db
+    source = db.one("SELECT id FROM sources LIMIT 1")["id"]
+    identifier, _ = ingest(db, source, ObservedJob("https://example.org/job", "AI Engineer", "Example", "Build C++ inference systems.", location="Hanoi"))
+    before = client.get(f"/api/jobs/{identifier}").json()
+    profile = client.get("/api/profile").json()
+    profile["skills"] = ["C++"]
+    assert client.put("/api/profile", json=profile).status_code == 200
+    after = client.get(f"/api/jobs/{identifier}").json()
+    import json
+    assert "C++" in json.loads(after["score_detail"])["matched_skills"]
+    assert after["score"] > before["score"]

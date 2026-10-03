@@ -1,6 +1,6 @@
 # Profile edits leave existing job match scores stale
 
-- **Status:** Open
+- **Status:** Closed
 - **Severity:** High
 - **Labels:** `bug`, `ranking`, `profile`
 
@@ -29,3 +29,7 @@ The posting still reported no matched skills after the profile contained `C++`; 
 ## Acceptance criteria
 
 Recompute affected scores on profile save or version scores and schedule a full recalculation.
+
+## Resolution
+
+Saving profile data now recomputes every existing vacancy score and explanation from the current profile. A regression test confirms a scanned C++ job updates after the candidate adds C++ to their skills.

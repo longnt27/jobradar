@@ -4,6 +4,9 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
+from .db import Database, now
+import json
+
 
 ROLE_WORDS = ("ai", "machine learning", "research", "llm", "language model", "computer vision", "data scientist", "robotics", "perception", "generative")
 NEGATIVE_WORDS = ("sales", "recruiter", "accountant", "driver", "customer service", "telesales")
@@ -50,3 +53,12 @@ def score_job(job: dict[str, Any], profile: dict[str, Any]) -> tuple[int, dict[s
         f"Experience: {years_required if years_required is not None else 'not stated'} years stated; not treated as an automatic rejection."
     )
     return min(100, sum(components.values())), {"components": components, "matched_skills": matched_skills, "years_required": years_required, "explanation": explanation}
+
+
+def rescore_vacancies(db: Database, profile: dict[str, Any]) -> None:
+    with db.connection() as conn:
+        rows = conn.execute("SELECT id,title,description,location,published_at,first_seen_at FROM vacancies").fetchall()
+        for row in rows:
+            score, detail = score_job(dict(row), profile)
+            conn.execute("UPDATE vacancies SET score=?,score_detail=?,updated_at=? WHERE id=?",
+                         (score, json.dumps(detail, ensure_ascii=False), now(), row["id"]))

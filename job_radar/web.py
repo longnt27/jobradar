@@ -22,6 +22,7 @@ from .evidence import generate_project_content, inspect_repository
 from .github import list_public_repositories
 from .mail_config import save_smtp, smtp_config
 from .notifications import save_telegram, telegram_config
+from .ranking import rescore_vacancies
 from .resume_import import parse_resume_template
 from .resume_extract import extract_resume
 from .seeds import seed
@@ -148,6 +149,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(422, f"{provider} is not available on this Mac; change it in Profile")
         return provider
 
+    def save_profile(profile: dict[str, Any]) -> None:
+        db.set_setting("profile", profile)
+        rescore_vacancies(db, profile)
+
     def attach_career_source(employer_id: str, name: str, url: str) -> None:
         parts = urlsplit(url)
         if parts.scheme not in ("http", "https") or not parts.hostname:
@@ -248,7 +253,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(422, "Profile must include a name and skills list")
         if profile.get("drafting_provider") and profile["drafting_provider"] not in {"codex_local", "codex", "agy", "claude"}:
             raise HTTPException(422, "Unsupported drafting provider")
-        db.set_setting("profile", profile)
+        save_profile(profile)
         return profile
 
     @app.put("/api/profile/provider")
@@ -257,7 +262,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(422, f"{payload.provider} is not available on this Mac")
         profile = db.get_setting("profile", {})
         profile["drafting_provider"] = payload.provider
-        db.set_setting("profile", profile)
+        save_profile(profile)
         return {"provider": payload.provider, "mode": PROVIDERS[payload.provider]}
 
     @app.post("/api/profile/resume/pdf")
@@ -269,7 +274,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except (ValueError, RuntimeError) as error:
             raise HTTPException(422, str(error)) from error
         profile = {**db.get_setting("profile", {}), **extracted}
-        db.set_setting("profile", profile)
+        save_profile(profile)
         return {"positions": len(profile["experience"]), "education": len(profile["education"]),
                 "achievements": len(profile["achievements"]), "provider": provider,
                 "review": "Review the extracted fields and positions before preparing an application"}
@@ -281,7 +286,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
         profile = {**db.get_setting("profile", {}), **imported}
-        db.set_setting("profile", profile)
+        save_profile(profile)
         return {"positions": len(imported["experience"]), "education": len(imported["education"]),
                 "achievements": len(imported["achievements"]), "skill_groups": len(imported["skill_groups"])}
 
@@ -294,7 +299,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         profile = db.get_setting("profile", {})
         item = {"id": new_id(), **payload.model_dump()}
         profile.setdefault("experience", []).append(item)
-        db.set_setting("profile", profile)
+        save_profile(profile)
         return item
 
     @app.put("/api/positions/{position_id}")
@@ -303,7 +308,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         for item in profile.get("experience", []):
             if item.get("id") == position_id:
                 item.update(payload.model_dump())
-                db.set_setting("profile", profile)
+                save_profile(profile)
                 return item
         raise HTTPException(404, "Position not found")
 
@@ -315,7 +320,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if len(kept) == len(items):
             raise HTTPException(404, "Position not found")
         profile["experience"] = kept
-        db.set_setting("profile", profile)
+        save_profile(profile)
         return {"deleted": True}
 
     @app.get("/api/sources")
