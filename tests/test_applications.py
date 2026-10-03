@@ -24,6 +24,8 @@ def test_email_send_is_explicit_and_duplicate_protected(tmp_path: Path, monkeypa
     client = TestClient(create_app(Settings(tmp_path)))
     draft = _prepared(client, "https://example.org/apply")
     draft = client.patch(f"/api/applications/{draft['id']}", json={"destination": {"kind": "email", "email": "jobs@example.org"}}).json()
+    assert client.post("/api/setup/smtp", json={"host": "smtp.example.org", "port": 587,
+        "user": "alex", "password": "secret", "from_address": "alex@example.org"}).status_code == 200
     sent = []
     monkeypatch.setattr("job_radar.apply._send_email", lambda item, _settings: sent.append(item["id"]) or "message-123")
     assert client.post(f"/api/applications/{draft['id']}/send", json={"package_hash": "0" * 64}).status_code == 422
@@ -36,6 +38,22 @@ def test_email_send_is_explicit_and_duplicate_protected(tmp_path: Path, monkeypa
     assert len(client.get("/api/submissions").json()) == 1
     snapshot = json.loads(client.get("/api/submissions").json()[0]["package_data"])
     assert snapshot["message_data"]["body"] == draft["message_data"]["body"]
+
+
+def test_missing_smtp_settings_do_not_lock_future_send(tmp_path: Path, monkeypatch) -> None:
+    client = TestClient(create_app(Settings(tmp_path)))
+    draft = _prepared(client, "https://example.org/apply")
+    draft = client.patch(f"/api/applications/{draft['id']}", json={"destination": {"kind": "email", "email": "jobs@example.org"}}).json()
+    first = client.post(f"/api/applications/{draft['id']}/send", json={"package_hash": draft["package_hash"]})
+    assert first.status_code == 422
+    assert not client.get("/api/submissions").json()
+
+    configured = client.post("/api/setup/smtp", json={"host": "smtp.example.org", "port": 587,
+        "user": "alex", "password": "secret", "from_address": "alex@example.org"})
+    assert configured.status_code == 200
+    monkeypatch.setattr("job_radar.apply._send_email", lambda *_args: "accepted")
+    second = client.post(f"/api/applications/{draft['id']}/send", json={"package_hash": draft["package_hash"]})
+    assert second.json()["status"] == "sent_confirmed"
 
 
 def test_web_form_inspection_and_one_click_submit(tmp_path: Path) -> None:

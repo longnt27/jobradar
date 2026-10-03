@@ -134,17 +134,26 @@ def _validate_destination(destination: dict) -> None:
         raise ValueError("Choose an email or web application destination")
 
 
-def _send_email(draft: dict, settings: Settings) -> str:
+def _validated_smtp_config(settings: Settings) -> dict:
     config = smtp_config(settings)
     host = config.get("host", "")
     user = config.get("user", "")
-    password = config.get("password", "")
     sender = config.get("from", user)
     port = int(config.get("port", 587))
     if not host or not sender:
         raise ValueError("Run job-radar configure-smtp before sending email applications")
     if port not in (465, 587):
         raise ValueError("SMTP port must be 465 or 587")
+    return config
+
+
+def _send_email(draft: dict, settings: Settings) -> str:
+    config = _validated_smtp_config(settings)
+    host = config["host"]
+    user = config.get("user", "")
+    password = config.get("password", "")
+    sender = config.get("from", user)
+    port = int(config.get("port", 587))
     message = EmailMessage()
     message["From"] = sender
     message["To"] = draft["destination"]["email"]
@@ -235,6 +244,8 @@ async def send_application(db: Database, settings: Settings, draft_id: str, expe
     _validate_destination(draft["destination"])
     if not draft["message_data"].get("body") or not draft["resume_data"].get("name"):
         raise ValueError("Complete the message and resume before sending")
+    if draft["destination"]["kind"] == "email":
+        _validated_smtp_config(settings)
     resume_path = Path(draft["resume_path"])
     if not resume_path.is_file() or hashlib.sha256(resume_path.read_bytes()).hexdigest() != draft["resume_hash"]:
         raise ValueError("Reviewed resume PDF has changed or is missing")

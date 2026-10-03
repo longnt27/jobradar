@@ -1,6 +1,6 @@
 # Missing SMTP configuration creates a permanent duplicate-send lock
 
-- **Status:** Open
+- **Status:** Closed
 - **Severity:** High
 - **Labels:** `bug`, `applications`, `email`
 
@@ -29,3 +29,7 @@ The first call returned `submitted_unconfirmed` with 'configure-smtp'; the secon
 ## Acceptance criteria
 
 Validate SMTP settings before inserting a submission record; reserve uncertain status for attempts that may have reached the transport.
+
+## Resolution
+
+SMTP configuration is validated before a submission record is created. A missing host, sender, or supported port returns a validation error and leaves the draft retryable.
