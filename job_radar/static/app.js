@@ -111,6 +111,7 @@ async function loadJobs() {
 
 async function showJob(id) {
   activeJob = id;
+  document.querySelectorAll('[data-job]').forEach((node) => node.classList.toggle('is-selected', node.dataset.job === id));
   const job = await api(`/api/jobs/${id}`);
   const profile = await api('/api/profile');
   const provider = profile.drafting_provider || '';
