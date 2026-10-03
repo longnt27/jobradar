@@ -1,6 +1,6 @@
 # Form controls inherit bold label weight and reduce readability
 
-- **Status:** Open
+- **Status:** Closed
 - **Severity:** Low
 - **Labels:** `bug`, `ui`, `visual`
 
@@ -29,3 +29,7 @@ The summary, project bullets, and other long textarea values appeared bold and d
 ## Acceptance criteria
 
 Set a normal font weight on editable controls while keeping label text bold.
+
+## Resolution
+
+Editable inputs, selects, and textareas explicitly use normal font weight while their labels remain bold. Browser computed-style verification measured label weight 700 and input weight 400.
