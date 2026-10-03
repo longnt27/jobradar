@@ -190,6 +190,13 @@ async def _send_web(settings: Settings, draft: dict) -> tuple[str, str]:
             form = page.locator("form").nth(form_data["form_index"])
             fields = form.locator("input,select,textarea")
             answers = form_data.get("answers", {})
+            required_radio_groups = {}
+            for field in current["fields"]:
+                if field["type"] == "radio" and field["required"]:
+                    required_radio_groups.setdefault(field["name"] or str(field["index"]), []).append(field)
+            for group in required_radio_groups.values():
+                if not any(str(answers.get(str(field["index"]), "")).casefold() in ("yes", "true", "checked") for field in group):
+                    return "needs_user_attention", f"Review required choice: {group[0]['label']}"
             for field in current["fields"]:
                 locator = fields.nth(field["index"])
                 kind = field["type"]
@@ -203,7 +210,7 @@ async def _send_web(settings: Settings, draft: dict) -> tuple[str, str]:
                 elif kind in ("checkbox", "radio"):
                     if answer.casefold() in ("yes", "true", "checked"):
                         await locator.check()
-                    elif field["required"]:
+                    elif kind == "checkbox" and field["required"]:
                         return "needs_user_attention", f"Review required choice: {field['label']}"
                 elif kind == "select":
                     if answer:

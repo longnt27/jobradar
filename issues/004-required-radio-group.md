@@ -1,6 +1,6 @@
 # Required radio group rejects the unselected choice
 
-- **Status:** Open
+- **Status:** Closed
 - **Severity:** High
 - **Labels:** `bug`, `applications`, `web-forms`
 
@@ -29,3 +29,7 @@ The app returned `needs_user_attention: Review required choice: No` before submi
 ## Acceptance criteria
 
 Group radios by name; require one selected option per required group and check only that option.
+
+## Resolution
+
+Required radio inputs are validated as a named group; selecting one choice satisfies the group. An end-to-end application form test covers the submission.

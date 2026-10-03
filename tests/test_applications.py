@@ -141,3 +141,43 @@ def test_static_thank_you_text_does_not_confirm_blocked_form(tmp_path: Path) -> 
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_required_radio_group_accepts_one_reviewed_choice(tmp_path: Path) -> None:
+    posted = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = b'<html><body><form method="post"><label>Yes <input type="radio" name="authorized" value="yes" required></label><label>No <input type="radio" name="authorized" value="no" required></label><button>Apply</button></form></body></html>'
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self):
+            posted.append(self.rfile.read(int(self.headers["Content-Length"])))
+            body = b"<html><body>Thank you. Application received.</body></html>"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        client = TestClient(create_app(Settings(tmp_path)))
+        draft = _prepared(client, f"http://127.0.0.1:{server.server_port}/apply")
+        inspected = client.post(f"/api/applications/{draft['id']}/inspect").json()
+        form_data = inspected["form_data"]
+        radios = [field for field in form_data["fields"] if field["type"] == "radio"]
+        form_data["answers"][str(radios[0]["index"])] = "yes"
+        reviewed = client.patch(f"/api/applications/{draft['id']}", json={"form_data": form_data}).json()
+        result = client.post(f"/api/applications/{draft['id']}/send", json={"package_hash": reviewed["package_hash"]})
+        assert result.json()["status"] == "submitted_confirmed"
+        assert len(posted) == 1
+    finally:
+        server.shutdown()
+        server.server_close()
