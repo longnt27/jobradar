@@ -1,6 +1,6 @@
 # Changing an employer career URL keeps the old source enabled
 
-- **Status:** Open
+- **Status:** Closed
 - **Severity:** Medium
 - **Labels:** `bug`, `employers`, `scanning`
 
@@ -29,3 +29,7 @@ Both A and B remained enabled and scheduled in the isolated QA app.
 ## Acceptance criteria
 
 Replace or disable the superseded source when the URL is changed.
+
+## Resolution
+
+Changing an employer career URL disables that employer’s other career sources and enables or creates the selected source. A regression test covers switching from A to B and back.

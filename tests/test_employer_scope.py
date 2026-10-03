@@ -36,3 +36,14 @@ def test_upgrade_disables_old_hcm_feed_and_hides_its_history(tmp_path: Path) -> 
     assert not client.get("/api/jobs").json()
     assert all(source["name"] != "ACB careers" for source in client.get("/api/sources?kind=career").json())
     assert db.one("SELECT enabled FROM sources WHERE id=?", (source_id,))["enabled"] == 0
+
+
+def test_changing_career_url_disables_superseded_source(tmp_path: Path) -> None:
+    client = TestClient(create_app(Settings(tmp_path)))
+    employer_id = client.post("/api/employers", json={"name": "Example QA", "career_url": "https://example.org/jobs/old"}).json()["id"]
+    assert client.patch(f"/api/employers/{employer_id}", json={"career_url": "https://example.org/jobs/new"}).status_code == 200
+    rows = client.app.state.db.all("SELECT url,enabled FROM sources WHERE employer_id=? ORDER BY url", (employer_id,))
+    assert rows == [{"url": "https://example.org/jobs/new", "enabled": 1}, {"url": "https://example.org/jobs/old", "enabled": 0}]
+    assert client.patch(f"/api/employers/{employer_id}", json={"career_url": "https://example.org/jobs/old"}).status_code == 200
+    rows = client.app.state.db.all("SELECT url,enabled FROM sources WHERE employer_id=? ORDER BY url", (employer_id,))
+    assert rows == [{"url": "https://example.org/jobs/new", "enabled": 0}, {"url": "https://example.org/jobs/old", "enabled": 1}]

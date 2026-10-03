@@ -157,7 +157,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         parts = urlsplit(url)
         if parts.scheme not in ("http", "https") or not parts.hostname:
             raise HTTPException(422, "Career page must be an HTTP or HTTPS URL")
-        if not db.one("SELECT id FROM sources WHERE employer_id=? AND kind='career' AND url=?", (employer_id, url)):
+        db.execute("UPDATE sources SET enabled=0 WHERE employer_id=? AND kind='career' AND url<>?", (employer_id, url))
+        if db.one("SELECT id FROM sources WHERE employer_id=? AND kind='career' AND url=?", (employer_id, url)):
+            db.execute("UPDATE sources SET enabled=1 WHERE employer_id=? AND kind='career' AND url=?", (employer_id, url))
+        else:
             db.execute("INSERT INTO sources(id,kind,name,url,employer_id,interval_minutes,created_at) VALUES(?,?,?,?,?,?,?)",
                        (new_id(), "career", f"{name} careers", url, employer_id, 240, now()))
 
