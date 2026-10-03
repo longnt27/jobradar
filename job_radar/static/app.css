@@ -54,3 +54,33 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .toolbar button{flex:none}
 @media(max-width:600px){.toolbar{flex-wrap:wrap}.toolbar input{flex-basis:100%}.toolbar select{flex:1}}
 @media(max-width:900px){#job-list{position:static;max-height:none;overflow:visible}}
+.project-add-panel h3{margin-bottom:8px}
+.project-add-panel>.hint{margin:0 0 18px}
+.project-add-form{display:flex;align-items:end;gap:12px}
+.project-add-form label{flex:1;min-width:0}
+.project-add-form button{white-space:nowrap}
+#project-provider-status{margin:12px 0 0}
+#project-add-status:not(:empty){margin:14px 0;color:#28684b}
+#github-repos:not(:empty){border-top:1px solid #e5ece7;margin-top:20px;padding-top:18px}
+.project-results-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+#repo-filter{margin-bottom:12px}
+.project-results-list{max-height:380px;overflow:auto;padding-right:4px}
+.project-repo-row{display:flex;justify-content:space-between;align-items:center;gap:18px;border:1px solid #e3eae6;border-radius:10px;padding:13px 15px}
+.project-repo-row strong{font-size:13px}
+.project-repo-row p{margin:5px 0 0}
+.project-repo-row .actions{margin:0;flex:none}
+.project-workspace{display:grid;grid-template-columns:minmax(220px,300px) minmax(0,1fr);gap:18px;align-items:start}
+.project-list-row{width:100%;text-align:left;background:#fff;border:1px solid #e3eae6;border-radius:10px;padding:14px;cursor:pointer}
+.project-list-row:hover,.project-list-row.is-selected{border-color:#58a57a;background:#f6fbf7}
+.project-list-row strong{display:block;font-size:13px;margin-bottom:6px}
+.project-list-row .pill{margin:0 0 5px}
+.project-list-row small{display:block;color:#72837e;overflow-wrap:anywhere;line-height:1.4}
+#project-editor{border:1px solid #e3eae6;border-radius:12px;padding:20px;min-height:250px}
+.project-editor-head{display:flex;align-items:start;justify-content:space-between;gap:12px}
+.project-editor-head h3{font-size:20px;margin:5px 0 0}
+.project-editor-head .pill{flex:none}
+.project-editor-empty{color:#72837e;padding:70px 20px;text-align:center}
+.project-fields{display:grid;gap:14px;margin:20px 0}
+#project-review-status:not(:empty){color:#28684b}
+@media(max-width:900px){.project-workspace{grid-template-columns:1fr}#evidence-list{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:600px){.project-add-form,.project-repo-row{display:block}.project-add-form button{margin-top:12px}.project-repo-row .actions{margin-top:10px}#evidence-list{grid-template-columns:1fr}}

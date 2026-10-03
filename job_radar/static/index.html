@@ -117,9 +117,22 @@
 
       <section id="projects" class="tab subpage">
         <button class="back-link" data-tab="profile">← My profile</button>
-        <div class="section-head"><p>Select real GitHub repositories. Review drafted project claims before approval.</p></div>
-        <div class="two-col"><div class="panel"><h3>Find your repositories</h3><form id="github-form" class="form-grid"><label class="full">GitHub username<input name="username" placeholder="your-username" required></label><button class="primary" type="submit">Find repositories</button></form><div id="github-repos" class="stack"></div></div><div class="panel"><h3>Import one repository</h3><p class="hint">Inspection reads files and history without running repository code.</p><p id="project-provider-status" class="hint"></p><form id="repo-form" class="form-grid"><label class="full">Repository URL<input type="url" name="url" placeholder="https://github.com/you/project" required></label><button class="primary" type="submit">Inspect and draft project</button></form></div></div>
-        <div class="panel"><h3>Selected projects</h3><div id="evidence-list" class="stack"></div></div>
+        <div class="panel project-add-panel">
+          <h3>Add a GitHub project</h3>
+          <p class="hint">Enter your GitHub username to browse your public repos, or paste a repository URL to add it directly.</p>
+          <form id="project-add-form" class="project-add-form">
+            <label class="full">GitHub username or repository URL<input id="project-github-input" name="github" placeholder="your-username or https://github.com/you/project" autocomplete="off" required></label>
+            <button class="primary" type="submit">Continue</button>
+          </form>
+          <p id="project-provider-status" class="hint"></p>
+          <button id="project-provider-action" class="text-button" type="button" hidden>Choose a provider in My profile →</button>
+          <p id="project-add-status" class="hint" role="status" aria-live="polite"></p>
+          <div id="github-repos"></div>
+        </div>
+        <div class="panel">
+          <div class="section-head"><div><h3>Your projects</h3><p class="hint">Review a draft before using it in tailored resumes.</p></div><span id="selected-project-count" class="pill muted"></span></div>
+          <div class="project-workspace"><div id="evidence-list" class="stack"></div><div id="project-editor"></div></div>
+        </div>
       </section>
 
       <section id="sources" class="tab subpage">

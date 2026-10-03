@@ -2,6 +2,10 @@ const $ = (selector) => document.querySelector(selector);
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const when = (value) => value ? new Date(value).toLocaleString() : 'Never';
 let activeJob = null;
+let projectCards = [];
+let discoveredRepos = [];
+let selectedProjectId = null;
+let projectProviderReady = false;
 
 function formatDescription(value) {
   const blocks = String(value ?? '').replace(/\r\n/g, '\n').split(/\n{2,}/).map((part) => part.trim()).filter(Boolean);
@@ -204,7 +208,7 @@ async function loadProfile() {
   $('#resume-status').textContent = hasResume ? 'Replace or update' : 'PDF or manual entry';
   $('#resume-panel').open = Boolean(profile.drafting_provider && !hasResume);
   $('#pdf-resume-form button[type="submit"]').disabled = !profile.drafting_provider || !availability[profile.drafting_provider];
-  const projectCount = cards.filter((card) => card.kind === 'project').length;
+  const projectCount = cards.filter((card) => card.kind === 'project' && card.approved).length;
   $('#profile-summary').textContent = hasResume
     ? `${profile.name} · ${profile.email}. ${(profile.experience || []).length} previous position${profile.experience?.length === 1 ? '' : 's'} and ${projectCount} selected project${projectCount === 1 ? '' : 's'}.`
     : 'Import a resume PDF or enter your details manually. You can review and edit every field.';
@@ -306,32 +310,108 @@ async function saveApplication(id, draft) {
   await api(`/api/applications/${id}`, {method:'PATCH', body:JSON.stringify(payload)});
   notice('Application saved');
 }
-async function loadEvidence() {
-  const cards = (await api('/api/evidence')).filter((card) => card.kind === 'project');
-  const profile = await api('/api/profile');
-  $('#project-provider-status').textContent = profile.drafting_provider ? `Using ${profile.drafting_provider}. Change it in Profile.` : 'Choose a drafting provider in Profile first.';
-  $('#repo-form button[type="submit"]').disabled = !profile.drafting_provider;
-  $('#evidence-list').innerHTML = cards.length ? cards.map((card) => `<div class="item">
-    <div class="item-title">${escapeHtml(card.title)} <span class="pill ${card.approved ? '' : 'warning'}">${card.approved ? 'Approved' : 'Needs review'}</span></div>
-    <div class="item-meta">${card.repository_url ? `<a href="${escapeHtml(card.repository_url)}" target="_blank" rel="noopener noreferrer">Repository ↗</a> · Commit ${escapeHtml(card.commit_sha?.slice(0, 8))}` : 'Manual project'}</div>
-    <label>Project title<input data-project-title="${card.id}" value="${escapeHtml(card.title)}"></label>
-    <label>Technologies<input data-project-stack="${card.id}" value="${escapeHtml((JSON.parse(card.details || '{}').tech_stack || []).join(', '))}"></label>
-    <label class="full">Project bullets <span class="hint">One per line. Review contribution and outcome claims before approval.</span><textarea data-project-claims="${card.id}" rows="5">${escapeHtml((JSON.parse(card.details || '{}').bullets || [card.claim]).join('\n'))}</textarea></label>
-    <div class="actions"><button data-save-evidence="${card.id}">Save project</button><button data-approve-evidence="${card.id}" data-approved="${!!card.approved}">${card.approved ? 'Revoke approval' : 'Approve project'}</button>${card.repository_url && !card.approved ? `<button data-generate-project="${card.id}">Generate again</button>` : ''}</div>
-  </div>`).join('') : '<div class="empty">No selected projects yet. Choose a GitHub repository above.</div>';
-  const content = (id) => { const bullets = $(`[data-project-claims="${id}"]`).value.split('\n').map((x) => x.trim()).filter(Boolean); return {title:$(`[data-project-title="${id}"]`).value.trim(), claim:bullets[0] || '', details:{tech_stack:$(`[data-project-stack="${id}"]`).value.split(',').map((x) => x.trim()).filter(Boolean), bullets}}; };
-  document.querySelectorAll('[data-save-evidence]').forEach((button) => button.addEventListener('click', async () => {
-    try { await api(`/api/evidence/${button.dataset.saveEvidence}`, {method:'PATCH', body:JSON.stringify(content(button.dataset.saveEvidence))}); notice('Project saved'); await loadEvidence(); }
-    catch(error) { notice(error.message, true); }
+function renderRepositoryResults(filter = '') {
+  const target = $('#github-repos');
+  if (!discoveredRepos.length) return;
+  const query = filter.trim().toLowerCase();
+  const visible = discoveredRepos.filter((repo) => `${repo.name} ${repo.description || ''} ${repo.language || ''}`.toLowerCase().includes(query));
+  target.innerHTML = `<div class="project-results-head"><strong>Repositories</strong><span class="hint">${visible.length} of ${discoveredRepos.length}</span></div>
+    <input id="repo-filter" type="search" aria-label="Filter repositories" placeholder="Filter by name or language" value="${escapeHtml(filter)}">
+    <div class="project-results-list stack">${visible.length ? visible.map((repo) => {
+      const saved = projectCards.find((card) => card.repository_url && normalizeRepoUrl(card.repository_url) === normalizeRepoUrl(repo.url));
+      return `<div class="project-repo-row"><div><strong>${escapeHtml(repo.name)}</strong>${repo.fork ? ' <span class="pill muted">Fork</span>' : ''}
+        <p class="hint">${escapeHtml(repo.description || 'No description')}${repo.language ? ` · ${escapeHtml(repo.language)}` : ''}</p></div>
+        <div class="actions"><button data-add-repo="${escapeHtml(repo.url)}" ${saved ? '' : !projectProviderReady ? 'disabled' : ''}>${saved ? 'Review project' : 'Add project'}</button><a href="${escapeHtml(repo.url)}" target="_blank" rel="noopener noreferrer">Open ↗</a></div></div>`;
+    }).join('') : '<div class="empty">No repositories match that filter.</div>'}</div>`;
+  $('#repo-filter').addEventListener('input', (event) => {
+    const caret = event.target.selectionStart;
+    renderRepositoryResults(event.target.value);
+    $('#repo-filter').focus();
+    $('#repo-filter').setSelectionRange(caret, caret);
+  });
+  target.querySelectorAll('[data-add-repo]').forEach((button) => button.addEventListener('click', async () => {
+    const saved = projectCards.find((card) => card.repository_url && normalizeRepoUrl(card.repository_url) === normalizeRepoUrl(button.dataset.addRepo));
+    if (saved) {
+      selectedProjectId = saved.id;
+      await loadEvidence(saved.id);
+      $('#project-editor').scrollIntoView({behavior:'smooth', block:'start'});
+      return;
+    }
+    await inspectSelectedRepository(button.dataset.addRepo, button);
   }));
-  document.querySelectorAll('[data-approve-evidence]').forEach((button) => button.addEventListener('click', async () => {
-    try { await api(`/api/evidence/${button.dataset.approveEvidence}`, {method:'PATCH', body:JSON.stringify({...content(button.dataset.approveEvidence), approved:button.dataset.approved !== 'true'})}); notice('Project updated'); await loadEvidence(); }
-    catch(error) { notice(error.message, true); }
+}
+
+function normalizeRepoUrl(value) {
+  return value.replace(/\.git\/?$/, '').replace(/\/$/, '');
+}
+
+async function loadEvidence(focusId = null) {
+  const [allCards, profile, setup] = await Promise.all([api('/api/evidence'), api('/api/profile'), api('/api/setup')]);
+  projectCards = allCards.filter((card) => card.kind === 'project');
+  if (focusId) selectedProjectId = focusId;
+  if (!projectCards.some((card) => card.id === selectedProjectId)) selectedProjectId = projectCards.find((card) => !card.approved)?.id || projectCards[0]?.id || null;
+  const availability = {codex:setup.providers.codex, codex_local:setup.providers.codex && setup.providers.ollama,
+    agy:setup.providers.agy, claude:setup.providers.claude};
+  projectProviderReady = Boolean(profile.drafting_provider && availability[profile.drafting_provider]);
+  $('#project-provider-status').textContent = projectProviderReady
+    ? `Project drafts use ${profile.drafting_provider}. You can change this in My profile.`
+    : 'Choose an available AI provider in My profile before adding a project.';
+  $('#project-provider-action').hidden = projectProviderReady;
+  const readyCount = projectCards.filter((card) => card.approved).length;
+  $('#selected-project-count').textContent = `${readyCount} ready for resumes`;
+  $('#evidence-list').innerHTML = projectCards.length ? projectCards.map((card) => `<button class="project-list-row ${card.id === selectedProjectId ? 'is-selected' : ''}" data-open-project="${card.id}" type="button">
+    <strong>${escapeHtml(card.title)}</strong><span class="pill ${card.approved ? '' : 'warning'}">${card.approved ? 'Ready for resume' : 'Needs review'}</span>
+    <small>${escapeHtml(card.repository_url || 'Manual project')}</small></button>`).join('') : '<div class="empty">No projects yet. Enter your GitHub username or a repository URL above.</div>';
+  document.querySelectorAll('[data-open-project]').forEach((button) => button.addEventListener('click', async () => {
+    selectedProjectId = button.dataset.openProject;
+    await loadEvidence(selectedProjectId);
   }));
-  document.querySelectorAll('[data-generate-project]').forEach((button) => button.addEventListener('click', async () => {
-    try { button.disabled = true; notice('Generating project content'); await api(`/api/evidence/${button.dataset.generateProject}/generate`, {method:'POST',body:'{}'}); await loadEvidence(); notice('Project draft ready for review'); }
-    catch(error) { notice(error.message, true); button.disabled = false; }
-  }));
+  const card = projectCards.find((item) => item.id === selectedProjectId);
+  if (!card) {
+    $('#project-editor').innerHTML = '<div class="project-editor-empty">Your AI-drafted project will appear here for review.</div>';
+    renderRepositoryResults($('#repo-filter')?.value || '');
+    return;
+  }
+  const details = JSON.parse(card.details || '{}');
+  $('#project-editor').innerHTML = `<div class="project-editor-head"><div><p class="eyebrow">REVIEW PROJECT</p><h3>${escapeHtml(card.title)}</h3></div><span class="pill ${card.approved ? '' : 'warning'}">${card.approved ? 'Ready for resume' : 'Needs review'}</span></div>
+    <p class="hint">Check the generated claims against your own work. Only projects marked ready can be used in an application.</p>
+    ${card.repository_url ? `<p class="item-meta"><a href="${escapeHtml(card.repository_url)}" target="_blank" rel="noopener noreferrer">Open repository ↗</a> · Commit ${escapeHtml(card.commit_sha?.slice(0, 8))}</p>` : ''}
+    <div class="project-fields"><label>Project title<input id="project-edit-title" value="${escapeHtml(card.title)}"></label>
+      <label>Project summary<textarea id="project-edit-summary" rows="3" placeholder="What the project does">${escapeHtml(details.summary || '')}</textarea></label>
+      <label>Technologies<input id="project-edit-stack" value="${escapeHtml((details.tech_stack || []).join(', '))}" placeholder="Python, React, ..."></label>
+      <label>What this project demonstrates <span class="hint">One resume bullet per line</span><textarea id="project-edit-bullets" rows="7">${escapeHtml((details.bullets || [card.claim]).join('\n'))}</textarea></label></div>
+    <p id="project-review-status" class="hint" role="status" aria-live="polite"></p>
+    <div class="actions"><button id="project-save" class="secondary">${card.approved ? 'Save changes' : 'Save draft'}</button>
+      <button id="project-approval" class="${card.approved ? 'secondary' : 'primary'}">${card.approved ? 'Remove from resumes' : 'Save and use on resumes'}</button>
+      ${card.repository_url && !card.approved ? '<button id="project-regenerate" class="secondary">Generate again</button>' : ''}</div>`;
+  const content = () => {
+    const bullets = $('#project-edit-bullets').value.split('\n').map((line) => line.trim()).filter(Boolean);
+    const title = $('#project-edit-title').value.trim();
+    if (title.length < 2 || !bullets.length || bullets[0].length < 5) throw new Error('Add a project title and at least one specific bullet before saving.');
+    return {title, claim:bullets[0], details:{...details, summary:$('#project-edit-summary').value.trim(), tech_stack:$('#project-edit-stack').value.split(',').map((item) => item.trim()).filter(Boolean), bullets}};
+  };
+  const save = async (approved) => {
+    const status = $('#project-review-status');
+    try {
+      status.textContent = 'Saving project…';
+      await api(`/api/evidence/${card.id}`, {method:'PATCH', body:JSON.stringify({...content(), approved})});
+      await loadEvidence(card.id);
+      $('#project-review-status').textContent = approved ? 'Saved. This project can now be used in tailored resumes.' : 'Saved. This project will stay out of resumes until you approve it.';
+    } catch(error) { status.textContent = error.message; notice(error.message, true); }
+  };
+  $('#project-save').addEventListener('click', () => save(Boolean(card.approved)));
+  $('#project-approval').addEventListener('click', () => save(!card.approved));
+  $('#project-regenerate')?.addEventListener('click', async (event) => {
+    const button = event.target;
+    try {
+      button.disabled = true;
+      $('#project-review-status').textContent = 'Generating a new draft from the repository…';
+      await api(`/api/evidence/${card.id}/generate`, {method:'POST', body:'{}'});
+      await loadEvidence(card.id);
+      $('#project-review-status').textContent = 'New draft ready. Review it before using it in resumes.';
+    } catch(error) { $('#project-review-status').textContent = error.message; button.disabled = false; }
+  });
+  renderRepositoryResults($('#repo-filter')?.value || '');
 }
 
 document.querySelectorAll('[data-tab]').forEach((button) => button.addEventListener('click', () => showTab(button.dataset.tab)));
@@ -496,33 +576,70 @@ $('#position-form').addEventListener('submit', async (event) => {
   } catch(error) { notice(error.message, true); }
 });
 
-async function inspectSelectedRepository(url) {
-  notice('Inspecting repository and drafting project content…');
-  const result = await api('/api/repositories/inspect', {method:'POST', body:JSON.stringify({url})});
-  await loadEvidence();
-  notice(result.generation_warning ? `Repository inspected. Project writing needs attention: ${result.generation_warning}` : 'Project draft ready. Review and approve it before preparing applications.', !!result.generation_warning);
+async function inspectSelectedRepository(url, button = null) {
+  if (!projectProviderReady) {
+    $('#project-add-status').textContent = 'Choose an available AI provider in My profile first.';
+    return;
+  }
+  if (button) button.disabled = true;
+  $('#project-add-status').textContent = 'Reading the repository and drafting a project description. This can take a minute…';
+  try {
+    const result = await api('/api/repositories/inspect', {method:'POST', body:JSON.stringify({url})});
+    await loadEvidence(result.evidence_id);
+    $('#project-add-status').textContent = result.generation_warning
+      ? `Repository added, but the draft needs attention: ${result.generation_warning}`
+      : 'Project draft ready. Review the claims below, then choose “Save and use on resumes”.';
+    $('#project-editor').scrollIntoView({behavior:'smooth', block:'start'});
+  } catch(error) {
+    $('#project-add-status').textContent = error.message;
+    notice(error.message, true);
+  } finally { if (button && button.isConnected) button.disabled = false; }
 }
 
-$('#repo-form').addEventListener('submit', async (event) => {
-  event.preventDefault();
-  try {
-    const data = Object.fromEntries(new FormData(event.target));
-    await inspectSelectedRepository(data.url);
-    event.target.reset();
-  } catch(error) { notice(error.message, true); }
+function parseGitHubEntry(input) {
+  const value = input.trim().replace(/^@/, '');
+  if (/^[A-Za-z0-9][A-Za-z0-9-]*$/.test(value)) return {username:value};
+  let url;
+  try { url = new URL(value); } catch { throw new Error('Enter a GitHub username or an HTTPS repository URL.'); }
+  if (url.protocol !== 'https:' || url.hostname !== 'github.com' || url.search || url.hash) throw new Error('Use a github.com profile or HTTPS repository URL.');
+  const segments = url.pathname.split('/').filter(Boolean);
+  if (segments.length === 1) return {username:segments[0]};
+  if (segments.length === 2) return {repository:url.href};
+  throw new Error('Use a GitHub profile or repository URL.');
+}
+
+$('#project-provider-action').addEventListener('click', () => {
+  showTab('profile');
+  $('#provider-panel').open = true;
+  $('#provider-panel').scrollIntoView({behavior:'smooth', block:'start'});
 });
 
-$('#github-form').addEventListener('submit', async (event) => {
+$('#project-add-form').addEventListener('submit', async (event) => {
   event.preventDefault();
+  const button = event.target.querySelector('button[type="submit"]');
   try {
-    const username = new FormData(event.target).get('username').trim();
-    const repos = await api(`/api/github/${encodeURIComponent(username)}/repositories`);
-    $('#github-repos').innerHTML = repos.length ? repos.map((repo) => `<div class="item"><div class="item-title">${escapeHtml(repo.name)} ${repo.fork ? '<span class="pill muted">Fork</span>' : ''}</div><div class="item-meta">${escapeHtml(repo.description || 'No description')} · ${escapeHtml(repo.language || 'Unknown language')}</div><div class="actions"><button data-inspect-repo="${escapeHtml(repo.url)}">Inspect</button><a href="${escapeHtml(repo.url)}" target="_blank" rel="noopener noreferrer">Open ↗</a></div></div>`).join('') : '<div class="empty">No public repositories found.</div>';
-    document.querySelectorAll('[data-inspect-repo]').forEach((button) => button.addEventListener('click', async () => {
-      try { await inspectSelectedRepository(button.dataset.inspectRepo); }
-      catch(error) { notice(error.message, true); }
-    }));
-  } catch(error) { notice(error.message, true); }
+    const entry = parseGitHubEntry($('#project-github-input').value);
+    if (entry.repository) {
+      const saved = projectCards.find((card) => card.repository_url && normalizeRepoUrl(card.repository_url) === normalizeRepoUrl(entry.repository));
+      if (saved) {
+        await loadEvidence(saved.id);
+        $('#project-add-status').textContent = 'This repository is already in your projects. Review it below.';
+        $('#project-editor').scrollIntoView({behavior:'smooth', block:'start'});
+        return;
+      }
+      await inspectSelectedRepository(entry.repository, button);
+      return;
+    }
+    button.disabled = true;
+    $('#project-add-status').textContent = `Finding public repositories for ${entry.username}…`;
+    discoveredRepos = await api(`/api/github/${encodeURIComponent(entry.username)}/repositories`);
+    $('#project-add-status').textContent = discoveredRepos.length
+      ? `Choose a repository below. Job Radar will draft its description for your review.`
+      : 'No public repositories found for this username.';
+    $('#github-repos').innerHTML = discoveredRepos.length ? '' : '<div class="empty">No public repositories found.</div>';
+    renderRepositoryResults();
+  } catch(error) { $('#project-add-status').textContent = error.message; notice(error.message, true); }
+  finally { button.disabled = false; }
 });
 
 for (const selector of ['#scan-due','#scan-all']) $(selector).addEventListener('click', async () => {
