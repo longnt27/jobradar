@@ -45,6 +45,15 @@ def test_telegram_first_time_blank_token_returns_validation_error(tmp_path: Path
     assert not (tmp_path / "telegram.json").exists()
 
 
+def test_changing_telegram_bot_resets_review_polling(tmp_path: Path) -> None:
+    app = create_app(Settings(tmp_path))
+    client = TestClient(app)
+    assert client.post("/api/setup/telegram", json={"token": "old-token", "chat_id": "42"}).status_code == 200
+    app.state.db.set_setting("telegram_review_offset", 900)
+    assert client.post("/api/setup/telegram", json={"token": "new-token", "chat_id": "43"}).status_code == 200
+    assert app.state.db.get_setting("telegram_review_offset") == 0
+
+
 def test_telegram_chat_lookup_uses_token_without_exposing_it(tmp_path: Path, monkeypatch) -> None:
     client = TestClient(create_app(Settings(tmp_path)))
     seen = []

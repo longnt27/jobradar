@@ -118,6 +118,10 @@ class SendInput(BaseModel):
     package_hash: str = Field(min_length=64, max_length=64)
 
 
+class RegenerateInput(BaseModel):
+    prompt: str = Field(min_length=1, max_length=2000)
+
+
 class SmtpInput(BaseModel):
     host: str = Field(min_length=2)
     port: Literal[465, 587] = 587
@@ -269,10 +273,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/setup/telegram")
     def configure_alerts(payload: TelegramInput):
-        token = payload.token.strip() or telegram_config(settings).get("token", "")
+        previous = telegram_config(settings)
+        token = payload.token.strip() or previous.get("token", "")
         if not token:
             raise HTTPException(422, "Enter a bot token to configure Telegram alerts")
         save_telegram(settings, {"token": token, "chat_id": payload.chat_id})
+        if token != previous.get("token") or str(payload.chat_id) != str(previous.get("chat_id", "")):
+            db.set_setting("telegram_review_offset", 0)
+            db.execute(
+                "UPDATE auto_application_attempts SET telegram_status='pending',telegram_error=NULL,"
+                "telegram_message_id=NULL WHERE status IN ('awaiting_review','needs_review') AND draft_id IS NOT NULL"
+            )
         profile = db.get_setting("profile", {})
         profile["alert_min_score"] = payload.min_score
         db.set_setting("profile", profile)
@@ -674,9 +685,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return PROVIDERS
 
     @app.post("/api/jobs/{job_id}/prepare")
-    def prepare(job_id: str, payload: PrepareInput):
+    async def prepare(job_id: str, payload: PrepareInput):
         try:
-            return prepare_draft(db, settings, job_id, payload.provider or configured_provider())
+            draft = await asyncio.to_thread(prepare_draft, db, settings, job_id, payload.provider or configured_provider())
+            auto_apply_manager.register_review(draft)
+            await auto_apply_manager.notify_review(draft["id"])
+            return draft
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
         except (ValueError, RuntimeError) as error:
@@ -685,21 +699,39 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/applications")
     def applications():
         rows = db.all("SELECT id FROM application_drafts ORDER BY created_at DESC LIMIT 100")
-        return [get_draft(db, row["id"]) for row in rows]
+        reviews = {row["draft_id"]: row for row in db.all(
+            "SELECT draft_id,status,telegram_status FROM auto_application_attempts WHERE draft_id IS NOT NULL")}
+        return [{**get_draft(db, row["id"]),
+                 "review_status": reviews.get(row["id"], {}).get("status"),
+                 "telegram_status": reviews.get(row["id"], {}).get("telegram_status")}
+                for row in rows]
 
     @app.get("/api/applications/{draft_id}")
     def application(draft_id: str):
         try:
             draft = get_draft(db, draft_id)
             reasons = send_readiness(db, settings, draft)
-            return {**draft, "send_ready": not reasons, "send_blockers": reasons}
+            review = db.one("SELECT status,review_hash,telegram_status,telegram_error FROM auto_application_attempts WHERE draft_id=?", (draft_id,))
+            return {**draft, "send_ready": not reasons, "send_blockers": reasons,
+                    "review_status": review["status"] if review else None,
+                    "review_hash": review["review_hash"] if review else None,
+                    "telegram_status": review["telegram_status"] if review else None,
+                    "telegram_error": review["telegram_error"] if review else None}
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
 
+    def require_editable_application(draft_id: str) -> None:
+        review = db.one("SELECT status FROM auto_application_attempts WHERE draft_id=?", (draft_id,))
+        if review and review["status"] in ("sending", "regenerating"):
+            raise HTTPException(409, "This application is being processed. Try again when it finishes.")
+
     @app.patch("/api/applications/{draft_id}")
-    def edit_application(draft_id: str, updates: dict[str, Any] = Body(...)):
+    async def edit_application(draft_id: str, updates: dict[str, Any] = Body(...)):
+        require_editable_application(draft_id)
         try:
-            return update_draft(db, settings, draft_id, updates)
+            draft = await asyncio.to_thread(update_draft, db, settings, draft_id, updates)
+            await auto_apply_manager.notify_review(draft_id)
+            return draft
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
         except ValueError as error:
@@ -718,6 +750,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/applications/{draft_id}/attachments")
     async def upload_application_attachment(draft_id: str, file: UploadFile = File(...)):
+        require_editable_application(draft_id)
         try:
             draft = get_draft(db, draft_id)
         except KeyError as error:
@@ -736,9 +769,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/applications/{draft_id}/inspect")
     async def inspect_application(draft_id: str):
+        require_editable_application(draft_id)
         try:
             async with scan_manager.browser_lock:
-                return await inspect_form(db, settings, draft_id)
+                draft = await inspect_form(db, settings, draft_id)
+            await auto_apply_manager.notify_review(draft_id)
+            return draft
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
         except (ValueError, RuntimeError) as error:
@@ -748,10 +784,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def send(draft_id: str, payload: SendInput):
         try:
             async with scan_manager.browser_lock:
-                return await send_application(db, settings, draft_id, payload.package_hash)
+                result = await send_application(db, settings, draft_id, payload.package_hash)
+            attempt = db.one("SELECT vacancy_id FROM auto_application_attempts WHERE draft_id=?", (draft_id,))
+            if attempt:
+                auto_apply_manager._set_status(attempt["vacancy_id"],
+                    "sent" if result["status"] in ("sent_confirmed", "submitted_confirmed") else "needs_review",
+                    result.get("receipt") or result.get("error") or result["status"], draft_id)
+            return result
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
         except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+
+    @app.post("/api/applications/{draft_id}/approve")
+    async def approve_application(draft_id: str, payload: SendInput):
+        try:
+            return await auto_apply_manager.approve(draft_id, payload.package_hash)
+        except KeyError as error:
+            raise HTTPException(404, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+
+    @app.post("/api/applications/{draft_id}/regenerate")
+    async def regenerate_application(draft_id: str, payload: RegenerateInput):
+        try:
+            return await auto_apply_manager.regenerate(draft_id, payload.prompt)
+        except KeyError as error:
+            raise HTTPException(404, str(error)) from error
+        except (ValueError, RuntimeError) as error:
             raise HTTPException(422, str(error)) from error
 
     @app.get("/api/submissions")

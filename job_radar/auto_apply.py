@@ -1,4 +1,4 @@
-"""Opt-in automatic applications for newly discovered, locally scored jobs."""
+"""Opt-in automatic drafting for newly discovered, locally scored jobs."""
 
 from __future__ import annotations
 
@@ -7,9 +7,13 @@ import json
 import logging
 import re
 
+import httpx
+
 from .apply import inspect_form, send_application, send_readiness
 from .db import Database, now
-from .drafting import get_draft, prepare_draft
+from .drafting import get_draft, prepare_draft, regenerate_draft
+from .notifications import telegram_config
+from .review_telegram import _post, send_review_packet
 from .settings import Settings
 
 
@@ -35,6 +39,7 @@ class AutoApplyManager:
         self.settings = settings
         self.browser_lock = browser_lock
         self.task: asyncio.Task | None = None
+        self.telegram_task: asyncio.Task | None = None
         self.wake_event = asyncio.Event()
         self.loop: asyncio.AbstractEventLoop | None = None
 
@@ -73,23 +78,37 @@ class AutoApplyManager:
 
     async def start(self) -> None:
         self.loop = asyncio.get_running_loop()
+        self.wake_event = asyncio.Event()
         self.db.execute(
-            "UPDATE auto_application_attempts SET status='needs_review',detail='Job Radar restarted during preparation; review before sending',updated_at=? "
-            "WHERE status='preparing'", (now(),))
+            "UPDATE auto_application_attempts SET status='needs_review',telegram_status='pending',"
+            "detail='Job Radar restarted during an application step; review its outcome before sending',updated_at=? "
+            "WHERE status IN ('preparing','regenerating','sending')", (now(),))
         self.task = asyncio.create_task(self._loop())
+        self.telegram_task = asyncio.create_task(self._telegram_loop())
 
     async def stop(self) -> None:
-        if self.task:
-            self.task.cancel()
-            try:
-                await self.task
-            except asyncio.CancelledError:
-                pass
+        for task in (self.task, self.telegram_task):
+            if task:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
     def _set_status(self, job_id: str, status: str, detail: str = "", draft_id: str | None = None) -> None:
         self.db.execute(
             "UPDATE auto_application_attempts SET status=?,detail=?,draft_id=COALESCE(?,draft_id),updated_at=? WHERE vacancy_id=?",
             (status, detail[:1000], draft_id, now(), job_id),
+        )
+
+    def register_review(self, draft: dict) -> None:
+        self.db.execute(
+            "INSERT INTO auto_application_attempts(vacancy_id,status,draft_id,detail,created_at,updated_at) "
+            "VALUES(?,'needs_review',?,'Preparing review',?,?) "
+            "ON CONFLICT(vacancy_id) DO UPDATE SET status='needs_review',draft_id=excluded.draft_id,"
+            "review_hash=NULL,telegram_status='pending',telegram_error=NULL,telegram_message_id=NULL,"
+            "detail='Preparing review',updated_at=excluded.updated_at",
+            (draft["vacancy_id"], draft["id"], now(), now()),
         )
 
     def _still_eligible(self, job_id: str) -> bool:
@@ -101,8 +120,8 @@ class AutoApplyManager:
 
     async def _process(self, job_id: str) -> None:
         job = self.db.one("SELECT apply_url FROM vacancies WHERE id=?", (job_id,))
-        if not job or not job["apply_url"]:
-            self._set_status(job_id, "needs_review", "No verified application destination. Open the job and prepare it manually.")
+        if not job:
+            self._set_status(job_id, "needs_review", "Job no longer exists.")
             return
         prior = self.db.one("SELECT id FROM submissions WHERE vacancy_id=? LIMIT 1", (job_id,))
         if prior:
@@ -122,8 +141,13 @@ class AutoApplyManager:
             self._set_status(job_id, "needs_review", "Automatic applications paused or job score changed.")
             return
         if draft["destination"].get("kind") == "web":
-            async with self.browser_lock:
-                draft = await inspect_form(self.db, self.settings, draft["id"])
+            try:
+                async with self.browser_lock:
+                    draft = await inspect_form(self.db, self.settings, draft["id"])
+            except (ValueError, RuntimeError) as error:
+                self._set_status(job_id, "needs_review", f"Form inspection needs attention: {error}", draft["id"])
+                await self.notify_review(draft["id"])
+                return
             attachments = {**draft["form_data"].get("attachments", {}),
                            **_safe_attachments(draft["form_data"].get("fields", []))}
             if attachments:
@@ -134,16 +158,210 @@ class AutoApplyManager:
         blockers = send_readiness(self.db, self.settings, draft)
         if blockers:
             self._set_status(job_id, "needs_review", "; ".join(blockers), draft["id"])
+            await self.notify_review(draft["id"])
             return
         if not self._still_eligible(job_id):
             self._set_status(job_id, "needs_review", "Automatic applications paused or job score changed.", draft["id"])
             return
-        async with self.browser_lock:
-            result = await send_application(self.db, self.settings, draft["id"], draft["package_hash"])
+        self._set_status(job_id, "awaiting_review", "Review the complete application before approving.", draft["id"])
+        await self.notify_review(draft["id"])
+
+    async def notify_review(self, draft_id: str) -> None:
+        attempt = self.db.one("SELECT vacancy_id,status FROM auto_application_attempts WHERE draft_id=?", (draft_id,))
+        if not attempt or attempt["status"] in ("sent", "sending", "skipped", "preparing", "regenerating"):
+            return
+        draft = get_draft(self.db, draft_id)
+        blockers = send_readiness(self.db, self.settings, draft)
+        status = "needs_review" if blockers else "awaiting_review"
+        self.db.execute("UPDATE auto_application_attempts SET review_hash=?,status=?,detail=?,telegram_status='pending',telegram_error=NULL,updated_at=? WHERE draft_id=?",
+                        (draft["package_hash"], status, "; ".join(blockers) if blockers else "Review the complete application before approving.", now(), draft_id))
+        config = telegram_config(self.settings)
+        if not config.get("token") or not config.get("chat_id"):
+            self.db.execute("UPDATE auto_application_attempts SET telegram_status='not_configured' WHERE draft_id=?", (draft_id,))
+            return
+        try:
+            message_id = await send_review_packet(self.settings, draft, blockers)
+            if telegram_config(self.settings) == config:
+                self.db.execute("UPDATE auto_application_attempts SET telegram_status='sent',telegram_message_id=?,telegram_error=NULL WHERE draft_id=? AND review_hash=?",
+                                (message_id, draft_id, draft["package_hash"]))
+        except (httpx.HTTPError, OSError, ValueError, RuntimeError) as error:
+            log.warning("Could not deliver application review %s: %s", draft_id, type(error).__name__)
+            if telegram_config(self.settings) == config:
+                self.db.execute("UPDATE auto_application_attempts SET telegram_status='failed',telegram_error=? WHERE draft_id=? AND review_hash=?",
+                                (f"Telegram delivery failed ({type(error).__name__})", draft_id, draft["package_hash"]))
+
+    async def regenerate(self, draft_id: str, prompt: str) -> dict:
+        attempt = self.db.one("SELECT vacancy_id,status FROM auto_application_attempts WHERE draft_id=?", (draft_id,))
+        if not attempt or attempt["status"] in ("sent", "sending", "skipped", "preparing", "regenerating"):
+            raise ValueError("This application cannot be regenerated")
+        self._set_status(attempt["vacancy_id"], "regenerating", "Generating a new draft from your instructions.", draft_id)
+        try:
+            draft = await asyncio.to_thread(regenerate_draft, self.db, self.settings, draft_id, prompt)
+            if draft["destination"].get("kind") == "web":
+                try:
+                    async with self.browser_lock:
+                        draft = await inspect_form(self.db, self.settings, draft_id)
+                    attachments = _safe_attachments(draft["form_data"].get("fields", []))
+                    if attachments:
+                        form_data = {**draft["form_data"], "attachments": attachments}
+                        self.db.execute("UPDATE application_drafts SET form_data=?,updated_at=? WHERE id=?",
+                                        (json.dumps(form_data, ensure_ascii=False), now(), draft_id))
+                except (ValueError, RuntimeError) as error:
+                    self._set_status(attempt["vacancy_id"], "needs_review", f"Form inspection needs attention: {error}", draft_id)
+            self._set_status(attempt["vacancy_id"], "needs_review", "Review the revised application.", draft_id)
+            await self.notify_review(draft_id)
+            return get_draft(self.db, draft_id)
+        except Exception as error:
+            self._set_status(attempt["vacancy_id"], "needs_review", f"Regeneration failed: {str(error)[:500]}", draft_id)
+            raise
+
+    async def approve(self, draft_id: str, expected_hash: str) -> dict:
+        attempt = self.db.one("SELECT * FROM auto_application_attempts WHERE draft_id=?", (draft_id,))
+        if not attempt or attempt["status"] != "awaiting_review":
+            raise ValueError("This application is not awaiting review")
+        draft = get_draft(self.db, draft_id)
+        if expected_hash != attempt["review_hash"] or expected_hash != draft["package_hash"]:
+            raise ValueError("Application changed since review. Review the current draft first")
+        blockers = send_readiness(self.db, self.settings, draft)
+        if blockers:
+            self._set_status(attempt["vacancy_id"], "needs_review", "; ".join(blockers), draft_id)
+            raise ValueError("; ".join(blockers))
+        with self.db.connection() as conn:
+            claimed = conn.execute(
+                "UPDATE auto_application_attempts SET status='sending',detail='Approval received.',updated_at=? "
+                "WHERE draft_id=? AND status='awaiting_review' AND review_hash=?",
+                (now(), draft_id, expected_hash),
+            ).rowcount
+        if not claimed:
+            raise ValueError("This application is already being sent or has changed")
+        try:
+            async with self.browser_lock:
+                result = await send_application(self.db, self.settings, draft_id, expected_hash)
+        except Exception as error:
+            self._set_status(attempt["vacancy_id"], "needs_review", str(error), draft_id)
+            raise
         if result["status"] in ("sent_confirmed", "submitted_confirmed"):
-            self._set_status(job_id, "sent", result.get("receipt", ""), draft["id"])
+            self._set_status(attempt["vacancy_id"], "sent", result.get("receipt", ""), draft_id)
         else:
-            self._set_status(job_id, "needs_review", result.get("error") or result.get("receipt") or result["status"], draft["id"])
+            self._set_status(attempt["vacancy_id"], "needs_review", result.get("error") or result.get("receipt") or result["status"], draft_id)
+        return result
+
+    async def handle_telegram_update(self, update: dict, client: httpx.AsyncClient) -> None:
+        config = telegram_config(self.settings)
+        token, chat_id = config.get("token"), str(config.get("chat_id", ""))
+        if not token or not chat_id:
+            return
+        callback = update.get("callback_query")
+        if not callback:
+            message = update.get("message", {})
+            chat = message.get("chat", {})
+            if (str(chat.get("id")) != chat_id or chat.get("type") != "private"
+                    or str(message.get("from", {}).get("id")) != chat_id):
+                return
+            reply_id = message.get("reply_to_message", {}).get("message_id")
+            pending = self.db.one("SELECT draft_id,review_hash FROM telegram_review_prompts WHERE message_id=?", (reply_id,)) if reply_id else None
+            if not pending:
+                return
+            self.db.execute("DELETE FROM telegram_review_prompts WHERE message_id=?", (reply_id,))
+            attempt = self.db.one("SELECT status,review_hash FROM auto_application_attempts WHERE draft_id=?", (pending["draft_id"],))
+            if not attempt or attempt["status"] not in ("awaiting_review", "needs_review") or attempt["review_hash"] != pending["review_hash"]:
+                await _post(client, token, "sendMessage", json={"chat_id": chat_id, "text": "That review has changed. Use Regenerate on the latest review message."})
+                return
+            instructions = str(message.get("text", "")).strip()
+            if not instructions or len(instructions) > 2000:
+                await _post(client, token, "sendMessage", json={"chat_id": chat_id, "text": "Send custom instructions under 2000 characters."})
+                return
+            await _post(client, token, "sendMessage", json={"chat_id": chat_id, "text": "Regenerating the application. I will send the revised draft for review."})
+            try:
+                await self.regenerate(pending["draft_id"], instructions)
+            except (ValueError, RuntimeError, KeyError):
+                await _post(client, token, "sendMessage", json={"chat_id": chat_id,
+                    "text": "Regeneration failed. Open Applications in Job Radar to review the draft and retry."})
+            return
+        async def answer(value: str) -> None:
+            await _post(client, token, "answerCallbackQuery", json={"callback_query_id": callback["id"],
+                                                              "text": value[:200], "show_alert": False})
+        chat = callback.get("message", {}).get("chat", {})
+        if (str(chat.get("id")) != chat_id or chat.get("type") != "private"
+                or str(callback.get("from", {}).get("id")) != chat_id):
+            await answer("Use the configured private chat to review applications.")
+            return
+        parts = str(callback.get("data", "")).split(":")
+        if len(parts) != 4 or parts[0] != "review" or parts[1] not in ("approve", "edit", "retry"):
+            await answer("Unknown review action.")
+            return
+        _, action, draft_id, version = parts
+        attempt = self.db.one("SELECT status,review_hash FROM auto_application_attempts WHERE draft_id=?", (draft_id,))
+        if not attempt or not attempt["review_hash"] or attempt["review_hash"][:12] != version:
+            await answer("This review is outdated. Open the latest draft in Job Radar.")
+            return
+        draft = get_draft(self.db, draft_id)
+        if draft["package_hash"] != attempt["review_hash"] or attempt["status"] in ("sent", "sending", "skipped"):
+            await answer("This review is outdated. Open the latest draft in Job Radar.")
+            return
+        if action == "approve":
+            if attempt["status"] != "awaiting_review":
+                await answer("This draft needs changes before it can be sent.")
+                return
+            await answer("Approval received. Sending the reviewed version.")
+            try:
+                result = await self.approve(draft_id, draft["package_hash"])
+                reply = f"Application outcome: {result['status']} · {result.get('receipt') or result.get('error') or ''}"
+            except (ValueError, KeyError) as error:
+                reply = f"Application was not sent: {error}"
+            await _post(client, token, "sendMessage", json={"chat_id": chat_id, "text": reply[:4000]})
+        elif action == "edit":
+            await answer("Open the draft in Job Radar to edit every field.")
+            await _post(client, token, "sendMessage", json={"chat_id": chat_id,
+                "text": f"Edit the application on your Mac: http://127.0.0.1:{self.settings.port}/#applications/{draft_id}\nSave it to receive an updated Telegram review."})
+        else:
+            await answer("Reply with your custom instructions for a new draft.")
+            result = await _post(client, token, "sendMessage", json={"chat_id": chat_id,
+                "text": f"Reply to this message with instructions to regenerate {draft['job_title']}. Include only changes you want; Job Radar will preserve your verified facts.",
+                "reply_markup": {"force_reply": True, "selective": True}})
+            self.db.execute("INSERT OR REPLACE INTO telegram_review_prompts(message_id,draft_id,review_hash,created_at) VALUES(?,?,?,?)",
+                            (result["message_id"], draft_id, draft["package_hash"], now()))
+
+    async def _telegram_loop(self) -> None:
+        next_retry = 0.0
+        while True:
+            config = telegram_config(self.settings)
+            if not config.get("token") or not config.get("chat_id"):
+                await asyncio.sleep(5)
+                continue
+            token = config["token"]
+            offset = int(self.db.get_setting("telegram_review_offset", 0))
+            try:
+                current = asyncio.get_running_loop().time()
+                if current >= next_retry:
+                    next_retry = current + 60
+                    undelivered = self.db.all("SELECT draft_id FROM auto_application_attempts WHERE telegram_status IN ('pending','failed','not_configured') "
+                                              "AND status IN ('awaiting_review','needs_review') AND draft_id IS NOT NULL ORDER BY updated_at DESC LIMIT 10")
+                    for item in undelivered:
+                        await self.notify_review(item["draft_id"])
+                async with httpx.AsyncClient(timeout=15) as client:
+                    response = await client.get(f"https://api.telegram.org/bot{token}/getUpdates",
+                        params={"offset": offset, "timeout": 5, "allowed_updates": json.dumps(["callback_query", "message"])})
+                    response.raise_for_status()
+                    payload = response.json()
+                    if not payload.get("ok"):
+                        raise RuntimeError("Telegram update polling failed")
+                    for update in payload.get("result", []):
+                        try:
+                            await self.handle_telegram_update(update, client)
+                        except Exception:
+                            log.exception("Could not process Telegram review update")
+                        offset = max(offset, int(update["update_id"]) + 1)
+                        current_config = telegram_config(self.settings)
+                        if (current_config.get("token") != token
+                                or str(current_config.get("chat_id", "")) != str(config.get("chat_id", ""))):
+                            break
+                        self.db.set_setting("telegram_review_offset", offset)
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                log.warning("Telegram review polling paused: %s", type(error).__name__)
+                await asyncio.sleep(10)
 
     async def _loop(self) -> None:
         while True:

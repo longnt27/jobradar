@@ -167,7 +167,7 @@ async function loadHome() {
     {label:'Add your resume', detail:'Import a PDF or enter details yourself', done:hasProfile, tab:'profile', panel:'resume-panel'},
     {label:'Choose a local matching model', detail:'Extract job requirements and score fit on this Mac', done:!!setup.matching.model, tab:'profile', panel:'matching-panel'},
     {label:setup.browser.sites.length ? 'Sign in to social sites again' : 'Connect LinkedIn and Facebook', detail:setup.browser.sites.length ? `${socialSiteNames(setup.browser)} session expired` : 'Separate one-time sign-in for each site', done:setup.browser.connected_sites.length === 2 && !setup.browser.sites.length, tab:'profile', socialAuth:true},
-    {label:'Telegram job alerts', detail:'Optional: set your bot, chat, and score threshold', done:setup.telegram_configured, tab:'profile', panel:'telegram-panel', optional:true},
+    {label:'Telegram reviews and job alerts', detail:'Connect a private bot chat to review application drafts', done:setup.telegram_configured, tab:'profile', panel:'telegram-panel', optional:true},
     {label:'Select your projects', detail:'Choose GitHub repositories for tailored applications', done:setup.approved_evidence > 0, tab:'projects'},
     {label:'Review live jobs', detail:`${c.vacancies} job${c.vacancies === 1 ? '' : 's'} found; check original postings`, done:false, tab:'jobs'},
   ];
@@ -374,6 +374,9 @@ async function loadPositions() {
 }
 
 function showTab(name, historyMode = 'push') {
+  const requested = name.split('/');
+  const selectedDraft = requested[0] === 'applications' ? requested[1] : null;
+  name = requested[0];
   if (name === 'setup') name = 'profile';
   if (name === 'overview') name = 'home';
   if (!document.getElementById(name)?.classList.contains('tab')) name = 'home';
@@ -386,17 +389,19 @@ function showTab(name, historyMode = 'push') {
   document.querySelectorAll('.sidebar nav [data-tab]').forEach((button) => button.classList.toggle('active', button.dataset.tab === nav));
   $('#page-title').textContent = ({home:'Home',jobs:'Jobs',applications:'Applications',profile:'My profile',
     experience:'Work history',projects:'GitHub projects',sources:'Job sources',employers:'Employers'})[name];
-  if (historyMode === 'replace') history.replaceState({tab:name}, '', `#${name}`);
-  else if (historyMode === 'push' && location.hash !== `#${name}`) history.pushState({tab:name}, '', `#${name}`);
+  const desiredHash = selectedDraft ? `#applications/${selectedDraft}` : `#${name}`;
+  if (historyMode === 'replace') history.replaceState({tab:name}, '', desiredHash);
+  else if (historyMode === 'push' && location.hash !== desiredHash) history.pushState({tab:name}, '', desiredHash);
   window.scrollTo(0, 0);
   if (!['home', 'profile'].includes(name)) refreshSocialAuth().catch((error) => notice(error.message, true));
-  return ({home:loadHome,jobs:loadJobs,applications:loadApplications,experience:loadPositions,projects:loadEvidence,sources:loadSources,employers:loadEmployers,profile:loadProfile})[name]?.().catch((error) => notice(error.message, true));
+  const loader = ({home:loadHome,jobs:loadJobs,applications:loadApplications,experience:loadPositions,projects:loadEvidence,sources:loadSources,employers:loadEmployers,profile:loadProfile})[name];
+  return loader?.(selectedDraft).catch((error) => notice(error.message, true));
 }
 
 async function loadApplications(selectedId = null) {
   await loadAutoApply();
   const drafts = await api('/api/applications');
-  $('#application-list').innerHTML = drafts.length ? drafts.map((draft) => `<button type="button" class="item clickable application-card" data-application="${draft.id}"><div class="item-title">${escapeHtml(draft.job_title)} <span class="pill ${draft.status === 'sent' ? '' : 'warning'}">${escapeHtml(draft.status)}</span></div><div class="item-meta">${escapeHtml(draft.company)} · ${escapeHtml(draft.provider_mode)}</div><div class="item-meta">Updated ${when(draft.updated_at)}</div></button>`).join('') : '<div class="panel empty"><p>No applications yet. Start with a job posting.</p><button id="applications-browse-jobs" class="primary">Browse jobs →</button></div>';
+  $('#application-list').innerHTML = drafts.length ? drafts.map((draft) => `<button type="button" class="item clickable application-card" data-application="${draft.id}"><div class="item-title">${escapeHtml(draft.job_title)} <span class="pill ${draft.review_status === 'awaiting_review' ? '' : 'warning'}">${escapeHtml(draft.review_status === 'awaiting_review' ? 'Ready for review' : draft.review_status === 'needs_review' ? 'Needs changes' : draft.review_status || draft.status)}</span></div><div class="item-meta">${escapeHtml(draft.company)} · ${escapeHtml(draft.provider_mode)}</div><div class="item-meta">Updated ${when(draft.updated_at)}</div></button>`).join('') : '<div class="panel empty"><p>No applications yet. Start with a job posting.</p><button id="applications-browse-jobs" class="primary">Browse jobs →</button></div>';
   $('#applications-browse-jobs')?.addEventListener('click', () => showTab('jobs'));
   document.querySelectorAll('[data-application]').forEach((node) => node.addEventListener('click', () => showApplication(node.dataset.application)));
   if (selectedId) await showApplication(selectedId);
@@ -414,9 +419,9 @@ async function loadAutoApply() {
   $('#auto-apply-status').textContent = data.enabled ? `On · above ${data.threshold}` : 'Off';
   $('#auto-apply-status').className = `pill ${data.enabled ? '' : 'muted'}`;
   const activity = $('#auto-apply-activity');
-  activity.innerHTML = data.recent.length ? `<h4>Recent automatic applications</h4>${data.recent.map((item) =>
+  activity.innerHTML = data.recent.length ? `<h4>Recent prepared drafts</h4>${data.recent.map((item) =>
     `<div class="item"><div class="item-title">${escapeHtml(item.title)} · ${escapeHtml(item.company)} <span class="pill ${item.status === 'sent' ? '' : 'warning'}">${escapeHtml(item.status.replace('_', ' '))}</span></div><div class="item-meta">${item.score == null ? '' : `${escapeHtml(item.score)}/100 · `}${escapeHtml(item.detail || '')}</div><div class="actions">${item.draft_id ? `<button type="button" data-auto-draft="${item.draft_id}">Open application</button>` : `<button type="button" data-auto-job="${item.vacancy_id}">Open job</button>`}</div></div>`
-  ).join('')}` : '<p class="hint">No automatic applications yet.</p>';
+  ).join('')}` : '<p class="hint">No prepared drafts yet.</p>';
   activity.querySelectorAll('[data-auto-draft]').forEach((button) => button.addEventListener('click', () => showApplication(button.dataset.autoDraft).catch((error) => notice(error.message, true))));
   activity.querySelectorAll('[data-auto-job]').forEach((button) => button.addEventListener('click', async () => { await showTab('jobs'); await showJob(button.dataset.autoJob); }));
   if (data.enabled && $('#applications').classList.contains('active')) window.autoApplyPoll = setTimeout(() => loadAutoApply().catch((error) => notice(error.message, true)), 5000);
@@ -429,17 +434,19 @@ $('#auto-apply-form').addEventListener('submit', async (event) => {
     const result = await api('/api/auto-apply', {method:'PUT', body:JSON.stringify({enabled:form.elements.enabled.checked, threshold:Number(form.elements.threshold.value)})});
     delete form.dataset.initialized;
     await loadAutoApply();
-    notice(result.enabled ? `Automatic applications enabled for new jobs scoring above ${result.threshold}.` : 'Automatic applications paused.');
+    notice(result.enabled ? `Automatic drafts enabled for new jobs scoring above ${result.threshold}. Every application waits for your approval.` : 'Automatic draft preparation paused.');
   } catch (error) { notice(error.message, true); }
 });
 
 async function showApplication(id) {
+  if ($('#applications').classList.contains('active') && location.hash !== `#applications/${id}`) history.replaceState({tab:'applications'}, '', `#applications/${id}`);
   const draft = await api(`/api/applications/${id}`);
   const resume = draft.resume_data;
   const message = draft.message_data;
   const destination = draft.destination;
   const projects = resume.projects || [];
   $('#application-detail').innerHTML = `<h2>${escapeHtml(draft.job_title)}</h2><div class="item-meta">${escapeHtml(draft.company)} · ${escapeHtml(draft.provider_mode)}</div>
+    <div class="review-section"><h4>Review status</h4><p>${escapeHtml(draft.review_status === 'awaiting_review' ? 'Waiting for your approval' : draft.review_status === 'needs_review' ? 'Needs changes before sending' : draft.review_status || draft.status)}</p><p class="hint">Telegram: ${escapeHtml(draft.telegram_status || 'Not configured')}${draft.telegram_error ? ` · ${escapeHtml(draft.telegram_error)}` : ''}</p><p class="hint">The Telegram approval button applies only to this saved version of the draft.</p></div>
     <div class="review-section"><h4>Destination</h4><label>Channel<select id="draft-destination-kind"><option value="web" ${destination.kind === 'web' ? 'selected' : ''}>Web form</option><option value="email" ${destination.kind === 'email' ? 'selected' : ''}>Email</option></select></label><label>URL or email address<input id="draft-destination" value="${escapeHtml(destination.url || destination.email || '')}"></label></div>
     <div class="review-section"><h4>Resume</h4><p><a href="/api/applications/${id}/resume" target="_blank">Preview or download PDF ↗</a></p>
       <div class="form-grid"><label>Name<input id="draft-name" value="${escapeHtml(resume.name || '')}"></label><label>Email<input id="draft-email" value="${escapeHtml(resume.email || '')}"></label><label>Phone<input id="draft-phone" value="${escapeHtml(resume.phone || '')}"></label><label>Links, one per line<textarea id="draft-links" rows="2">${escapeHtml((resume.links || []).join('\n'))}</textarea></label></div>
@@ -458,7 +465,17 @@ async function showApplication(id) {
     })() : `<label>${escapeHtml(field.label || field.name || `Field ${field.index}`)}${field.required ? ' *' : ''}<textarea data-answer="${field.index}" rows="2">${escapeHtml(draft.form_data.answers?.[String(field.index)] || '')}</textarea>${field.options?.length ? `<span class="hint">Options: ${field.options.map((option) => escapeHtml(option.value)).join(', ')}</span>` : ''}</label>`).join('') || '<p class="hint">No form fields inspected yet. Inspect the final application URL before sending.</p>'}</div>
     ${draft.warnings.length ? `<div class="review-section"><h4>Review notes</h4>${draft.warnings.map((warning) => `<p class="hint">${escapeHtml(warning)}</p>`).join('')}</div>` : ''}
     ${draft.send_blockers?.length ? `<div class="review-section"><h4>Before sending</h4>${draft.send_blockers.map((reason) => `<p class="hint">${escapeHtml(reason)}</p>`).join('')}</div>` : ''}
-    <div class="actions"><button id="save-draft" class="primary">Save changes</button><button id="inspect-draft">Inspect form</button><button id="send-draft" ${draft.send_ready ? '' : 'disabled'}>Send application</button></div><p class="hint">Package fingerprint: <span class="mono">${escapeHtml(draft.package_hash.slice(0, 16))}</span>. Open the PDF after saving changes.</p><div id="application-outcome" class="hint"></div>`;
+    <div class="review-section"><h4>Regenerate draft</h4><label>Custom instructions for regeneration<textarea id="regenerate-prompt" rows="3" placeholder="Example: emphasize production search work and shorten the opening paragraph"></textarea></label><div class="actions"><button id="regenerate-draft" ${draft.provider === 'template' ? 'disabled' : ''}>Regenerate draft</button></div>${draft.provider === 'template' ? '<p class="hint">This draft used the basic template. Create a new draft with an AI provider to regenerate it with instructions.</p>' : ''}</div>
+    <div class="actions"><button id="edit-draft">Edit details</button><button id="save-draft" class="primary">Save changes</button><button id="inspect-draft">Inspect form</button><button id="send-draft" ${draft.send_ready && draft.review_status === 'awaiting_review' ? '' : 'disabled'}>Approve &amp; send</button></div><p class="hint">Package fingerprint: <span class="mono">${escapeHtml(draft.package_hash.slice(0, 16))}</span>. Open the PDF after saving changes.</p><div id="application-outcome" class="hint"></div>`;
+  $('#edit-draft').addEventListener('click', () => { $('#draft-destination').focus(); $('#draft-destination').scrollIntoView({behavior:'smooth', block:'center'}); });
+  $('#regenerate-draft').addEventListener('click', async () => {
+    const prompt = $('#regenerate-prompt').value.trim();
+    if (!prompt) { notice('Enter custom instructions to regenerate the draft.', true); return; }
+    const button = $('#regenerate-draft');
+    button.disabled = true; button.textContent = 'Regenerating…';
+    try { await api(`/api/applications/${id}/regenerate`, {method:'POST', body:JSON.stringify({prompt})}); await showApplication(id); await loadApplications(id); notice('New draft prepared for review.'); }
+    catch(error) { button.disabled = false; button.textContent = 'Regenerate draft'; notice(error.message, true); }
+  });
   $('#application-detail').querySelectorAll('input,select,textarea').forEach((field) => field.addEventListener('input', () => { $('#send-draft').disabled = true; $('#application-outcome').textContent = 'Save and review your changes before sending.'; }));
   $('#application-detail').querySelectorAll('[data-attachment-file]').forEach((input) => input.addEventListener('change', () => {
     if (input.files.length) {
@@ -479,9 +496,9 @@ async function showApplication(id) {
     const button = $('#send-draft');
     button.disabled = true;
     button.textContent = 'Sending…';
-    try { const result = await api(`/api/applications/${id}/send`, {method:'POST', body:JSON.stringify({package_hash:draft.package_hash})}); $('#application-outcome').textContent = `${result.status}: ${result.receipt || result.error || ''}`; await loadApplications(); notice(`Application outcome: ${result.status}`); }
+    try { const result = await api(`/api/applications/${id}/approve`, {method:'POST', body:JSON.stringify({package_hash:draft.package_hash})}); $('#application-outcome').textContent = `${result.status}: ${result.receipt || result.error || ''}`; await loadApplications(id); notice(`Application outcome: ${result.status}`); }
     catch(error) { notice(error.message, true); }
-    finally { button.textContent = 'Send application'; }
+    finally { button.textContent = 'Approve & send'; }
   });
 }
 

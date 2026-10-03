@@ -158,11 +158,21 @@ CREATE TABLE IF NOT EXISTS auto_application_attempts (
   vacancy_id TEXT PRIMARY KEY REFERENCES vacancies(id),
   status TEXT NOT NULL,
   draft_id TEXT REFERENCES application_drafts(id),
+  review_hash TEXT,
+  telegram_status TEXT NOT NULL DEFAULT 'pending',
+  telegram_error TEXT,
+  telegram_message_id INTEGER,
   detail TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_auto_application_status ON auto_application_attempts(status, updated_at DESC);
+CREATE TABLE IF NOT EXISTS telegram_review_prompts (
+  message_id INTEGER PRIMARY KEY,
+  draft_id TEXT NOT NULL REFERENCES application_drafts(id),
+  review_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS notification_attempts (
   vacancy_id TEXT NOT NULL REFERENCES vacancies(id),
   channel TEXT NOT NULL,
@@ -202,6 +212,15 @@ class Database:
             ):
                 if name not in vacancy_columns:
                     conn.execute(f"ALTER TABLE vacancies ADD COLUMN {name} {definition}")
+            review_columns = {row[1] for row in conn.execute("PRAGMA table_info(auto_application_attempts)")}
+            for name, definition in (
+                ("review_hash", "TEXT"),
+                ("telegram_status", "TEXT NOT NULL DEFAULT 'pending'"),
+                ("telegram_error", "TEXT"),
+                ("telegram_message_id", "INTEGER"),
+            ):
+                if name not in review_columns:
+                    conn.execute(f"ALTER TABLE auto_application_attempts ADD COLUMN {name} {definition}")
             conn.execute("PRAGMA journal_mode=WAL")
 
     @contextmanager

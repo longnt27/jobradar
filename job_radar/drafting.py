@@ -86,7 +86,7 @@ def _template(job: dict, profile: dict, cards: list[dict]) -> ModelDraft:
                       email_subject=f"Application for {job['title']} — {profile.get('name', '')}", email_body=body)
 
 
-def _run_provider(provider: str, job: dict, profile: dict, cards: list[dict]) -> ModelDraft:
+def _run_provider(provider: str, job: dict, profile: dict, cards: list[dict], custom_prompt: str = "") -> ModelDraft:
     payload = {
         "job": {key: job.get(key) for key in ("company", "title", "description", "location")},
         "candidate": {key: profile.get(key) for key in ("name", "summary", "skills", "location", "experience", "education", "achievements")},
@@ -101,7 +101,9 @@ def _run_provider(provider: str, job: dict, profile: dict, cards: list[dict]) ->
               "only in Selected Projects. Write a concise professional summary, application subject, and email body. "
               "Use only facts explicitly present in candidate and approved_projects. "
               "Do not invent contributions, metrics, years, degrees, or technologies. "
-              "Preserve the candidate's name and employer/job title.\n\n"
+              "Preserve the candidate's name and employer/job title. "
+              "Follow the candidate's revision request only where supported by the facts above.\n\n"
+              + (f"Candidate revision request: {custom_prompt[:2000]}\n\n" if custom_prompt else "")
               + json.dumps(payload, ensure_ascii=False)[:30_000])
     return _provider_json(provider, prompt, ModelDraft)
 
@@ -178,7 +180,8 @@ def render_resume(settings: Settings, draft_id: str, resume: dict) -> tuple[str,
     return render_pdf(settings, draft_id, resume)
 
 
-def prepare_draft(db: Database, settings: Settings, vacancy_id: str, provider: str = "codex") -> dict:
+def prepare_draft(db: Database, settings: Settings, vacancy_id: str, provider: str = "codex",
+                  draft_id: str | None = None, custom_prompt: str = "") -> dict:
     if provider not in PROVIDERS:
         raise ValueError("Unsupported drafting provider")
     job = db.one("SELECT * FROM vacancies WHERE id=?", (vacancy_id,))
@@ -192,7 +195,14 @@ def prepare_draft(db: Database, settings: Settings, vacancy_id: str, provider: s
         card["details"] = json.loads(card["details"])
     if not cards and not profile.get("experience"):
         raise ValueError("Add a previous position or approve a GitHub project before preparing an application")
-    model = _template(job, profile, cards) if provider == "template" else _run_provider(provider, job, profile, cards)
+    if custom_prompt and provider == "template":
+        raise ValueError("Choose an AI drafting provider to regenerate with custom instructions")
+    previous = get_draft(db, draft_id) if draft_id else None
+    if previous and (previous["vacancy_id"] != vacancy_id or previous["status"] == "sent"):
+        raise ValueError("This application cannot be regenerated")
+    model = (_template(job, profile, cards) if provider == "template" else
+             _run_provider(provider, job, profile, cards, custom_prompt) if custom_prompt else
+             _run_provider(provider, job, profile, cards))
     by_id = {card["id"]: card for card in cards}
     selected = [by_id[identifier] for identifier in model.selected_evidence_ids if identifier in by_id]
     tailored = {item.evidence_id: item.bullets for item in model.project_bullets}
@@ -211,19 +221,34 @@ def prepare_draft(db: Database, settings: Settings, vacancy_id: str, provider: s
     destination = ({"kind": "email", "email": job["apply_url"].removeprefix("mailto:").split("?", 1)[0]}
                    if job["apply_url"] and job["apply_url"].startswith("mailto:") else
                    {"kind": "web", "url": job["apply_url"]} if job["apply_url"] else {"kind": "unknown", "url": ""})
+    if previous:
+        destination = previous["destination"]
     warnings = []
     if warning := _destination_warning(destination):
         warnings.append(warning)
     if provider != "template":
         warnings.append("Review AI wording for factual accuracy before sending.")
-    identifier = new_id()
+    identifier = draft_id or new_id()
     resume_path, resume_hash = render_resume(settings, identifier, resume)
-    db.execute("INSERT INTO application_drafts(id,vacancy_id,provider,provider_mode,evidence_ids,resume_data,message_data,form_data,destination,resume_path,resume_hash,warnings,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-               (identifier, vacancy_id, provider, PROVIDERS[provider], json.dumps([card["id"] for card in selected]), json.dumps(resume, ensure_ascii=False),
-                json.dumps(message, ensure_ascii=False), "{}", json.dumps(destination), resume_path, resume_hash,
-                json.dumps(warnings), now(), now()))
+    if previous:
+        db.execute("UPDATE application_drafts SET evidence_ids=?,resume_data=?,message_data=?,form_data='{}',destination=?,resume_path=?,resume_hash=?,warnings=?,status='draft',updated_at=? WHERE id=?",
+                   (json.dumps([card["id"] for card in selected]), json.dumps(resume, ensure_ascii=False),
+                    json.dumps(message, ensure_ascii=False), json.dumps(destination), resume_path, resume_hash,
+                    json.dumps(warnings), now(), identifier))
+    else:
+        db.execute("INSERT INTO application_drafts(id,vacancy_id,provider,provider_mode,evidence_ids,resume_data,message_data,form_data,destination,resume_path,resume_hash,warnings,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                   (identifier, vacancy_id, provider, PROVIDERS[provider], json.dumps([card["id"] for card in selected]), json.dumps(resume, ensure_ascii=False),
+                    json.dumps(message, ensure_ascii=False), "{}", json.dumps(destination), resume_path, resume_hash,
+                    json.dumps(warnings), now(), now()))
     db.execute("UPDATE vacancies SET state='prepare',updated_at=? WHERE id=?", (now(), vacancy_id))
     return get_draft(db, identifier)
+
+
+def regenerate_draft(db: Database, settings: Settings, draft_id: str, prompt: str) -> dict:
+    if not prompt.strip() or len(prompt) > 2000:
+        raise ValueError("Enter custom instructions under 2000 characters")
+    previous = get_draft(db, draft_id)
+    return prepare_draft(db, settings, previous["vacancy_id"], previous["provider"], draft_id, prompt.strip())
 
 
 def get_draft(db: Database, identifier: str) -> dict:

@@ -41,6 +41,22 @@ def test_email_send_is_explicit_and_duplicate_protected(tmp_path: Path, monkeypa
     assert snapshot["message_data"]["body"] == draft["message_data"]["body"]
 
 
+def test_manual_application_is_registered_for_review_and_edit_refreshes_version(tmp_path: Path) -> None:
+    app = create_app(Settings(tmp_path))
+    client = TestClient(app)
+    draft = _prepared(client, "https://example.org/apply")
+    status = client.get(f"/api/applications/{draft['id']}").json()
+    assert status["review_status"] == "needs_review"
+    assert status["telegram_status"] == "not_configured"
+    previous_hash = status["package_hash"]
+    updated = client.patch(f"/api/applications/{draft['id']}", json={
+        "message_data": {**status["message_data"], "body": "Revised application message"}})
+    assert updated.status_code == 200, updated.text
+    revised = client.get(f"/api/applications/{draft['id']}").json()
+    assert revised["package_hash"] != previous_hash
+    assert revised["review_hash"] == revised["package_hash"]
+
+
 def test_missing_smtp_settings_do_not_lock_future_send(tmp_path: Path, monkeypatch) -> None:
     client = TestClient(create_app(Settings(tmp_path)))
     draft = _prepared(client, "https://example.org/apply")
