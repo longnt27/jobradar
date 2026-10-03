@@ -18,7 +18,8 @@ def score_job(job: dict[str, Any], profile: dict[str, Any]) -> tuple[int, dict[s
     location = (job.get("location") or "").casefold()
     role_matches = [word for word in ROLE_WORDS if word in title]
     role = 25 if role_matches else (10 if any(word in description for word in ROLE_WORDS) else 0)
-    if any(word in title for word in NEGATIVE_WORDS):
+    negative_role = next((word for word in NEGATIVE_WORDS if re.search(r"\b" + re.escape(word) + r"\b", title)), None)
+    if negative_role:
         role = 0
 
     skills = [str(skill).strip() for skill in profile.get("skills", []) if str(skill).strip()]
@@ -52,7 +53,9 @@ def score_job(job: dict[str, Any], profile: dict[str, Any]) -> tuple[int, dict[s
         f"Matched profile skills: {', '.join(matched_skills[:6]) if matched_skills else 'not yet identified'}. "
         f"Experience: {years_required if years_required is not None else 'not stated'} years stated; not treated as an automatic rejection."
     )
-    return min(100, sum(components.values())), {"components": components, "matched_skills": matched_skills, "years_required": years_required, "explanation": explanation}
+    if negative_role:
+        explanation = f"Excluded role term in title: {negative_role}. " + explanation
+    return min(20 if negative_role else 100, sum(components.values())), {"components": components, "matched_skills": matched_skills, "years_required": years_required, "explanation": explanation, "excluded_role": negative_role}
 
 
 def rescore_vacancies(db: Database, profile: dict[str, Any]) -> None:

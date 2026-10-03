@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from job_radar.settings import Settings
 from job_radar.ingest import ObservedJob, ingest
+from job_radar.ranking import score_job
 from job_radar.web import create_app
 
 
@@ -67,3 +68,10 @@ def test_profile_skill_edit_rescores_existing_jobs(tmp_path: Path) -> None:
     import json
     assert "C++" in json.loads(after["score_detail"])["matched_skills"]
     assert after["score"] > before["score"]
+
+
+def test_negative_role_is_capped_despite_matching_skills() -> None:
+    score, detail = score_job({"title": "Sales Manager", "description": "AI research with Python.", "location": "Hanoi"}, {"skills": ["Python"], "location": "Hanoi"})
+    assert score <= 20
+    assert detail["excluded_role"] == "sales"
+    assert "Excluded role" in detail["explanation"]

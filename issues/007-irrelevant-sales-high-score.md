@@ -1,6 +1,6 @@
 # Obvious non-target role receives a high match score
 
-- **Status:** Open
+- **Status:** Closed
 - **Severity:** Medium
 - **Labels:** `bug`, `ranking`
 
@@ -28,3 +28,7 @@ The role is excluded or receives a clearly low score with an exclusion reason.
 ## Acceptance criteria
 
 Apply an exclusion cap or explicit negative-role decision before combining other components.
+
+## Resolution
+
+Titles with an explicit negative role term are capped at 20/100 and the score explanation names the term. A regression test covers a Sales Manager posting with otherwise matching AI and Python text.
