@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import re
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import parse_qsl, urljoin, urlsplit, urlunsplit, urlencode
 
 import httpx
 from bs4 import BeautifulSoup, NavigableString, Tag
@@ -139,7 +139,7 @@ async def collect_linkedin(context: BrowserContext, source: dict) -> list[Observ
 
 
 RECRUITING = re.compile(r"\b(hiring|recruit|vacancy|apply|tuyển dụng|tuyển|cần tìm|cần tuyển|job opening|we are looking)\b", re.I)
-ROLE = re.compile(r"\b(ai|ml|machine learning|engineer|developer|research|data scientist|llm|computer vision|kỹ sư|lập trình|trí tuệ nhân tạo)\b", re.I)
+ROLE = re.compile(r"\b(ai|ml|machine learning|engineer|engineering|developer|devops|research|data scientist|data analyst|data architect|llm|computer vision|software|architect|fullstack|backend|frontend|technical lead|tech lead|kỹ sư|lập trình|trí tuệ nhân tạo|công nghệ thông tin|khoa học dữ liệu)\b", re.I)
 
 
 async def collect_facebook(context: BrowserContext, source: dict) -> list[ObservedJob]:
@@ -268,9 +268,290 @@ async def collect_career(source: dict) -> list[ObservedJob]:
         return jobs
 
 
+def _career_client() -> httpx.AsyncClient:
+    return httpx.AsyncClient(
+        follow_redirects=True, timeout=30,
+        limits=httpx.Limits(max_connections=6),
+        headers={"User-Agent": "Mozilla/5.0 (compatible; JobRadar/0.1; personal job discovery)"},
+    )
+
+
+def _target_title(title: str) -> bool:
+    return bool(title and len(title) <= 180 and "\n" not in title and ROLE.search(title) and not NON_TARGET_TITLE.search(title)
+                and not GENERIC_CAREER_TITLE.fullmatch(title.strip()))
+
+
+def _expired_posting(text: str) -> bool:
+    """Skip a posting only when its own page shows an explicit past deadline."""
+    match = re.search(
+        r"(?:Application deadline|Hạn nộp hồ sơ|Thời gian ứng tuyển|Deadline)\s*:?\s*"
+        r"(?:\d{1,2}/\d{1,2}\s*[—–-]\s*)?(\d{1,2})/(\d{1,2})/(20\d{2})",
+        text[:3000], re.I,
+    )
+    if not match:
+        return False
+    try:
+        return datetime(int(match[3]), int(match[2]), int(match[1])).date() < datetime.now(timezone.utc).date()
+    except ValueError:
+        return False
+
+
+def _detail_description(soup: BeautifulSoup, preferred: str = "") -> str:
+    selectors = [part.strip() for part in preferred.split(",") if part.strip()]
+    selectors.extend((".jobdescription", ".job_description_content", ".content-article", ".article", "[class*=job-content]", "article", "main"))
+    for selector in selectors:
+        for node in soup.select(selector):
+            value = _structured_text(node)
+            if len(value) >= 100:
+                return value
+    return ""
+
+
+def _detail_title(soup: BeautifulSoup, label: str) -> str:
+    headings = [node.get_text(" ", strip=True) for node in soup.select("h1")]
+    title = next((value for value in headings if _target_title(value)), "")
+    if title:
+        return title
+    if _target_title(label):
+        return label
+    metadata = _meta(soup, "og:title") or (soup.title.get_text(" ", strip=True) if soup.title else "")
+    for separator in (" | ", " - ", " — ", " – "):
+        metadata = metadata.split(separator)[0]
+    return metadata.strip() if _target_title(metadata.strip()) else ""
+
+
+async def collect_html_board(source: dict) -> list[ObservedJob]:
+    config = source["config"]
+    pattern = re.compile(config["link_path"])
+    async with _career_client() as client:
+        response = await client.get(source["url"])
+        response.raise_for_status()
+        root_host = urlsplit(str(response.url)).hostname
+        allowed_hosts = {root_host, *config.get("allowed_hosts", [])}
+        links: dict[str, str] = {}
+        for page in range(min(int(config.get("max_pages", 1)), 12)):
+            if page:
+                if config.get("pagination") == "wordpress":
+                    listing_url = urljoin(source["url"].rstrip("/") + "/", f"page/{page + 1}/")
+                else:
+                    parts = urlsplit(source["url"])
+                    query = dict(parse_qsl(parts.query))
+                    query["page"] = str(page + 1)
+                    listing_url = urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), ""))
+                response = await client.get(listing_url)
+                if response.status_code == 404:
+                    break
+                response.raise_for_status()
+            soup = BeautifulSoup(response.text, "html.parser")
+            before = len(links)
+            for anchor in soup.select("a[href]"):
+                url = urljoin(str(response.url), anchor.get("href", ""))
+                parts = urlsplit(url)
+                if parts.hostname not in allowed_hosts or not pattern.fullmatch(parts.path):
+                    continue
+                label = anchor.get_text(" ", strip=True)
+                if not label or len(label) > 180 or label.casefold() in {"apply", "apply now", "ứng tuyển", "ứng tuyển ngay", "learn more", "xem chi tiết"}:
+                    label = ""
+                clean_url = url.split("?")[0].split("#")[0]
+                if clean_url not in links or label:
+                    links[clean_url] = label
+            if len(links) == before:
+                break
+        jobs: list[ObservedJob] = []
+        for url, label in list(links.items())[:int(config.get("max_results", 80))]:
+            if label and not _target_title(label):
+                continue
+            try:
+                detail = await client.get(url)
+                detail.raise_for_status()
+                item = BeautifulSoup(detail.text, "html.parser")
+                title = _detail_title(item, label)
+                if not _target_title(title):
+                    continue
+                for tag in item(["script", "style", "nav", "footer", "header"]):
+                    tag.decompose()
+                description = _detail_description(item, config.get("description_selector", ""))
+                if len(description) < 100 or _expired_posting(item.get_text(" ", strip=True)):
+                    continue
+                location = _text(item, ("[class*=job-location]", "[class*=location]", "[data-test*=location]"))[:250]
+                jobs.append(ObservedJob(
+                    url=str(detail.url).split("?")[0], title=title[:180],
+                    company=source.get("employer_name") or source["name"],
+                    description=description[:30000], location=location,
+                    raw_text=description[:30000],
+                ))
+            except httpx.HTTPError:
+                continue
+        return jobs
+
+
+async def collect_successfactors(source: dict) -> list[ObservedJob]:
+    config = source["config"]
+    boards = config.get("boards") or [source["url"]]
+    if config.get("queries"):
+        boards = [source["url"].split("?")[0] + "?" + urlencode({"q": query}) for query in config["queries"]]
+    links: dict[str, str] = {}
+    async with _career_client() as client:
+        for board in boards:
+            for page in range(min(int(config.get("max_pages", 1)), 8)):
+                listing_url = urljoin(board, f"{page * 10}/") if "/go/" in board and page else board
+                if page and "/go/" not in board:
+                    break
+                response = await client.get(listing_url)
+                response.raise_for_status()
+                soup = BeautifulSoup(response.text, "html.parser")
+                found = 0
+                for anchor in soup.select('a.jobTitle-link[href*="/job/"]'):
+                    title = anchor.get_text(" ", strip=True)
+                    if not _target_title(title):
+                        continue
+                    url = urljoin(str(response.url), anchor.get("href", ""))
+                    links[url] = title
+                    found += 1
+                if not soup.select('a.jobTitle-link[href*="/job/"]'):
+                    break
+                if page and found == 0:
+                    break
+        jobs: list[ObservedJob] = []
+        for url, label in list(links.items())[:120]:
+            try:
+                response = await client.get(url)
+                response.raise_for_status()
+                soup = BeautifulSoup(response.text, "html.parser")
+                title = _detail_title(soup, label)
+                description = _detail_description(soup, ".jobdescription")
+                if not _target_title(title) or len(description) < 100:
+                    continue
+                jobs.append(ObservedJob(
+                    url=str(response.url), title=title[:180],
+                    company=source.get("employer_name") or source["name"],
+                    description=description[:30000],
+                    location=_text(soup, (".job-location", "[class*=location]"))[:250],
+                    raw_text=description[:30000],
+                ))
+            except httpx.HTTPError:
+                continue
+        return jobs
+
+
+async def collect_vindynamics(source: dict) -> list[ObservedJob]:
+    payload = {
+        "categoryGroupId": "019fcb1c7a097f82bc0497c05ad10a75", "keyword": "",
+        "pageIndex": 0, "pageSize": 100, "languageId": "00000P",
+        "includeContent": True, "attributeFilters": [],
+    }
+    async with _career_client() as client:
+        response = await client.post("https://vindynamics.net/api/Articles/Gets", json=payload)
+        response.raise_for_status()
+        data = response.json()
+    if not data.get("status") or "articles" not in data.get("data", {}):
+        raise RuntimeError("VinDynamics career API returned an unexpected response")
+    jobs = []
+    for item in data["data"]["articles"]:
+        title = str(item.get("title", "")).strip()
+        path = str(item.get("detailUrl", ""))
+        if not _target_title(title) or not path.startswith("/career/"):
+            continue
+        description = _structured_text(BeautifulSoup(item.get("content") or "", "html.parser"))
+        if len(description) < 100:
+            continue
+        location = item.get("attrs", {}).get("location", {})
+        jobs.append(ObservedJob(
+            url=urljoin(source["url"], path), external_id=str(item.get("id") or ""),
+            title=title[:180], company=source.get("employer_name") or "VinDynamics",
+            description=description[:30000], location=location.get("label", "") if isinstance(location, dict) else "",
+            published_at=item.get("publishDate"), raw_text=description[:30000],
+        ))
+    return jobs
+
+
+async def collect_vinrobotics(source: dict) -> list[ObservedJob]:
+    async with _career_client() as client:
+        response = await client.get("https://vinrobotics.net/api/job-description", params={"page": 1, "pageSize": 100, "locale": "en"})
+        response.raise_for_status()
+        data = response.json()
+        if "data" not in data or not isinstance(data["data"], list):
+            raise RuntimeError("VinRobotics career API returned an unexpected response")
+        jobs = []
+        for item in data["data"]:
+            title = str(item.get("title", "")).strip()
+            slug = str(item.get("slug", ""))
+            if not _target_title(title) or not re.fullmatch(r"[a-z0-9-]+", slug):
+                continue
+            url = urljoin(source["url"], "/career/" + slug)
+            try:
+                detail = await client.get(url)
+                detail.raise_for_status()
+                soup = BeautifulSoup(detail.text, "html.parser")
+                node = soup.select_one(".content-logical")
+                description = _structured_text(node) if node else ""
+                if len(description) < 100:
+                    continue
+                jobs.append(ObservedJob(
+                    url=str(detail.url), external_id=str(item.get("id") or ""),
+                    title=title[:180], company=source.get("employer_name") or "VinRobotics",
+                    description=description[:30000], location=str(item.get("location") or "")[:250],
+                    published_at=item.get("publishedAt"), raw_text=description[:30000],
+                ))
+            except httpx.HTTPError:
+                continue
+        return jobs
+
+
+async def collect_smartrecruiters(source: dict) -> list[ObservedJob]:
+    slug = source["config"]["company_slug"]
+    endpoint = f"https://api.smartrecruiters.com/v1/companies/{slug}/postings"
+    async with _career_client() as client:
+        response = await client.get(endpoint, params={"limit": 100})
+        response.raise_for_status()
+        data = response.json()
+        if "content" not in data:
+            raise RuntimeError("SmartRecruiters returned an unexpected response")
+        jobs = []
+        for item in data["content"]:
+            title = str(item.get("name", ""))
+            if not _target_title(title):
+                continue
+            try:
+                released = datetime.fromisoformat(item["releasedDate"].replace("Z", "+00:00"))
+                if released < datetime.now(timezone.utc) - timedelta(days=180):
+                    continue
+                detail = await client.get(f"{endpoint}/{item['id']}")
+                detail.raise_for_status()
+                post = detail.json()
+                sections = post.get("jobAd", {}).get("sections", {})
+                description = "\n\n".join(_structured_text(BeautifulSoup(section.get("text") or "", "html.parser"))
+                                          for section in sections.values() if isinstance(section, dict))
+                if len(description) < 100 or not post.get("active", False):
+                    continue
+                jobs.append(ObservedJob(
+                    url=post["postingUrl"], external_id=str(item["id"]),
+                    title=title[:180], company=source.get("employer_name") or source["name"],
+                    description=description[:30000], location=post.get("location", {}).get("fullLocation", "")[:250],
+                    apply_url=post.get("applyUrl"), published_at=item.get("releasedDate"),
+                    raw_text=description[:30000],
+                ))
+            except (httpx.HTTPError, KeyError, ValueError):
+                continue
+        return jobs
+
+
+CAREER_ADAPTERS = {
+    "legacy": collect_career,
+    "html_board": collect_html_board,
+    "successfactors": collect_successfactors,
+    "vindynamics": collect_vindynamics,
+    "vinrobotics": collect_vinrobotics,
+    "smartrecruiters": collect_smartrecruiters,
+}
+
+
 async def collect_source(settings: Settings, source: dict) -> list[ObservedJob]:
     if source["kind"] == "career":
-        return await collect_career(source)
+        adapter = source.get("config", {}).get("adapter", "legacy")
+        if adapter not in CAREER_ADAPTERS:
+            raise ValueError(f"Unknown career adapter: {adapter}")
+        return await CAREER_ADAPTERS[adapter](source)
     async with async_playwright() as playwright:
         context = await playwright.chromium.launch_persistent_context(
             str(settings.browser_profile), headless=True, viewport={"width": 1365, "height": 900},

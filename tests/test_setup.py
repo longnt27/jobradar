@@ -6,6 +6,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from job_radar.db import Database, now
+from job_radar.feed_catalog import CAREER_FEEDS
 from job_radar.scanner import ScanManager
 from job_radar.seeds import seed
 from job_radar.settings import Settings
@@ -40,10 +41,10 @@ def test_social_scans_wait_for_browser_setup(tmp_path: Path) -> None:
 
     async def run():
         manager = ScanManager(db, settings)
-        assert manager.queue_due() == 1  # VinAI careers only
+        assert manager.queue_due() == len(CAREER_FEEDS)
         await manager.stop()
         db.set_setting("browser_login_completed_at", now())
-        assert manager.queue_due() == 28  # Career page plus 27 LinkedIn searches
+        assert manager.queue_due() == len(CAREER_FEEDS) + 27
         await manager.stop()
 
     asyncio.run(run())

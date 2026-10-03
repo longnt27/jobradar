@@ -4,6 +4,7 @@ import json
 from urllib.parse import urlencode
 
 from .db import Database, new_id, now
+from .feed_catalog import CAREER_FEEDS
 
 
 EMPLOYERS: dict[str, str] = {
@@ -91,6 +92,9 @@ EMPLOYERS: dict[str, str] = {
     "Nokia Vietnam": "global_tech", "Huawei Vietnam": "global_tech",
     "Panasonic Vietnam": "global_tech", "Toyota Vietnam": "global_tech",
     "Honda Vietnam": "global_tech", "Hyundai Motor Vietnam": "global_tech",
+    "TeenCare": "technology", "Golden Gate": "commerce",
+    "Cloud Ace": "technology", "Eastgate Software": "technology",
+    "Innovature BPO": "technology", "TARA JSC": "commerce",
 }
 
 ROLE_TERMS = (
@@ -119,13 +123,24 @@ def seed(db: Database) -> None:
         for name, aliases in EMPLOYER_ALIASES.items():
             conn.execute("UPDATE employers SET aliases=? WHERE name=? AND aliases='[]'",
                          (json.dumps(aliases, ensure_ascii=False), name))
-        vinai = conn.execute("SELECT id FROM employers WHERE name='VinAI'").fetchone()
-        if vinai:
-            career_url = "https://www.vinai.io/careers/"
-            conn.execute("UPDATE employers SET career_url=COALESCE(career_url,?) WHERE id=?", (career_url, vinai[0]))
-            if not conn.execute("SELECT id FROM sources WHERE kind='career' AND employer_id=? AND url=?", (vinai[0], career_url)).fetchone():
-                conn.execute("INSERT INTO sources(id,kind,name,url,employer_id,interval_minutes,created_at) VALUES(?,?,?,?,?,?,?)",
-                             (new_id(), "career", "VinAI careers", career_url, vinai[0], 240, timestamp))
+        for feed in CAREER_FEEDS:
+            employer = conn.execute("SELECT id FROM employers WHERE name=?", (feed.employer,)).fetchone()
+            if not employer:
+                raise ValueError(f"Career feed has no employer: {feed.employer}")
+            conn.execute("UPDATE employers SET career_url=COALESCE(career_url,?) WHERE id=?", (feed.url, employer[0]))
+            config = json.dumps({"adapter": feed.adapter, **feed.options})
+            existing_feed = conn.execute(
+                "SELECT id,config FROM sources WHERE kind='career' AND employer_id=? AND url=?",
+                (employer[0], feed.url),
+            ).fetchone()
+            if existing_feed:
+                if json.loads(existing_feed[1]).get("adapter") != feed.adapter:
+                    conn.execute("UPDATE sources SET config=? WHERE id=?", (config, existing_feed[0]))
+            else:
+                conn.execute(
+                    "INSERT INTO sources(id,kind,name,url,employer_id,interval_minutes,config,created_at) VALUES(?,?,?,?,?,?,?,?)",
+                    (new_id(), "career", f"{feed.employer} careers", feed.url, employer[0], 240, config, timestamp),
+                )
         existing = conn.execute("SELECT COUNT(*) FROM sources WHERE kind='linkedin'").fetchone()[0]
         if not existing:
             for role in ROLE_TERMS:
