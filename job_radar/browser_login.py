@@ -19,7 +19,9 @@ class BrowserLoginManager:
         self.finished = asyncio.Event()
 
     def status(self) -> dict:
-        return {"state": self.state, "error": self.error,
+        sites = [site for site in ("linkedin", "facebook") if self.db.get_setting(f"social_reauth_required_{site}")]
+        state = "reauth_required" if sites and self.state not in ("opening", "open") else self.state
+        return {"state": state, "sites": sites, "error": self.error,
                 "last_saved_at": self.db.get_setting("browser_login_completed_at")}
 
     def start(self) -> dict:
@@ -53,15 +55,19 @@ class BrowserLoginManager:
                     context = await playwright.chromium.launch_persistent_context(
                         str(self.settings.browser_profile), headless=False, viewport={"width": 1365, "height": 900})
                     try:
-                        for url in ("https://www.linkedin.com/login", "https://www.facebook.com/"):
+                        sites = self.status()["sites"] or ["linkedin", "facebook"]
+                        urls = {"linkedin": "https://www.linkedin.com/login", "facebook": "https://www.facebook.com/"}
+                        for site in sites:
                             page = await context.new_page()
                             try:
-                                await page.goto(url, wait_until="domcontentloaded", timeout=20000)
+                                await page.goto(urls[site], wait_until="domcontentloaded", timeout=20000)
                             except Exception:
                                 pass
                         self.state = "open"
                         await self.finished.wait()
                         self.db.set_setting("browser_login_completed_at", now())
+                        for site in sites:
+                            self.db.set_setting(f"social_reauth_required_{site}", None)
                         self.state = "saved"
                     finally:
                         await context.close()

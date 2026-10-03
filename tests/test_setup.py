@@ -6,6 +6,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from job_radar.db import Database, now
+from job_radar.collectors import AuthRequired
 from job_radar.feed_catalog import CAREER_FEEDS
 from job_radar.scanner import ScanManager
 from job_radar.seeds import seed
@@ -77,3 +78,90 @@ def test_browser_setup_flow_can_finish_from_ui(tmp_path: Path, monkeypatch) -> N
                 break
         assert client.post("/api/setup/browser/finish").json()["state"] == "saved"
         assert client.get("/api/setup").json()["browser"]["last_saved_at"]
+
+
+def test_expired_social_session_is_persisted_and_only_that_site_pauses(tmp_path: Path, monkeypatch) -> None:
+    app = create_app(Settings(tmp_path))
+    db = app.state.db
+    db.set_setting("browser_login_completed_at", now())
+    linkedin = db.one("SELECT id FROM sources WHERE kind='linkedin' LIMIT 1")["id"]
+    added = TestClient(app).post("/api/sources", json={"kind": "facebook", "name": "Test AI group",
+        "url": "https://www.facebook.com/groups/12345"})
+    assert added.status_code == 201
+    alerts = []
+    monkeypatch.setattr("job_radar.scanner.notify_social_sign_in_required", lambda site: alerts.append(site), raising=False)
+
+    async def expired(_settings, _source):
+        raise AuthRequired("Login or verification is required in the browser profile")
+
+    monkeypatch.setattr("job_radar.scanner.collect_source", expired)
+
+    async def run():
+        result = await app.state.scan_manager.run_source(linkedin)
+        assert result["status"] == "auth_required"
+        assert app.state.scan_manager.queue_due() == len(CAREER_FEEDS) + 1
+        await app.state.scan_manager.stop()
+
+    asyncio.run(run())
+    browser = TestClient(app).get("/api/setup").json()["browser"]
+    assert browser["state"] == "reauth_required"
+    assert browser["sites"] == ["linkedin"]
+    assert browser["last_saved_at"]
+    assert alerts == ["linkedin"]
+    blocked = asyncio.run(app.state.scan_manager.run_source(linkedin))
+    assert blocked["status"] == "auth_required"
+    assert alerts == ["linkedin"]
+
+
+def test_signing_in_again_reuses_browser_profile_and_clears_expiry(tmp_path: Path, monkeypatch) -> None:
+    app = create_app(Settings(tmp_path))
+    db = app.state.db
+    db.set_setting("browser_login_completed_at", now())
+    db.set_setting("social_reauth_required_linkedin", {"detected_at": now()})
+    opened = []
+    profiles = []
+
+    class FakePage:
+        async def goto(self, url, **_kwargs):
+            opened.append(url)
+
+    class FakeContext:
+        async def new_page(self):
+            return FakePage()
+
+        async def close(self):
+            pass
+
+    class FakeChromium:
+        async def launch_persistent_context(self, path, **_kwargs):
+            profiles.append(path)
+            return FakeContext()
+
+    class FakePlaywright:
+        chromium = FakeChromium()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            pass
+
+    monkeypatch.setattr("job_radar.browser_login.async_playwright", FakePlaywright)
+    manager = app.state.login_manager
+
+    async def run():
+        assert manager.status()["state"] == "reauth_required"
+        manager.start()
+        for _ in range(100):
+            if manager.state == "open":
+                break
+            await asyncio.sleep(.01)
+        assert manager.state == "open"
+        return await manager.finish()
+
+    saved = asyncio.run(run())
+    assert saved["state"] == "saved"
+    assert saved["sites"] == []
+    assert profiles == [str(Settings(tmp_path).browser_profile)]
+    assert opened == ["https://www.linkedin.com/login"]
+    assert TestClient(create_app(Settings(tmp_path))).get("/api/setup").json()["browser"]["state"] == "saved"

@@ -3,12 +3,27 @@ from __future__ import annotations
 import getpass
 import json
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 import httpx
 
 from .db import Database, now
 from .settings import Settings
+
+
+def notify_social_sign_in_required(site: str) -> None:
+    """Show one local alert when a saved social session first needs renewal."""
+    if sys.platform != "darwin":
+        return
+    label = {"linkedin": "LinkedIn", "facebook": "Facebook"}.get(site)
+    if not label:
+        return
+    subprocess.run(
+        ["osascript", "-e", f'display notification "{label} sign-in expired. Open Job Radar to sign in again." with title "Job Radar"'],
+        capture_output=True, timeout=5, check=False,
+    )
 
 
 def configure_telegram(settings: Settings) -> None:

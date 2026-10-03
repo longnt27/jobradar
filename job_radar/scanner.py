@@ -9,7 +9,7 @@ from .collectors import AuthRequired, collect_source
 from .db import Database, new_id, now
 from .employer_scope import HCMC_NAMES
 from .ingest import ingest
-from .notifications import notify_new_jobs
+from .notifications import notify_new_jobs, notify_social_sign_in_required
 from .settings import Settings
 
 
@@ -56,7 +56,9 @@ class ScanManager:
         current = datetime.now(timezone.utc)
         due = []
         for source in sources:
-            if source["kind"] in ("linkedin", "facebook") and not browser_ready:
+            if source["kind"] in ("linkedin", "facebook") and (
+                not browser_ready or self.db.get_setting(f"social_reauth_required_{source['kind']}")
+            ):
                 continue
             try:
                 last = datetime.fromisoformat(source["last_attempt_at"]) if source["last_attempt_at"] else None
@@ -84,6 +86,8 @@ class ScanManager:
             raise KeyError("Source not found")
         if source["employer_id"] and self.db.one("SELECT id FROM employers WHERE id=? AND coverage_status='excluded_hcm'", (source["employer_id"],)):
             raise ValueError("HCMC-based employer is outside the crawl scope")
+        if source["kind"] in ("linkedin", "facebook") and self.db.get_setting(f"social_reauth_required_{source['kind']}"):
+            return {"status": "auth_required", "error": f"Sign in to {source['kind'].capitalize()} again in Profile"}
         if source_id in self.active:
             return {"status": "already_running"}
         source["config"] = json.loads(source["config"])
@@ -122,6 +126,14 @@ class ScanManager:
             status = "auth_required" if isinstance(error, AuthRequired) else "failed"
             self.db.execute("UPDATE scan_runs SET finished_at=?,status=?,detail=? WHERE id=?", (now(), status, str(error)[:1000], run_id))
             self.db.execute("UPDATE sources SET last_status=? WHERE id=?", (status, source_id))
+            if status == "auth_required" and source["kind"] in ("linkedin", "facebook"):
+                key = f"social_reauth_required_{source['kind']}"
+                if not self.db.get_setting(key):
+                    self.db.set_setting(key, {"source_id": source_id, "detected_at": now()})
+                    try:
+                        await asyncio.to_thread(notify_social_sign_in_required, source["kind"])
+                    except Exception as alert_error:
+                        log.warning("Could not show local sign-in alert: %s", alert_error)
             log.warning("Scan %s failed: %s", source["name"], error)
             return {"run_id": run_id, "status": status, "error": str(error)}
         finally:
