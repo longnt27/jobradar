@@ -1,6 +1,6 @@
 # Jobs search input collapses to a few pixels
 
-- **Status:** Open
+- **Status:** Closed
 - **Severity:** Medium
 - **Labels:** `bug`, `ui`, `responsive`
 
@@ -29,3 +29,7 @@ Visual QA showed an approximately 20-pixel-wide input at both tested widths.
 ## Acceptance criteria
 
 Constrain the select width and give the search input a real minimum; stack controls at narrow widths.
+
+## Resolution
+
+The job search has a real minimum width, while the state selector stays constrained and the controls wrap on narrow screens. Browser checks measured the search field at 630 px in a 1200 px viewport and 339 px in a 375 px viewport.
