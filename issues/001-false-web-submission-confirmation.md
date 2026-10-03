@@ -1,6 +1,6 @@
 # False web submission confirmation when browser validation blocks the form
 
-- **Status:** Open
+- **Status:** Closed
 - **Severity:** Critical
 - **Labels:** `bug`, `applications`, `data-integrity`
 
@@ -29,3 +29,7 @@ The API returns `submitted_confirmed` and changes the draft to `sent`. The local
 ## Acceptance criteria
 
 Confirm submission only from a post-submit transition or receipt specific to that attempt; check browser validity before clicking and never use static page text alone.
+
+## Resolution
+
+The sender checks browser field validity before clicking Submit. Confirmation now requires both an observed submission request and a page transition or changed response text; pre-existing thank-you copy cannot confirm an attempt.

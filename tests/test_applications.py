@@ -84,3 +84,42 @@ def test_web_form_inspection_and_one_click_submit(tmp_path: Path) -> None:
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_static_thank_you_text_does_not_confirm_blocked_form(tmp_path: Path) -> None:
+    posted = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = b'<html><body><p>Thank you for visiting our careers page.</p><form method="post"><label>Email <input type="email" name="email" required></label><button>Apply</button></form></body></html>'
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self):
+            posted.append(True)
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        client = TestClient(create_app(Settings(tmp_path)))
+        draft = _prepared(client, f"http://127.0.0.1:{server.server_port}/apply")
+        inspected = client.post(f"/api/applications/{draft['id']}/inspect").json()
+        form_data = inspected["form_data"]
+        email_field = next(field for field in form_data["fields"] if field["type"] == "email")
+        form_data["answers"][str(email_field["index"])] = "invalid-email"
+        reviewed = client.patch(f"/api/applications/{draft['id']}", json={"form_data": form_data}).json()
+        outcome = client.post(f"/api/applications/{draft['id']}/send", json={"package_hash": reviewed["package_hash"]})
+        assert outcome.json()["status"] == "needs_user_attention"
+        assert not posted
+        assert client.get(f"/api/applications/{draft['id']}").json()["status"] == "draft"
+    finally:
+        server.shutdown()
+        server.server_close()

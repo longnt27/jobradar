@@ -208,11 +208,18 @@ async def _send_web(settings: Settings, draft: dict) -> tuple[str, str]:
             submit = form.locator('button:not([type]),button[type="submit"],input[type="submit"]').first
             if not await submit.count():
                 return "needs_user_attention", "No submit control was found on the reviewed form"
+            invalid = form.locator("input:invalid,select:invalid,textarea:invalid").first
+            if await invalid.count():
+                label = await invalid.get_attribute("name") or await invalid.get_attribute("aria-label") or "form field"
+                return "needs_user_attention", f"Review invalid or missing value: {label}"
             before = page.url
+            before_text = (await page.locator("body").inner_text(timeout=7000))[:3000]
+            submitted_requests = []
+            page.on("request", lambda request: submitted_requests.append(request.url) if request.method not in ("GET", "HEAD") else None)
             await submit.click(timeout=15000)
             await page.wait_for_timeout(2500)
             visible = (await page.locator("body").inner_text(timeout=7000))[:3000]
-            if re.search(r"thank you|application (has been |was )?(received|submitted)|successfully applied|cảm ơn|ứng tuyển thành công", visible, re.I):
+            if submitted_requests and (page.url != before or visible != before_text) and re.search(r"thank you|application (has been |was )?(received|submitted)|successfully applied|cảm ơn|ứng tuyển thành công", visible, re.I):
                 return "submitted_confirmed", f"{page.url}: {visible[:500]}"
             if page.url != before and not await page.locator("form").count():
                 return "submitted_unconfirmed", f"Form navigated to {page.url}; confirmation not detected"

@@ -1,6 +1,6 @@
 # Job Radar QA issues
 
-These local Markdown files are open issue cases, one per finding. They have not been posted to GitHub.
+These local Markdown files track QA cases, one per finding. They have not been posted to GitHub. Each case records its current status.
 
 ## Test scope
 
@@ -10,7 +10,7 @@ These local Markdown files are open issue cases, one per finding. They have not 
 - Visual checks: Home, Jobs, Applications, Profile, Projects, Sources, Employers, and generated A4 PDFs.
 - No real application, email, or Telegram alert was sent. External social sign-in and live SMTP were not exercised.
 
-## Open cases
+## Cases
 
 | ID | Severity | Issue |
 | --- | --- | --- |
