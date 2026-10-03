@@ -75,3 +75,13 @@ def test_negative_role_is_capped_despite_matching_skills() -> None:
     assert score <= 20
     assert detail["excluded_role"] == "sales"
     assert "Excluded role" in detail["explanation"]
+
+
+def test_literal_cpp_search_returns_matching_job(tmp_path: Path) -> None:
+    client = TestClient(create_app(Settings(tmp_path)))
+    job = client.post("/api/jobs/import", json={"company": "Example", "title": "C++ Engineer",
+        "description": "Build native systems.", "apply_url": "https://example.org/apply"}).json()
+    response = client.get("/api/jobs", params={"q": "C++"})
+    assert response.status_code == 200
+    assert [row["id"] for row in response.json()] == [job["id"]]
+    assert client.get("/api/jobs", params={"q": "C%"}).json() == []

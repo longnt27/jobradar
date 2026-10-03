@@ -432,13 +432,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 row["source"] = by_id.get(row["id"])
             return rows
         if q.strip():
-            try:
-                return with_sources(db.all(
-                    "SELECT v.* FROM vacancy_fts f JOIN vacancies v ON v.id=f.vacancy_id WHERE vacancy_fts MATCH ? AND (?='' OR v.state=?) AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm') ORDER BY v.score DESC,v.first_seen_at DESC LIMIT ?",
-                    (q.strip(), state, state, limit),
-                ))
-            except Exception as error:
-                raise HTTPException(422, f"Invalid search: {error}") from error
+            terms = q.strip().split()
+            predicates = " AND ".join("(v.title LIKE ? ESCAPE '\\' OR v.company LIKE ? ESCAPE '\\' OR v.description LIKE ? ESCAPE '\\')" for _ in terms)
+            values = tuple(value for term in terms for value in (["%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"] * 3))
+            return with_sources(db.all(
+                f"SELECT v.* FROM vacancies v WHERE {predicates} AND (?='' OR v.state=?) AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm') ORDER BY v.score DESC,v.first_seen_at DESC LIMIT ?",
+                (*values, state, state, limit),
+            ))
         return with_sources(db.all(
             "SELECT v.* FROM vacancies v WHERE (?='' OR v.state=?) AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm') ORDER BY v.score DESC,v.first_seen_at DESC LIMIT ?",
             (state, state, limit),

@@ -1,6 +1,6 @@
 # Literal C++ job search returns an FTS syntax error
 
-- **Status:** Open
+- **Status:** Closed
 - **Severity:** Medium
 - **Labels:** `bug`, `search`
 
@@ -28,3 +28,7 @@ The API returned 422 with `fts5: syntax error near '+'`; the UI displayed `Inval
 ## Acceptance criteria
 
 Escape/tokenize ordinary search text before MATCH, or provide a documented advanced-query mode separately.
+
+## Resolution
+
+Ordinary search is now split into literal terms and matched against job title, company, and description with escaped SQL LIKE patterns. This handles C++ and treats wildcard characters literally. A regression test covers both.
