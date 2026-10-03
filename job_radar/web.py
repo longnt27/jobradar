@@ -176,6 +176,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             counts["employers"] = conn.execute("SELECT COUNT(*) FROM employers WHERE coverage_status!='excluded_hcm'").fetchone()[0]
             counts["vacancies"] = conn.execute("SELECT COUNT(*) FROM vacancies v WHERE NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm')").fetchone()[0]
             counts["active_sources"] = conn.execute("SELECT COUNT(*) FROM sources WHERE enabled=1").fetchone()[0]
+            counts["career_sources_enabled"] = conn.execute("SELECT COUNT(*) FROM sources WHERE enabled=1 AND kind='career'").fetchone()[0]
         recent = db.all("SELECT scan_runs.*, sources.name AS source_name FROM scan_runs JOIN sources ON sources.id=scan_runs.source_id ORDER BY started_at DESC LIMIT 10")
         return {"counts": counts, "recent_runs": recent, "data_dir": str(settings.data_dir)}
 

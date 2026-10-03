@@ -68,9 +68,16 @@ async function loadHome() {
   const [data, profile, setup] = await Promise.all([api('/api/status'), api('/api/profile'), api('/api/setup')]);
   const c = data.counts;
   $('#metrics').innerHTML = [
-    ['Jobs found', c.vacancies], ['Sources enabled', c.active_sources],
+    ['Jobs found', c.vacancies], ['Company career feeds', c.career_sources_enabled],
     ['Applications', c.application_drafts], ['Sent', c.submissions],
   ].map(([label, value]) => `<div class="metric"><strong>${value}</strong><span>${label}</span></div>`).join('');
+  const socialSources = [
+    setup.linkedin_searches ? `${setup.linkedin_searches} LinkedIn searches` : '',
+    setup.facebook_groups ? `${setup.facebook_groups} Facebook groups` : '',
+  ].filter(Boolean);
+  $('#source-summary').textContent = socialSources.length
+    ? `${socialSources.join(' and ')} ${setup.browser.last_saved_at ? 'have a saved browser session.' : 'are waiting for browser sign-in before scans can run.'}`
+    : 'Company career feeds scan every four hours.';
   const hasProfile = Boolean(profile.name && profile.email);
   const steps = [
     {label:'Choose an AI provider', detail:'One choice for resume import and application drafts', done:!!profile.drafting_provider, tab:'profile'},

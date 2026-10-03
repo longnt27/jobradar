@@ -38,3 +38,16 @@ def test_source_can_be_paused(tmp_path: Path) -> None:
     assert client.patch(f"/api/sources/{source['id']}", json={"enabled": False}).status_code == 200
     updated = next(row for row in client.get("/api/sources?kind=linkedin").json() if row["id"] == source["id"])
     assert updated["enabled"] is False
+
+
+def test_status_separates_company_feeds_from_social_searches(tmp_path: Path) -> None:
+    client = TestClient(create_app(Settings(tmp_path)))
+    counts = client.get("/api/status").json()["counts"]
+    assert counts["career_sources_enabled"] == 43
+    assert counts["active_sources"] == 70
+
+    career = client.get("/api/sources?kind=career").json()[0]
+    assert client.patch(f"/api/sources/{career['id']}", json={"enabled": False}).status_code == 200
+    counts = client.get("/api/status").json()["counts"]
+    assert counts["career_sources_enabled"] == 42
+    assert counts["active_sources"] == 69
