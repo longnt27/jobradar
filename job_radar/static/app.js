@@ -118,6 +118,10 @@ async function loadJobs() {
     } catch(error) { notice(error.message, true); }
   }));
   if (activeJob && jobs.some((job) => job.id === activeJob)) await showJob(activeJob);
+  else {
+    activeJob = null;
+    $('#job-detail').innerHTML = `<div class="empty">${jobs.length ? 'Select a job to see details.' : 'No job matches this search.'}</div>`;
+  }
 }
 
 async function showJob(id) {

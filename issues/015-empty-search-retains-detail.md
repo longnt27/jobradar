@@ -1,6 +1,6 @@
 # Empty job search keeps an unrelated selected job visible
 
-- **Status:** Open
+- **Status:** Closed
 - **Severity:** Medium
 - **Labels:** `bug`, `ui`, `search`
 
@@ -28,3 +28,7 @@ The list said `No jobs found` while the previous job title and action buttons st
 ## Acceptance criteria
 
 Clear `activeJob` and the detail panel whenever the selected job is absent from the filtered results.
+
+## Resolution
+
+Job list refresh now clears the selected job and replaces its detail panel when that job is absent from the filtered results. Browser verification selected an existing job, searched for an unmatched term, and saw zero cards with “No job matches this search.”
