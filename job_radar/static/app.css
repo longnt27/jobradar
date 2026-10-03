@@ -103,3 +103,9 @@ input,textarea,select{font-weight:400}
 .social-sign-in-content>.inline-details{margin:19px 0}
 .social-sign-in-content>.text-button{margin-top:4px}
 @media(max-width:600px){#social-auth-banner{align-items:stretch;flex-direction:column}#social-auth-banner button{align-self:flex-start}}
+.social-site-row{display:flex;align-items:center;justify-content:space-between;gap:16px;border:1px solid #e3eae6;border-radius:10px;padding:14px 16px;margin-top:10px}
+.social-site-row strong,.social-site-row small{display:block}
+.social-site-row strong{font-size:14px}
+.social-site-row small{font-size:12px;color:#72837e;margin-top:4px}
+.social-site-row button{flex:none}
+@media(max-width:600px){.social-site-row{align-items:stretch;flex-direction:column}.social-site-row button{align-self:flex-start}}

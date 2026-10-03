@@ -17,6 +17,7 @@ from .db import Database, new_id, now
 from .drafting import draft_custom_answers, get_draft, package_hash
 from .mail_config import smtp_config
 from .settings import Settings
+from .social_browser import chrome_context_options
 
 
 def _field_signature(fields: list[dict], action: str, method: str) -> str:
@@ -89,7 +90,7 @@ async def inspect_form(db: Database, settings: Settings, draft_id: str) -> dict:
     if destination.get("kind") != "web" or not destination.get("url"):
         raise ValueError("Set a web application URL before inspecting a form")
     async with async_playwright() as playwright:
-        context = await playwright.chromium.launch_persistent_context(str(settings.browser_profile), headless=True)
+        context = await playwright.chromium.launch_persistent_context(str(settings.browser_profile), headless=True, **chrome_context_options())
         try:
             page = await context.new_page()
             await page.goto(destination["url"], wait_until="domcontentloaded", timeout=45000)
@@ -251,7 +252,7 @@ async def _send_web(settings: Settings, draft: dict) -> tuple[str, str]:
     if not form_data.get("signature") or form_data.get("destination_url") != draft["destination"].get("url"):
         return "needs_user_attention", "Inspect this exact application form before sending"
     async with async_playwright() as playwright:
-        context = await playwright.chromium.launch_persistent_context(str(settings.browser_profile), headless=True, accept_downloads=False)
+        context = await playwright.chromium.launch_persistent_context(str(settings.browser_profile), headless=True, accept_downloads=False, **chrome_context_options())
         try:
             page = await context.new_page()
             await page.goto(draft["destination"]["url"], wait_until="domcontentloaded", timeout=45000)

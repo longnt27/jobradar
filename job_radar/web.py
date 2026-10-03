@@ -42,6 +42,10 @@ class SourceInput(BaseModel):
     config: dict[str, Any] = Field(default_factory=dict)
 
 
+class BrowserLoginInput(BaseModel):
+    site: Literal["linkedin", "facebook"]
+
+
 class EmployerInput(BaseModel):
     name: str = Field(min_length=2)
     category: str = "custom"
@@ -214,8 +218,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
 
     @app.post("/api/setup/browser/start")
-    async def start_browser_login():
-        return login_manager.start()
+    async def start_browser_login(payload: BrowserLoginInput):
+        try:
+            return login_manager.start(payload.site)
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
 
     @app.post("/api/setup/browser/finish")
     async def finish_browser_login():

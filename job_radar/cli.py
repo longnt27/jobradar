@@ -6,7 +6,8 @@ import asyncio
 import uvicorn
 
 from .settings import Settings
-from .collectors import login_browser
+from .browser_login import BrowserLoginManager
+from .db import Database
 from .service import install_service, uninstall_service
 from .mail_config import configure_smtp
 from .notifications import configure_telegram
@@ -16,7 +17,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="job-radar")
     sub = parser.add_subparsers(dest="command")
     sub.add_parser("serve", help="Start the local web app")
-    sub.add_parser("login", help="Open the persistent browser profile for manual sign-in")
+    login_parser = sub.add_parser("login", help="Sign in to LinkedIn or Facebook in regular Chrome")
+    login_parser.add_argument("site", choices=("linkedin", "facebook"))
     sub.add_parser("install-service", help="Start Job Radar in the background at macOS login")
     sub.add_parser("uninstall-service", help="Stop and remove the macOS background service")
     sub.add_parser("configure-smtp", help="Save SMTP credentials in a restricted local file")
@@ -26,7 +28,18 @@ def main() -> None:
     if args.command in (None, "serve"):
         uvicorn.run("job_radar.web:create_app", factory=True, host=settings.host, port=settings.port)
     elif args.command == "login":
-        asyncio.run(login_browser(settings))
+        async def sign_in():
+            manager = BrowserLoginManager(Database(settings.database_path), settings, asyncio.Lock())
+            manager.start(args.site)
+            while manager.state == "opening":
+                await asyncio.sleep(.1)
+            if manager.state != "open":
+                raise RuntimeError(manager.error or "Chrome did not open")
+            print(f"Sign in to {args.site.capitalize()} in Chrome, then press Enter here.")
+            await asyncio.to_thread(input)
+            await manager.finish()
+            print(f"{args.site.capitalize()} session saved")
+        asyncio.run(sign_in())
     elif args.command == "install-service":
         print(f"Installed {install_service(settings)}")
     elif args.command == "uninstall-service":

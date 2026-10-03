@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import re
 from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qsl, urljoin, urlsplit, urlunsplit, urlencode
@@ -11,6 +10,7 @@ from playwright.async_api import BrowserContext, Page, async_playwright
 
 from .ingest import ObservedJob
 from .settings import Settings
+from .social_browser import chrome_context_options
 
 
 class AuthRequired(RuntimeError):
@@ -785,24 +785,11 @@ async def collect_source(settings: Settings, source: dict) -> list[ObservedJob]:
     async with async_playwright() as playwright:
         context = await playwright.chromium.launch_persistent_context(
             str(settings.browser_profile), headless=True, viewport={"width": 1365, "height": 900},
+            **chrome_context_options(required=True),
         )
         try:
             if source["kind"] == "linkedin":
                 return await collect_linkedin(context, source)
             return await collect_facebook(context, source)
-        finally:
-            await context.close()
-
-
-async def login_browser(settings: Settings) -> None:
-    settings.ensure_dirs()
-    async with async_playwright() as playwright:
-        context = await playwright.chromium.launch_persistent_context(
-            str(settings.browser_profile), headless=False, viewport={"width": 1365, "height": 900},
-        )
-        try:
-            await context.new_page()
-            print("Sign in to LinkedIn and Facebook in the opened browser. Press Enter here when done.")
-            await asyncio.to_thread(input)
         finally:
             await context.close()

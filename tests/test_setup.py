@@ -52,7 +52,7 @@ def test_social_scans_wait_for_browser_setup(tmp_path: Path) -> None:
         manager = ScanManager(db, settings)
         assert manager.queue_due() == len(CAREER_FEEDS)
         await manager.stop()
-        db.set_setting("browser_login_completed_at", now())
+        db.set_setting("social_login_completed_at_linkedin", now())
         assert manager.queue_due() == len(CAREER_FEEDS) + 27
         await manager.stop()
 
@@ -67,23 +67,24 @@ def test_browser_setup_flow_can_finish_from_ui(tmp_path: Path, monkeypatch) -> N
     async def fake_browser():
         manager.state = "open"
         await manager.finished.wait()
-        manager.db.set_setting("browser_login_completed_at", now())
+        manager.db.set_setting("social_login_completed_at_linkedin", now())
         manager.state = "saved"
 
     monkeypatch.setattr(manager, "_run", fake_browser)
     with TestClient(app) as client:
-        assert client.post("/api/setup/browser/start").status_code == 200
+        assert client.post("/api/setup/browser/start", json={"site": "linkedin"}).status_code == 200
         for _ in range(5):
             if client.get("/api/setup").json()["browser"]["state"] == "open":
                 break
         assert client.post("/api/setup/browser/finish").json()["state"] == "saved"
-        assert client.get("/api/setup").json()["browser"]["last_saved_at"]
+        assert client.get("/api/setup").json()["browser"]["connected_sites"] == ["linkedin"]
 
 
 def test_expired_social_session_is_persisted_and_only_that_site_pauses(tmp_path: Path, monkeypatch) -> None:
     app = create_app(Settings(tmp_path))
     db = app.state.db
-    db.set_setting("browser_login_completed_at", now())
+    db.set_setting("social_login_completed_at_linkedin", now())
+    db.set_setting("social_login_completed_at_facebook", now())
     linkedin = db.one("SELECT id FROM sources WHERE kind='linkedin' LIMIT 1")["id"]
     added = TestClient(app).post("/api/sources", json={"kind": "facebook", "name": "Test AI group",
         "url": "https://www.facebook.com/groups/12345"})
@@ -113,45 +114,30 @@ def test_expired_social_session_is_persisted_and_only_that_site_pauses(tmp_path:
     assert alerts == ["linkedin"]
 
 
-def test_signing_in_again_reuses_browser_profile_and_clears_expiry(tmp_path: Path, monkeypatch) -> None:
+def test_signing_in_again_uses_regular_chrome_for_one_site_and_clears_expiry(tmp_path: Path, monkeypatch) -> None:
     app = create_app(Settings(tmp_path))
     db = app.state.db
-    db.set_setting("browser_login_completed_at", now())
+    db.set_setting("social_login_completed_at_linkedin", now())
     db.set_setting("social_reauth_required_linkedin", {"detected_at": now()})
-    opened = []
-    profiles = []
+    launches = []
 
-    class FakePage:
-        async def goto(self, url, **_kwargs):
-            opened.append(url)
+    class FakeProcess:
+        def poll(self):
+            return None
 
-    class FakeContext:
-        async def new_page(self):
-            return FakePage()
-
-        async def close(self):
+        def terminate(self):
             pass
 
-    class FakeChromium:
-        async def launch_persistent_context(self, path, **_kwargs):
-            profiles.append(path)
-            return FakeContext()
+        def wait(self, timeout=None):
+            return 0
 
-    class FakePlaywright:
-        chromium = FakeChromium()
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *_args):
-            pass
-
-    monkeypatch.setattr("job_radar.browser_login.async_playwright", FakePlaywright)
+    monkeypatch.setattr("job_radar.browser_login.chrome_executable", lambda: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+    monkeypatch.setattr("job_radar.browser_login.subprocess.Popen", lambda args, **kwargs: launches.append(args) or FakeProcess())
     manager = app.state.login_manager
 
     async def run():
         assert manager.status()["state"] == "reauth_required"
-        manager.start()
+        manager.start("linkedin")
         for _ in range(100):
             if manager.state == "open":
                 break
@@ -162,6 +148,21 @@ def test_signing_in_again_reuses_browser_profile_and_clears_expiry(tmp_path: Pat
     saved = asyncio.run(run())
     assert saved["state"] == "saved"
     assert saved["sites"] == []
-    assert profiles == [str(Settings(tmp_path).browser_profile)]
-    assert opened == ["https://www.linkedin.com/login"]
-    assert TestClient(create_app(Settings(tmp_path))).get("/api/setup").json()["browser"]["state"] == "saved"
+    assert saved["connected_sites"] == ["linkedin"]
+    assert len(launches) == 1
+    assert f"--user-data-dir={Settings(tmp_path).browser_profile}" in launches[0]
+    assert "https://www.linkedin.com/login" in launches[0]
+    assert not any("remote-debugging" in arg for arg in launches[0])
+    assert TestClient(create_app(Settings(tmp_path))).get("/api/setup").json()["browser"]["connected_sites"] == ["linkedin"]
+
+    async def connect_facebook():
+        manager.start("facebook")
+        for _ in range(100):
+            if manager.state == "open":
+                break
+            await asyncio.sleep(.01)
+        return await manager.finish()
+
+    both = asyncio.run(connect_facebook())
+    assert both["connected_sites"] == ["linkedin", "facebook"]
+    assert "https://www.facebook.com/" in launches[1]
