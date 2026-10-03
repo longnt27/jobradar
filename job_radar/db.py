@@ -150,6 +150,17 @@ CREATE TABLE IF NOT EXISTS submissions (
   updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_submission_vacancy ON submissions(vacancy_id, sent_at DESC);
+CREATE TABLE IF NOT EXISTS notification_attempts (
+  vacancy_id TEXT NOT NULL REFERENCES vacancies(id),
+  channel TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  last_attempt_at TEXT,
+  sent_at TEXT,
+  PRIMARY KEY(vacancy_id, channel)
+);
+CREATE INDEX IF NOT EXISTS idx_notification_pending ON notification_attempts(channel, status, last_attempt_at);
 CREATE TABLE IF NOT EXISTS feedback (
   id TEXT PRIMARY KEY,
   vacancy_id TEXT NOT NULL REFERENCES vacancies(id),

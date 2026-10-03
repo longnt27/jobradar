@@ -1,6 +1,6 @@
 # Transient Telegram failure loses a new-job alert
 
-- **Status:** Open
+- **Status:** Closed
 - **Severity:** Medium
 - **Labels:** `bug`, `notifications`, `scanning`
 
@@ -29,3 +29,7 @@ The scanner logs the failure and continues; a repeated observation is no longer 
 ## Acceptance criteria
 
 Persist notification attempts per vacancy and channel, then retry unsent alerts independently of scan novelty.
+
+## Resolution
+
+Eligible Telegram alerts are stored per vacancy with pending/sent status, attempt count, and last error. Failed sends remain pending; the scan scheduler retries them independently of whether a later scan discovers a new vacancy. A regression test covers temporary failure, recovery, and duplicate suppression.

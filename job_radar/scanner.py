@@ -21,6 +21,7 @@ class ScanManager:
         self.db = db
         self.settings = settings
         self.browser_lock = asyncio.Lock()
+        self.notification_lock = asyncio.Lock()
         self.active: set[str] = set()
         self._due_task: asyncio.Task | None = None
         self._scheduler_task: asyncio.Task | None = None
@@ -41,6 +42,8 @@ class ScanManager:
         while True:
             try:
                 self.queue_due()
+                async with self.notification_lock:
+                    await notify_new_jobs(self.db, self.settings, [])
             except Exception:
                 log.exception("Unable to schedule sources")
             await asyncio.sleep(60)
@@ -109,11 +112,11 @@ class ScanManager:
             self.db.execute("UPDATE scan_runs SET finished_at=?,status=?,observed_count=?,new_count=? WHERE id=?",
                             (finished, status, len(jobs), new_count, run_id))
             self.db.execute("UPDATE sources SET last_success_at=?,last_status=? WHERE id=?", (finished, status, source_id))
-            if new_ids:
-                try:
+            try:
+                async with self.notification_lock:
                     await notify_new_jobs(self.db, self.settings, new_ids)
-                except Exception as error:
-                    log.warning("Job alerts failed after scan %s: %s", source["name"], error)
+            except Exception as error:
+                log.warning("Job alerts failed after scan %s: %s", source["name"], error)
             return {"run_id": run_id, "status": status, "observed": len(jobs), "new": new_count}
         except Exception as error:
             status = "auth_required" if isinstance(error, AuthRequired) else "failed"
