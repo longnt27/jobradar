@@ -71,13 +71,12 @@ def _default_answer(field: dict, profile: dict, message: dict) -> str:
         (r"full.?name|your.?name|name", "name"), (r"city|location", "location"),
         (r"linkedin", "linkedin"), (r"github", "github"),
     ]
-    name = profile.get("name", "")
     for pattern, key in patterns:
         if re.search(pattern, text):
             if key == "first_name":
-                return name.split()[0] if name else ""
+                return str(profile.get("given_name", ""))
             if key == "last_name":
-                return " ".join(name.split()[1:]) if name else ""
+                return str(profile.get("family_name", ""))
             if key in ("linkedin", "github"):
                 return next((link for link in profile.get("links", []) if key in link.casefold()), "")
             return str(profile.get(key, ""))

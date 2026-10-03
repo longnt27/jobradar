@@ -6,6 +6,7 @@ from threading import Thread
 from fastapi.testclient import TestClient
 
 from job_radar.settings import Settings
+from job_radar.apply import _default_answer
 from job_radar.web import create_app
 
 
@@ -71,6 +72,17 @@ def test_destination_warning_and_send_readiness_follow_current_draft(tmp_path: P
     assert client.get(f"/api/applications/{draft['id']}").json()["send_ready"] is False
     client.post("/api/setup/smtp", json={"host": "smtp.example.org", "port": 587, "user": "alex", "password": "secret", "from_address": "alex@example.org"})
     assert client.get(f"/api/applications/{draft['id']}").json()["send_ready"] is True
+
+
+def test_name_parts_require_explicit_candidate_preference() -> None:
+    first = {"name": "first_name", "id": "", "label": "First name", "type": "text"}
+    last = {"name": "last_name", "id": "", "label": "Last name", "type": "text"}
+    profile = {"name": "Nguyen Trung Long"}
+    assert _default_answer(first, profile, {}) == ""
+    assert _default_answer(last, profile, {}) == ""
+    profile.update({"given_name": "Long", "family_name": "Nguyen Trung"})
+    assert _default_answer(first, profile, {}) == "Long"
+    assert _default_answer(last, profile, {}) == "Nguyen Trung"
 
 
 def test_web_form_inspection_and_one_click_submit(tmp_path: Path) -> None:

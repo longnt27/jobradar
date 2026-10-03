@@ -231,7 +231,7 @@ async function loadProfile() {
   $('#position-count').textContent = `${(profile.experience || []).length} previous position${profile.experience?.length === 1 ? '' : 's'}`;
   $('#project-count').textContent = `${projectCount} selected project${projectCount === 1 ? '' : 's'}`;
   const form = $('#profile-form');
-  for (const key of ['name','email','phone','location','summary','salary_expectation','work_authorization','notice_period','relocation']) form.elements[key].value = profile[key] || '';
+  for (const key of ['name','given_name','family_name','email','phone','location','summary','salary_expectation','work_authorization','notice_period','relocation']) form.elements[key].value = profile[key] || '';
   form.elements.alert_min_score.value = profile.alert_min_score ?? 60;
   form.elements.skills.value = (profile.skills || []).join('\n');
   form.elements.links.value = (profile.links || []).join('\n');
@@ -561,7 +561,7 @@ $('#profile-form').addEventListener('submit', async (event) => {
   try {
     const profile = await api('/api/profile');
     const form = event.target;
-    for (const key of ['name','email','phone','location','summary','salary_expectation','work_authorization','notice_period','relocation']) profile[key] = form.elements[key].value.trim();
+    for (const key of ['name','given_name','family_name','email','phone','location','summary','salary_expectation','work_authorization','notice_period','relocation']) profile[key] = form.elements[key].value.trim();
     profile.alert_min_score = Number(form.elements.alert_min_score.value || 60);
     profile.skills = form.elements.skills.value.split('\n').map((x) => x.trim()).filter(Boolean);
     profile.links = form.elements.links.value.split('\n').map((x) => x.trim()).filter(Boolean);

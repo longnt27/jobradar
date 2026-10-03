@@ -1,6 +1,6 @@
 # Automatic first and last name answers split Vietnamese names incorrectly
 
-- **Status:** Open
+- **Status:** Closed
 - **Severity:** Medium
 - **Labels:** `bug`, `applications`, `localization`
 
@@ -28,3 +28,7 @@ The fields are filled according to the candidate's chosen name order, or left fo
 ## Acceptance criteria
 
 Store preferred given/family names explicitly or ask the user to review the split before it is used in a package.
+
+## Resolution
+
+Profile now has optional given and family name fields for application forms. The app fills first and last name inputs only from those explicit values; ambiguous full names remain blank for review. A regression test covers a Vietnamese surname-first name and explicit preferences.
