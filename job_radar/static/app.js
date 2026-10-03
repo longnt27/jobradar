@@ -3,6 +3,21 @@ const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({'
 const when = (value) => value ? new Date(value).toLocaleString() : 'Never';
 let activeJob = null;
 
+function formatDescription(value) {
+  const blocks = String(value ?? '').replace(/\r\n/g, '\n').split(/\n{2,}/).map((part) => part.trim()).filter(Boolean);
+  const bullet = /^[•–-]\s+/;
+  return blocks.map((block, index) => {
+    const lines = block.split('\n').map((line) => line.trim()).filter(Boolean);
+    if (lines.every((line) => bullet.test(line))) {
+      return `<ul>${lines.map((line) => `<li>${escapeHtml(line.replace(bullet, ''))}</li>`).join('')}</ul>`;
+    }
+    const nextIsList = bullet.test(blocks[index + 1] || '');
+    const heading = lines.length === 1 && lines[0].length < 100 && !/[.!?]$/.test(lines[0]) &&
+      (nextIsList || /^(what|why|nice to have|contact|about|requirements|qualifications|responsibilities|benefits)\b/i.test(lines[0]));
+    return heading ? `<h4>${escapeHtml(lines[0])}</h4>` : `<p>${lines.map(escapeHtml).join('<br>')}</p>`;
+  }).join('');
+}
+
 async function api(path, options = {}) {
   const response = await fetch(path, {
     headers: options.body instanceof FormData ? (options.headers || {}) : {'Content-Type': 'application/json', ...(options.headers || {})},
@@ -111,7 +126,7 @@ async function showJob(id) {
     ${!job.apply_url ? '<p class="hint">No application form has been verified for this posting. Check the original source for its application instructions before sending.</p>' : ''}
     ${links ? `<p class="item-meta">${links}</p>` : ''}
     ${score ? `<div class="review-section"><h4>Why it matched</h4><p>${escapeHtml(score.explanation || '')}</p></div>` : ''}
-    <div class="description">${escapeHtml(job.description)}</div>`;
+    <div class="description"><h3>Original description</h3>${formatDescription(job.description)}</div>`;
   $('#job-detail').querySelector('[data-tab="profile"]').addEventListener('click', () => showTab('profile'));
   $('#job-detail').querySelectorAll('[data-state]').forEach((button) => button.addEventListener('click', async () => {
     try { await api(`/api/jobs/${id}/state`, {method:'POST', body: JSON.stringify({state:button.dataset.state})}); notice('Job updated'); await loadJobs(); }

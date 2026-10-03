@@ -38,3 +38,10 @@
 button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible,summary:focus-visible{outline:2px solid #278b5c;outline-offset:2px}
 @media(max-width:900px){.home-grid{grid-template-columns:1fr}.home-grid .panel{min-height:0}}
 @media(max-width:680px){.action-cards{grid-template-columns:1fr}.flow-panel>summary{align-items:flex-start}.flow-panel>summary .hint{text-align:right}.section-head{align-items:flex-start;flex-wrap:wrap}}
+#job-detail{position:static}
+#job-detail .description{max-height:none;overflow:visible;white-space:normal;line-height:1.65}
+#job-detail .description h3{font-size:15px;margin:0 0 18px}
+#job-detail .description h4{font-size:14px;margin:22px 0 8px;color:#1b4f3b}
+#job-detail .description p{margin:0 0 14px}
+#job-detail .description ul{margin:0 0 18px;padding-left:22px}
+#job-detail .description li{margin:0 0 8px;padding-left:3px}

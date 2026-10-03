@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urljoin, urlsplit
 
 import httpx
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString, Tag
 from playwright.async_api import BrowserContext, Page, async_playwright
 
 from .ingest import ObservedJob
@@ -25,6 +25,31 @@ def _text(soup: BeautifulSoup, selectors: tuple[str, ...]) -> str:
             if text:
                 return text
     return ""
+
+
+def _structured_text(node: Tag) -> str:
+    """Keep the paragraphs and lists that give a posting its meaning."""
+    def walk(part: Tag | NavigableString) -> str:
+        if isinstance(part, NavigableString):
+            return re.sub(r"\s+", " ", str(part).replace("\xa0", " "))
+        if part.name in {"script", "style", "noscript", "svg"}:
+            return ""
+        if part.name == "br":
+            return "\n"
+        contents = "".join(walk(child) for child in part.children)
+        if part.name == "li":
+            return f"\n• {contents.strip()}"
+        if part.name in {"h1", "h2", "h3", "h4", "h5", "h6", "p", "ul", "ol", "blockquote"}:
+            return f"\n\n{contents.strip()}\n\n"
+        if part.name in {"div", "section", "article", "main"}:
+            return f"\n{contents.strip()}\n"
+        return contents
+
+    value = walk(node)
+    value = re.sub(r"[ \t]*\n[ \t]*", "\n", value)
+    value = re.sub(r"\n{3,}", "\n\n", value)
+    value = re.sub(r" {2,}", " ", value)
+    return value.strip()
 
 
 def _meta(soup: BeautifulSoup, key: str) -> str:
@@ -186,8 +211,14 @@ def _posting_title(item: BeautifulSoup, label: str, company: str) -> str:
 
 
 def _posting_description(item: BeautifulSoup) -> str:
-    return _text(item, ("[class*=careers_detail_contents]", "[class*=job-description]", "[class*=job_description]",
-                        "[data-test*=job-description]", "article", "main", "[class*=description]"))
+    for selector in ("[class*=careers_detail_contents]", "[class*=job-description]", "[class*=job_description]",
+                     "[data-test*=job-description]", "article", "main", "[class*=description]"):
+        node = item.select_one(selector)
+        if node:
+            text = _structured_text(node)
+            if text:
+                return text
+    return ""
 
 
 async def collect_career(source: dict) -> list[ObservedJob]:
