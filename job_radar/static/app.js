@@ -86,7 +86,7 @@ async function loadSetup() {
   renderSocialAuth(data.browser);
   $('#setup-browser-finish').disabled = data.browser.state !== 'open';
   $('#setup-browser-finish').textContent = data.browser.active_site ? `I've finished ${data.browser.active_site === 'linkedin' ? 'LinkedIn' : 'Facebook'} sign-in` : "I've finished signing in";
-  $('#setup-browser-detail').textContent = data.browser.error || (data.browser.state === 'opening' ? 'Opening Chrome…' : data.browser.state === 'open' ? 'Finish signing in in Chrome, then click the button here to save this session.' : data.browser.state === 'reauth_required' ? `${socialSiteNames(data.browser)} needs a new sign-in. Other sources keep scanning.` : data.browser.last_saved_at ? `Saved session last updated ${when(data.browser.last_saved_at)}. Upcoming scans will verify site access.` : 'Choose a site to begin. Google sign-in opens in regular Chrome.');
+  $('#setup-browser-detail').textContent = data.browser.error || (data.browser.state === 'opening' ? 'Opening Chrome…' : data.browser.state === 'open' ? 'After signing in, switch to the Job Radar tab in Chrome and click “Finish and return to Job Radar”.' : data.browser.state === 'reauth_required' ? `${socialSiteNames(data.browser)} needs a new sign-in. Other sources keep scanning.` : data.browser.last_saved_at ? `Saved session last updated ${when(data.browser.last_saved_at)}. Upcoming scans will verify site access.` : 'Choose a site to begin. Google sign-in opens in regular Chrome.');
   const mailForm = $('#setup-smtp-form');
   if (!mailForm.dataset.initialized) {
     mailForm.elements.host.value = data.smtp_host || '';
@@ -773,4 +773,14 @@ for (const selector of ['#scan-due','#scan-all']) $(selector).addEventListener('
 });
 
 window.addEventListener('popstate', () => showTab(location.hash.slice(1) || 'home', 'none'));
+function refreshAfterReturn() {
+  clearTimeout(window.returnRefresh);
+  window.returnRefresh = setTimeout(() => {
+    const active = document.querySelector('.tab.active')?.id;
+    const refresh = active === 'profile' ? loadSetup : active === 'home' ? loadHome : refreshSocialAuth;
+    refresh().catch((error) => notice(error.message, true));
+  }, 100);
+}
+window.addEventListener('focus', refreshAfterReturn);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshAfterReturn(); });
 showTab(location.hash.slice(1) || 'home', 'replace');

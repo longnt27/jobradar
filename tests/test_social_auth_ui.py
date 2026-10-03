@@ -38,6 +38,8 @@ def test_social_sign_in_is_a_setup_step_and_expiry_is_visible_from_jobs(tmp_path
                 assert page.get_by_role("button", name="Sign in to Facebook").is_visible()
 
                 app.state.db.set_setting("social_login_completed_at_linkedin", "2026-10-01T12:00:00+00:00")
+                page.evaluate("window.dispatchEvent(new Event('focus'))")
+                page.locator("#linkedin-sign-in-status").get_by_text("Connected").wait_for()
                 app.state.db.set_setting("social_reauth_required_linkedin", "1")
                 page.get_by_role("button", name="Jobs", exact=True).first.click()
                 banner = page.locator("#social-auth-banner")

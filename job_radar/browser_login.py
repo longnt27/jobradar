@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import secrets
 import subprocess
 
 from .db import Database, now
+from .desktop_handoff import frontmost_app_bundle, return_to_job_radar
 from .settings import Settings
 from .social_browser import SITES, chrome_executable, social_login_at
 
@@ -22,6 +24,9 @@ class BrowserLoginManager:
         self.task: asyncio.Task | None = None
         self.process: subprocess.Popen | None = None
         self.finished = asyncio.Event()
+        self.token: str | None = None
+        self.return_app: str | None = None
+        self.finish_scheduled = False
 
     def status(self) -> dict:
         expired = [site for site in SITES if self.db.get_setting(f"social_reauth_required_{site}")]
@@ -44,11 +49,16 @@ class BrowserLoginManager:
         self.finished = asyncio.Event()
         self.error = None
         self.site = site
+        self.token = secrets.token_urlsafe(24)
+        self.return_app = frontmost_app_bundle()
+        self.finish_scheduled = False
         self.state = "opening"
         self.task = asyncio.create_task(self._run())
         return self.status()
 
-    async def finish(self) -> dict:
+    async def finish(self, token: str | None = None) -> dict:
+        if token is not None and token != self.token:
+            raise ValueError("This sign-in window is no longer active")
         if self.state != "open" or not self.task:
             raise ValueError("Open the sign-in browser first")
         self.finished.set()
@@ -80,9 +90,10 @@ class BrowserLoginManager:
         try:
             async with self.browser_lock:
                 self.settings.ensure_dirs()
+                finish_url = f"http://127.0.0.1:{self.settings.port}/signin/finish/{self.token}"
                 self.process = subprocess.Popen(
                     [chrome_executable(), f"--user-data-dir={self.settings.browser_profile}",
-                     "--no-first-run", "--no-default-browser-check", LOGIN_URLS[self.site]],
+                     "--no-first-run", "--no-default-browser-check", "--new-window", finish_url, LOGIN_URLS[self.site]],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 )
                 self.state = "open"
@@ -95,6 +106,10 @@ class BrowserLoginManager:
                 await self._close_process()
                 self.db.set_setting(f"social_login_completed_at_{self.site}", now())
                 self.db.set_setting(f"social_reauth_required_{self.site}", None)
+                try:
+                    await asyncio.to_thread(return_to_job_radar, self.return_app, self.settings.port)
+                except Exception:
+                    pass
                 self.state = "saved"
         except asyncio.CancelledError:
             await self._close_process()

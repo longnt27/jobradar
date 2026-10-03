@@ -1,6 +1,7 @@
 import asyncio
 import json
 import stat
+import time
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -133,6 +134,8 @@ def test_signing_in_again_uses_regular_chrome_for_one_site_and_clears_expiry(tmp
 
     monkeypatch.setattr("job_radar.browser_login.chrome_executable", lambda: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
     monkeypatch.setattr("job_radar.browser_login.subprocess.Popen", lambda args, **kwargs: launches.append(args) or FakeProcess())
+    monkeypatch.setattr("job_radar.browser_login.frontmost_app_bundle", lambda: "com.openai.codex")
+    monkeypatch.setattr("job_radar.browser_login.return_to_job_radar", lambda *_args: None)
     manager = app.state.login_manager
 
     async def run():
@@ -166,3 +169,50 @@ def test_signing_in_again_uses_regular_chrome_for_one_site_and_clears_expiry(tmp
     both = asyncio.run(connect_facebook())
     assert both["connected_sites"] == ["linkedin", "facebook"]
     assert "https://www.facebook.com/" in launches[1]
+
+
+def test_finish_tab_saves_session_closes_chrome_and_returns_to_app(tmp_path: Path, monkeypatch) -> None:
+    app = create_app(Settings(tmp_path))
+    app.state.db.execute("UPDATE sources SET enabled=0")
+    launches = []
+    activated = []
+
+    class FakeProcess:
+        closed = False
+
+        def poll(self):
+            return 0 if self.closed else None
+
+        def terminate(self):
+            self.closed = True
+
+        def wait(self, timeout=None):
+            return 0
+
+    process = FakeProcess()
+    monkeypatch.setattr("job_radar.browser_login.chrome_executable", lambda: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+    monkeypatch.setattr("job_radar.browser_login.subprocess.Popen", lambda args, **kwargs: launches.append(args) or process)
+    monkeypatch.setattr("job_radar.browser_login.frontmost_app_bundle", lambda: "com.openai.codex")
+    monkeypatch.setattr("job_radar.browser_login.return_to_job_radar", lambda bundle, port: activated.append((bundle, port)))
+
+    with TestClient(app) as client:
+        started = client.post("/api/setup/browser/start", json={"site": "linkedin"})
+        assert started.status_code == 200
+        for _ in range(100):
+            if client.get("/api/setup").json()["browser"]["state"] == "open":
+                break
+        assert client.get("/api/setup").json()["browser"]["state"] == "open"
+        finish_url = next(arg for arg in launches[0] if "/signin/finish/" in arg)
+        token = finish_url.rsplit("/", 1)[-1]
+        page = client.get(f"/signin/finish/{token}")
+        assert page.status_code == 200
+        assert "Finish and return to Job Radar" in page.text
+        result = client.post(f"/api/setup/browser/finish/{token}")
+        assert result.status_code == 200
+        for _ in range(100):
+            if client.get("/api/setup").json()["browser"]["state"] == "saved":
+                break
+            time.sleep(.01)
+        assert process.closed
+        assert client.get("/api/setup").json()["browser"]["connected_sites"] == ["linkedin"]
+        assert activated == [("com.openai.codex", 8787)]
