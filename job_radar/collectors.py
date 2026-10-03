@@ -221,6 +221,24 @@ def _posting_description(item: BeautifulSoup) -> str:
     return ""
 
 
+def _application_destination(soup: BeautifulSoup, posting_url: str) -> str:
+    for anchor in soup.select("a[href]"):
+        label = anchor.get_text(" ", strip=True)
+        if not re.search(r"\b(apply|application|ứng tuyển|nộp hồ sơ|submit cv)\b", label, re.I):
+            continue
+        href = urljoin(posting_url, str(anchor.get("href", "")).strip())
+        parts = urlsplit(href)
+        if parts.scheme in ("http", "https") and parts.hostname:
+            return href
+        if parts.scheme == "mailto" and re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", parts.path):
+            return f"mailto:{parts.path}"
+    text = soup.get_text(" ", strip=True)
+    match = re.search(r"(?:apply|application|send (?:your )?(?:cv|resume)|ứng tuyển|gửi (?:cv|hồ sơ))[^\n]{0,120}?\b([\w.+-]+@[\w.-]+\.[A-Za-z]{2,})", text, re.I)
+    if match:
+        return f"mailto:{match.group(1)}"
+    return posting_url
+
+
 async def collect_career(source: dict) -> list[ObservedJob]:
     async with httpx.AsyncClient(follow_redirects=True, timeout=30, headers={"User-Agent": "JobRadar/0.1 personal job discovery"}) as client:
         response = await client.get(source["url"])
@@ -261,6 +279,7 @@ async def collect_career(source: dict) -> list[ObservedJob]:
                 jobs.append(ObservedJob(
                     url=str(detail.url), title=title[:180], company=company,
                     description=description[:30000], location=location,
+                    apply_url=_application_destination(item, str(detail.url)),
                     published_at=published,
                 ))
             except Exception:
@@ -386,6 +405,7 @@ async def collect_html_board(source: dict) -> list[ObservedJob]:
                     url=str(detail.url) if config.get("keep_query") else str(detail.url).split("?")[0], title=title[:180],
                     company=source.get("employer_name") or source["name"],
                     description=description[:30000], location=location,
+                    apply_url=_application_destination(item, str(detail.url)),
                     raw_text=description[:30000],
                 ))
             except httpx.HTTPError:
@@ -452,7 +472,8 @@ async def collect_browser_board(source: dict) -> list[ObservedJob]:
                     jobs.append(ObservedJob(
                         url=detail.url, title=title[:180],
                         company=source.get("employer_name") or source["name"],
-                        description=description[:30000], raw_text=description[:30000],
+                        description=description[:30000], apply_url=_application_destination(soup, detail.url),
+                        raw_text=description[:30000],
                     ))
                 except Exception:
                     continue
@@ -531,7 +552,8 @@ async def collect_vietinbank(source: dict) -> list[ObservedJob]:
                 jobs.append(ObservedJob(
                     url=str(detail.url), title=title[:180],
                     company=source.get("employer_name") or "VietinBank",
-                    description=description[:30000], raw_text=description[:30000],
+                    description=description[:30000], apply_url=_application_destination(soup, str(detail.url)),
+                    raw_text=description[:30000],
                 ))
             except httpx.HTTPError:
                 continue
@@ -580,6 +602,7 @@ async def collect_successfactors(source: dict) -> list[ObservedJob]:
                     company=source.get("employer_name") or source["name"],
                     description=description[:30000],
                     location=_text(soup, (".job-location", "[class*=location]"))[:250],
+                    apply_url=_application_destination(soup, str(response.url)),
                     raw_text=description[:30000],
                 ))
             except httpx.HTTPError:
@@ -644,6 +667,7 @@ async def collect_vinrobotics(source: dict) -> list[ObservedJob]:
                     url=str(detail.url), external_id=str(item.get("id") or ""),
                     title=title[:180], company=source.get("employer_name") or "VinRobotics",
                     description=description[:30000], location=str(item.get("location") or "")[:250],
+                    apply_url=_application_destination(soup, str(detail.url)),
                     published_at=item.get("publishedAt"), raw_text=description[:30000],
                 ))
             except httpx.HTTPError:
@@ -753,7 +777,11 @@ async def collect_source(settings: Settings, source: dict) -> list[ObservedJob]:
         adapter = source.get("config", {}).get("adapter", "legacy")
         if adapter not in CAREER_ADAPTERS:
             raise ValueError(f"Unknown career adapter: {adapter}")
-        return await CAREER_ADAPTERS[adapter](source)
+        jobs = await CAREER_ADAPTERS[adapter](source)
+        for job in jobs:
+            if not job.apply_url:
+                job.apply_url = job.url
+        return jobs
     async with async_playwright() as playwright:
         context = await playwright.chromium.launch_persistent_context(
             str(settings.browser_profile), headless=True, viewport={"width": 1365, "height": 900},

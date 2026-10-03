@@ -191,7 +191,9 @@ def prepare_draft(db: Database, settings: Settings, vacancy_id: str, provider: s
                           for card in selected]
     resume["evidence"] = selected  # Existing drafts and integrations retain source references.
     message = {"subject": model.email_subject, "body": model.email_body}
-    destination = {"kind": "web", "url": job["apply_url"]} if job["apply_url"] else {"kind": "unknown", "url": ""}
+    destination = ({"kind": "email", "email": job["apply_url"].removeprefix("mailto:").split("?", 1)[0]}
+                   if job["apply_url"] and job["apply_url"].startswith("mailto:") else
+                   {"kind": "web", "url": job["apply_url"]} if job["apply_url"] else {"kind": "unknown", "url": ""})
     warnings = []
     if not job["apply_url"]:
         warnings.append("No application destination is known. Add an email address or application URL before sending.")

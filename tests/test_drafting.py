@@ -6,6 +6,7 @@ from pypdf import PdfReader
 from job_radar.settings import Settings
 from job_radar.web import create_app
 from job_radar.drafting import ModelDraft, ProjectBullets, _run_provider
+from job_radar.ingest import ObservedJob, ingest
 
 
 def test_draft_uses_approved_evidence_and_renders_resume(tmp_path: Path) -> None:
@@ -76,3 +77,16 @@ def test_job_specific_project_bullets_are_used_in_resume(tmp_path: Path, monkeyp
     draft = response.json()
     assert draft["resume_data"]["projects"][0]["bullets"] == ["Built a Python document index for search."]
     assert "Built a Python document index for search." in PdfReader(Path(draft["resume_path"])).pages[0].extract_text()
+
+
+def test_career_email_destination_prepares_email_application(tmp_path: Path) -> None:
+    client = TestClient(create_app(Settings(tmp_path)))
+    profile = client.get("/api/profile").json()
+    profile.update({"name": "Alex Example", "email": "alex@example.org"})
+    client.put("/api/profile", json=profile)
+    client.post("/api/positions", json={"company": "Example Labs", "role": "Engineer", "dates": "2024–2026", "bullets": ["Built Python systems."]})
+    db = client.app.state.db
+    source = db.one("SELECT id FROM sources WHERE kind='career' LIMIT 1")["id"]
+    identifier, _ = ingest(db, source, ObservedJob("https://example.org/jobs/42", "AI Engineer", "Example", "Build AI systems with Python.", apply_url="mailto:careers@example.org"))
+    draft = client.post(f"/api/jobs/{identifier}/prepare", json={"provider": "template"}).json()
+    assert draft["destination"] == {"kind": "email", "email": "careers@example.org"}

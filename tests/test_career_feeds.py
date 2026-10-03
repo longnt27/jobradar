@@ -1,6 +1,8 @@
 from pathlib import Path
 
-from job_radar.collectors import _expired_posting, _target_title
+from bs4 import BeautifulSoup
+
+from job_radar.collectors import _application_destination, _expired_posting, _target_title
 from job_radar.db import Database
 from job_radar.employer_scope import HCMC_BASED
 from job_radar.feed_catalog import CAREER_FEEDS
@@ -41,3 +43,12 @@ def test_company_publication_time_without_timezone_can_be_ranked() -> None:
     }, {})
     assert score > 0
     assert detail["components"]["freshness"] >= 0
+
+
+def test_career_application_destination_prefers_apply_link_email_then_posting() -> None:
+    posting = "https://example.org/jobs/42"
+    linked = BeautifulSoup('<a href="/apply/42">Apply now</a><p>Email jobs@example.org</p>', "html.parser")
+    assert _application_destination(linked, posting) == "https://example.org/apply/42"
+    emailed = BeautifulSoup('<p>To apply, send your CV to careers@example.org</p>', "html.parser")
+    assert _application_destination(emailed, posting) == "mailto:careers@example.org"
+    assert _application_destination(BeautifulSoup("<p>Job details</p>", "html.parser"), posting) == posting

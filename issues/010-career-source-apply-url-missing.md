@@ -1,6 +1,6 @@
 # Career collector never records application destinations
 
-- **Status:** Open
+- **Status:** Closed
 - **Severity:** Medium
 - **Labels:** `bug`, `collection`, `applications`
 
@@ -28,3 +28,7 @@ The career collector constructs `ObservedJob` without `apply_url`. In the QA sca
 ## Acceptance criteria
 
 Extract and validate employer Apply links or email instructions; retain the source link as fallback.
+
+## Resolution
+
+Career detail adapters now extract labeled Apply links or application email instructions. The posting URL is retained as the review destination when neither appears, including API-backed feeds. Email instructions prepare an email draft. Destination extraction and email preparation have regression tests.
