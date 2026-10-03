@@ -26,6 +26,8 @@ My profile guides you through the one-time personal steps:
 
 The registry contains more than 200 employers, including Vingroup entities, banks, Viettel, VNPT, FPT, CMC, and technology companies. The app starts with 31 verified company career feeds, listed in [CAREER_FEEDS.md](CAREER_FEEDS.md). Some companies use a dedicated recruiting portal hosted by an application platform; those feeds still point to the company's own job listings and direct postings. An employer appears as actively scanned only when it has an enabled source. Add a career page from its employer card.
 
+The job list excludes postings located only in Ho Chi Minh City. When a career page leaves the location field blank, the app checks the posting title and header for a city. Listings that also offer Hanoi, another recognized city, or remote work remain visible. Jobs with no identifiable location remain visible for review. The rule applies to existing postings when the app updates and to new scans; company feeds continue checking for eligible openings.
+
 ## Apply
 
 Open a job and click **Prepare application**. The provider saved in Profile drafts the application. Codex CLI, Antigravity, and Claude Code use remote inference through CLIs running on your Mac. Codex OSS with Ollama uses a local model.

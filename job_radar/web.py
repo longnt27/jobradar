@@ -20,6 +20,7 @@ from .drafting import PROVIDERS, get_draft, prepare_draft, update_draft
 from .evidence import generate_project_content, inspect_repository
 from .github import list_public_repositories
 from .mail_config import save_smtp, smtp_config
+from .location import is_hcm_only, job_location
 from .notifications import save_telegram, telegram_config
 from .resume_import import parse_resume_template
 from .resume_extract import extract_resume
@@ -171,8 +172,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def status():
         counts = {}
         with db.connection() as conn:
-            for table in ("employers", "sources", "vacancies", "evidence", "application_drafts", "submissions"):
+            for table in ("employers", "sources", "evidence", "application_drafts", "submissions"):
                 counts[table] = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            counts["vacancies"] = conn.execute("SELECT COUNT(*) FROM vacancies WHERE excluded_location=0").fetchone()[0]
             counts["active_sources"] = conn.execute("SELECT COUNT(*) FROM sources WHERE enabled=1").fetchone()[0]
         recent = db.all("SELECT scan_runs.*, sources.name AS source_name FROM scan_runs JOIN sources ON sources.id=scan_runs.source_id ORDER BY started_at DESC LIMIT 10")
         return {"counts": counts, "recent_runs": recent, "data_dir": str(settings.data_dir)}
@@ -422,13 +424,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if q.strip():
             try:
                 return with_sources(db.all(
-                    "SELECT v.* FROM vacancy_fts f JOIN vacancies v ON v.id=f.vacancy_id WHERE vacancy_fts MATCH ? AND (?='' OR v.state=?) ORDER BY v.score DESC,v.first_seen_at DESC LIMIT ?",
+                    "SELECT v.* FROM vacancy_fts f JOIN vacancies v ON v.id=f.vacancy_id WHERE vacancy_fts MATCH ? AND v.excluded_location=0 AND (?='' OR v.state=?) ORDER BY v.score DESC,v.first_seen_at DESC LIMIT ?",
                     (q.strip(), state, state, limit),
                 ))
             except Exception as error:
                 raise HTTPException(422, f"Invalid search: {error}") from error
         return with_sources(db.all(
-            "SELECT * FROM vacancies WHERE (?='' OR state=?) ORDER BY score DESC,first_seen_at DESC LIMIT ?",
+            "SELECT * FROM vacancies WHERE excluded_location=0 AND (?='' OR state=?) ORDER BY score DESC,first_seen_at DESC LIMIT ?",
             (state, state, limit),
         ))
 
@@ -445,6 +447,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/jobs/import", status_code=201)
     def import_job(payload: JobInput):
+        location = job_location(payload.location, payload.title, payload.description)
+        if is_hcm_only(location):
+            raise HTTPException(422, "Ho Chi Minh City-only jobs are excluded from this search")
         identifier = new_id()
         timestamp = now()
         employer = db.one("SELECT id FROM employers WHERE lower(name)=lower(?)", (payload.company,))
@@ -452,7 +457,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             conn.execute(
                 "INSERT INTO vacancies(id,employer_id,company,title,location,description,apply_url,first_seen_at,last_seen_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                 (identifier, employer["id"] if employer else None, payload.company, payload.title,
-                 payload.location, payload.description, str(payload.apply_url) if payload.apply_url else None, timestamp, timestamp, timestamp, timestamp),
+                 location, payload.description, str(payload.apply_url) if payload.apply_url else None, timestamp, timestamp, timestamp, timestamp),
             )
             conn.execute("INSERT INTO vacancy_fts(vacancy_id,title,company,description) VALUES(?,?,?,?)",
                          (identifier, payload.title, payload.company, payload.description))

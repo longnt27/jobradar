@@ -49,7 +49,7 @@ async def notify_new_jobs(db: Database, settings: Settings, vacancy_ids: list[st
     sent = 0
     async with httpx.AsyncClient(timeout=20) as client:
         for identifier in dict.fromkeys(vacancy_ids):
-            job = db.one("SELECT title,company,location,score,apply_url FROM vacancies WHERE id=?", (identifier,))
+            job = db.one("SELECT title,company,location,score,apply_url FROM vacancies WHERE id=? AND excluded_location=0", (identifier,))
             if not job or (job["score"] or 0) < minimum:
                 continue
             source = db.one("SELECT o.url FROM vacancy_observations vo JOIN observations o ON o.id=vo.observation_id WHERE vo.vacancy_id=? ORDER BY o.first_seen_at LIMIT 1", (identifier,))
