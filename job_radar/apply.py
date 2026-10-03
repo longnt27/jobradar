@@ -113,6 +113,7 @@ async def inspect_form(db: Database, settings: Settings, draft_id: str) -> dict:
             warnings = [*draft["warnings"], f"Form answer drafting failed: {str(error)[:200]}"]
             db.execute("UPDATE application_drafts SET warnings=? WHERE id=?", (json.dumps(warnings), draft_id))
     structure["answers"] = answers
+    structure["attachments"] = draft["form_data"].get("attachments", {}) if draft["form_data"].get("signature") == structure["signature"] else {}
     structure["destination_url"] = destination["url"]
     db.execute("UPDATE application_drafts SET form_data=?,updated_at=? WHERE id=?",
                (json.dumps(structure, ensure_ascii=False), now(), draft_id))
@@ -145,6 +146,32 @@ def _validated_smtp_config(settings: Settings) -> dict:
     if port not in (465, 587):
         raise ValueError("SMTP port must be 465 or 587")
     return config
+
+
+def _reviewed_attachment(settings: Settings, draft: dict, field: dict) -> str | None:
+    assignment = draft["form_data"].get("attachments", {}).get(str(field["index"]))
+    if not isinstance(assignment, dict):
+        raise ValueError(f"Choose an attachment for {field['label'] or field['name']}")
+    kind = assignment.get("kind")
+    if kind == "none" and not field["required"]:
+        return None
+    if kind == "resume":
+        path = Path(draft["resume_path"])
+        digest = draft["resume_hash"]
+    elif kind == "uploaded":
+        path = Path(str(assignment.get("path", ""))).resolve()
+        allowed = (settings.artifact_dir / draft["id"] / "attachments").resolve()
+        if not path.is_relative_to(allowed):
+            raise ValueError("Attachment is outside this application's files")
+        digest = assignment.get("sha256", "")
+    else:
+        raise ValueError(f"Choose an attachment for {field['label'] or field['name']}")
+    if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+        raise ValueError(f"Reviewed attachment has changed or is missing: {field['label'] or field['name']}")
+    accept = field["accept"].casefold()
+    if accept and ".pdf" not in accept and "application/pdf" not in accept:
+        raise ValueError(f"File field {field['label']} does not accept the reviewed PDF")
+    return str(path)
 
 
 def _send_email(draft: dict, settings: Settings) -> str:
@@ -204,9 +231,9 @@ async def _send_web(settings: Settings, draft: dict) -> tuple[str, str]:
                 if field["max_length"] and len(answer) > field["max_length"]:
                     return "needs_user_attention", f"Answer exceeds character limit: {field['label']}"
                 if kind == "file":
-                    if ".pdf" not in field["accept"].casefold() and field["accept"] and "application/pdf" not in field["accept"].casefold():
-                        return "needs_user_attention", f"File field {field['label']} does not accept the reviewed PDF"
-                    await locator.set_input_files(draft["resume_path"])
+                    attachment = _reviewed_attachment(settings, draft, field)
+                    if attachment:
+                        await locator.set_input_files(attachment)
                 elif kind in ("checkbox", "radio"):
                     if answer.casefold() in ("yes", "true", "checked"):
                         await locator.check()
@@ -253,6 +280,10 @@ async def send_application(db: Database, settings: Settings, draft_id: str, expe
         raise ValueError("Complete the message and resume before sending")
     if draft["destination"]["kind"] == "email":
         _validated_smtp_config(settings)
+    elif draft["form_data"].get("fields"):
+        for field in draft["form_data"]["fields"]:
+            if field["type"] == "file":
+                _reviewed_attachment(settings, draft, field)
     resume_path = Path(draft["resume_path"])
     if not resume_path.is_file() or hashlib.sha256(resume_path.read_bytes()).hexdigest() != draft["resume_hash"]:
         raise ValueError("Reviewed resume PDF has changed or is missing")

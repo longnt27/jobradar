@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import shutil
 from contextlib import asynccontextmanager
@@ -578,6 +579,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not path.is_file():
             raise HTTPException(404, "Resume file not found")
         return FileResponse(path, media_type="application/pdf", filename=f"resume-{draft_id[:8]}.pdf")
+
+    @app.post("/api/applications/{draft_id}/attachments")
+    async def upload_application_attachment(draft_id: str, file: UploadFile = File(...)):
+        try:
+            draft = get_draft(db, draft_id)
+        except KeyError as error:
+            raise HTTPException(404, str(error)) from error
+        if draft["status"] == "sent":
+            raise HTTPException(422, "Sent applications cannot be changed")
+        data = await file.read(10_000_001)
+        if len(data) > 10_000_000 or not data.startswith(b"%PDF-"):
+            raise HTTPException(422, "Choose a PDF smaller than 10 MB")
+        directory = settings.artifact_dir / draft_id / "attachments"
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"{new_id()}.pdf"
+        path.write_bytes(data)
+        return {"kind": "uploaded", "path": str(path), "sha256": hashlib.sha256(data).hexdigest(),
+                "name": Path(file.filename or "attachment.pdf").name}
 
     @app.post("/api/applications/{draft_id}/inspect")
     async def inspect_application(draft_id: str):

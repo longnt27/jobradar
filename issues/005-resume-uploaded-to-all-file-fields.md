@@ -1,6 +1,6 @@
 # Resume is uploaded to every PDF-compatible file field
 
-- **Status:** Open
+- **Status:** Closed
 - **Severity:** High
 - **Labels:** `bug`, `applications`, `attachments`
 
@@ -28,3 +28,7 @@ The code sends `resume_path` to every PDF-compatible file input; the review scre
 ## Acceptance criteria
 
 Model attachment fields explicitly, show them in review, and require a reviewed file mapping for each upload.
+
+## Resolution
+
+Each file input now appears in application review with an explicit resume, separate PDF, or optional no-file assignment. Uploaded PDFs are saved under the draft, validated by hash, and sent only to their assigned field. A two-file form test verifies an unassigned required field blocks sending and that distinct files reach the correct inputs.

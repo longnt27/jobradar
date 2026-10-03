@@ -277,10 +277,20 @@ async function showApplication(id) {
     <div class="review-section"><h4>Destination</h4><label>Channel<select id="draft-destination-kind"><option value="web" ${destination.kind === 'web' ? 'selected' : ''}>Web form</option><option value="email" ${destination.kind === 'email' ? 'selected' : ''}>Email</option></select></label><label>URL or email address<input id="draft-destination" value="${escapeHtml(destination.url || destination.email || '')}"></label></div>
     <div class="review-section"><h4>Resume</h4><p><a href="/api/applications/${id}/resume" target="_blank">Preview or download PDF ↗</a></p><label>Professional summary<textarea id="draft-summary" rows="3">${escapeHtml(resume.summary || '')}</textarea></label><p class="item-meta">Experience: ${(resume.experience || []).map((item) => escapeHtml(item.company || item.title)).join(', ') || 'None'} · Projects: ${projects.length}</p>${projects.map((project, index) => `<label>${escapeHtml(project.title)} — tailored bullets<textarea data-project-bullets="${index}" rows="4">${escapeHtml((project.bullets || []).join('\n'))}</textarea></label>`).join('')}</div>
     <div class="review-section"><h4>Application message</h4><label>Subject<input id="draft-subject" value="${escapeHtml(message.subject || '')}"></label><label>Body<textarea id="draft-body" rows="10">${escapeHtml(message.body || '')}</textarea></label></div>
-    <div id="draft-form-fields" class="review-section"><h4>Form answers</h4>${draft.form_data.action ? `<p class="hint">Form submits to: ${escapeHtml(draft.form_data.action)} (${escapeHtml(draft.form_data.method)})</p>` : ''}${(draft.form_data.fields || []).filter((field) => field.type !== 'file').map((field) => `<label>${escapeHtml(field.label || field.name || `Field ${field.index}`)}${field.required ? ' *' : ''}<textarea data-answer="${field.index}" rows="2">${escapeHtml(draft.form_data.answers?.[String(field.index)] || '')}</textarea>${field.options?.length ? `<span class="hint">Options: ${field.options.map((option) => escapeHtml(option.value)).join(', ')}</span>` : ''}</label>`).join('') || '<p class="hint">No form fields inspected yet. Inspect the final application URL before sending.</p>'}</div>
+    <div id="draft-form-fields" class="review-section"><h4>Form answers and attachments</h4>${draft.form_data.action ? `<p class="hint">Form submits to: ${escapeHtml(draft.form_data.action)} (${escapeHtml(draft.form_data.method)})</p>` : ''}${(draft.form_data.fields || []).map((field) => field.type === 'file' ? (() => {
+      const assignment = draft.form_data.attachments?.[String(field.index)] || {};
+      return `<label>${escapeHtml(field.label || field.name || `File ${field.index}`)}${field.required ? ' *' : ''}<select data-attachment="${field.index}"><option value="" ${!assignment.kind ? 'selected' : ''}>Choose a file</option><option value="resume" ${assignment.kind === 'resume' ? 'selected' : ''}>Generated resume PDF</option>${!field.required ? `<option value="none" ${assignment.kind === 'none' ? 'selected' : ''}>No file</option>` : ''}${assignment.kind === 'uploaded' ? `<option value="uploaded" selected>${escapeHtml(assignment.name || 'Uploaded PDF')}</option>` : ''}</select><input type="file" accept="application/pdf,.pdf" data-attachment-file="${field.index}" aria-label="Upload PDF for ${escapeHtml(field.label || field.name || `File ${field.index}`)}"><span class="hint">Select the document to attach to this field.</span></label>`;
+    })() : `<label>${escapeHtml(field.label || field.name || `Field ${field.index}`)}${field.required ? ' *' : ''}<textarea data-answer="${field.index}" rows="2">${escapeHtml(draft.form_data.answers?.[String(field.index)] || '')}</textarea>${field.options?.length ? `<span class="hint">Options: ${field.options.map((option) => escapeHtml(option.value)).join(', ')}</span>` : ''}</label>`).join('') || '<p class="hint">No form fields inspected yet. Inspect the final application URL before sending.</p>'}</div>
     ${draft.warnings.length ? `<div class="review-section"><h4>Review notes</h4>${draft.warnings.map((warning) => `<p class="hint">${escapeHtml(warning)}</p>`).join('')}</div>` : ''}
     <div class="actions"><button id="save-draft" class="primary">Save changes</button><button id="inspect-draft">Inspect form</button><button id="send-draft" ${draft.status === 'sent' ? 'disabled' : ''}>Send application</button></div><p class="hint">Package fingerprint: <span class="mono">${escapeHtml(draft.package_hash.slice(0, 16))}</span>. Open the PDF after saving changes.</p><div id="application-outcome" class="hint"></div>`;
   $('#application-detail').querySelectorAll('input,select,textarea').forEach((field) => field.addEventListener('input', () => { $('#send-draft').disabled = true; $('#application-outcome').textContent = 'Save and review your changes before sending.'; }));
+  $('#application-detail').querySelectorAll('[data-attachment-file]').forEach((input) => input.addEventListener('change', () => {
+    if (input.files.length) {
+      const select = document.querySelector(`[data-attachment="${input.dataset.attachmentFile}"]`);
+      if (!select.querySelector('[value="uploaded"]')) select.add(new Option(input.files[0].name, 'uploaded'));
+      select.value = 'uploaded';
+    }
+  }));
   $('#save-draft').addEventListener('click', async () => {
     try { await saveApplication(id, draft); await showApplication(id); }
     catch(error) { notice(error.message, true); }
@@ -302,11 +312,25 @@ async function showApplication(id) {
 async function saveApplication(id, draft) {
   const answers = {};
   document.querySelectorAll('[data-answer]').forEach((field) => { answers[field.dataset.answer] = field.value; });
+  const attachments = {};
+  for (const select of document.querySelectorAll('[data-attachment]')) {
+    const index = select.dataset.attachment;
+    const file = document.querySelector(`[data-attachment-file="${index}"]`).files[0];
+    if (file && select.value === 'uploaded') {
+      const body = new FormData();
+      body.append('file', file);
+      attachments[index] = await api(`/api/applications/${id}/attachments`, {method:'POST', body});
+    } else if (select.value === 'uploaded') {
+      attachments[index] = draft.form_data.attachments?.[index];
+    } else if (select.value) {
+      attachments[index] = {kind:select.value};
+    }
+  }
   const kind = $('#draft-destination-kind').value;
   const value = $('#draft-destination').value.trim();
   const destination = kind === 'email' ? {kind, email:value} : {kind, url:value};
   const projects = (draft.resume_data.projects || []).map((project, index) => ({...project, bullets:document.querySelector(`[data-project-bullets="${index}"]`).value.split('\n').map((x) => x.trim()).filter(Boolean)}));
-  const payload = {resume_data:{...draft.resume_data, summary:$('#draft-summary').value, projects}, message_data:{subject:$('#draft-subject').value, body:$('#draft-body').value}, form_data:{...draft.form_data, answers}, destination};
+  const payload = {resume_data:{...draft.resume_data, summary:$('#draft-summary').value, projects}, message_data:{subject:$('#draft-subject').value, body:$('#draft-body').value}, form_data:{...draft.form_data, answers, attachments}, destination};
   await api(`/api/applications/${id}`, {method:'PATCH', body:JSON.stringify(payload)});
   notice('Application saved');
 }

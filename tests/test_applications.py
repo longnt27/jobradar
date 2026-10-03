@@ -90,12 +90,16 @@ def test_web_form_inspection_and_one_click_submit(tmp_path: Path) -> None:
         answers = inspected.json()["form_data"]["answers"]
         assert "Alex Example" in answers.values()
         assert any("I am applying" in value for value in answers.values())
+        form_data = inspected.json()["form_data"]
+        resume_field = next(field for field in form_data["fields"] if field["type"] == "file")
+        form_data["attachments"] = {str(resume_field["index"]): {"kind": "resume"}}
+        inspected_draft = client.patch(f"/api/applications/{draft['id']}", json={"form_data": form_data}).json()
         action[0] = "/changed"
-        changed = client.post(f"/api/applications/{draft['id']}/send", json={"package_hash": inspected.json()["package_hash"]})
+        changed = client.post(f"/api/applications/{draft['id']}/send", json={"package_hash": inspected_draft["package_hash"]})
         assert changed.json()["status"] == "needs_user_attention"
         assert not posted
         action[0] = ""
-        result = client.post(f"/api/applications/{draft['id']}/send", json={"package_hash": inspected.json()["package_hash"]})
+        result = client.post(f"/api/applications/{draft['id']}/send", json={"package_hash": inspected_draft["package_hash"]})
         assert result.status_code == 200, result.text
         assert result.json()["status"] == "submitted_confirmed"
         assert len(posted) == 1
@@ -178,6 +182,54 @@ def test_required_radio_group_accepts_one_reviewed_choice(tmp_path: Path) -> Non
         result = client.post(f"/api/applications/{draft['id']}/send", json={"package_hash": reviewed["package_hash"]})
         assert result.json()["status"] == "submitted_confirmed"
         assert len(posted) == 1
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_each_file_field_uses_its_reviewed_attachment(tmp_path: Path) -> None:
+    posted = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = b'<html><body><form method="post" enctype="multipart/form-data"><label>Resume <input type="file" name="resume" accept="application/pdf" required></label><label>Cover letter <input type="file" name="cover_letter" accept="application/pdf" required></label><button>Apply</button></form></body></html>'
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self):
+            posted.append(self.rfile.read(int(self.headers["Content-Length"])))
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(b"<html><body>Thank you. Application received.</body></html>")
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        client = TestClient(create_app(Settings(tmp_path)))
+        draft = _prepared(client, f"http://127.0.0.1:{server.server_port}/apply")
+        inspected = client.post(f"/api/applications/{draft['id']}/inspect").json()
+        fields = {field["name"]: field for field in inspected["form_data"]["fields"]}
+        form_data = inspected["form_data"]
+        form_data["attachments"] = {str(fields["resume"]["index"]): {"kind": "resume"}}
+        partial = client.patch(f"/api/applications/{draft['id']}", json={"form_data": form_data}).json()
+        assert client.post(f"/api/applications/{draft['id']}/send", json={"package_hash": partial["package_hash"]}).status_code == 422
+        assert not posted
+        upload = client.post(f"/api/applications/{draft['id']}/attachments", files={"file": ("cover.pdf", b"%PDF-1.4\nCOVER LETTER UNIQUE\n%%EOF", "application/pdf")})
+        assert upload.status_code == 200
+        form_data["attachments"][str(fields["cover_letter"]["index"])] = upload.json()
+        reviewed = client.patch(f"/api/applications/{draft['id']}", json={"form_data": form_data}).json()
+        outcome = client.post(f"/api/applications/{draft['id']}/send", json={"package_hash": reviewed["package_hash"]})
+        assert outcome.json()["status"] == "submitted_confirmed"
+        assert b"COVER LETTER UNIQUE" in posted[0]
+        assert b'name="resume"; filename="' in posted[0]
+        assert b'name="cover_letter"; filename="' in posted[0]
+        assert b"COVER LETTER UNIQUE" not in posted[0].split(b'name="resume"; filename="')[1].split(b'name="cover_letter"; filename="')[0]
     finally:
         server.shutdown()
         server.server_close()
