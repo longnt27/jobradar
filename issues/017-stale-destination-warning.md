@@ -1,6 +1,6 @@
 # Destination warning remains after a valid destination is saved
 
-- **Status:** Open
+- **Status:** Closed
 - **Severity:** Medium
 - **Labels:** `bug`, `applications`, `ui`
 
@@ -29,3 +29,7 @@ The draft kept `No application destination is known` after saving the email addr
 ## Acceptance criteria
 
 Recompute warnings on every draft update and enable Send only after current package checks pass.
+
+## Resolution
+
+Draft updates now recalculate destination warnings. The detail API reports current send blockers, including invalid destination, missing SMTP settings, uninspected web forms, unanswered required fields, and unassigned files; the Send button uses that readiness state. A regression test checks the warning clears and readiness changes after an email destination and SMTP settings are saved.

@@ -174,6 +174,51 @@ def _reviewed_attachment(settings: Settings, draft: dict, field: dict) -> str | 
     return str(path)
 
 
+def send_readiness(db: Database, settings: Settings, draft: dict) -> list[str]:
+    reasons = []
+    if draft["status"] == "sent":
+        reasons.append("This application has already been sent")
+    try:
+        _validate_destination(draft["destination"])
+    except ValueError as error:
+        reasons.append(str(error))
+    if not draft["message_data"].get("body") or not draft["resume_data"].get("name"):
+        reasons.append("Complete the message and resume")
+    path = Path(draft["resume_path"])
+    if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != draft["resume_hash"]:
+        reasons.append("Save and review the current resume PDF")
+    if draft["destination"].get("kind") == "email":
+        try:
+            _validated_smtp_config(settings)
+        except ValueError as error:
+            reasons.append(str(error))
+    elif draft["destination"].get("kind") == "web":
+        form = draft["form_data"]
+        if not form.get("signature") or form.get("destination_url") != draft["destination"].get("url"):
+            reasons.append("Inspect this application form before sending")
+        else:
+            required_radios = {}
+            for field in form.get("fields", []):
+                if field["type"] == "file":
+                    try:
+                        _reviewed_attachment(settings, draft, field)
+                    except ValueError as error:
+                        reasons.append(str(error))
+                elif field["type"] == "radio" and field["required"]:
+                    required_radios.setdefault(field["name"] or str(field["index"]), []).append(field)
+                elif field["required"]:
+                    answer = str(form.get("answers", {}).get(str(field["index"]), "")).strip()
+                    if not answer or (field["type"] == "checkbox" and answer.casefold() not in ("yes", "true", "checked")):
+                        reasons.append(f"Answer required: {field['label'] or field['name']}")
+            for group in required_radios.values():
+                if not any(str(form.get("answers", {}).get(str(field["index"]), "")).casefold() in ("yes", "true", "checked") for field in group):
+                    reasons.append(f"Choose an option: {group[0]['label'] or group[0]['name']}")
+    prior = db.one("SELECT status FROM submissions WHERE vacancy_id=? AND status IN ('sent_confirmed','submitted_confirmed','submitted_unconfirmed','sending') LIMIT 1", (draft["vacancy_id"],))
+    if prior:
+        reasons.append(f"This job already has a {prior['status']} application")
+    return reasons
+
+
 def _send_email(draft: dict, settings: Settings) -> str:
     config = _validated_smtp_config(settings)
     host = config["host"]

@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field
 
@@ -21,6 +22,22 @@ PROVIDERS = {
     "agy": "remote inference through local Antigravity CLI",
     "claude": "remote inference through local Claude Code CLI",
 }
+
+
+DESTINATION_WARNING = "No application destination is known. Add an email address or application URL before sending."
+
+
+def _destination_warning(destination: dict) -> str | None:
+    if destination.get("kind") == "email":
+        if re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", destination.get("email", "")):
+            return None
+        return "Enter a valid application email address before sending."
+    if destination.get("kind") == "web":
+        parts = urlsplit(destination.get("url", ""))
+        if parts.scheme in ("http", "https") and parts.hostname:
+            return None
+        return "Enter a valid application URL before sending."
+    return DESTINATION_WARNING
 
 
 class ProjectBullets(BaseModel):
@@ -195,8 +212,8 @@ def prepare_draft(db: Database, settings: Settings, vacancy_id: str, provider: s
                    if job["apply_url"] and job["apply_url"].startswith("mailto:") else
                    {"kind": "web", "url": job["apply_url"]} if job["apply_url"] else {"kind": "unknown", "url": ""})
     warnings = []
-    if not job["apply_url"]:
-        warnings.append("No application destination is known. Add an email address or application URL before sending.")
+    if warning := _destination_warning(destination):
+        warnings.append(warning)
     if provider != "template":
         warnings.append("Review AI wording for factual accuracy before sending.")
     identifier = new_id()
@@ -238,6 +255,9 @@ def update_draft(db: Database, settings: Settings, identifier: str, updates: dic
     if not merged["resume_data"].get("name") or not merged["message_data"].get("body"):
         raise ValueError("Resume name and application message are required")
     path, digest = render_resume(settings, identifier, merged["resume_data"])
-    db.execute("UPDATE application_drafts SET resume_data=?,message_data=?,form_data=?,destination=?,resume_path=?,resume_hash=?,status='draft',updated_at=? WHERE id=?",
-               (*(json.dumps(merged[key], ensure_ascii=False) for key in ("resume_data", "message_data", "form_data", "destination")), path, digest, now(), identifier))
+    warnings = [item for item in draft["warnings"] if item != DESTINATION_WARNING and not item.startswith("Enter a valid application ")]
+    if warning := _destination_warning(merged["destination"]):
+        warnings.append(warning)
+    db.execute("UPDATE application_drafts SET resume_data=?,message_data=?,form_data=?,destination=?,warnings=?,resume_path=?,resume_hash=?,status='draft',updated_at=? WHERE id=?",
+               (*(json.dumps(merged[key], ensure_ascii=False) for key in ("resume_data", "message_data", "form_data", "destination")), json.dumps(warnings, ensure_ascii=False), path, digest, now(), identifier))
     return get_draft(db, identifier)

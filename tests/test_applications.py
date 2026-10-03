@@ -56,6 +56,23 @@ def test_missing_smtp_settings_do_not_lock_future_send(tmp_path: Path, monkeypat
     assert second.json()["status"] == "sent_confirmed"
 
 
+def test_destination_warning_and_send_readiness_follow_current_draft(tmp_path: Path) -> None:
+    client = TestClient(create_app(Settings(tmp_path)))
+    profile = client.get("/api/profile").json()
+    profile.update({"name": "Alex Example", "email": "alex@example.org"})
+    client.put("/api/profile", json=profile)
+    client.post("/api/positions", json={"company": "Example Labs", "role": "Engineer", "dates": "2024–2026", "bullets": ["Built Python systems."]})
+    job = client.post("/api/jobs/import", json={"company": "Example", "title": "Engineer", "description": "Build Python systems."}).json()
+    draft = client.post(f"/api/jobs/{job['id']}/prepare", json={"provider": "template"}).json()
+    assert any("No application destination" in warning for warning in draft["warnings"])
+    assert client.get(f"/api/applications/{draft['id']}").json()["send_ready"] is False
+    updated = client.patch(f"/api/applications/{draft['id']}", json={"destination": {"kind": "email", "email": "jobs@example.org"}}).json()
+    assert not any("destination" in warning for warning in updated["warnings"])
+    assert client.get(f"/api/applications/{draft['id']}").json()["send_ready"] is False
+    client.post("/api/setup/smtp", json={"host": "smtp.example.org", "port": 587, "user": "alex", "password": "secret", "from_address": "alex@example.org"})
+    assert client.get(f"/api/applications/{draft['id']}").json()["send_ready"] is True
+
+
 def test_web_form_inspection_and_one_click_submit(tmp_path: Path) -> None:
     posted = []
     action = [""]

@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, HttpUrl
 
 from .db import Database, new_id, now
-from .apply import inspect_form, send_application
+from .apply import inspect_form, send_application, send_readiness
 from .browser_login import BrowserLoginManager
 from .drafting import PROVIDERS, get_draft, prepare_draft, update_draft
 from .evidence import generate_project_content, inspect_repository
@@ -564,7 +564,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/applications/{draft_id}")
     def application(draft_id: str):
         try:
-            return get_draft(db, draft_id)
+            draft = get_draft(db, draft_id)
+            reasons = send_readiness(db, settings, draft)
+            return {**draft, "send_ready": not reasons, "send_blockers": reasons}
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
 
