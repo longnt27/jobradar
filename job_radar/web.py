@@ -527,7 +527,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             result = inspect_repository(db, settings, str(payload.url))
             try:
                 result["project_content"] = generate_project_content(db, result["evidence_id"], provider)
-            except RuntimeError as error:
+            except (ValueError, RuntimeError) as error:
                 result["generation_warning"] = str(error)
             return result
         except (ValueError, RuntimeError) as error:

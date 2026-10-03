@@ -32,4 +32,4 @@ Strip README markup for fallback text, expose the generation failure on the card
 
 ## Resolution
 
-README HTML is stripped before fallback text is stored. Project generation errors are persisted and shown on the card. A repository placeholder cannot be approved until the user replaces it with a specific reviewed bullet; both UI and API enforce this. Tests cover HTML cleanup, blocked placeholder approval, manual correction, and recorded generation failure.
+README HTML is stripped before fallback text is stored. Project generation errors are persisted and shown on the card. A repository placeholder cannot be approved until the user replaces it with a specific reviewed bullet; both UI and API enforce this. Tests cover HTML cleanup, blocked placeholder approval, manual correction, and recorded generation failure. Inspection also returns the failed card for review when model output is invalid.

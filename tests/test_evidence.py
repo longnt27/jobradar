@@ -74,6 +74,24 @@ def test_project_generation_failure_is_recorded_on_card(tmp_path: Path, monkeypa
     assert "Provider unavailable" in details["generation_error"]
 
 
+def test_repository_inspection_returns_failed_card_for_invalid_model_output(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "source"
+    root.mkdir()
+    subprocess.run(["git", "init", str(root)], check=True, capture_output=True)
+    (root / "README.md").write_text("# Document search\nIndexes documents with Python.")
+    subprocess.run(["git", "-C", str(root), "add", "README.md"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(root), "-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-m", "Initial"], check=True, capture_output=True)
+    monkeypatch.setattr("job_radar.evidence.canonical_github_url", lambda _: (str(root), "test__project"))
+    monkeypatch.setattr("job_radar.drafting._provider_json", lambda *_args: (_ for _ in ()).throw(ValueError("Invalid project bullets")))
+    client = TestClient(create_app(Settings(tmp_path / "app")))
+    response = client.post("/api/repositories/inspect", json={"url": "https://github.com/test/project", "provider": "codex"})
+    assert response.status_code == 200
+    assert "Invalid project bullets" in response.json()["generation_warning"]
+    identifier = response.json()["evidence_id"]
+    card = next(item for item in client.get("/api/evidence").json() if item["id"] == identifier)
+    assert __import__("json").loads(card["details"])["generation_status"] == "failed"
+
+
 def test_codex_project_content_stays_unapproved_until_review(tmp_path: Path, monkeypatch) -> None:
     client = TestClient(create_app(Settings(tmp_path)))
     db = client.app.state.db

@@ -12,7 +12,7 @@ These local Markdown files track QA cases, one per finding. They have not been p
 
 ## Resolution verification
 
-- Full suite: 54 passed with `uv run --no-sync pytest -vv -x` after all 24 fixes.
+- Full suite: 55 passed with `uv run --no-sync pytest -q` after all fixes.
 - Browser test covers setting and filtering Interview, Rejected, and Offer states. Additional browser checks covered search layout, empty results, and keyboard job selection.
 - Web form regression tests use local HTTP fixtures; no real application was sent.
 
