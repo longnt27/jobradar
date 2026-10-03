@@ -31,13 +31,10 @@ def main() -> None:
         async def sign_in():
             manager = BrowserLoginManager(Database(settings.database_path), settings, asyncio.Lock())
             manager.start(args.site)
-            while manager.state == "opening":
-                await asyncio.sleep(.1)
-            if manager.state != "open":
-                raise RuntimeError(manager.error or "Chrome did not open")
-            print(f"Sign in to {args.site.capitalize()} in Chrome, then press Enter here.")
-            await asyncio.to_thread(input)
-            await manager.finish()
+            print(f"Sign in to {args.site.capitalize()} in Chrome. Job Radar will detect completion automatically.")
+            await manager.task
+            if manager.state != "saved":
+                raise RuntimeError(manager.error or "Sign-in did not complete")
             print(f"{args.site.capitalize()} session saved")
         asyncio.run(sign_in())
     elif args.command == "install-service":

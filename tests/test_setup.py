@@ -60,24 +60,32 @@ def test_social_scans_wait_for_browser_setup(tmp_path: Path) -> None:
     asyncio.run(run())
 
 
-def test_browser_setup_flow_can_finish_from_ui(tmp_path: Path, monkeypatch) -> None:
+def test_browser_setup_flow_detects_login_without_finish_click(tmp_path: Path, monkeypatch) -> None:
     app = create_app(Settings(tmp_path))
     app.state.db.execute("UPDATE sources SET enabled=0")
-    manager = app.state.login_manager
+    class FakeProcess:
+        pid = 12345
+        closed = False
+        def poll(self):
+            return 0 if self.closed else None
+        def terminate(self):
+            self.closed = True
+        def wait(self, timeout=None):
+            return 0
 
-    async def fake_browser():
-        manager.state = "open"
-        await manager.finished.wait()
-        manager.db.set_setting("social_login_completed_at_linkedin", now())
-        manager.state = "saved"
-
-    monkeypatch.setattr(manager, "_run", fake_browser)
+    process = FakeProcess()
+    monkeypatch.setattr("job_radar.browser_login.chrome_executable", lambda: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+    monkeypatch.setattr("job_radar.browser_login.subprocess.Popen", lambda *_args, **_kwargs: process)
+    monkeypatch.setattr("job_radar.browser_login.chrome_login_complete", lambda _profile, site, _started: site == "linkedin")
+    monkeypatch.setattr("job_radar.browser_login.frontmost_app_bundle", lambda: "com.openai.codex")
+    monkeypatch.setattr("job_radar.browser_login.return_to_job_radar", lambda *_args: None)
     with TestClient(app) as client:
         assert client.post("/api/setup/browser/start", json={"site": "linkedin"}).status_code == 200
-        for _ in range(5):
-            if client.get("/api/setup").json()["browser"]["state"] == "open":
+        for _ in range(100):
+            if client.get("/api/setup").json()["browser"]["state"] == "saved":
                 break
-        assert client.post("/api/setup/browser/finish").json()["state"] == "saved"
+            time.sleep(.01)
+        assert process.closed
         assert client.get("/api/setup").json()["browser"]["connected_sites"] == ["linkedin"]
 
 
@@ -123,6 +131,7 @@ def test_signing_in_again_uses_regular_chrome_for_one_site_and_clears_expiry(tmp
     launches = []
 
     class FakeProcess:
+        pid = 12345
         def poll(self):
             return None
 
@@ -134,6 +143,7 @@ def test_signing_in_again_uses_regular_chrome_for_one_site_and_clears_expiry(tmp
 
     monkeypatch.setattr("job_radar.browser_login.chrome_executable", lambda: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
     monkeypatch.setattr("job_radar.browser_login.subprocess.Popen", lambda args, **kwargs: launches.append(args) or FakeProcess())
+    monkeypatch.setattr("job_radar.browser_login.chrome_login_complete", lambda _profile, _site, _started: True)
     monkeypatch.setattr("job_radar.browser_login.frontmost_app_bundle", lambda: "com.openai.codex")
     monkeypatch.setattr("job_radar.browser_login.return_to_job_radar", lambda *_args: None)
     manager = app.state.login_manager
@@ -141,12 +151,8 @@ def test_signing_in_again_uses_regular_chrome_for_one_site_and_clears_expiry(tmp
     async def run():
         assert manager.status()["state"] == "reauth_required"
         manager.start("linkedin")
-        for _ in range(100):
-            if manager.state == "open":
-                break
-            await asyncio.sleep(.01)
-        assert manager.state == "open"
-        return await manager.finish()
+        await manager.task
+        return manager.status()
 
     saved = asyncio.run(run())
     assert saved["state"] == "saved"
@@ -154,30 +160,28 @@ def test_signing_in_again_uses_regular_chrome_for_one_site_and_clears_expiry(tmp
     assert saved["connected_sites"] == ["linkedin"]
     assert len(launches) == 1
     assert f"--user-data-dir={Settings(tmp_path).browser_profile}" in launches[0]
-    assert "https://www.linkedin.com/login" in launches[0]
+    assert "https://www.linkedin.com/feed/" in launches[0]
     assert not any("remote-debugging" in arg for arg in launches[0])
     assert TestClient(create_app(Settings(tmp_path))).get("/api/setup").json()["browser"]["connected_sites"] == ["linkedin"]
 
     async def connect_facebook():
         manager.start("facebook")
-        for _ in range(100):
-            if manager.state == "open":
-                break
-            await asyncio.sleep(.01)
-        return await manager.finish()
+        await manager.task
+        return manager.status()
 
     both = asyncio.run(connect_facebook())
     assert both["connected_sites"] == ["linkedin", "facebook"]
-    assert "https://www.facebook.com/" in launches[1]
+    assert "https://www.facebook.com/settings" in launches[1]
 
 
-def test_finish_tab_saves_session_closes_chrome_and_returns_to_app(tmp_path: Path, monkeypatch) -> None:
+def test_auto_detect_closes_chrome_and_returns_to_app(tmp_path: Path, monkeypatch) -> None:
     app = create_app(Settings(tmp_path))
     app.state.db.execute("UPDATE sources SET enabled=0")
     launches = []
     activated = []
 
     class FakeProcess:
+        pid = 67890
         closed = False
 
         def poll(self):
@@ -192,6 +196,7 @@ def test_finish_tab_saves_session_closes_chrome_and_returns_to_app(tmp_path: Pat
     process = FakeProcess()
     monkeypatch.setattr("job_radar.browser_login.chrome_executable", lambda: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
     monkeypatch.setattr("job_radar.browser_login.subprocess.Popen", lambda args, **kwargs: launches.append(args) or process)
+    monkeypatch.setattr("job_radar.browser_login.chrome_login_complete", lambda _profile, site, _started: site == "linkedin")
     monkeypatch.setattr("job_radar.browser_login.frontmost_app_bundle", lambda: "com.openai.codex")
     monkeypatch.setattr("job_radar.browser_login.return_to_job_radar", lambda bundle, port: activated.append((bundle, port)))
 
@@ -199,20 +204,10 @@ def test_finish_tab_saves_session_closes_chrome_and_returns_to_app(tmp_path: Pat
         started = client.post("/api/setup/browser/start", json={"site": "linkedin"})
         assert started.status_code == 200
         for _ in range(100):
-            if client.get("/api/setup").json()["browser"]["state"] == "open":
-                break
-        assert client.get("/api/setup").json()["browser"]["state"] == "open"
-        finish_url = next(arg for arg in launches[0] if "/signin/finish/" in arg)
-        token = finish_url.rsplit("/", 1)[-1]
-        page = client.get(f"/signin/finish/{token}")
-        assert page.status_code == 200
-        assert "Finish and return to Job Radar" in page.text
-        result = client.post(f"/api/setup/browser/finish/{token}")
-        assert result.status_code == 200
-        for _ in range(100):
             if client.get("/api/setup").json()["browser"]["state"] == "saved":
                 break
             time.sleep(.01)
         assert process.closed
+        assert not any("/signin/finish/" in arg for arg in launches[0])
         assert client.get("/api/setup").json()["browser"]["connected_sites"] == ["linkedin"]
         assert activated == [("com.openai.codex", 8787)]

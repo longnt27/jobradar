@@ -53,7 +53,7 @@ function renderSocialAuth(browser) {
   $('#social-auth-message').textContent = expired
     ? `${socialSiteNames(browser)} sign-in expired. Sign in again to resume those scans.` : '';
   $('#social-sign-in-status').textContent = expired ? 'Sign in again'
-    : ['opening', 'open'].includes(browser.state) ? 'Sign-in window open'
+    : ['opening', 'open'].includes(browser.state) ? 'Waiting for sign-in'
     : connected.length === 2 ? 'Both connected' : `${connected.length} of 2 connected`;
   for (const site of ['linkedin', 'facebook']) {
     const label = site === 'linkedin' ? 'LinkedIn' : 'Facebook';
@@ -84,9 +84,7 @@ async function loadSetup() {
   badge('#setup-smtp-status', data.smtp_configured ? 'Configured' : 'Optional', data.smtp_configured);
   badge('#setup-telegram-status', data.telegram_configured ? 'Configured' : 'Optional', data.telegram_configured);
   renderSocialAuth(data.browser);
-  $('#setup-browser-finish').disabled = data.browser.state !== 'open';
-  $('#setup-browser-finish').textContent = data.browser.active_site ? `I've finished ${data.browser.active_site === 'linkedin' ? 'LinkedIn' : 'Facebook'} sign-in` : "I've finished signing in";
-  $('#setup-browser-detail').textContent = data.browser.error || (data.browser.state === 'opening' ? 'Opening Chrome…' : data.browser.state === 'open' ? 'After signing in, switch to the Job Radar tab in Chrome and click “Finish and return to Job Radar”.' : data.browser.state === 'reauth_required' ? `${socialSiteNames(data.browser)} needs a new sign-in. Other sources keep scanning.` : data.browser.last_saved_at ? `Saved session last updated ${when(data.browser.last_saved_at)}. Upcoming scans will verify site access.` : 'Choose a site to begin. Google sign-in opens in regular Chrome.');
+  $('#setup-browser-detail').textContent = data.browser.error || (data.browser.state === 'opening' ? 'Opening Chrome…' : data.browser.state === 'open' ? `Waiting for ${data.browser.active_site === 'linkedin' ? 'LinkedIn' : 'Facebook'} sign-in in Chrome. The window closes automatically when the account page loads.` : data.browser.state === 'reauth_required' ? `${socialSiteNames(data.browser)} needs a new sign-in. Other sources keep scanning.` : data.browser.last_saved_at ? `Saved session last updated ${when(data.browser.last_saved_at)}. Upcoming scans will verify site access.` : 'Choose a site to begin. Google sign-in opens in regular Chrome.');
   const mailForm = $('#setup-smtp-form');
   if (!mailForm.dataset.initialized) {
     mailForm.elements.host.value = data.smtp_host || '';
@@ -100,7 +98,7 @@ async function loadSetup() {
     alertForm.elements.chat_id.value = data.telegram_chat_id || '';
     alertForm.dataset.initialized = 'true';
   }
-  if (data.browser.state === 'opening' && $('#profile').classList.contains('active')) window.setupPoll = setTimeout(() => loadSetup().catch((error) => notice(error.message, true)), 1000);
+  if (['opening', 'open'].includes(data.browser.state) && $('#profile').classList.contains('active')) window.setupPoll = setTimeout(() => loadSetup().catch((error) => notice(error.message, true)), 1000);
   return data;
 }
 
@@ -554,11 +552,6 @@ for (const site of ['linkedin', 'facebook']) {
     catch(error) { notice(error.message, true); }
   });
 }
-
-$('#setup-browser-finish').addEventListener('click', async () => {
-  try { await api('/api/setup/browser/finish', {method:'POST'}); await Promise.all([loadSetup(), loadHome()]); notice('Browser session saved. Social scans can resume.'); }
-  catch(error) { notice(error.message, true); }
-});
 
 $('#setup-facebook-form').addEventListener('submit', async (event) => {
   event.preventDefault();

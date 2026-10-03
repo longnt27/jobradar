@@ -1,20 +1,23 @@
 from __future__ import annotations
 
 import asyncio
-import secrets
 import subprocess
+import time
+from collections.abc import Callable
 
+from .chrome_auth_watch import chrome_login_complete
 from .db import Database, now
 from .desktop_handoff import frontmost_app_bundle, return_to_job_radar
 from .settings import Settings
 from .social_browser import SITES, chrome_executable, social_login_at
 
 
-LOGIN_URLS = {"linkedin": "https://www.linkedin.com/login", "facebook": "https://www.facebook.com/"}
+LOGIN_URLS = {"linkedin": "https://www.linkedin.com/feed/", "facebook": "https://www.facebook.com/settings"}
 
 
 class BrowserLoginManager:
-    def __init__(self, db: Database, settings: Settings, browser_lock: asyncio.Lock):
+    def __init__(self, db: Database, settings: Settings, browser_lock: asyncio.Lock,
+                 on_complete: Callable[[], None] | None = None):
         self.db = db
         self.settings = settings
         self.browser_lock = browser_lock
@@ -23,10 +26,8 @@ class BrowserLoginManager:
         self.site: str | None = None
         self.task: asyncio.Task | None = None
         self.process: subprocess.Popen | None = None
-        self.finished = asyncio.Event()
-        self.token: str | None = None
         self.return_app: str | None = None
-        self.finish_scheduled = False
+        self.on_complete = on_complete
 
     def status(self) -> dict:
         expired = [site for site in SITES if self.db.get_setting(f"social_reauth_required_{site}")]
@@ -43,28 +44,14 @@ class BrowserLoginManager:
             raise ValueError("Choose LinkedIn or Facebook")
         if self.task and not self.task.done():
             if site != self.site:
-                raise ValueError(f"Finish {self.site.capitalize()} sign-in before opening {site.capitalize()}")
+                raise ValueError(f"Complete {self.site.capitalize()} sign-in before opening {site.capitalize()}")
             return self.status()
         chrome_executable()
-        self.finished = asyncio.Event()
         self.error = None
         self.site = site
-        self.token = secrets.token_urlsafe(24)
         self.return_app = frontmost_app_bundle()
-        self.finish_scheduled = False
         self.state = "opening"
         self.task = asyncio.create_task(self._run())
-        return self.status()
-
-    async def finish(self, token: str | None = None) -> dict:
-        if token is not None and token != self.token:
-            raise ValueError("This sign-in window is no longer active")
-        if self.state != "open" or not self.task:
-            raise ValueError("Open the sign-in browser first")
-        self.finished.set()
-        await self.task
-        if self.state == "failed":
-            raise ValueError(self.error or "Sign-in browser failed")
         return self.status()
 
     async def stop(self) -> None:
@@ -90,22 +77,36 @@ class BrowserLoginManager:
         try:
             async with self.browser_lock:
                 self.settings.ensure_dirs()
-                finish_url = f"http://127.0.0.1:{self.settings.port}/signin/finish/{self.token}"
+                started_at = time.time()
                 self.process = subprocess.Popen(
                     [chrome_executable(), f"--user-data-dir={self.settings.browser_profile}",
-                     "--no-first-run", "--no-default-browser-check", "--new-window", finish_url, LOGIN_URLS[self.site]],
+                     "--profile-directory=Default", "--no-first-run", "--no-default-browser-check",
+                     "--new-window", LOGIN_URLS[self.site]],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 )
                 self.state = "open"
-                while not self.finished.is_set() and self.process.poll() is None:
-                    await asyncio.sleep(0.25)
-                if not self.finished.is_set():
+                while self.process.poll() is None:
+                    try:
+                        ready = await asyncio.to_thread(chrome_login_complete, self.settings.browser_profile,
+                                                        self.site, started_at)
+                        self.error = None
+                        if ready:
+                            break
+                    except Exception:
+                        self.error = "Job Radar could not check Chrome's sign-in status. Try again shortly."
+                    await asyncio.sleep(1)
+                else:
                     self.state = "failed"
-                    self.error = "Chrome closed before sign-in was saved. Open it again and click finished after signing in."
+                    self.error = "Chrome closed before sign-in completed. Open it again to continue."
                     return
                 await self._close_process()
                 self.db.set_setting(f"social_login_completed_at_{self.site}", now())
                 self.db.set_setting(f"social_reauth_required_{self.site}", None)
+                if self.on_complete:
+                    try:
+                        self.on_complete()
+                    except Exception:
+                        pass
                 try:
                     await asyncio.to_thread(return_to_job_radar, self.return_app, self.settings.port)
                 except Exception:

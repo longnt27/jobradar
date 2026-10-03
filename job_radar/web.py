@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 
 import httpx
 from fastapi import Body, FastAPI, File, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, HttpUrl
 
 from .db import Database, new_id, now
@@ -125,7 +125,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     db = Database(settings.database_path)
     seed(db)
     scan_manager = ScanManager(db, settings)
-    login_manager = BrowserLoginManager(db, settings, scan_manager.browser_lock)
+    login_manager = BrowserLoginManager(db, settings, scan_manager.browser_lock, scan_manager.queue_due)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -223,52 +223,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return login_manager.start(payload.site)
         except ValueError as error:
             raise HTTPException(409, str(error)) from error
-
-    @app.post("/api/setup/browser/finish")
-    async def finish_browser_login():
-        try:
-            result = await login_manager.finish()
-        except ValueError as error:
-            raise HTTPException(409, str(error)) from error
-        scan_manager.queue_due()
-        return result
-
-    @app.get("/signin/finish/{token}", response_class=HTMLResponse)
-    def browser_finish_page(token: str):
-        if token != login_manager.token or not login_manager.site:
-            raise HTTPException(404, "Sign-in window no longer active")
-        label = "LinkedIn" if login_manager.site == "linkedin" else "Facebook"
-        return HTMLResponse(f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>Finish {label} sign-in · Job Radar</title>
-<style>body{{font:16px -apple-system,BlinkMacSystemFont,sans-serif;background:#f5f7f5;color:#14262a;margin:0;display:grid;place-items:center;min-height:100vh}}main{{background:white;border:1px solid #dce7df;border-radius:16px;padding:32px;max-width:440px;margin:20px;box-shadow:0 8px 30px #10252a12}}h1{{font-size:24px;margin:0 0 12px}}p{{line-height:1.55;color:#50665e}}button{{background:#163e34;color:white;border:0;border-radius:9px;padding:12px 18px;font:inherit;font-weight:650;cursor:pointer}}button:disabled{{opacity:.55}}</style></head>
-<body><main><h1>Finish {label} sign-in</h1><p>Once you are signed in on the {label} tab, come back to this tab and click below. Job Radar will save the session, close this Chrome window, and return to the app.</p>
-<button id="finish">Finish and return to Job Radar</button><p id="status" role="status"></p></main>
-<script>document.getElementById('finish').addEventListener('click', async () => {{
-  const button = document.getElementById('finish'); button.disabled = true;
-  document.getElementById('status').textContent = 'Saving your sign-in and returning to Job Radar…';
-  try {{ const response = await fetch('/api/setup/browser/finish/' + location.pathname.split('/').pop(), {{method:'POST'}});
-    if (!response.ok) throw new Error('Could not finish sign-in. Return to Job Radar and try again.');
-  }} catch (error) {{ document.getElementById('status').textContent = error.message; button.disabled = false; }}
-}});</script></body></html>""", headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
-
-    @app.post("/api/setup/browser/finish/{token}")
-    async def finish_browser_login_from_chrome(token: str):
-        if token != login_manager.token or login_manager.state not in ("opening", "open"):
-            raise HTTPException(409, "This sign-in window is no longer active")
-        if login_manager.finish_scheduled:
-            return {"closing": True}
-        login_manager.finish_scheduled = True
-
-        async def complete():
-            await asyncio.sleep(.35)
-            try:
-                await login_manager.finish(token)
-                scan_manager.queue_due()
-            except ValueError:
-                pass
-
-        asyncio.create_task(complete())
-        return {"closing": True}
 
     @app.post("/api/setup/smtp")
     def configure_mail(payload: SmtpInput):
