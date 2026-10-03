@@ -42,15 +42,42 @@ function notice(message, error = false) {
   window.noticeTimeout = setTimeout(() => { node.textContent = ''; node.classList.remove('error'); }, 6000);
 }
 
+function socialSiteNames(browser) {
+  return (browser.sites || []).map((site) => site === 'linkedin' ? 'LinkedIn' : 'Facebook').join(' and ');
+}
+
+function renderSocialAuth(browser) {
+  const expired = browser.state === 'reauth_required';
+  $('#social-auth-banner').hidden = !expired;
+  $('#social-auth-message').textContent = expired
+    ? `${socialSiteNames(browser)} sign-in expired. Sign in again to resume those scans.` : '';
+  $('#social-sign-in-status').textContent = expired ? 'Sign in again'
+    : browser.state === 'saved' ? 'Connected'
+    : ['opening', 'open'].includes(browser.state) ? 'Sign-in window open' : 'Sign-in needed';
+  $('#setup-browser-start').textContent = expired ? 'Sign in again' : 'Open sign-in browser';
+}
+
+async function refreshSocialAuth() {
+  const setup = await api('/api/setup');
+  renderSocialAuth(setup.browser);
+}
+
+async function openSocialSignIn() {
+  await showTab('profile');
+  $('#social-sign-in-panel').open = true;
+  $('#social-sign-in-panel').scrollIntoView({behavior:'smooth', block:'start'});
+}
+
 async function loadSetup() {
   clearTimeout(window.setupPoll);
   const data = await api('/api/setup');
   const badge = (selector, label, ready) => { const node = $(selector); node.textContent = label; node.className = `pill ${ready ? '' : 'warning'}`; };
   badge('#setup-smtp-status', data.smtp_configured ? 'Configured' : 'Optional', data.smtp_configured);
   badge('#setup-telegram-status', data.telegram_configured ? 'Configured' : 'Optional', data.telegram_configured);
+  renderSocialAuth(data.browser);
   $('#setup-browser-start').disabled = ['opening','open'].includes(data.browser.state);
   $('#setup-browser-finish').disabled = data.browser.state !== 'open';
-  $('#setup-browser-detail').textContent = data.browser.error || (data.browser.state === 'opening' ? 'Opening the sign-in window…' : data.browser.state === 'open' ? 'Sign in to both sites, then click “I’ve finished signing in”.' : data.browser.state === 'saved' ? 'Session saved. Upcoming scans will verify site access.' : 'Social scans start after you save the sign-in session.');
+  $('#setup-browser-detail').textContent = data.browser.error || (data.browser.state === 'opening' ? 'Opening the sign-in window…' : data.browser.state === 'open' ? 'Sign in to the sites shown in the browser, then click “I’ve finished signing in”.' : data.browser.state === 'reauth_required' ? `${socialSiteNames(data.browser)} needs a new sign-in. Other sources keep scanning.` : data.browser.state === 'saved' ? `Session saved${data.browser.last_saved_at ? ` ${when(data.browser.last_saved_at)}` : ''}. Upcoming scans will verify site access.` : 'Social scans start after you save the sign-in session.');
   const mailForm = $('#setup-smtp-form');
   if (!mailForm.dataset.initialized) {
     mailForm.elements.host.value = data.smtp_host || '';
@@ -80,24 +107,26 @@ async function loadHome() {
     setup.facebook_groups ? `${setup.facebook_groups} Facebook groups` : '',
   ].filter(Boolean);
   $('#source-summary').textContent = socialSources.length
-    ? `${socialSources.join(' and ')} ${setup.browser.last_saved_at ? 'have a saved browser session.' : 'are waiting for browser sign-in before scans can run.'}`
+    ? `${socialSources.join(' and ')} ${setup.browser.state === 'reauth_required' ? `need ${socialSiteNames(setup.browser)} sign-in again.` : setup.browser.last_saved_at ? 'have a saved browser session.' : 'are waiting for browser sign-in before scans can run.'}`
     : 'Company career feeds scan every four hours.';
   const hasProfile = Boolean(profile.name && profile.email);
   const steps = [
     {label:'Choose an AI provider', detail:'One choice for resume import and application drafts', done:!!profile.drafting_provider, tab:'profile'},
     {label:'Add your resume', detail:'Import a PDF or enter details yourself', done:hasProfile, tab:'profile'},
+    {label:setup.browser.state === 'reauth_required' ? 'Sign in to social sites again' : 'Connect LinkedIn and Facebook', detail:setup.browser.state === 'reauth_required' ? `${socialSiteNames(setup.browser)} session expired` : 'One sign-in for four-hour social scans', done:!!setup.browser.last_saved_at && setup.browser.state !== 'reauth_required', tab:'profile', socialAuth:true},
     {label:'Select your projects', detail:'Choose GitHub repositories for tailored applications', done:setup.approved_evidence > 0, tab:'projects'},
     {label:'Review live jobs', detail:`${c.vacancies} job${c.vacancies === 1 ? '' : 's'} found; check original postings`, done:false, tab:'jobs'},
   ];
-  const next = steps.find((step) => !step.done) || steps[3];
+  const next = steps.find((step) => !step.done) || steps[4];
   $('#home-title').textContent = hasProfile ? 'Your job search is ready to move.' : 'Let’s get your search ready.';
   $('#home-description').textContent = hasProfile ? 'Review live jobs and prepare applications from your own experience.' : 'Start with your provider and resume. Then choose projects and review jobs.';
   $('#home-primary').textContent = `${next.label} →`;
   $('#home-primary').dataset.tab = next.tab;
+  $('#home-primary').dataset.socialAuth = next.socialAuth ? 'true' : 'false';
   $('#home-steps').innerHTML = steps.map((step) =>
-    `<button class="step-row" data-home-step="${step.tab}"><span class="step-check ${step.done ? 'done' : ''}">${step.done ? '✓' : '○'}</span><span><strong>${escapeHtml(step.label)}</strong><small>${escapeHtml(step.detail)}</small></span><span class="step-arrow">→</span></button>`
+    `<button class="step-row" data-home-step="${step.tab}" data-social-auth="${step.socialAuth ? 'true' : 'false'}"><span class="step-check ${step.done ? 'done' : ''}">${step.done ? '✓' : '○'}</span><span><strong>${escapeHtml(step.label)}</strong><small>${escapeHtml(step.detail)}</small></span><span class="step-arrow">→</span></button>`
   ).join('');
-  document.querySelectorAll('[data-home-step]').forEach((button) => button.addEventListener('click', () => showTab(button.dataset.homeStep)));
+  document.querySelectorAll('[data-home-step]').forEach((button) => button.addEventListener('click', () => button.dataset.socialAuth === 'true' ? openSocialSignIn() : showTab(button.dataset.homeStep)));
   $('#recent-scans').innerHTML = data.recent_runs.length ? data.recent_runs.map((run) =>
     `<div class="item"><div class="item-title">${escapeHtml(run.source_name)} <span class="pill ${run.status === 'success' ? '' : 'warning'}">${escapeHtml(run.status)}</span></div><div class="item-meta">${when(run.started_at)} · ${run.observed_count} observed · ${run.new_count} new</div>${run.detail ? `<div class="item-meta">${escapeHtml(run.detail)}</div>` : ''}</div>`
   ).join('') : '<div class="empty">No scans yet. Your enabled sources will appear here.</div>';
@@ -221,6 +250,7 @@ async function loadProfile() {
   $('#resume-panel-label').textContent = hasResume ? 'Your resume details' : 'Import your resume';
   $('#resume-status').textContent = hasResume ? 'Replace or update' : 'PDF or manual entry';
   $('#resume-panel').open = Boolean(profile.drafting_provider && !hasResume);
+  $('#social-sign-in-panel').open = Boolean(profile.drafting_provider && hasResume && (setup.browser.state === 'reauth_required' || !setup.browser.last_saved_at));
   $('#pdf-resume-form button[type="submit"]').disabled = !profile.drafting_provider || !availability[profile.drafting_provider];
   const projectCount = cards.filter((card) => card.kind === 'project' && card.approved).length;
   $('#profile-summary').textContent = hasResume
@@ -270,7 +300,8 @@ function showTab(name, historyMode = 'push') {
   if (historyMode === 'replace') history.replaceState({tab:name}, '', `#${name}`);
   else if (historyMode === 'push' && location.hash !== `#${name}`) history.pushState({tab:name}, '', `#${name}`);
   window.scrollTo(0, 0);
-  ({home:loadHome,jobs:loadJobs,applications:loadApplications,experience:loadPositions,projects:loadEvidence,sources:loadSources,employers:loadEmployers,profile:loadProfile})[name]?.().catch((error) => notice(error.message, true));
+  refreshSocialAuth().catch((error) => notice(error.message, true));
+  return ({home:loadHome,jobs:loadJobs,applications:loadApplications,experience:loadPositions,projects:loadEvidence,sources:loadSources,employers:loadEmployers,profile:loadProfile})[name]?.().catch((error) => notice(error.message, true));
 }
 
 async function loadApplications(selectedId = null) {
@@ -493,7 +524,9 @@ async function loadEvidence(focusId = null) {
   renderRepositoryResults($('#repo-filter')?.value || '');
 }
 
-document.querySelectorAll('[data-tab]').forEach((button) => button.addEventListener('click', () => showTab(button.dataset.tab)));
+document.querySelectorAll('[data-tab]').forEach((button) => button.addEventListener('click', () => button.dataset.socialAuth === 'true' ? openSocialSignIn() : showTab(button.dataset.tab)));
+$('#social-auth-action').addEventListener('click', openSocialSignIn);
+setInterval(() => refreshSocialAuth().catch(() => {}), 60000);
 $('#edit-profile-button').addEventListener('click', () => {
   $('#profile-edit-panel').open = true;
   $('#profile-edit-panel').scrollIntoView({behavior:'smooth', block:'start'});
@@ -511,7 +544,7 @@ $('#setup-browser-start').addEventListener('click', async () => {
 });
 
 $('#setup-browser-finish').addEventListener('click', async () => {
-  try { await api('/api/setup/browser/finish', {method:'POST'}); await loadSetup(); notice('Browser session saved. LinkedIn and Facebook scans are queued.'); }
+  try { await api('/api/setup/browser/finish', {method:'POST'}); await Promise.all([loadSetup(), loadHome()]); notice('Browser session saved. Social scans can resume.'); }
   catch(error) { notice(error.message, true); }
 });
 

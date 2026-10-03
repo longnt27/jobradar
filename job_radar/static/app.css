@@ -95,3 +95,11 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .error-text{color:#a13a23}
 input,textarea,select{font-weight:400}
 #project-editor{scroll-margin-top:24px}
+#social-auth-banner{display:flex;align-items:center;justify-content:space-between;gap:16px;background:#fff2d8;border:1px solid #e8c77d;color:#704819;border-radius:11px;padding:14px 17px;margin-bottom:20px;font-size:13px;font-weight:650}
+#social-auth-banner[hidden]{display:none}
+#social-auth-banner button{flex:none}
+.social-sign-in-content{margin:0 23px 23px}
+.social-sign-in-content>.actions{margin-top:0}
+.social-sign-in-content>.inline-details{margin:19px 0}
+.social-sign-in-content>.text-button{margin-top:4px}
+@media(max-width:600px){#social-auth-banner{align-items:stretch;flex-direction:column}#social-auth-banner button{align-self:flex-start}}
