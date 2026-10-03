@@ -1,6 +1,6 @@
 # Source scan failure is shown as Scan complete
 
-- **Status:** Open
+- **Status:** Closed
 - **Severity:** Medium
 - **Labels:** `bug`, `scanning`, `ui`
 
@@ -29,3 +29,7 @@ The UI displayed `Scan complete` even though the source was still running during
 ## Acceptance criteria
 
 Use the returned status and error text; refresh after completion and avoid success wording for `already_running` or failed scans.
+
+## Resolution
+
+The source scan action now waits for the API result, refreshes source and home data, and reports success, empty, already running, authentication required, or failure using the returned status and error. The scan button is disabled while that request is active.

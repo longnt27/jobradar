@@ -172,8 +172,19 @@ async function loadSources() {
     catch(error) { notice(error.message, true); }
   }));
   document.querySelectorAll('[data-scan]').forEach((button) => button.addEventListener('click', async () => {
-    try { notice('Scan started'); await api(`/api/sources/${button.dataset.scan}/scan`, {method:'POST'}); await loadSources(); await loadHome(); notice('Scan complete'); }
+    try {
+      button.disabled = true;
+      notice('Scan started');
+      const result = await api(`/api/sources/${button.dataset.scan}/scan`, {method:'POST'});
+      await Promise.all([loadSources(), loadHome()]);
+      const message = result.status === 'success' ? `Scan complete: ${result.observed} seen, ${result.new} new.`
+        : result.status === 'empty' ? 'Scan finished: no jobs found.'
+        : result.status === 'already_running' ? 'This source is already scanning.'
+        : `Scan ${result.status}: ${result.error || 'Check this source before trying again.'}`;
+      notice(message, ['failed', 'auth_required'].includes(result.status));
+    }
     catch(error) { notice(error.message, true); }
+    finally { button.disabled = false; }
   }));
 }
 
