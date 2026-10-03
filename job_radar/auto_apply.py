@@ -16,6 +16,19 @@ from .settings import Settings
 log = logging.getLogger(__name__)
 
 
+def _safe_attachments(fields: list[dict]) -> dict[str, dict]:
+    files = [field for field in fields if field["type"] == "file"]
+    resume_fields = [field for field in files if re.search(
+        r"\b(resume|cv|curriculum vitae)\b", f"{field['name']} {field['label']}", re.I)]
+    assignments = {}
+    for field in files:
+        if len(resume_fields) == 1 and field is resume_fields[0]:
+            assignments[str(field["index"])] = {"kind": "resume"}
+        elif not field["required"] and field not in resume_fields:
+            assignments[str(field["index"])] = {"kind": "none"}
+    return assignments
+
+
 class AutoApplyManager:
     def __init__(self, db: Database, settings: Settings, browser_lock: asyncio.Lock):
         self.db = db
@@ -111,10 +124,8 @@ class AutoApplyManager:
         if draft["destination"].get("kind") == "web":
             async with self.browser_lock:
                 draft = await inspect_form(self.db, self.settings, draft["id"])
-            attachments = draft["form_data"].get("attachments", {})
-            for field in draft["form_data"].get("fields", []):
-                if field["type"] == "file" and re.search(r"\b(resume|cv|curriculum vitae)\b", f"{field['name']} {field['label']}", re.I):
-                    attachments[str(field["index"])] = {"kind": "resume"}
+            attachments = {**draft["form_data"].get("attachments", {}),
+                           **_safe_attachments(draft["form_data"].get("fields", []))}
             if attachments:
                 form_data = {**draft["form_data"], "attachments": attachments}
                 self.db.execute("UPDATE application_drafts SET form_data=?,updated_at=? WHERE id=?",
@@ -139,6 +150,7 @@ class AutoApplyManager:
             config = self.config()
             job = self.db.one(
                 "SELECT v.id FROM vacancies v WHERE v.analysis_status='done' AND v.score>? AND v.state='new' "
+                "AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm') "
                 "AND NOT EXISTS(SELECT 1 FROM auto_application_attempts a WHERE a.vacancy_id=v.id) "
                 "ORDER BY v.score DESC,v.first_seen_at DESC LIMIT 1", (config["threshold"],)) if config["enabled"] else None
             if not job:

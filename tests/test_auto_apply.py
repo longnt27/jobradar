@@ -5,6 +5,7 @@ from threading import Thread
 
 from fastapi.testclient import TestClient
 
+from job_radar.auto_apply import _safe_attachments
 from job_radar.ingest import ObservedJob, ingest
 from job_radar.mail_config import save_smtp
 from job_radar.settings import Settings
@@ -73,6 +74,15 @@ def test_auto_apply_setting_requires_local_matching_and_profile(tmp_path: Path) 
         assert response.status_code == 409
         assert "local matching model" in response.json()["detail"]
         assert client.put("/api/auto-apply", json={"enabled": False, "threshold": 101}).status_code == 422
+
+
+def test_auto_apply_attaches_resume_only_to_unambiguous_resume_field() -> None:
+    fields = [{"index": 0, "type": "file", "name": "resume", "label": "Resume", "required": True},
+              {"index": 1, "type": "file", "name": "portfolio", "label": "Portfolio", "required": False}]
+    assert _safe_attachments(fields) == {"0": {"kind": "resume"}, "1": {"kind": "none"}}
+    fields.append({"index": 2, "type": "file", "name": "cv_other", "label": "Additional CV", "required": True})
+    assert "0" not in _safe_attachments(fields)
+    assert "2" not in _safe_attachments(fields)
 
 
 def test_auto_apply_submits_complete_web_form(tmp_path: Path) -> None:
