@@ -116,11 +116,12 @@ class ScanManager:
             self.db.execute("UPDATE scan_runs SET finished_at=?,status=?,observed_count=?,new_count=? WHERE id=?",
                             (finished, status, len(jobs), new_count, run_id))
             self.db.execute("UPDATE sources SET last_success_at=?,last_status=? WHERE id=?", (finished, status, source_id))
-            try:
-                async with self.notification_lock:
-                    await notify_new_jobs(self.db, self.settings, new_ids)
-            except Exception as error:
-                log.warning("Job alerts failed after scan %s: %s", source["name"], error)
+            if not self.db.get_setting("matching_model", ""):
+                try:
+                    async with self.notification_lock:
+                        await notify_new_jobs(self.db, self.settings, new_ids)
+                except Exception as error:
+                    log.warning("Job alerts failed after scan %s: %s", source["name"], error)
             return {"run_id": run_id, "status": status, "observed": len(jobs), "new": new_count}
         except Exception as error:
             status = "auth_required" if isinstance(error, AuthRequired) else "failed"

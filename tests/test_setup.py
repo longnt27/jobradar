@@ -28,10 +28,11 @@ def test_setup_saves_secrets_without_returning_them(tmp_path: Path) -> None:
     client.post("/api/setup/smtp", json={"host": "mail.example.org", "port": 587,
         "user": "alex", "password": "", "from_address": "new@example.org"})
     assert json.loads((tmp_path / "smtp.json").read_text())["password"] == "private-password"
-    alert = client.post("/api/setup/telegram", json={"token": "1234567890:secret", "chat_id": "42"})
+    alert = client.post("/api/setup/telegram", json={"token": "1234567890:secret", "chat_id": "42", "min_score": 72})
     assert alert.status_code == 200
     status = client.get("/api/setup").json()
     assert status["smtp_configured"] and status["telegram_configured"]
+    assert status["telegram_min_score"] == 72
     assert "private-password" not in json.dumps(status)
     assert "1234567890:secret" not in json.dumps(status)
 
@@ -42,6 +43,20 @@ def test_telegram_first_time_blank_token_returns_validation_error(tmp_path: Path
     assert response.status_code == 422
     assert "token" in response.json()["detail"].lower()
     assert not (tmp_path / "telegram.json").exists()
+
+
+def test_telegram_chat_lookup_uses_token_without_exposing_it(tmp_path: Path, monkeypatch) -> None:
+    client = TestClient(create_app(Settings(tmp_path)))
+    seen = []
+    async def lookup(token):
+        seen.append(token)
+        return [{"id": "42", "name": "My chat"}]
+    monkeypatch.setattr("job_radar.web.discover_telegram_chats", lookup)
+    response = client.post("/api/setup/telegram/chats", json={"token": "secret"})
+    assert response.status_code == 200
+    assert response.json() == {"chats": [{"id": "42", "name": "My chat"}]}
+    assert seen == ["secret"]
+    assert "secret" not in response.text
 
 
 def test_social_scans_wait_for_browser_setup(tmp_path: Path) -> None:

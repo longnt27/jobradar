@@ -22,8 +22,10 @@ from .drafting import PROVIDERS, get_draft, prepare_draft, update_draft
 from .evidence import generate_project_content, inspect_repository
 from .github import list_public_repositories
 from .mail_config import save_smtp, smtp_config
-from .notifications import save_telegram, telegram_config
-from .ranking import rescore_vacancies
+from .local_analysis import list_local_models, validate_local_model
+from .matching import MatchManager
+from .notifications import discover_telegram_chats, save_telegram, telegram_config
+from .ranking import rescore_vacancies, score_job
 from .resume_import import parse_resume_template
 from .resume_extract import extract_resume
 from .seeds import seed
@@ -89,6 +91,10 @@ class ProviderInput(BaseModel):
     provider: Literal["codex_local", "codex", "agy", "claude"]
 
 
+class MatchingModelInput(BaseModel):
+    model: str = Field(min_length=2, max_length=100)
+
+
 class ProjectGenerationInput(BaseModel):
     provider: Literal["template", "codex_local", "codex", "agy", "claude"] | None = None
 
@@ -117,6 +123,11 @@ class SmtpInput(BaseModel):
 class TelegramInput(BaseModel):
     token: str = ""
     chat_id: str = Field(min_length=1)
+    min_score: int = Field(default=60, ge=0, le=100)
+
+
+class TelegramLookupInput(BaseModel):
+    token: str = ""
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -125,21 +136,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     db = Database(settings.database_path)
     seed(db)
     scan_manager = ScanManager(db, settings)
+    match_manager = MatchManager(db, settings, scan_manager.notification_lock)
     login_manager = BrowserLoginManager(db, settings, scan_manager.browser_lock, scan_manager.queue_due)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         await scan_manager.start()
+        await match_manager.start()
         try:
             yield
         finally:
             await login_manager.stop()
+            await match_manager.stop()
             await scan_manager.stop()
 
     app = FastAPI(title="Job Radar", version="0.1.0", lifespan=lifespan)
     app.state.db = db
     app.state.settings = settings
     app.state.scan_manager = scan_manager
+    app.state.match_manager = match_manager
     app.state.login_manager = login_manager
 
     def provider_available(provider: str) -> bool:
@@ -155,8 +170,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return provider
 
     def save_profile(profile: dict[str, Any]) -> None:
+        previous = db.get_setting("profile", {})
         db.set_setting("profile", profile)
-        rescore_vacancies(db, profile)
+        matching_fields = ("skills", "location", "relocation", "experience", "education")
+        if any(previous.get(field) != profile.get(field) for field in matching_fields):
+            rescore_vacancies(db, profile)
+            match_manager.wake()
 
     def attach_career_source(employer_id: str, name: str, url: str) -> None:
         parts = urlsplit(url)
@@ -213,6 +232,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "smtp_from": mail.get("from", ""),
             "telegram_configured": bool(telegram.get("token") and telegram.get("chat_id")),
             "telegram_chat_id": telegram.get("chat_id", ""),
+            "telegram_min_score": profile.get("alert_min_score", 60),
+            "matching": match_manager.status(),
             "service_installed": service_path().exists(),
             "providers": {name: bool(shutil.which(name)) for name in ("codex", "agy", "claude", "ollama")},
         }
@@ -241,12 +262,53 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not token:
             raise HTTPException(422, "Enter a bot token to configure Telegram alerts")
         save_telegram(settings, {"token": token, "chat_id": payload.chat_id})
+        profile = db.get_setting("profile", {})
+        profile["alert_min_score"] = payload.min_score
+        db.set_setting("profile", profile)
         return {"configured": True}
+
+    @app.post("/api/setup/telegram/chats")
+    async def find_telegram_chat(payload: TelegramLookupInput):
+        token = payload.token.strip() or telegram_config(settings).get("token", "")
+        try:
+            return {"chats": await discover_telegram_chats(token)}
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
 
     @app.delete("/api/setup/telegram")
     def remove_alerts():
         (settings.data_dir / "telegram.json").unlink(missing_ok=True)
         return {"configured": False}
+
+    @app.get("/api/matching/models")
+    def local_models():
+        try:
+            models = list_local_models()
+            available = []
+            for item in models:
+                try:
+                    validate_local_model(item["name"])
+                    available.append(item)
+                except (ValueError, RuntimeError):
+                    continue
+            return {"models": available, "matching": match_manager.status(), "error": None}
+        except RuntimeError as error:
+            return {"models": [], "matching": match_manager.status(), "error": str(error)}
+
+    @app.put("/api/matching/model")
+    async def choose_matching_model(payload: MatchingModelInput):
+        try:
+            await asyncio.to_thread(match_manager.select_model, payload.model)
+        except (ValueError, RuntimeError) as error:
+            raise HTTPException(422, str(error)) from error
+        return match_manager.status()
+
+    @app.post("/api/matching/model/download", status_code=202)
+    async def download_matching_model():
+        try:
+            return match_manager.download_recommended()
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
 
     @app.get("/api/profile")
     def get_profile():
@@ -462,15 +524,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         identifier = new_id()
         timestamp = now()
         employer = db.one("SELECT id FROM employers WHERE lower(name)=lower(?)", (payload.company,))
+        score, detail = score_job({"title": payload.title, "description": payload.description,
+                                   "location": payload.location, "first_seen_at": timestamp}, db.get_setting("profile", {}))
+        matching_model = db.get_setting("matching_model", "")
         with db.connection() as conn:
             conn.execute(
-                "INSERT INTO vacancies(id,employer_id,company,title,location,description,apply_url,first_seen_at,last_seen_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO vacancies(id,employer_id,company,title,location,description,apply_url,first_seen_at,last_seen_at,score,score_detail,analysis_status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (identifier, employer["id"] if employer else None, payload.company, payload.title,
-                 payload.location, payload.description, str(payload.apply_url) if payload.apply_url else None, timestamp, timestamp, timestamp, timestamp),
+                 payload.location, payload.description, str(payload.apply_url) if payload.apply_url else None,
+                 timestamp, timestamp, score, json.dumps(detail, ensure_ascii=False),
+                 "pending" if matching_model else "not_configured", timestamp, timestamp),
             )
             conn.execute("INSERT INTO vacancy_fts(vacancy_id,title,company,description) VALUES(?,?,?,?)",
                          (identifier, payload.title, payload.company, payload.description))
+        match_manager.wake()
         return {"id": identifier}
+
+    @app.post("/api/jobs/{job_id}/analyze", status_code=202)
+    def analyze_again(job_id: str):
+        try:
+            match_manager.retry(job_id)
+        except KeyError as error:
+            raise HTTPException(404, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
+        return {"queued": True}
 
     @app.post("/api/jobs/{job_id}/state")
     def update_state(job_id: str, payload: StateInput):
@@ -493,6 +571,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "INSERT INTO evidence(id,kind,title,claim,support,approved,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
             (identifier, payload.kind, payload.title, payload.claim, json.dumps(payload.support), int(payload.approved), now(), now()),
         )
+        if payload.approved and payload.kind == "project":
+            match_manager.invalidate_all()
         return {"id": identifier}
 
     @app.patch("/api/evidence/{evidence_id}")
@@ -516,6 +596,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             details.pop("generation_error", None)
         db.execute("UPDATE evidence SET kind=?,title=?,claim=?,details=?,support=?,approved=?,updated_at=? WHERE id=?",
                    (validated.kind, validated.title, validated.claim, json.dumps(details, ensure_ascii=False), json.dumps(validated.support), int(validated.approved), now(), evidence_id))
+        if (validated.approved or row["approved"]) and (validated.kind == "project" or row["kind"] == "project"):
+            match_manager.invalidate_all()
         return {"id": evidence_id}
 
     @app.post("/api/repositories/inspect")
@@ -525,6 +607,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             result = inspect_repository(db, settings, str(payload.url))
             try:
                 result["project_content"] = generate_project_content(db, result["evidence_id"], provider)
+                if db.one("SELECT approved FROM evidence WHERE id=?", (result["evidence_id"],))["approved"]:
+                    match_manager.invalidate_all()
             except (ValueError, RuntimeError) as error:
                 result["generation_warning"] = str(error)
             return result
@@ -534,7 +618,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/evidence/{evidence_id}/generate")
     def generate_project(evidence_id: str, payload: ProjectGenerationInput):
         try:
-            return generate_project_content(db, evidence_id, payload.provider or configured_provider())
+            result = generate_project_content(db, evidence_id, payload.provider or configured_provider())
+            if db.one("SELECT approved FROM evidence WHERE id=?", (evidence_id,))["approved"]:
+                match_manager.invalidate_all()
+            return result
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
         except (ValueError, RuntimeError) as error:

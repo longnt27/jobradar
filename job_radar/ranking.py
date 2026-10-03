@@ -55,13 +55,14 @@ def score_job(job: dict[str, Any], profile: dict[str, Any]) -> tuple[int, dict[s
     )
     if negative_role:
         explanation = f"Excluded role term in title: {negative_role}. " + explanation
-    return min(20 if negative_role else 100, sum(components.values())), {"components": components, "matched_skills": matched_skills, "years_required": years_required, "explanation": explanation, "excluded_role": negative_role}
+    return min(20 if negative_role else 100, sum(components.values())), {"method": "rules", "components": components, "matched_skills": matched_skills, "years_required": years_required, "explanation": explanation, "excluded_role": negative_role}
 
 
 def rescore_vacancies(db: Database, profile: dict[str, Any]) -> None:
+    pending = bool(db.get_setting("matching_model"))
     with db.connection() as conn:
         rows = conn.execute("SELECT id,title,description,location,published_at,first_seen_at FROM vacancies").fetchall()
         for row in rows:
             score, detail = score_job(dict(row), profile)
-            conn.execute("UPDATE vacancies SET score=?,score_detail=?,updated_at=? WHERE id=?",
-                         (score, json.dumps(detail, ensure_ascii=False), now(), row["id"]))
+            conn.execute("UPDATE vacancies SET score=?,score_detail=?,analysis_status=?,analysis_error=NULL,updated_at=? WHERE id=?",
+                         (score, json.dumps(detail, ensure_ascii=False), "pending" if pending else "not_configured", now(), row["id"]))

@@ -45,6 +45,28 @@ def save_telegram(settings: Settings, config: dict) -> None:
     path.chmod(0o600)
 
 
+async def discover_telegram_chats(token: str) -> list[dict]:
+    if not token:
+        raise ValueError("Enter a bot token first")
+    try:
+        async with httpx.AsyncClient(timeout=12) as client:
+            response = await client.get(f"https://api.telegram.org/bot{token}/getUpdates", params={"limit": 20})
+            response.raise_for_status()
+            payload = response.json()
+    except (httpx.HTTPError, ValueError) as error:
+        raise ValueError("Telegram could not find chats for this bot. Check the token and try again") from error
+    if not payload.get("ok"):
+        raise ValueError("Telegram rejected this bot token")
+    chats = {}
+    for update in payload.get("result", []):
+        event = next((update[key] for key in ("message", "edited_message", "channel_post", "my_chat_member") if key in update), {})
+        chat = event.get("chat", {})
+        if "id" in chat:
+            chats[str(chat["id"])] = {"id": str(chat["id"]),
+                                      "name": chat.get("title") or " ".join(filter(None, (chat.get("first_name"), chat.get("last_name")))) or str(chat["id"])}
+    return list(chats.values())
+
+
 def telegram_config(settings: Settings) -> dict:
     path = settings.data_dir / "telegram.json"
     config = json.loads(path.read_text()) if path.exists() else {}

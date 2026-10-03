@@ -86,6 +86,10 @@ CREATE TABLE IF NOT EXISTS vacancies (
   last_seen_at TEXT NOT NULL,
   score INTEGER,
   score_detail TEXT,
+  analysis_status TEXT NOT NULL DEFAULT 'not_configured',
+  analysis_model TEXT,
+  analysis_error TEXT,
+  analyzed_at TEXT,
   state TEXT NOT NULL DEFAULT 'new',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -180,6 +184,15 @@ class Database:
             columns = {row[1] for row in conn.execute("PRAGMA table_info(submissions)")}
             if "package_data" not in columns:
                 conn.execute("ALTER TABLE submissions ADD COLUMN package_data TEXT NOT NULL DEFAULT '{}'")
+            vacancy_columns = {row[1] for row in conn.execute("PRAGMA table_info(vacancies)")}
+            for name, definition in (
+                ("analysis_status", "TEXT NOT NULL DEFAULT 'not_configured'"),
+                ("analysis_model", "TEXT"),
+                ("analysis_error", "TEXT"),
+                ("analyzed_at", "TEXT"),
+            ):
+                if name not in vacancy_columns:
+                    conn.execute(f"ALTER TABLE vacancies ADD COLUMN {name} {definition}")
             conn.execute("PRAGMA journal_mode=WAL")
 
     @contextmanager

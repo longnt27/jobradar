@@ -1,0 +1,121 @@
+import json
+import time
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+
+from job_radar.ingest import ObservedJob, ingest
+from job_radar.local_analysis import Criterion, JobFacts, MatchJudgment, _ground_facts, analyze_job
+from job_radar.settings import Settings
+from job_radar.web import create_app
+
+
+def test_local_analysis_extracts_facts_and_sums_ten_scores(monkeypatch) -> None:
+    prompts = []
+
+    def generate(_model, prompt, result_type):
+        prompts.append(prompt)
+        if result_type is JobFacts:
+            return JobFacts(role="AI Engineer", seniority="mid", required_skills=["Python"],
+                            preferred_skills=["PyTorch"], years_required=3, location="Hanoi",
+                            work_mode="hybrid", responsibilities=["Build models"], education=[],
+                            languages=[], summary="Builds AI models.")
+        return MatchJudgment(**{name: Criterion(score=8, reason="Supported by candidate evidence")
+                                for name in MatchJudgment.model_fields if name != "summary"},
+                             summary="Good match based on relevant experience.")
+
+    monkeypatch.setattr("job_radar.local_analysis._generate", generate)
+    score, detail = analyze_job(
+        {"company": "Example", "title": "AI Engineer", "description": "Build Python models in Hanoi.",
+         "location": "Hanoi"},
+        {"skills": ["Python"], "location": "Hanoi", "experience": [{"role": "ML Engineer", "dates": "2022-2025"}]},
+        [{"title": "Vision", "claim": "Built a model", "details": {"bullets": ["Built a model"], "tech_stack": ["Python"]}}],
+        "test:small",
+    )
+    assert score == 80
+    assert len(detail["criteria"]) == 10
+    assert detail["facts"]["required_skills"] == ["Python"]
+    assert detail["method"] == "local_llm"
+    assert "ML Engineer" in prompts[1] and "Vision" in prompts[1]
+
+
+def test_extraction_discards_unsupported_language_seniority_and_years() -> None:
+    facts = JobFacts(role="AI Engineer", seniority="Senior", required_skills=["Python", "Go"],
+                    preferred_skills=[], years_required=5, location="Hanoi", work_mode="",
+                    responsibilities=["Build models"], education=["Master's degree"],
+                    languages=["English"], summary="Build models.")
+    grounded = _ground_facts(facts, {"title": "AI Engineer", "description": "Build models with Python in Hanoi. 3 years required."})
+    assert grounded.required_skills == ["Python"]
+    assert grounded.languages == []
+    assert grounded.seniority == ""
+    assert grounded.years_required is None
+    assert grounded.education == []
+
+
+def test_model_setting_backfills_jobs_without_changing_drafting_provider(tmp_path: Path, monkeypatch) -> None:
+    app = create_app(Settings(tmp_path))
+    app.state.db.execute("UPDATE sources SET enabled=0")
+    monkeypatch.setattr("job_radar.matching.validate_local_model", lambda model: model)
+    monkeypatch.setattr("job_radar.matching.analyze_job", lambda *_args: (83, {
+        "method": "local_llm", "facts": {"required_skills": ["Python"], "responsibilities": ["Build models"]},
+        "criteria": {"role": {"score": 9, "reason": "Relevant role"}}, "explanation": "Good fit.",
+    }))
+    with TestClient(app) as client:
+        identifier = client.post("/api/jobs/import", json={"company": "Example", "title": "AI Engineer",
+            "description": "Build Python models in Hanoi."}).json()["id"]
+        assert client.get(f"/api/jobs/{identifier}").json()["analysis_status"] == "not_configured"
+        assert client.put("/api/matching/model", json={"model": "test:small"}).status_code == 200
+        for _ in range(100):
+            job = client.get(f"/api/jobs/{identifier}").json()
+            if job["analysis_status"] == "done":
+                break
+            time.sleep(.02)
+        assert job["analysis_status"] == "done"
+        assert job["score"] == 83
+        assert json.loads(job["score_detail"])["facts"]["responsibilities"] == ["Build models"]
+        assert client.get("/api/profile").json()["drafting_provider"] == ""
+        assert client.get("/api/setup").json()["matching"]["completed"] == 1
+
+
+def test_unchanged_rescan_preserves_local_score(tmp_path: Path) -> None:
+    app = create_app(Settings(tmp_path))
+    db = app.state.db
+    db.set_setting("matching_model", "test:small")
+    source = db.one("SELECT id FROM sources LIMIT 1")["id"]
+    observed = ObservedJob("https://example.org/job", "AI Engineer", "Example", "Build Python models.", location="Hanoi")
+    identifier, _ = ingest(db, source, observed)
+    db.execute("UPDATE vacancies SET score=88,score_detail=?,analysis_status='done',analysis_model='test:small' WHERE id=?",
+               (json.dumps({"method": "local_llm"}), identifier))
+    assert ingest(db, source, observed) == (identifier, False)
+    row = db.one("SELECT score,analysis_status FROM vacancies WHERE id=?", (identifier,))
+    assert row == {"score": 88, "analysis_status": "done"}
+
+
+def test_negative_role_cap_is_enforced_after_model_scoring(monkeypatch) -> None:
+    def generate(_model, _prompt, result_type):
+        if result_type is JobFacts:
+            return JobFacts(role="Sales Manager", seniority="", required_skills=[], preferred_skills=[],
+                            years_required=None, location="", work_mode="", responsibilities=[],
+                            education=[], languages=[], summary="")
+        return MatchJudgment(**{name: Criterion(score=10, reason="Match")
+                                for name in MatchJudgment.model_fields if name != "summary"}, summary="Strong fit")
+
+    monkeypatch.setattr("job_radar.local_analysis._generate", generate)
+    score, detail = analyze_job({"title": "Sales Manager", "description": "AI and Python"}, {}, [], "test:small")
+    assert score == 20
+    assert detail["excluded_role"] == "sales"
+
+
+def test_model_picker_excludes_embedding_only_models(tmp_path: Path, monkeypatch) -> None:
+    client = TestClient(create_app(Settings(tmp_path)))
+    monkeypatch.setattr("job_radar.web.list_local_models", lambda: [
+        {"name": "bge-m3:latest", "size": 100}, {"name": "small:latest", "size": 200},
+    ])
+    def validate(model):
+        if model == "bge-m3:latest":
+            raise ValueError("embedding only")
+        return model
+    monkeypatch.setattr("job_radar.web.validate_local_model", validate)
+    response = client.get("/api/matching/models")
+    assert response.status_code == 200
+    assert response.json()["models"] == [{"name": "small:latest", "size": 200}]

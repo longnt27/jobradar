@@ -52,6 +52,7 @@ def ingest(db: Database, source_id: str, job: ObservedJob) -> tuple[str, bool]:
     digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
     timestamp = now()
     profile = db.get_setting("profile", {})
+    matching_model = db.get_setting("matching_model", "")
     with db.connection() as conn:
         existing_observation = conn.execute("SELECT id,content_hash FROM observations WHERE source_id=? AND url=?", (source_id, url)).fetchone()
         if existing_observation:
@@ -60,19 +61,33 @@ def ingest(db: Database, source_id: str, job: ObservedJob) -> tuple[str, bool]:
                 "UPDATE observations SET last_seen_at=?,raw_text=?,content_hash=?,payload=?,published_at=COALESCE(?,published_at) WHERE id=?",
                 (timestamp, raw, digest, json.dumps(job.__dict__, ensure_ascii=False), job.published_at, observation_id),
             )
-            linked = conn.execute("SELECT vacancy_id FROM vacancy_observations WHERE observation_id=?", (observation_id,)).fetchone()
+            linked = conn.execute(
+                "SELECT v.id,v.title,v.description,v.location,v.analysis_status,v.analysis_model "
+                "FROM vacancy_observations vo JOIN vacancies v ON v.id=vo.vacancy_id WHERE vo.observation_id=?",
+                (observation_id,),
+            ).fetchone()
             if linked:
                 score, detail = score_job({**job.__dict__, "first_seen_at": timestamp}, profile)
+                unchanged = (linked["title"] == job.title and linked["description"] == job.description
+                             and (linked["location"] or "") == job.location)
+                keep_model_score = (unchanged and matching_model and linked["analysis_status"] == "done"
+                                    and linked["analysis_model"] == matching_model)
                 conn.execute(
                     "UPDATE vacancies SET company=?,title=?,description=?,location=?,work_mode=?,apply_url=?,"
-                    "published_at=COALESCE(?,published_at),score=?,score_detail=?,last_seen_at=?,updated_at=? WHERE id=?",
+                    "published_at=COALESCE(?,published_at),last_seen_at=?,updated_at=? WHERE id=?",
                     (job.company, job.title, job.description, job.location, job.work_mode,
                      normalize_url(job.apply_url) if job.apply_url else None, job.published_at,
-                     score, json.dumps(detail, ensure_ascii=False), timestamp, timestamp, linked[0]),
+                     timestamp, timestamp, linked["id"]),
                 )
+                if not keep_model_score:
+                    conn.execute(
+                        "UPDATE vacancies SET score=?,score_detail=?,analysis_status=?,analysis_error=NULL WHERE id=?",
+                        (score, json.dumps(detail, ensure_ascii=False),
+                         "pending" if matching_model else "not_configured", linked["id"]),
+                    )
                 conn.execute("UPDATE vacancy_fts SET title=?,company=?,description=? WHERE vacancy_id=?",
-                             (job.title, job.company, job.description, linked[0]))
-                return linked[0], False
+                             (job.title, job.company, job.description, linked["id"]))
+                return linked["id"], False
         else:
             observation_id = new_id()
             conn.execute(
@@ -91,10 +106,11 @@ def ingest(db: Database, source_id: str, job: ObservedJob) -> tuple[str, bool]:
             )
         score, detail = score_job({**job.__dict__, "first_seen_at": timestamp}, profile)
         conn.execute(
-            "INSERT INTO vacancies(id,employer_id,company,title,location,work_mode,description,apply_url,published_at,first_seen_at,last_seen_at,score,score_detail,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO vacancies(id,employer_id,company,title,location,work_mode,description,apply_url,published_at,first_seen_at,last_seen_at,score,score_detail,analysis_status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (vacancy_id, employer_id, job.company, job.title, job.location, job.work_mode,
              job.description, normalize_url(job.apply_url) if job.apply_url else None,
-             job.published_at, timestamp, timestamp, score, json.dumps(detail, ensure_ascii=False), timestamp, timestamp),
+             job.published_at, timestamp, timestamp, score, json.dumps(detail, ensure_ascii=False),
+             "pending" if matching_model else "not_configured", timestamp, timestamp),
         )
         conn.execute("INSERT INTO vacancy_fts(vacancy_id,title,company,description) VALUES(?,?,?,?)",
                      (vacancy_id, job.title, job.company, job.description))
