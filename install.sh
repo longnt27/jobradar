@@ -16,6 +16,33 @@ if [[ -z "$uv_bin" ]]; then
   curl -fsSL https://astral.sh/uv/install.sh -o "$installer_file"
   UV_INSTALL_DIR="$HOME/.local/bin" UV_NO_MODIFY_PATH=1 sh "$installer_file"
   uv_bin="$HOME/.local/bin/uv"
+  rm -f "$installer_file"
+  trap - EXIT
+fi
+
+if [[ "${JOB_RADAR_INSTALL_TEST_MODE:-}" != "1" ]]; then
+  if ! command -v ollama >/dev/null 2>&1; then
+    if command -v brew >/dev/null 2>&1; then
+      brew install ollama
+    else
+      ollama_installer_file="$(mktemp)"
+      trap 'rm -f "$ollama_installer_file"' EXIT
+      curl -fsSL https://ollama.com/install.sh -o "$ollama_installer_file"
+      sh "$ollama_installer_file"
+      rm -f "$ollama_installer_file"
+      trap - EXIT
+    fi
+  fi
+  if ! curl -fsS http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+    if command -v brew >/dev/null 2>&1 && brew list --formula ollama >/dev/null 2>&1; then
+      brew services start ollama
+    elif [[ -d /Applications/Ollama.app ]]; then
+      open -a Ollama
+    elif command -v ollama >/dev/null 2>&1; then
+      mkdir -p "$HOME/Library/Application Support/JobRadar"
+      nohup ollama serve > "$HOME/Library/Application Support/JobRadar/ollama.log" 2>&1 </dev/null &
+    fi
+  fi
 fi
 
 "$uv_bin" sync --locked

@@ -22,6 +22,30 @@ function formatDescription(value) {
   }).join('');
 }
 
+function renderJobAnalysis(job, score) {
+  const status = job.analysis_status;
+  const stateMessage = status === 'done' ? `Local match · ${escapeHtml(job.analysis_model || '')} · ${when(job.analyzed_at)}`
+    : status === 'failed' ? `Local analysis failed: ${escapeHtml(job.analysis_error || 'Unknown error')}`
+    : ['pending', 'running'].includes(status) ? 'Local model is extracting requirements and scoring this job.'
+    : 'Basic keyword score. Choose a local matching model in My profile for a detailed assessment.';
+  const retry = status === 'failed' ? `<button type="button" data-analyze="${job.id}" class="secondary">Try analysis again</button>` : '';
+  const facts = score?.facts;
+  const list = (label, items) => items?.length ? `<div><strong>${label}</strong><ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul></div>` : '';
+  const factsHtml = facts ? `<div class="review-section job-facts"><h4>Job at a glance</h4><p class="hint">Extracted by the local model. Check the original posting before applying.</p>
+    ${facts.summary ? `<p>${escapeHtml(facts.summary)}</p>` : ''}
+    <div class="fact-grid"><div><strong>Role</strong><p>${escapeHtml([facts.role, facts.seniority].filter(Boolean).join(' · ') || 'Not stated')}</p></div>
+    <div><strong>Experience</strong><p>${facts.years_required == null ? 'Not stated' : `${escapeHtml(facts.years_required)} years required`}</p></div>
+    <div><strong>Location and mode</strong><p>${escapeHtml([facts.location, facts.work_mode].filter(Boolean).join(' · ') || 'Not stated')}</p></div></div>
+    <div class="fact-grid">${list('Required skills', facts.required_skills)}${list('Preferred skills', facts.preferred_skills)}${list('Responsibilities', facts.responsibilities)}${list('Education', facts.education)}${list('Languages', facts.languages)}</div></div>` : '';
+  const labels = {role:'Role', required_skills:'Required skills', preferred_skills:'Preferred skills', experience:'Experience',
+    responsibilities:'Responsibilities', research:'Research', location:'Location', work_mode:'Work mode', education:'Education', freshness:'Freshness'};
+  const criteria = score?.criteria ? `<div class="review-section"><h4>Match breakdown · ${job.score}/100</h4><p>${escapeHtml(score.explanation || '')}</p>
+    <div class="criteria-grid">${Object.entries(labels).map(([key, label]) => { const item = score.criteria[key]; return item ? `<div class="criterion"><strong>${label} <span>${escapeHtml(item.score)}/10</span></strong><small>${escapeHtml(item.reason)}</small></div>` : ''; }).join('')}</div>
+    ${score.excluded_role ? `<p class="hint">Score capped at 20 because the title contains “${escapeHtml(score.excluded_role)}”.</p>` : ''}</div>` :
+    score ? `<div class="review-section"><h4>Basic score</h4><p>${escapeHtml(score.explanation || '')}</p></div>` : '';
+  return `<div class="review-section"><p class="hint">${stateMessage}</p>${retry}</div>${factsHtml}${criteria}`;
+}
+
 async function api(path, options = {}) {
   const response = await fetch(path, {
     headers: options.body instanceof FormData ? (options.headers || {}) : {'Content-Type': 'application/json', ...(options.headers || {})},
@@ -72,9 +96,16 @@ async function refreshSocialAuth() {
 }
 
 async function openSocialSignIn() {
-  await showTab('profile');
-  $('#social-sign-in-panel').open = true;
-  $('#social-sign-in-panel').scrollIntoView({behavior:'smooth', block:'start'});
+  await openSetupPanel('social-sign-in-panel');
+}
+
+async function openSetupPanel(id) {
+  const loading = showTab('profile');
+  const panel = $(`#${id}`);
+  panel.open = true;
+  panel.scrollIntoView({behavior:'smooth', block:'start'});
+  await loading;
+  panel.open = true;
 }
 
 async function loadSetup() {
@@ -83,6 +114,9 @@ async function loadSetup() {
   const badge = (selector, label, ready) => { const node = $(selector); node.textContent = label; node.className = `pill ${ready ? '' : 'warning'}`; };
   badge('#setup-smtp-status', data.smtp_configured ? 'Configured' : 'Optional', data.smtp_configured);
   badge('#setup-telegram-status', data.telegram_configured ? 'Configured' : 'Optional', data.telegram_configured);
+  $('#matching-status').textContent = data.matching.model
+    ? `${data.matching.model} · ${data.matching.pending} queued${data.matching.failed ? ` · ${data.matching.failed} failed` : ''}`
+    : 'Choose a model';
   renderSocialAuth(data.browser);
   $('#setup-browser-detail').textContent = data.browser.error || (data.browser.state === 'opening' ? 'Opening Chrome…' : data.browser.state === 'open' ? `Waiting for ${data.browser.active_site === 'linkedin' ? 'LinkedIn' : 'Facebook'} sign-in in Chrome. The window closes automatically when the account page loads.` : data.browser.state === 'reauth_required' ? `${socialSiteNames(data.browser)} needs a new sign-in. Other sources keep scanning.` : data.browser.last_saved_at ? `Saved session last updated ${when(data.browser.last_saved_at)}. Upcoming scans will verify site access.` : 'Choose a site to begin. Google sign-in opens in regular Chrome.');
   const mailForm = $('#setup-smtp-form');
@@ -96,9 +130,10 @@ async function loadSetup() {
   const alertForm = $('#setup-telegram-form');
   if (!alertForm.dataset.initialized) {
     alertForm.elements.chat_id.value = data.telegram_chat_id || '';
+    alertForm.elements.min_score.value = data.telegram_min_score ?? 60;
     alertForm.dataset.initialized = 'true';
   }
-  if (['opening', 'open'].includes(data.browser.state) && $('#profile').classList.contains('active')) window.setupPoll = setTimeout(() => loadSetup().catch((error) => notice(error.message, true)), 1000);
+  if ((['opening', 'open'].includes(data.browser.state) || data.matching.pending || data.matching.download_state === 'downloading') && $('#profile').classList.contains('active')) window.setupPoll = setTimeout(() => loadSetup().catch((error) => notice(error.message, true)), 2000);
   return data;
 }
 
@@ -119,33 +154,37 @@ async function loadHome() {
     : 'Company career feeds scan every four hours.';
   const hasProfile = Boolean(profile.name && profile.email);
   const steps = [
-    {label:'Choose an AI provider', detail:'One choice for resume import and application drafts', done:!!profile.drafting_provider, tab:'profile'},
-    {label:'Add your resume', detail:'Import a PDF or enter details yourself', done:hasProfile, tab:'profile'},
+    {label:'Choose a drafting provider', detail:'For resume import and application drafts', done:!!profile.drafting_provider, tab:'profile', panel:'provider-panel'},
+    {label:'Add your resume', detail:'Import a PDF or enter details yourself', done:hasProfile, tab:'profile', panel:'resume-panel'},
+    {label:'Choose a local matching model', detail:'Extract job requirements and score fit on this Mac', done:!!setup.matching.model, tab:'profile', panel:'matching-panel'},
     {label:setup.browser.sites.length ? 'Sign in to social sites again' : 'Connect LinkedIn and Facebook', detail:setup.browser.sites.length ? `${socialSiteNames(setup.browser)} session expired` : 'Separate one-time sign-in for each site', done:setup.browser.connected_sites.length === 2 && !setup.browser.sites.length, tab:'profile', socialAuth:true},
+    {label:'Telegram job alerts', detail:'Optional: set your bot, chat, and score threshold', done:setup.telegram_configured, tab:'profile', panel:'telegram-panel', optional:true},
     {label:'Select your projects', detail:'Choose GitHub repositories for tailored applications', done:setup.approved_evidence > 0, tab:'projects'},
     {label:'Review live jobs', detail:`${c.vacancies} job${c.vacancies === 1 ? '' : 's'} found; check original postings`, done:false, tab:'jobs'},
   ];
-  const next = steps.find((step) => !step.done) || steps[4];
+  const next = steps.find((step) => !step.done && !step.optional) || steps.at(-1);
   $('#home-title').textContent = hasProfile ? 'Your job search is ready to move.' : 'Let’s get your search ready.';
   $('#home-description').textContent = hasProfile ? 'Review live jobs and prepare applications from your own experience.' : 'Start with your provider and resume. Then choose projects and review jobs.';
   $('#home-primary').textContent = `${next.label} →`;
   $('#home-primary').dataset.tab = next.tab;
   $('#home-primary').dataset.socialAuth = next.socialAuth ? 'true' : 'false';
+  $('#home-primary').dataset.setupPanel = next.panel || '';
   $('#home-steps').innerHTML = steps.map((step) =>
-    `<button class="step-row" data-home-step="${step.tab}" data-social-auth="${step.socialAuth ? 'true' : 'false'}"><span class="step-check ${step.done ? 'done' : ''}">${step.done ? '✓' : '○'}</span><span><strong>${escapeHtml(step.label)}</strong><small>${escapeHtml(step.detail)}</small></span><span class="step-arrow">→</span></button>`
+    `<button class="step-row" data-home-step="${step.tab}" data-social-auth="${step.socialAuth ? 'true' : 'false'}" data-setup-panel="${step.panel || ''}"><span class="step-check ${step.done ? 'done' : ''}">${step.done ? '✓' : '○'}</span><span><strong>${escapeHtml(step.label)}</strong><small>${escapeHtml(step.detail)}</small></span><span class="step-arrow">→</span></button>`
   ).join('');
-  document.querySelectorAll('[data-home-step]').forEach((button) => button.addEventListener('click', () => button.dataset.socialAuth === 'true' ? openSocialSignIn() : showTab(button.dataset.homeStep)));
+  document.querySelectorAll('[data-home-step]').forEach((button) => button.addEventListener('click', () => button.dataset.socialAuth === 'true' ? openSocialSignIn() : button.dataset.setupPanel ? openSetupPanel(button.dataset.setupPanel) : showTab(button.dataset.homeStep)));
   $('#recent-scans').innerHTML = data.recent_runs.length ? data.recent_runs.map((run) =>
     `<div class="item"><div class="item-title">${escapeHtml(run.source_name)} <span class="pill ${run.status === 'success' ? '' : 'warning'}">${escapeHtml(run.status)}</span></div><div class="item-meta">${when(run.started_at)} · ${run.observed_count} observed · ${run.new_count} new</div>${run.detail ? `<div class="item-meta">${escapeHtml(run.detail)}</div>` : ''}</div>`
   ).join('') : '<div class="empty">No scans yet. Your enabled sources will appear here.</div>';
 }
 
 async function loadJobs() {
+  clearTimeout(window.jobPoll);
   const query = new URLSearchParams({q: $('#job-query').value, state: $('#job-state').value});
   const jobs = await api(`/api/jobs?${query}`);
   const sourceLabel = (source) => !source ? 'Manually added' : source.kind === 'career' ? 'Company career page' : source.kind === 'linkedin' ? 'LinkedIn listing' : 'Facebook group lead';
   $('#job-list').innerHTML = jobs.length ? jobs.map((job) =>
-    `<div class="item job-card"><button type="button" class="card-select" data-job="${job.id}" aria-label="Open ${escapeHtml(job.title)} at ${escapeHtml(job.company)}"><span class="score">${job.score ?? '—'}</span><div class="item-title">${escapeHtml(job.title)}</div><div class="item-meta">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div><div class="item-meta">${escapeHtml(sourceLabel(job.source))}${job.source ? ` · Checked ${when(job.source.last_seen_at)}` : ''}</div><div class="item-meta">First seen ${when(job.first_seen_at)} <span class="pill muted">${escapeHtml(job.state)}</span></div></button>${job.source ? `<a href="${escapeHtml(job.source.url)}" target="_blank" rel="noopener noreferrer">Original posting ↗</a>` : ''}</div>`
+    `<div class="item job-card"><button type="button" class="card-select" data-job="${job.id}" aria-label="Open ${escapeHtml(job.title)} at ${escapeHtml(job.company)}"><span class="score">${job.score ?? '—'}</span><div class="item-title">${escapeHtml(job.title)}</div><div class="item-meta">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div><div class="item-meta">${escapeHtml(sourceLabel(job.source))}${job.source ? ` · Checked ${when(job.source.last_seen_at)}` : ''}</div><div class="item-meta">First seen ${when(job.first_seen_at)} <span class="pill muted">${escapeHtml(job.state)}</span> · ${job.analysis_status === 'done' ? 'Local match' : job.analysis_status === 'failed' ? 'Analysis failed' : ['pending','running'].includes(job.analysis_status) ? 'Analyzing locally' : 'Basic score'}</div></button>${job.source ? `<a href="${escapeHtml(job.source.url)}" target="_blank" rel="noopener noreferrer">Original posting ↗</a>` : ''}</div>`
   ).join('') : '<div class="empty">No jobs found. Run a scan or import a job.</div>';
   document.querySelectorAll('[data-job]').forEach((node) => node.addEventListener('click', async () => {
     try {
@@ -157,6 +196,9 @@ async function loadJobs() {
   else {
     activeJob = null;
     $('#job-detail').innerHTML = `<div class="empty">${jobs.length ? 'Select a job to see details.' : 'No job matches this search.'}</div>`;
+  }
+  if (jobs.some((job) => ['pending','running'].includes(job.analysis_status)) && $('#jobs').classList.contains('active')) {
+    window.jobPoll = setTimeout(() => loadJobs().catch((error) => notice(error.message, true)), 5000);
   }
 }
 
@@ -177,9 +219,13 @@ async function showJob(id) {
     ${job.apply_url ? `<p><a href="${escapeHtml(job.apply_url)}" target="_blank" rel="noopener noreferrer">${job.apply_url.startsWith('mailto:') ? 'Application email ↗' : 'Application page ↗'}</a></p>` : ''}
     ${!job.apply_url ? '<p class="hint">No application form has been verified for this posting. Check the original source for its application instructions before sending.</p>' : ''}
     ${links ? `<p class="item-meta">${links}</p>` : ''}
-    ${score ? `<div class="review-section"><h4>Why it matched</h4><p>${escapeHtml(score.explanation || '')}</p></div>` : ''}
+    ${renderJobAnalysis(job, score)}
     <div class="description"><h3>Original description</h3>${formatDescription(job.description)}</div>`;
   $('#job-detail').querySelector('[data-tab="profile"]').addEventListener('click', () => showTab('profile'));
+  $('#job-detail').querySelector('[data-analyze]')?.addEventListener('click', async () => {
+    try { await api(`/api/jobs/${id}/analyze`, {method:'POST'}); notice('Local analysis queued'); await loadJobs(); }
+    catch(error) { notice(error.message, true); }
+  });
   $('#job-detail').querySelectorAll('[data-state]').forEach((button) => button.addEventListener('click', async () => {
     try { await api(`/api/jobs/${id}/state`, {method:'POST', body: JSON.stringify({state:button.dataset.state})}); notice('Job updated'); await loadJobs(); }
     catch(error) { notice(error.message, true); }
@@ -246,6 +292,7 @@ async function loadEmployers() {
 
 async function loadProfile() {
   const [profile, setup, cards] = await Promise.all([api('/api/profile'), loadSetup(), api('/api/evidence')]);
+  await loadMatchingModels();
   const availability = {codex:setup.providers.codex, codex_local:setup.providers.codex && setup.providers.ollama,
     agy:setup.providers.agy, claude:setup.providers.claude};
   const providerForm = $('#provider-form');
@@ -258,7 +305,9 @@ async function loadProfile() {
   $('#resume-panel-label').textContent = hasResume ? 'Your resume details' : 'Import your resume';
   $('#resume-status').textContent = hasResume ? 'Replace or update' : 'PDF or manual entry';
   $('#resume-panel').open = Boolean(profile.drafting_provider && !hasResume);
+  $('#matching-panel').open = Boolean(hasResume && !setup.matching.model);
   $('#social-sign-in-panel').open = Boolean(profile.drafting_provider && hasResume && (setup.browser.sites.length || setup.browser.connected_sites.length < 2));
+  $('#telegram-panel').open = Boolean(hasResume && setup.matching.model && !setup.telegram_configured);
   $('#pdf-resume-form button[type="submit"]').disabled = !profile.drafting_provider || !availability[profile.drafting_provider];
   const projectCount = cards.filter((card) => card.kind === 'project' && card.approved).length;
   $('#profile-summary').textContent = hasResume
@@ -270,12 +319,32 @@ async function loadProfile() {
   $('#project-count').textContent = `${projectCount} selected project${projectCount === 1 ? '' : 's'}`;
   const form = $('#profile-form');
   for (const key of ['name','given_name','family_name','email','phone','location','summary','salary_expectation','work_authorization','notice_period','relocation']) form.elements[key].value = profile[key] || '';
-  form.elements.alert_min_score.value = profile.alert_min_score ?? 60;
   form.elements.skills.value = (profile.skills || []).join('\n');
   form.elements.links.value = (profile.links || []).join('\n');
   form.elements.education.value = (profile.education || []).map((item) => typeof item === 'string' ? item : [item.school || '', item.degree || '', item.dates || ''].join(' | ')).join('\n');
   form.elements.achievements.value = (profile.achievements || []).join('\n');
   form.elements.skill_groups.value = Object.entries(profile.skill_groups || {}).map(([label, value]) => `${label}: ${Array.isArray(value) ? value.join(', ') : value}`).join('\n');
+}
+
+async function loadMatchingModels() {
+  clearTimeout(window.matchingPoll);
+  const data = await api('/api/matching/models');
+  const select = $('#matching-model-form').elements.model;
+  const saved = data.matching.model;
+  select.replaceChildren(new Option('Choose an installed model', ''));
+  for (const model of data.models) select.add(new Option(`${model.name} · ${(model.size / 1e9).toFixed(1)} GB`, model.name));
+  if (saved && !data.models.some((model) => model.name === saved)) select.add(new Option(`${saved} (unavailable)`, saved));
+  select.value = saved || '';
+  const state = data.matching.download_state;
+  $('#matching-download').hidden = data.models.some((model) => model.name === data.matching.recommended) && state !== 'downloading';
+  $('#matching-download').disabled = state === 'downloading';
+  $('#matching-download').textContent = state === 'downloading' ? 'Downloading model…' : `Download ${data.matching.recommended} (about 2 GB)`;
+  $('#matching-model-detail').textContent = data.matching.download_error || data.matching.service_error || data.error ||
+    (state === 'downloading' ? 'Downloading in the background. Job Radar will select it when ready.' :
+     saved ? `${data.matching.completed} jobs analyzed · ${data.matching.pending} waiting${data.matching.failed ? ` · ${data.matching.failed} failed` : ''}.` :
+     'Choose an installed text model or download the recommended small model. Embedding models are not listed.');
+  if (state === 'downloading') window.matchingPoll = setTimeout(() => loadMatchingModels().then(loadSetup).catch((error) => notice(error.message, true)), 2500);
+  return data;
 }
 
 async function loadPositions() {
@@ -300,6 +369,8 @@ function showTab(name, historyMode = 'push') {
   if (name === 'overview') name = 'home';
   if (!document.getElementById(name)?.classList.contains('tab')) name = 'home';
   if (name !== 'profile') clearTimeout(window.setupPoll);
+  if (name !== 'profile') clearTimeout(window.matchingPoll);
+  if (name !== 'jobs') clearTimeout(window.jobPoll);
   document.querySelectorAll('.tab').forEach((tab) => tab.classList.toggle('active', tab.id === name));
   const nav = ['experience','projects'].includes(name) ? 'profile' : ['sources','employers'].includes(name) ? 'jobs' : name;
   document.querySelectorAll('.sidebar nav [data-tab]').forEach((button) => button.classList.toggle('active', button.dataset.tab === nav));
@@ -532,7 +603,7 @@ async function loadEvidence(focusId = null) {
   renderRepositoryResults($('#repo-filter')?.value || '');
 }
 
-document.querySelectorAll('[data-tab]').forEach((button) => button.addEventListener('click', () => button.dataset.socialAuth === 'true' ? openSocialSignIn() : showTab(button.dataset.tab)));
+document.querySelectorAll('[data-tab]').forEach((button) => button.addEventListener('click', () => button.dataset.socialAuth === 'true' ? openSocialSignIn() : button.dataset.setupPanel ? openSetupPanel(button.dataset.setupPanel) : showTab(button.dataset.tab)));
 $('#social-auth-action').addEventListener('click', openSocialSignIn);
 setInterval(() => refreshSocialAuth().catch(() => {}), 60000);
 $('#edit-profile-button').addEventListener('click', () => {
@@ -589,6 +660,21 @@ $('#setup-telegram-form').addEventListener('submit', async (event) => {
   } catch(error) { $('#setup-telegram-message').textContent = error.message; notice(error.message, true); }
 });
 
+$('#telegram-find-chat').addEventListener('click', async () => {
+  const form = $('#setup-telegram-form');
+  const results = $('#telegram-chat-results');
+  results.textContent = 'Looking for chats…';
+  try {
+    const data = await api('/api/setup/telegram/chats', {method:'POST', body:JSON.stringify({token:form.elements.token.value})});
+    if (!data.chats.length) { results.textContent = 'No chats yet. Send your bot a message in Telegram, then try again.'; return; }
+    results.innerHTML = `<p class="hint">Choose where alerts should go:</p>${data.chats.map((chat) => `<button type="button" class="secondary" data-chat-id="${escapeHtml(chat.id)}">${escapeHtml(chat.name)} · ${escapeHtml(chat.id)}</button>`).join('')}`;
+    results.querySelectorAll('[data-chat-id]').forEach((button) => button.addEventListener('click', () => {
+      form.elements.chat_id.value = button.dataset.chatId;
+      results.textContent = `Selected ${button.dataset.chatId}. Save Telegram alerts to finish.`;
+    }));
+  } catch(error) { results.textContent = error.message; notice(error.message, true); }
+});
+
 $('#setup-telegram-remove').addEventListener('click', async () => {
   try { await api('/api/setup/telegram', {method:'DELETE'}); $('#setup-telegram-form').reset(); delete $('#setup-telegram-form').dataset.initialized; await loadSetup(); notice('Telegram alerts removed'); }
   catch(error) { notice(error.message, true); }
@@ -600,7 +686,6 @@ $('#profile-form').addEventListener('submit', async (event) => {
     const profile = await api('/api/profile');
     const form = event.target;
     for (const key of ['name','given_name','family_name','email','phone','location','summary','salary_expectation','work_authorization','notice_period','relocation']) profile[key] = form.elements[key].value.trim();
-    profile.alert_min_score = Number(form.elements.alert_min_score.value || 60);
     profile.skills = form.elements.skills.value.split('\n').map((x) => x.trim()).filter(Boolean);
     profile.links = form.elements.links.value.split('\n').map((x) => x.trim()).filter(Boolean);
     profile.achievements = form.elements.achievements.value.split('\n').map((x) => x.trim()).filter(Boolean);
@@ -612,6 +697,25 @@ $('#profile-form').addEventListener('submit', async (event) => {
     notice('Personal details saved');
   } catch(error) { notice(error.message, true); }
 });
+
+$('#matching-model-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  try {
+    await api('/api/matching/model', {method:'PUT', body:JSON.stringify({model:event.target.elements.model.value})});
+    await loadProfile();
+    notice('Local matching model saved. Existing jobs are being analyzed.');
+  } catch(error) { notice(error.message, true); }
+});
+
+$('#matching-download').addEventListener('click', async () => {
+  try {
+    await api('/api/matching/model/download', {method:'POST'});
+    await loadMatchingModels();
+    notice('Model download started. It will be selected automatically.');
+  } catch(error) { notice(error.message, true); }
+});
+
+$('#matching-refresh').addEventListener('click', () => loadMatchingModels().catch((error) => notice(error.message, true)));
 
 $('#provider-form').addEventListener('submit', async (event) => {
   event.preventDefault();

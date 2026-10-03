@@ -67,8 +67,15 @@
           <p id="pdf-import-status" class="hint" role="status"></p>
           <details class="inline-details"><summary>Have a LaTeX resume instead?</summary><form id="latex-import-form"><label>LaTeX source<textarea name="latex" rows="8" required></textarea></label><button class="secondary" type="submit">Import details</button></form></details>
         </details>
+        <details class="panel flow-panel" id="matching-panel">
+          <summary><span><span class="step-number">3</span><strong>Choose a local job matching model</strong></span><span id="matching-status" class="hint">Choose a model</span></summary>
+          <p class="hint">A small Ollama model reads job postings, extracts requirements, and scores them against your resume and approved projects. This runs on your Mac. Your application drafting provider stays separate.</p>
+          <form id="matching-model-form" class="form-grid"><label class="full">Installed text model<select name="model" required><option value="">Choose an installed model</option></select></label><button class="primary" type="submit">Use this model</button></form>
+          <div class="actions"><button id="matching-download" class="secondary" type="button">Download recommended small model</button><button id="matching-refresh" class="text-button" type="button">Refresh models</button></div>
+          <p id="matching-model-detail" class="hint" role="status"></p>
+        </details>
         <details class="panel flow-panel" id="social-sign-in-panel">
-          <summary><span><span class="step-number">3</span><strong>Connect LinkedIn and Facebook</strong></span><span id="social-sign-in-status" class="hint">Sign-in needed</span></summary>
+          <summary><span><span class="step-number">4</span><strong>Connect LinkedIn and Facebook</strong></span><span id="social-sign-in-status" class="hint">Sign-in needed</span></summary>
           <p class="hint">Choose a site. Job Radar opens regular Chrome with a separate saved profile. When sign-in finishes, Chrome closes and Job Radar returns automatically. Four-hour scans reuse the session until the site asks you to sign in again.</p>
           <div class="social-sign-in-content">
             <div class="social-site-row"><span><strong>LinkedIn</strong><small id="linkedin-sign-in-status">Sign-in needed</small></span><button id="setup-linkedin-start" class="primary" type="button">Sign in to LinkedIn</button></div>
@@ -77,6 +84,11 @@
             <details class="inline-details"><summary>Add a Facebook group to scan</summary><form id="setup-facebook-form" class="form-grid"><label>Name<input name="name" placeholder="AI jobs Vietnam" required></label><label class="full">Facebook group URL<input name="url" type="url" placeholder="https://www.facebook.com/groups/..." required></label><button class="secondary" type="submit">Add group</button></form></details>
             <button class="text-button" data-tab="sources">Manage all sources →</button>
           </div>
+        </details>
+        <details class="panel flow-panel" id="telegram-panel">
+          <summary><span><span class="step-number">5</span><strong>Telegram job alerts</strong></span><span id="setup-telegram-status" class="hint">Optional</span></summary>
+          <p class="hint">Create a bot with <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer">BotFather</a>, then send your bot a message. Job Radar sends new jobs that meet your score threshold.</p>
+          <form id="setup-telegram-form" class="form-grid"><label class="full">Bot token<input name="token" type="password" autocomplete="off" placeholder="Leave blank to keep the saved token"></label><label>Chat ID<input name="chat_id" required></label><label>Minimum match score<input name="min_score" type="number" min="0" max="100" value="60" required></label><button id="telegram-find-chat" class="secondary" type="button">Find my chat ID</button><button class="primary" type="submit">Save Telegram alerts</button><button id="setup-telegram-remove" class="secondary" type="button">Remove settings</button><div id="telegram-chat-results" class="full"></div><p id="setup-telegram-message" class="full hint" role="status"></p></form>
         </details>
         <div class="panel" id="profile-summary-panel">
           <div class="section-head"><h3>Your resume</h3><span id="profile-summary-status" class="pill warning">Needs details</span></div>
@@ -104,16 +116,14 @@
               <label>Work authorization<input name="work_authorization" placeholder="Leave blank to answer manually"></label>
               <label>Notice period<input name="notice_period" placeholder="Leave blank to answer manually"></label>
               <label>Relocation preference<input name="relocation" placeholder="Leave blank to answer manually"></label>
-              <label>Telegram alert minimum score<input name="alert_min_score" type="number" min="0" max="100" value="60"></label>
             </div></details></div>
             <button class="primary" type="submit">Save details</button>
           </form>
         </details>
         <details class="panel" id="connections-panel">
-          <summary>Connections and notifications</summary>
+          <summary>Email application settings</summary>
           <div class="connection-stack">
             <details class="inline-details"><summary>Email applications <span id="setup-smtp-status" class="pill muted">Optional</span></summary><form id="setup-smtp-form" class="form-grid"><label>SMTP host<input name="host" placeholder="smtp.example.com" required></label><label>Port<select name="port"><option value="587">587 (STARTTLS)</option><option value="465">465 (TLS)</option></select></label><label>Username<input name="user" autocomplete="username"></label><label>Password or app password<input name="password" type="password" autocomplete="new-password" placeholder="Leave blank to keep saved password"></label><label class="full">From address<input name="from_address" type="email" required></label><button class="primary" type="submit">Save email settings</button><button id="setup-smtp-remove" class="secondary" type="button">Remove settings</button></form></details>
-            <details class="inline-details"><summary>Telegram alerts <span id="setup-telegram-status" class="pill muted">Optional</span></summary><form id="setup-telegram-form" class="form-grid"><label>Bot token<input name="token" type="password" placeholder="Leave blank to keep saved token"></label><label>Chat ID<input name="chat_id" required></label><button class="primary" type="submit">Save alert settings</button><button id="setup-telegram-remove" class="secondary" type="button">Remove settings</button><p id="setup-telegram-message" class="full hint" role="status"></p></form></details>
           </div>
         </details>
       </section>
