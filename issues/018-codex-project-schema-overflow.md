@@ -1,6 +1,6 @@
 # Codex project drafting fails when it returns six bullets
 
-- **Status:** Open
+- **Status:** Closed
 - **Severity:** Medium
 - **Labels:** `bug`, `codex-provider`, `projects`
 
@@ -29,3 +29,7 @@ The initial inspect left the repository card ungenerated. A Generate again attem
 ## Acceptance criteria
 
 State the supported bullet count in the prompt and handle a bounded schema-validation retry or safe normalization while retaining the candidate's review step.
+
+## Resolution
+
+The project prompt states the five-bullet limit. Provider output is parsed into a permissive intermediate shape, then trimmed to the supported limits before validation and saved as an unapproved draft for candidate review. A six-bullet regression test confirms generation succeeds and approval remains required.

@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 from job_radar.db import Database
 from job_radar.evidence import canonical_github_url, inspect_repository
-from job_radar.evidence import ProjectContent, generate_project_content
+from job_radar.evidence import ProjectContent, ProjectContentRaw, generate_project_content
 from job_radar.settings import Settings
 from job_radar.web import create_app
 
@@ -57,3 +57,24 @@ def test_codex_project_content_stays_unapproved_until_review(tmp_path: Path, mon
     assert card["approved"] == 0
     assert captured[0][0] == "codex"
     assert "Indexes documents with Python" in captured[0][1]
+
+
+def test_project_generation_safely_bounds_six_provider_bullets(tmp_path: Path, monkeypatch) -> None:
+    client = TestClient(create_app(Settings(tmp_path)))
+    db = client.app.state.db
+    from job_radar.db import new_id, now
+    repository_id, evidence_id = new_id(), new_id()
+    db.execute("INSERT INTO repository_snapshots(id,url,local_path,commit_sha,summary,inspected_at) VALUES(?,?,?,?,?,?)",
+               (repository_id, "https://github.com/alex/search", "/tmp/search", "abc123", '{"readme":"Python search project"}', now()))
+    db.execute("INSERT INTO evidence(id,kind,title,claim,repository_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+               (evidence_id, "project", "search", "Review required", repository_id, now(), now()))
+    prompts = []
+    def fake_provider(_provider, prompt, response_type):
+        prompts.append(prompt)
+        assert response_type is ProjectContentRaw
+        return ProjectContentRaw(title="Search", summary="A Python search system.", bullets=[f"Supported fact {i}" for i in range(6)])
+    monkeypatch.setattr("job_radar.drafting._provider_json", fake_provider)
+    result = generate_project_content(db, evidence_id, "codex")
+    assert len(result["details"]["bullets"]) == 5
+    assert db.one("SELECT approved FROM evidence WHERE id=?", (evidence_id,))["approved"] == 0
+    assert "between one and five" in prompts[0]
