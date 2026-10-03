@@ -8,8 +8,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-from .location import is_hcm_only, job_location
-
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -80,7 +78,6 @@ CREATE TABLE IF NOT EXISTS vacancies (
   company TEXT NOT NULL,
   title TEXT NOT NULL,
   location TEXT,
-  excluded_location INTEGER NOT NULL DEFAULT 0,
   work_mode TEXT,
   description TEXT NOT NULL,
   apply_url TEXT,
@@ -172,15 +169,6 @@ class Database:
             columns = {row[1] for row in conn.execute("PRAGMA table_info(submissions)")}
             if "package_data" not in columns:
                 conn.execute("ALTER TABLE submissions ADD COLUMN package_data TEXT NOT NULL DEFAULT '{}'")
-            vacancy_columns = {row[1] for row in conn.execute("PRAGMA table_info(vacancies)")}
-            if "excluded_location" not in vacancy_columns:
-                conn.execute("ALTER TABLE vacancies ADD COLUMN excluded_location INTEGER NOT NULL DEFAULT 0")
-            for vacancy in conn.execute("SELECT id,title,location,description,excluded_location FROM vacancies").fetchall():
-                location = job_location(vacancy["location"], vacancy["title"], vacancy["description"])
-                excluded = int(is_hcm_only(location))
-                if location != (vacancy["location"] or "") or excluded != vacancy["excluded_location"]:
-                    conn.execute("UPDATE vacancies SET location=?,excluded_location=? WHERE id=?",
-                                 (location, excluded, vacancy["id"]))
             conn.execute("PRAGMA journal_mode=WAL")
 
     @contextmanager

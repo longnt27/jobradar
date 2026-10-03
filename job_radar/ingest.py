@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from .db import Database, new_id, now
-from .location import is_hcm_only, job_location
 from .ranking import score_job
 
 
@@ -48,13 +47,11 @@ def _employer_id(conn, company: str) -> str | None:
 
 
 def ingest(db: Database, source_id: str, job: ObservedJob) -> tuple[str, bool]:
-    job.location = job_location(job.location, job.title, job.description)
     url = normalize_url(job.url)
     raw = job.raw_text or job.description
     digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
     timestamp = now()
     profile = db.get_setting("profile", {})
-    excluded_location = int(is_hcm_only(job.location))
     with db.connection() as conn:
         existing_observation = conn.execute("SELECT id,content_hash FROM observations WHERE source_id=? AND url=?", (source_id, url)).fetchone()
         if existing_observation:
@@ -67,12 +64,12 @@ def ingest(db: Database, source_id: str, job: ObservedJob) -> tuple[str, bool]:
             if linked:
                 if existing_observation[1] != digest:
                     score, detail = score_job({**job.__dict__, "first_seen_at": timestamp}, profile)
-                    conn.execute("UPDATE vacancies SET title=?,description=?,location=?,excluded_location=?,score=?,score_detail=?,last_seen_at=?,updated_at=? WHERE id=?",
-                                 (job.title, job.description, job.location, excluded_location, score, json.dumps(detail, ensure_ascii=False), timestamp, timestamp, linked[0]))
+                    conn.execute("UPDATE vacancies SET title=?,description=?,location=?,score=?,score_detail=?,last_seen_at=?,updated_at=? WHERE id=?",
+                                 (job.title, job.description, job.location, score, json.dumps(detail, ensure_ascii=False), timestamp, timestamp, linked[0]))
                     conn.execute("UPDATE vacancy_fts SET title=?,company=?,description=? WHERE vacancy_id=?",
                                  (job.title, job.company, job.description, linked[0]))
                 else:
-                    conn.execute("UPDATE vacancies SET location=?,excluded_location=?,last_seen_at=?,updated_at=? WHERE id=?", (job.location, excluded_location, timestamp, timestamp, linked[0]))
+                    conn.execute("UPDATE vacancies SET last_seen_at=?,updated_at=? WHERE id=?", (timestamp, timestamp, linked[0]))
                 return linked[0], False
         else:
             observation_id = new_id()
@@ -99,7 +96,7 @@ def ingest(db: Database, source_id: str, job: ObservedJob) -> tuple[str, bool]:
                     break
         if vacancy:
             vacancy_id = vacancy[0]
-            conn.execute("UPDATE vacancies SET excluded_location=?,last_seen_at=?,updated_at=? WHERE id=?", (excluded_location, timestamp, timestamp, vacancy_id))
+            conn.execute("UPDATE vacancies SET last_seen_at=?,updated_at=? WHERE id=?", (timestamp, timestamp, vacancy_id))
             merge_reason = "apply_url_or_company_title_location"
             is_new = False
         else:
@@ -113,8 +110,8 @@ def ingest(db: Database, source_id: str, job: ObservedJob) -> tuple[str, bool]:
                 )
             score, detail = score_job({**job.__dict__, "first_seen_at": timestamp}, profile)
             conn.execute(
-                "INSERT INTO vacancies(id,employer_id,company,title,location,excluded_location,work_mode,description,apply_url,published_at,first_seen_at,last_seen_at,score,score_detail,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (vacancy_id, employer_id, job.company, job.title, job.location, excluded_location, job.work_mode,
+                "INSERT INTO vacancies(id,employer_id,company,title,location,work_mode,description,apply_url,published_at,first_seen_at,last_seen_at,score,score_detail,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (vacancy_id, employer_id, job.company, job.title, job.location, job.work_mode,
                  job.description, normalize_url(job.apply_url) if job.apply_url else None,
                  job.published_at, timestamp, timestamp, score, json.dumps(detail, ensure_ascii=False), timestamp, timestamp),
             )
@@ -126,4 +123,4 @@ def ingest(db: Database, source_id: str, job: ObservedJob) -> tuple[str, bool]:
             "INSERT OR IGNORE INTO vacancy_observations(vacancy_id,observation_id,merge_reason) VALUES(?,?,?)",
             (vacancy_id, observation_id, merge_reason),
         )
-        return vacancy_id, is_new and not excluded_location
+        return vacancy_id, is_new

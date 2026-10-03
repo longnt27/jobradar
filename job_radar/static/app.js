@@ -107,7 +107,6 @@ async function loadJobs() {
     } catch(error) { notice(error.message, true); }
   }));
   if (activeJob && jobs.some((job) => job.id === activeJob)) await showJob(activeJob);
-  else if (activeJob) { activeJob = null; $('#job-detail').innerHTML = '<div class="empty">Select a job to see details.</div>'; }
 }
 
 async function showJob(id) {
