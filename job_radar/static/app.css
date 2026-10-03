@@ -94,3 +94,4 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .job-card:focus-within,.application-card:hover{border-color:#71bd9a}
 .error-text{color:#a13a23}
 input,textarea,select{font-weight:400}
+#project-editor{scroll-margin-top:24px}

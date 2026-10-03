@@ -1,6 +1,6 @@
 # Repository results push project review thousands of pixels below the search
 
-- **Status:** Open
+- **Status:** Closed
 - **Severity:** Medium
 - **Labels:** `bug`, `projects`, `ui`
 
@@ -29,3 +29,7 @@ The 32 repository rows made the page 6,305 pixels tall; Selected projects began 
 ## Acceptance criteria
 
 Focus or scroll to the inspected card, and constrain or paginate the repository results so review remains nearby.
+
+## Resolution
+
+The repository list is bounded to a scrollable 380 px area, and inspecting or reopening a repository scrolls to its project editor. Browser verification with 32 repository rows measured a 380 px results list and the editor near the search, rather than thousands of pixels below it.
