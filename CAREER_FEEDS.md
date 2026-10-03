@@ -1,6 +1,6 @@
 # Company career feeds
 
-Job Radar registers these 30 company-specific career listings. Each source runs every four hours. The collector follows only that company's posting links and stores the original posting URL. A company-branded recruiting portal is included when it is the company's application site; general job aggregators and social posts are not part of this catalog.
+Job Radar registers these 31 company-specific career listings. Each source runs every four hours. The collector follows only that company's posting links and stores the original posting URL. A company-branded recruiting portal is included when it is the company's application site; general job aggregators and social posts are not part of this catalog.
 
 | Company | Career listing | Collector |
 | --- | --- | --- |
@@ -12,6 +12,7 @@ Job Radar registers these 30 company-specific career listings. Each source runs 
 | FPT Education | [FPT Education careers](https://career.fpt.edu.vn/Job/Search) | HTML |
 | Techcombank | [Techcombank Data & Analytics](https://www.techcombankjobs.com/go/Data-%26-Analytics/549144/) and Technology | SuccessFactors |
 | Vietcombank | [Vietcombank IT](https://tuyendung.vietcombank.com.vn/go/IT/572944/) and branch IT | SuccessFactors |
+| MB Bank | [MB Bank careers](https://careers.mbbank.com.vn/list-of-posts) | Company career API |
 | VPBank | [VPBank data and analytics careers](https://vpbank.talent.vn/jobs?dept=3326) | Company recruiting portal |
 | GPBank | [GPBank technology careers](https://gpbank.talent.vn/jobs?dept=1538) | Company recruiting portal |
 | ACB | [ACB careers](https://acbjobs.talent.vn/jobs) | Company recruiting portal |

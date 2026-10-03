@@ -536,6 +536,51 @@ async def collect_smartrecruiters(source: dict) -> list[ObservedJob]:
         return jobs
 
 
+async def collect_mbbank(source: dict) -> list[ObservedJob]:
+    """Search MB's own career API, then retain only live direct requisitions."""
+    endpoint = "https://careers.mbbank.com.vn/libra-job-management/public/recruitment-news"
+    async with _career_client() as client:
+        listings: dict[str, dict] = {}
+        for query in source["config"].get("queries", []):
+            response = await client.get(endpoint, params={"name": query, "size": 100, "page": 0})
+            response.raise_for_status()
+            data = response.json()
+            if "content" not in data:
+                raise RuntimeError("MB Bank career API returned an unexpected response")
+            for item in data["content"]:
+                if _target_title(str(item.get("name", ""))) and item.get("id"):
+                    listings[str(item["id"])] = item
+        jobs = []
+        for item in listings.values():
+            try:
+                deadline = datetime.strptime(str(item.get("toDate", "")), "%d-%m-%Y").date()
+                if deadline < datetime.now(timezone.utc).date():
+                    continue
+                response = await client.get(f"{endpoint}/{item['id']}")
+                response.raise_for_status()
+                detail = response.json()
+                raw_description = detail.get("jobDescriptionVn") or detail.get("jobDescriptionEn") or ""
+                if "<" in raw_description and ">" in raw_description:
+                    raw_description = _structured_text(BeautifulSoup(raw_description, "html.parser"))
+                description = str(raw_description).strip()
+                requirements = str(detail.get("experienceDescription") or "").strip()
+                if requirements:
+                    description += "\n\nRequirements\n\n" + requirements
+                if len(description) < 100:
+                    continue
+                url = ("https://careers.mbbank.com.vn/list-of-posts/detail-list-of-posts"
+                       f"?id={item['id']}&workGroupId={item.get('workGroupId') or ''}")
+                jobs.append(ObservedJob(
+                    url=url, external_id=str(item["id"]), title=str(detail.get("name") or item["name"])[:180],
+                    company=source.get("employer_name") or "MB Bank",
+                    description=description[:30000], location=str(detail.get("city") or item.get("province") or "")[:250],
+                    raw_text=description[:30000],
+                ))
+            except (httpx.HTTPError, ValueError, KeyError):
+                continue
+        return jobs
+
+
 CAREER_ADAPTERS = {
     "legacy": collect_career,
     "html_board": collect_html_board,
@@ -543,6 +588,7 @@ CAREER_ADAPTERS = {
     "vindynamics": collect_vindynamics,
     "vinrobotics": collect_vinrobotics,
     "smartrecruiters": collect_smartrecruiters,
+    "mbbank": collect_mbbank,
 }
 
 

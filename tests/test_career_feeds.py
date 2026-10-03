@@ -7,9 +7,9 @@ from job_radar.ranking import score_job
 from job_radar.seeds import seed
 
 
-def test_thirty_distinct_company_feeds_are_seeded_idempotently(tmp_path: Path) -> None:
-    assert len(CAREER_FEEDS) == len({feed.employer for feed in CAREER_FEEDS}) == 30
-    assert {"VinDynamics", "VinRobotics", "Techcombank", "Vietcombank", "VPBank", "GPBank", "ACB"} <= {
+def test_company_feeds_are_seeded_idempotently(tmp_path: Path) -> None:
+    assert len(CAREER_FEEDS) == len({feed.employer for feed in CAREER_FEEDS}) == 31
+    assert {"VinDynamics", "VinRobotics", "Techcombank", "Vietcombank", "MB Bank", "VPBank", "GPBank", "ACB"} <= {
         feed.employer for feed in CAREER_FEEDS
     }
     assert all("linkedin.com" not in feed.url and "facebook.com" not in feed.url for feed in CAREER_FEEDS)
@@ -18,7 +18,7 @@ def test_thirty_distinct_company_feeds_are_seeded_idempotently(tmp_path: Path) -
     seed(db)
     seed(db)
     rows = db.all("SELECT s.name,s.interval_minutes,s.config,e.name AS employer FROM sources s JOIN employers e ON e.id=s.employer_id WHERE s.kind='career'")
-    assert len(rows) == 30
+    assert len(rows) == 31
     assert {row["employer"] for row in rows} == {feed.employer for feed in CAREER_FEEDS}
     assert all(row["interval_minutes"] == 240 and '"adapter"' in row["config"] for row in rows)
 

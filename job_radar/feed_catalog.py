@@ -34,6 +34,9 @@ CAREER_FEEDS: tuple[CareerFeed, ...] = (
     CareerFeed("Vietcombank", "https://tuyendung.vietcombank.com.vn/go/IT/572944/", "successfactors", {
         "boards": ["https://tuyendung.vietcombank.com.vn/go/IT/572944/", "https://tuyendung.vietcombank.com.vn/go/Tin-h%E1%BB%8Dc-CN_Batch/570844/"], "max_pages": 3,
     }),
+    CareerFeed("MB Bank", "https://careers.mbbank.com.vn/list-of-posts", "mbbank", {
+        "queries": ["AI Engineer", "Data", "DevOps", "Developer", "Software", "Kỹ sư", "Công nghệ thông tin"],
+    }),
     html("VPBank", "https://vpbank.talent.vn/jobs?dept=3326", TALENT_JOB, max_results=100, max_pages=5, description_selector=".content-article, .article, article"),
     html("GPBank", "https://gpbank.talent.vn/jobs?dept=1538", TALENT_JOB, max_results=100, max_pages=4, description_selector=".content-article, .article, article"),
     html("ACB", "https://acbjobs.talent.vn/jobs", TALENT_JOB, max_results=100, max_pages=6, description_selector=".content-article, .article, article"),
