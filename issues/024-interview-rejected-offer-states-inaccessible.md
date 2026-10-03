@@ -1,6 +1,6 @@
 # Interview, Rejected, and Offer states have no UI controls
 
-- **Status:** Open
+- **Status:** Closed
 - **Severity:** Medium
 - **Labels:** `bug`, `jobs`, `ui`
 
@@ -29,3 +29,7 @@ No UI action or filter option exists for these states; they can only be set thro
 ## Acceptance criteria
 
 Expose state transitions and filter options for all supported application outcomes.
+
+## Resolution
+
+Job detail now offers Interview, Rejected, and Offer actions, and the Jobs filter includes each state. An isolated browser test sets each state and finds only the matching job through the UI.
