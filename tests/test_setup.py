@@ -34,6 +34,14 @@ def test_setup_saves_secrets_without_returning_them(tmp_path: Path) -> None:
     assert "1234567890:secret" not in json.dumps(status)
 
 
+def test_telegram_first_time_blank_token_returns_validation_error(tmp_path: Path) -> None:
+    client = TestClient(create_app(Settings(tmp_path)))
+    response = client.post("/api/setup/telegram", json={"token": "", "chat_id": "42"})
+    assert response.status_code == 422
+    assert "token" in response.json()["detail"].lower()
+    assert not (tmp_path / "telegram.json").exists()
+
+
 def test_social_scans_wait_for_browser_setup(tmp_path: Path) -> None:
     settings = Settings(tmp_path)
     db = Database(settings.database_path)

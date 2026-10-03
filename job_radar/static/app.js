@@ -546,8 +546,9 @@ $('#setup-telegram-form').addEventListener('submit', async (event) => {
     const data = Object.fromEntries(new FormData(event.target));
     await api('/api/setup/telegram', {method:'POST', body:JSON.stringify(data)});
     event.target.elements.token.value = '';
+    $('#setup-telegram-message').textContent = 'Telegram alerts configured.';
     await loadSetup(); notice('Telegram alerts configured');
-  } catch(error) { notice(error.message, true); }
+  } catch(error) { $('#setup-telegram-message').textContent = error.message; notice(error.message, true); }
 });
 
 $('#setup-telegram-remove').addEventListener('click', async () => {

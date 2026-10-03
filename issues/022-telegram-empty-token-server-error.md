@@ -1,6 +1,6 @@
 # Saving Telegram settings without a token returns a server error
 
-- **Status:** Open
+- **Status:** Closed
 - **Severity:** Low
 - **Labels:** `bug`, `notifications`, `validation`
 
@@ -28,3 +28,7 @@ The API returned HTTP 500 `Internal Server Error` in the QA instance.
 ## Acceptance criteria
 
 Validate the first-time token requirement at the API boundary and surface a readable error in the form.
+
+## Resolution
+
+The Telegram API now rejects a first-time blank token with HTTP 422 and a specific message. The form displays that message beside its controls. A regression test confirms no settings file is written.

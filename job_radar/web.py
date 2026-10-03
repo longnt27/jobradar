@@ -239,7 +239,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/setup/telegram")
     def configure_alerts(payload: TelegramInput):
-        save_telegram(settings, {"token": payload.token or telegram_config(settings).get("token", ""), "chat_id": payload.chat_id})
+        token = payload.token.strip() or telegram_config(settings).get("token", "")
+        if not token:
+            raise HTTPException(422, "Enter a bot token to configure Telegram alerts")
+        save_telegram(settings, {"token": token, "chat_id": payload.chat_id})
         return {"configured": True}
 
     @app.delete("/api/setup/telegram")
