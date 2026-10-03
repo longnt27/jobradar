@@ -3,6 +3,7 @@ from pathlib import Path
 from job_radar.collectors import _expired_posting, _target_title
 from job_radar.db import Database
 from job_radar.feed_catalog import CAREER_FEEDS
+from job_radar.ranking import score_job
 from job_radar.seeds import seed
 
 
@@ -28,3 +29,12 @@ def test_expired_requisition_and_non_job_heading_are_rejected() -> None:
     assert _target_title("Senior Data Engineer")
     assert not _target_title("Careers")
     assert not _target_title("We build AI systems and seek an engineer. " * 10)
+
+
+def test_company_publication_time_without_timezone_can_be_ranked() -> None:
+    score, detail = score_job({
+        "title": "AI Engineer", "description": "Build robot perception models.",
+        "location": "Hanoi", "published_at": "2026-03-31T20:53:33",
+    }, {})
+    assert score > 0
+    assert detail["components"]["freshness"] >= 0

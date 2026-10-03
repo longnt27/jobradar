@@ -36,7 +36,10 @@ def score_job(job: dict[str, Any], profile: dict[str, Any]) -> tuple[int, dict[s
     freshness = 3
     if published:
         try:
-            age_hours = max(0, (datetime.now(timezone.utc) - datetime.fromisoformat(published.replace("Z", "+00:00"))).total_seconds() / 3600)
+            published_time = datetime.fromisoformat(published.replace("Z", "+00:00"))
+            if published_time.tzinfo is None:
+                published_time = published_time.replace(tzinfo=timezone.utc)
+            age_hours = max(0, (datetime.now(timezone.utc) - published_time).total_seconds() / 3600)
             freshness = 5 if age_hours <= 24 else 4 if age_hours <= 72 else 2 if age_hours <= 336 else 0
         except ValueError:
             pass
