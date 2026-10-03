@@ -20,6 +20,10 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
     identifier = TestClient(app).post("/api/jobs/import", json={
         "company": "Example", "title": "AI Engineer", "description": "Build Python models in Hanoi.",
     }).json()["id"]
+    pending_id = TestClient(app).post("/api/jobs/import", json={
+        "company": "Pending Example", "title": "Python Engineer", "description": "Build Python systems in Hanoi.",
+    }).json()["id"]
+    app.state.db.execute("UPDATE vacancies SET analysis_status='pending' WHERE id=?", (pending_id,))
     app.state.db.execute(
         "UPDATE vacancies SET score=82,analysis_status='done',analysis_model='test:small',score_detail=? WHERE id=?",
         (json.dumps({"method": "local_llm", "facts": {"role": "AI Engineer", "seniority": "",
@@ -52,10 +56,15 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 page.locator("#telegram-panel[open]").wait_for()
                 assert page.get_by_role("button", name="Find my chat ID").is_visible()
                 page.get_by_role("button", name="Jobs", exact=True).first.click()
+                pending_card = page.get_by_role("button", name="Open Python Engineer at Pending Example")
+                assert "Analyzing" in pending_card.inner_text()
+                assert "No score" not in pending_card.inner_text()
+                assert pending_card.locator(".score-pending").count() == 1
                 page.get_by_role("button", name="Open AI Engineer at Example").click()
                 page.get_by_role("heading", name="Job at a glance").wait_for()
                 assert "Python" in page.locator(".job-facts").inner_text()
                 assert "Match breakdown" in page.locator("#job-detail").inner_text()
+                assert page.get_by_role("button", name="Open AI Engineer at Example").locator(".score-high").inner_text() == "82"
             finally:
                 browser.close()
     finally:

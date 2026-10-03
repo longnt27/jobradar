@@ -90,6 +90,13 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 @media(max-width:900px){.project-workspace{grid-template-columns:1fr}#evidence-list{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:600px){.project-add-form,.project-repo-row{display:block}.project-add-form button{margin-top:12px}.project-repo-row .actions{margin-top:10px}#evidence-list{grid-template-columns:1fr}}
 .review-section > h4:not(:first-child){margin-top:22px}
+.score{float:right;margin-left:10px;background:#edf1ef;color:#5a6d65}
+.score-high{background:#d9f2e3;color:#176139}
+.score-good{background:#d8ecee;color:#185b66}
+.score-medium{background:#fff0cf;color:#86570c}
+.score-low{background:#fbe2df;color:#9a352d}
+.score-pending{font-weight:650;font-size:11px}
+.review-section h4 .score{float:none;vertical-align:middle;margin-left:0;margin-right:5px}
 .review-subsection{border:1px solid #e3eae6;border-radius:10px;padding:14px;margin:12px 0;display:grid;gap:12px}
 .toolbar #job-query{min-width:min(220px,100%)}
 .card-select{display:block;width:100%;border:0;background:transparent;padding:0;text-align:left;color:inherit;font:inherit;cursor:pointer}

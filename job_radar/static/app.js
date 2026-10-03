@@ -1,6 +1,14 @@
 const $ = (selector) => document.querySelector(selector);
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const when = (value) => value ? new Date(value).toLocaleString() : 'Never';
+function scoreBadge(job) {
+  if (job.analysis_status !== 'done' || !Number.isFinite(job.score)) {
+    const label = job.analysis_status === 'failed' ? 'Failed' : job.analysis_status === 'not_configured' ? 'No score' : 'Analyzing';
+    return `<span class="score score-pending" aria-label="${label}">${label}</span>`;
+  }
+  const range = job.score >= 80 ? 'high' : job.score >= 60 ? 'good' : job.score >= 40 ? 'medium' : 'low';
+  return `<span class="score score-${range}" aria-label="Match score ${job.score} out of 100">${job.score}</span>`;
+}
 let activeJob = null;
 let projectCards = [];
 let discoveredRepos = [];
@@ -29,7 +37,8 @@ function renderJobAnalysis(job, score) {
     : ['pending', 'running'].includes(status) ? 'Local model is extracting requirements and scoring this job.'
     : 'Basic keyword score. Choose a local matching model in My profile for a detailed assessment.';
   const retry = status === 'failed' ? `<button type="button" data-analyze="${job.id}" class="secondary">Try analysis again</button>` : '';
-  const facts = score?.facts;
+  const completed = status === 'done';
+  const facts = completed ? score?.facts : null;
   const list = (label, items) => items?.length ? `<div><strong>${label}</strong><ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul></div>` : '';
   const factsHtml = facts ? `<div class="review-section job-facts"><h4>Job at a glance</h4><p class="hint">Extracted by the local model. Check the original posting before applying.</p>
     ${facts.summary ? `<p>${escapeHtml(facts.summary)}</p>` : ''}
@@ -39,10 +48,10 @@ function renderJobAnalysis(job, score) {
     <div class="fact-grid">${list('Required skills', facts.required_skills)}${list('Preferred skills', facts.preferred_skills)}${list('Responsibilities', facts.responsibilities)}${list('Education', facts.education)}${list('Languages', facts.languages)}</div></div>` : '';
   const labels = {role:'Role', required_skills:'Required skills', preferred_skills:'Preferred skills', experience:'Experience',
     responsibilities:'Responsibilities', research:'Research', location:'Location', work_mode:'Work mode', education:'Education', freshness:'Freshness'};
-  const criteria = score?.criteria ? `<div class="review-section"><h4>Match breakdown · ${job.score}/100</h4><p>${escapeHtml(score.explanation || '')}</p>
+  const criteria = completed && score?.criteria ? `<div class="review-section"><h4>Match breakdown · ${scoreBadge(job)} ${job.score}/100</h4><p>${escapeHtml(score.explanation || '')}</p>
     <div class="criteria-grid">${Object.entries(labels).map(([key, label]) => { const item = score.criteria[key]; return item ? `<div class="criterion"><strong>${label} <span>${escapeHtml(item.score)}/10</span></strong><small>${escapeHtml(item.reason)}</small></div>` : ''; }).join('')}</div>
     ${score.excluded_role ? `<p class="hint">Score capped at 20 because the title contains “${escapeHtml(score.excluded_role)}”.</p>` : ''}</div>` :
-    score ? `<div class="review-section"><h4>Basic score</h4><p>${escapeHtml(score.explanation || '')}</p></div>` : '';
+    '';
   return `<div class="review-section"><p class="hint">${stateMessage}</p>${retry}</div>${factsHtml}${criteria}`;
 }
 
@@ -184,7 +193,7 @@ async function loadJobs() {
   const jobs = await api(`/api/jobs?${query}`);
   const sourceLabel = (source) => !source ? 'Manually added' : source.kind === 'career' ? 'Company career page' : source.kind === 'linkedin' ? 'LinkedIn listing' : 'Facebook group lead';
   $('#job-list').innerHTML = jobs.length ? jobs.map((job) =>
-    `<div class="item job-card"><button type="button" class="card-select" data-job="${job.id}" aria-label="Open ${escapeHtml(job.title)} at ${escapeHtml(job.company)}"><span class="score">${job.score ?? '—'}</span><div class="item-title">${escapeHtml(job.title)}</div><div class="item-meta">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div><div class="item-meta">${escapeHtml(sourceLabel(job.source))}${job.source ? ` · Checked ${when(job.source.last_seen_at)}` : ''}</div><div class="item-meta">First seen ${when(job.first_seen_at)} <span class="pill muted">${escapeHtml(job.state)}</span> · ${job.analysis_status === 'done' ? 'Local match' : job.analysis_status === 'failed' ? 'Analysis failed' : ['pending','running'].includes(job.analysis_status) ? 'Analyzing locally' : 'Basic score'}</div></button>${job.source ? `<a href="${escapeHtml(job.source.url)}" target="_blank" rel="noopener noreferrer">Original posting ↗</a>` : ''}</div>`
+    `<div class="item job-card"><button type="button" class="card-select" data-job="${job.id}" aria-label="Open ${escapeHtml(job.title)} at ${escapeHtml(job.company)}">${scoreBadge(job)}<div class="item-title">${escapeHtml(job.title)}</div><div class="item-meta">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div><div class="item-meta">${escapeHtml(sourceLabel(job.source))}${job.source ? ` · Checked ${when(job.source.last_seen_at)}` : ''}</div><div class="item-meta">First seen ${when(job.first_seen_at)} <span class="pill muted">${escapeHtml(job.state)}</span> · ${job.analysis_status === 'done' ? 'Local match' : job.analysis_status === 'failed' ? 'Analysis failed' : ['pending','running'].includes(job.analysis_status) ? 'Analyzing locally' : 'Waiting for local model'}</div></button>${job.source ? `<a href="${escapeHtml(job.source.url)}" target="_blank" rel="noopener noreferrer">Original posting ↗</a>` : ''}</div>`
   ).join('') : '<div class="empty">No jobs found. Run a scan or import a job.</div>';
   document.querySelectorAll('[data-job]').forEach((node) => node.addEventListener('click', async () => {
     try {
