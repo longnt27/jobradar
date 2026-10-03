@@ -1,6 +1,6 @@
 # Vacancy merge and refresh retain stale application URLs
 
-- **Status:** Open
+- **Status:** Closed
 - **Severity:** High
 - **Labels:** `bug`, `collection`, `applications`
 
@@ -29,3 +29,7 @@ The same-URL update kept A. The new-URL merge kept both the old description and 
 ## Acceptance criteria
 
 Refresh all canonical destination fields when evidence changes; avoid automatic merge based only on company, title, and location.
+
+## Resolution
+
+Reobserving the same source URL refreshes canonical vacancy fields, including the application URL, even when the description is unchanged. A new posting URL creates a separate vacancy rather than guessing identity from company, title, location, or a shared application URL. Covered by collection regression tests.
