@@ -55,6 +55,10 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 page.get_by_role("button", name="Telegram job alerts").click()
                 page.locator("#telegram-panel[open]").wait_for()
                 assert page.get_by_role("button", name="Find my chat ID").is_visible()
+                page.get_by_role("button", name="Applications", exact=True).first.click()
+                page.locator("#auto-apply-panel summary").click()
+                assert page.locator("#auto-apply-form input[name='enabled']").is_visible()
+                assert page.locator("#auto-apply-status").inner_text() == "Off"
                 page.get_by_role("button", name="Jobs", exact=True).first.click()
                 pending_card = page.get_by_role("button", name="Open Python Engineer at Pending Example")
                 assert "Analyzing" in pending_card.inner_text()
@@ -65,6 +69,9 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 assert "Python" in page.locator(".job-facts").inner_text()
                 assert "Match breakdown" in page.locator("#job-detail").inner_text()
                 assert page.get_by_role("button", name="Open AI Engineer at Example").locator(".score-high").inner_text() == "82"
+                high_color = page.get_by_role("button", name="Open AI Engineer at Example").locator(".score-high").evaluate("node => getComputedStyle(node).backgroundColor")
+                pending_color = pending_card.locator(".score-pending").evaluate("node => getComputedStyle(node).backgroundColor")
+                assert high_color != pending_color
             finally:
                 browser.close()
     finally:

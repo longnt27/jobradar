@@ -97,6 +97,10 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .score-low{background:#fbe2df;color:#9a352d}
 .score-pending{font-weight:650;font-size:11px}
 .review-section h4 .score{float:none;vertical-align:middle;margin-left:0;margin-right:5px}
+.checkbox-label{display:flex;align-items:center;gap:10px;font-size:13px}
+.checkbox-label input{width:auto;margin:0;accent-color:#176139}
+#auto-apply-panel>p{max-width:780px;line-height:1.6}
+#auto-apply-activity{margin-top:18px}
 .review-subsection{border:1px solid #e3eae6;border-radius:10px;padding:14px;margin:12px 0;display:grid;gap:12px}
 .toolbar #job-query{min-width:min(220px,100%)}
 .card-select{display:block;width:100%;border:0;background:transparent;padding:0;text-align:left;color:inherit;font:inherit;cursor:pointer}

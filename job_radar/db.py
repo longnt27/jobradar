@@ -154,6 +154,15 @@ CREATE TABLE IF NOT EXISTS submissions (
   updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_submission_vacancy ON submissions(vacancy_id, sent_at DESC);
+CREATE TABLE IF NOT EXISTS auto_application_attempts (
+  vacancy_id TEXT PRIMARY KEY REFERENCES vacancies(id),
+  status TEXT NOT NULL,
+  draft_id TEXT REFERENCES application_drafts(id),
+  detail TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_auto_application_status ON auto_application_attempts(status, updated_at DESC);
 CREATE TABLE IF NOT EXISTS notification_attempts (
   vacancy_id TEXT NOT NULL REFERENCES vacancies(id),
   channel TEXT NOT NULL,

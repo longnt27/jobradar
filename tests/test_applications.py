@@ -91,7 +91,7 @@ def test_web_form_inspection_and_one_click_submit(tmp_path: Path) -> None:
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
-            body = f'<html><body><form method="post" action="{action[0]}"><label>Name <input name="name" required></label><label>Email <input type="email" name="email" required></label><label>Cover letter <textarea name="cover_letter" required></textarea></label><input type="file" name="resume" accept="application/pdf"><button>Apply</button></form></body></html>'.encode()
+            body = f'<html><body><form method="post" enctype="multipart/form-data" action="{action[0]}"><label>Name <input name="name" required></label><label>Email <input type="email" name="email" required></label><label>Cover letter <textarea name="cover_letter" required></textarea></label><input type="file" name="resume" accept="application/pdf"><button>Apply</button></form></body></html>'.encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/html")
             self.end_headers()

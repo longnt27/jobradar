@@ -49,7 +49,17 @@
       </section>
 
       <section id="applications" class="tab">
-        <div class="section-head"><p>Review your resume and message before you send anything.</p></div>
+        <div class="section-head"><p>Review drafts, track submissions, and choose whether strong new matches should apply automatically.</p></div>
+        <details class="panel" id="auto-apply-panel">
+          <summary>Automatic applications <span id="auto-apply-status" class="pill muted">Off</span></summary>
+          <p class="hint">When enabled, Job Radar drafts and sends applications for newly found jobs after local analysis scores them above your threshold. It will not send applications for jobs already found. Jobs with missing destinations or incomplete forms go to review.</p>
+          <form id="auto-apply-form" class="form-grid">
+            <label class="checkbox-label full"><input name="enabled" type="checkbox"><span>Apply automatically to new matches</span></label>
+            <label>Minimum score to exceed<input name="threshold" type="number" min="0" max="100" value="85" required></label>
+            <button class="primary" type="submit">Save automatic applications</button>
+          </form>
+          <div id="auto-apply-activity" class="stack"></div>
+        </details>
         <div class="two-col jobs-layout"><div id="application-list" class="stack"></div><div id="application-detail" class="panel detail"><div class="empty">No application selected.</div></div></div>
       </section>
 

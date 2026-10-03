@@ -380,6 +380,7 @@ function showTab(name, historyMode = 'push') {
   if (name !== 'profile') clearTimeout(window.setupPoll);
   if (name !== 'profile') clearTimeout(window.matchingPoll);
   if (name !== 'jobs') clearTimeout(window.jobPoll);
+  if (name !== 'applications') clearTimeout(window.autoApplyPoll);
   document.querySelectorAll('.tab').forEach((tab) => tab.classList.toggle('active', tab.id === name));
   const nav = ['experience','projects'].includes(name) ? 'profile' : ['sources','employers'].includes(name) ? 'jobs' : name;
   document.querySelectorAll('.sidebar nav [data-tab]').forEach((button) => button.classList.toggle('active', button.dataset.tab === nav));
@@ -393,12 +394,44 @@ function showTab(name, historyMode = 'push') {
 }
 
 async function loadApplications(selectedId = null) {
+  await loadAutoApply();
   const drafts = await api('/api/applications');
   $('#application-list').innerHTML = drafts.length ? drafts.map((draft) => `<button type="button" class="item clickable application-card" data-application="${draft.id}"><div class="item-title">${escapeHtml(draft.job_title)} <span class="pill ${draft.status === 'sent' ? '' : 'warning'}">${escapeHtml(draft.status)}</span></div><div class="item-meta">${escapeHtml(draft.company)} · ${escapeHtml(draft.provider_mode)}</div><div class="item-meta">Updated ${when(draft.updated_at)}</div></button>`).join('') : '<div class="panel empty"><p>No applications yet. Start with a job posting.</p><button id="applications-browse-jobs" class="primary">Browse jobs →</button></div>';
   $('#applications-browse-jobs')?.addEventListener('click', () => showTab('jobs'));
   document.querySelectorAll('[data-application]').forEach((node) => node.addEventListener('click', () => showApplication(node.dataset.application)));
   if (selectedId) await showApplication(selectedId);
 }
+
+async function loadAutoApply() {
+  clearTimeout(window.autoApplyPoll);
+  const data = await api('/api/auto-apply');
+  const form = $('#auto-apply-form');
+  if (!form.dataset.initialized) {
+    form.elements.enabled.checked = data.enabled;
+    form.elements.threshold.value = data.threshold;
+    form.dataset.initialized = 'true';
+  }
+  $('#auto-apply-status').textContent = data.enabled ? `On · above ${data.threshold}` : 'Off';
+  $('#auto-apply-status').className = `pill ${data.enabled ? '' : 'muted'}`;
+  const activity = $('#auto-apply-activity');
+  activity.innerHTML = data.recent.length ? `<h4>Recent automatic applications</h4>${data.recent.map((item) =>
+    `<div class="item"><div class="item-title">${escapeHtml(item.title)} · ${escapeHtml(item.company)} <span class="pill ${item.status === 'sent' ? '' : 'warning'}">${escapeHtml(item.status.replace('_', ' '))}</span></div><div class="item-meta">${item.score == null ? '' : `${escapeHtml(item.score)}/100 · `}${escapeHtml(item.detail || '')}</div><div class="actions">${item.draft_id ? `<button type="button" data-auto-draft="${item.draft_id}">Open application</button>` : `<button type="button" data-auto-job="${item.vacancy_id}">Open job</button>`}</div></div>`
+  ).join('')}` : '<p class="hint">No automatic applications yet.</p>';
+  activity.querySelectorAll('[data-auto-draft]').forEach((button) => button.addEventListener('click', () => showApplication(button.dataset.autoDraft).catch((error) => notice(error.message, true))));
+  activity.querySelectorAll('[data-auto-job]').forEach((button) => button.addEventListener('click', async () => { await showTab('jobs'); await showJob(button.dataset.autoJob); }));
+  if (data.enabled && $('#applications').classList.contains('active')) window.autoApplyPoll = setTimeout(() => loadAutoApply().catch((error) => notice(error.message, true)), 5000);
+}
+
+$('#auto-apply-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.target;
+  try {
+    const result = await api('/api/auto-apply', {method:'PUT', body:JSON.stringify({enabled:form.elements.enabled.checked, threshold:Number(form.elements.threshold.value)})});
+    delete form.dataset.initialized;
+    await loadAutoApply();
+    notice(result.enabled ? `Automatic applications enabled for new jobs scoring above ${result.threshold}.` : 'Automatic applications paused.');
+  } catch (error) { notice(error.message, true); }
+});
 
 async function showApplication(id) {
   const draft = await api(`/api/applications/${id}`);

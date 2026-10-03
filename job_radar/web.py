@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field, HttpUrl
 
 from .db import Database, new_id, now
 from .apply import inspect_form, send_application, send_readiness
+from .auto_apply import AutoApplyManager
 from .browser_login import BrowserLoginManager
 from .drafting import PROVIDERS, get_draft, prepare_draft, update_draft
 from .evidence import generate_project_content, inspect_repository
@@ -95,6 +96,11 @@ class MatchingModelInput(BaseModel):
     model: str = Field(min_length=2, max_length=100)
 
 
+class AutoApplyInput(BaseModel):
+    enabled: bool = False
+    threshold: int = Field(default=85, ge=0, le=100)
+
+
 class ProjectGenerationInput(BaseModel):
     provider: Literal["template", "codex_local", "codex", "agy", "claude"] | None = None
 
@@ -136,17 +142,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     db = Database(settings.database_path)
     seed(db)
     scan_manager = ScanManager(db, settings)
-    match_manager = MatchManager(db, settings, scan_manager.notification_lock)
+    auto_apply_manager = AutoApplyManager(db, settings, scan_manager.browser_lock)
+    match_manager = MatchManager(db, settings, scan_manager.notification_lock, auto_apply_manager)
     login_manager = BrowserLoginManager(db, settings, scan_manager.browser_lock, scan_manager.queue_due)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         await scan_manager.start()
         await match_manager.start()
+        await auto_apply_manager.start()
         try:
             yield
         finally:
             await login_manager.stop()
+            await auto_apply_manager.stop()
             await match_manager.stop()
             await scan_manager.stop()
 
@@ -155,6 +164,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.scan_manager = scan_manager
     app.state.match_manager = match_manager
+    app.state.auto_apply_manager = auto_apply_manager
     app.state.login_manager = login_manager
 
     def provider_available(provider: str) -> bool:
@@ -234,6 +244,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "telegram_chat_id": telegram.get("chat_id", ""),
             "telegram_min_score": profile.get("alert_min_score", 60),
             "matching": match_manager.status(),
+            "auto_apply": auto_apply_manager.status(),
             "service_installed": service_path().exists(),
             "providers": {name: bool(shutil.which(name)) for name in ("codex", "agy", "claude", "ollama")},
         }
@@ -549,6 +560,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except ValueError as error:
             raise HTTPException(409, str(error)) from error
         return {"queued": True}
+
+    @app.get("/api/auto-apply")
+    def auto_apply_status():
+        return auto_apply_manager.status()
+
+    @app.put("/api/auto-apply")
+    def configure_auto_apply(payload: AutoApplyInput):
+        if payload.enabled:
+            profile = db.get_setting("profile", {})
+            if not db.get_setting("matching_model", ""):
+                raise HTTPException(409, "Choose a local matching model in My profile first")
+            if not profile.get("drafting_provider") or not provider_available(profile["drafting_provider"]):
+                raise HTTPException(409, "Choose an available application drafting provider in My profile first")
+            if not profile.get("name") or not profile.get("email"):
+                raise HTTPException(409, "Add your name and email in My profile first")
+            if not profile.get("experience") and not db.one("SELECT id FROM evidence WHERE approved=1 AND kind='project' LIMIT 1"):
+                raise HTTPException(409, "Add work history or approve a GitHub project first")
+        return auto_apply_manager.configure(payload.enabled, payload.threshold)
 
     @app.post("/api/jobs/{job_id}/state")
     def update_state(job_id: str, payload: StateInput):

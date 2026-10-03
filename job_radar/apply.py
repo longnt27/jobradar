@@ -20,10 +20,10 @@ from .settings import Settings
 from .social_browser import chrome_context_options
 
 
-def _field_signature(fields: list[dict], action: str, method: str) -> str:
+def _field_signature(fields: list[dict], action: str, method: str, enctype: str) -> str:
     stable = [{key: field.get(key) for key in ("index", "name", "id", "type", "required", "label", "options", "accept", "max_length")}
               for field in fields]
-    return hashlib.sha256(json.dumps({"fields": stable, "action": action, "method": method}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    return hashlib.sha256(json.dumps({"fields": stable, "action": action, "method": method, "enctype": enctype}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
 async def _form_structure(page: Page) -> dict:
@@ -32,7 +32,7 @@ async def _form_structure(page: Page) -> dict:
     candidates = []
     for form_index in range(count):
         form = forms.nth(form_index)
-        metadata = await form.evaluate("node => ({action:node.action,method:node.method,submit:(node.querySelector('button:not([type]),button[type=submit],input[type=submit]')?.innerText || node.querySelector('input[type=submit]')?.value || '').trim()})")
+        metadata = await form.evaluate("node => ({action:node.action,method:node.method,enctype:node.enctype,submit:(node.querySelector('button:not([type]),button[type=submit],input[type=submit]')?.innerText || node.querySelector('input[type=submit]')?.value || '').trim()})")
         fields = await form.locator("input,select,textarea").evaluate_all("""nodes => nodes.map((node, index) => {
           const type = (node.getAttribute('type') || node.tagName.toLowerCase()).toLowerCase();
           if (['hidden','submit','button','reset','image'].includes(type)) return null;
@@ -53,7 +53,8 @@ async def _form_structure(page: Page) -> dict:
         raise ValueError("No recognizable application form was found at this URL")
     form_index, fields, metadata = max(candidates, key=lambda item: sum(3 if field["type"] == "file" else 2 if field["required"] else 1 for field in item[1]))
     return {"form_index": form_index, "fields": fields, "action": metadata["action"], "method": metadata["method"],
-            "signature": _field_signature(fields, metadata["action"], metadata["method"]), "final_url": page.url}
+            "enctype": metadata["enctype"],
+            "signature": _field_signature(fields, metadata["action"], metadata["method"], metadata["enctype"]), "final_url": page.url}
 
 
 def _default_answer(field: dict, profile: dict, message: dict) -> str:
@@ -197,6 +198,8 @@ def send_readiness(db: Database, settings: Settings, draft: dict) -> list[str]:
         if not form.get("signature") or form.get("destination_url") != draft["destination"].get("url"):
             reasons.append("Inspect this application form before sending")
         else:
+            if any(field["type"] == "file" for field in form.get("fields", [])) and form.get("enctype") != "multipart/form-data":
+                reasons.append("This form cannot upload files; check the application page before sending")
             required_radios = {}
             for field in form.get("fields", []):
                 if field["type"] == "file":
@@ -326,6 +329,8 @@ async def send_application(db: Database, settings: Settings, draft_id: str, expe
     if draft["destination"]["kind"] == "email":
         _validated_smtp_config(settings)
     elif draft["form_data"].get("fields"):
+        if any(field["type"] == "file" for field in draft["form_data"]["fields"]) and draft["form_data"].get("enctype") != "multipart/form-data":
+            raise ValueError("This form cannot upload files; check the application page before sending")
         for field in draft["form_data"]["fields"]:
             if field["type"] == "file":
                 _reviewed_attachment(settings, draft, field)
