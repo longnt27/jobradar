@@ -286,7 +286,16 @@ async function showApplication(id) {
   const projects = resume.projects || [];
   $('#application-detail').innerHTML = `<h2>${escapeHtml(draft.job_title)}</h2><div class="item-meta">${escapeHtml(draft.company)} · ${escapeHtml(draft.provider_mode)}</div>
     <div class="review-section"><h4>Destination</h4><label>Channel<select id="draft-destination-kind"><option value="web" ${destination.kind === 'web' ? 'selected' : ''}>Web form</option><option value="email" ${destination.kind === 'email' ? 'selected' : ''}>Email</option></select></label><label>URL or email address<input id="draft-destination" value="${escapeHtml(destination.url || destination.email || '')}"></label></div>
-    <div class="review-section"><h4>Resume</h4><p><a href="/api/applications/${id}/resume" target="_blank">Preview or download PDF ↗</a></p><label>Professional summary<textarea id="draft-summary" rows="3">${escapeHtml(resume.summary || '')}</textarea></label><p class="item-meta">Experience: ${(resume.experience || []).map((item) => escapeHtml(item.company || item.title)).join(', ') || 'None'} · Projects: ${projects.length}</p>${projects.map((project, index) => `<label>${escapeHtml(project.title)} — tailored bullets<textarea data-project-bullets="${index}" rows="4">${escapeHtml((project.bullets || []).join('\n'))}</textarea></label>`).join('')}</div>
+    <div class="review-section"><h4>Resume</h4><p><a href="/api/applications/${id}/resume" target="_blank">Preview or download PDF ↗</a></p>
+      <div class="form-grid"><label>Name<input id="draft-name" value="${escapeHtml(resume.name || '')}"></label><label>Email<input id="draft-email" value="${escapeHtml(resume.email || '')}"></label><label>Phone<input id="draft-phone" value="${escapeHtml(resume.phone || '')}"></label><label>Links, one per line<textarea id="draft-links" rows="2">${escapeHtml((resume.links || []).join('\n'))}</textarea></label></div>
+      <label>Professional summary<textarea id="draft-summary" rows="3">${escapeHtml(resume.summary || '')}</textarea></label>
+      <h4>Experience</h4>${(resume.experience || []).map((item, index) => `<div class="review-subsection"><div class="form-grid"><label>Company<input data-experience-company="${index}" value="${escapeHtml(item.company || '')}"></label><label>Role<input data-experience-role="${index}" value="${escapeHtml(item.role || '')}"></label><label>Dates<input data-experience-dates="${index}" value="${escapeHtml(item.dates || '')}"></label></div><label>Bullets, one per line<textarea data-experience-bullets="${index}" rows="4">${escapeHtml((item.bullets || []).join('\n'))}</textarea></label></div>`).join('') || '<p class="hint">No previous positions in this draft.</p>'}
+      <h4>Selected projects</h4>${projects.map((project, index) => `<div class="review-subsection"><div class="form-grid"><label>Title<input data-project-title="${index}" value="${escapeHtml(project.title || '')}"></label><label>Repository URL<input data-project-url="${index}" value="${escapeHtml(project.repository_url || '')}"></label><label>Technologies<input data-project-stack="${index}" value="${escapeHtml((project.tech_stack || []).join(', '))}"></label></div><label>Tailored bullets, one per line<textarea data-project-bullets="${index}" rows="4">${escapeHtml((project.bullets || []).join('\n'))}</textarea></label></div>`).join('') || '<p class="hint">No projects selected for this draft.</p>'}
+      <h4>Education</h4>${(resume.education || []).map((item, index) => { const entry = typeof item === 'string' ? {school:item} : item; return `<div class="form-grid"><label>School<input data-education-school="${index}" value="${escapeHtml(entry.school || '')}"></label><label>Degree<input data-education-degree="${index}" value="${escapeHtml(entry.degree || '')}"></label><label>Dates<input data-education-dates="${index}" value="${escapeHtml(entry.dates || '')}"></label></div>`; }).join('') || '<p class="hint">No education in this draft.</p>'}
+      <label>Achievements, one per line<textarea id="draft-achievements" rows="3">${escapeHtml((resume.achievements || []).join('\n'))}</textarea></label>
+      <label>Skills, one per line<textarea id="draft-skills" rows="3">${escapeHtml((resume.skills || []).join('\n'))}</textarea></label>
+      <label>Skill groups, one per line as “Group: skills”<textarea id="draft-skill-groups" rows="3">${escapeHtml(Object.entries(resume.skill_groups || {}).map(([group, values]) => `${group}: ${Array.isArray(values) ? values.join(', ') : values}`).join('\n'))}</textarea></label>
+    </div>
     <div class="review-section"><h4>Application message</h4><label>Subject<input id="draft-subject" value="${escapeHtml(message.subject || '')}"></label><label>Body<textarea id="draft-body" rows="10">${escapeHtml(message.body || '')}</textarea></label></div>
     <div id="draft-form-fields" class="review-section"><h4>Form answers and attachments</h4>${draft.form_data.action ? `<p class="hint">Form submits to: ${escapeHtml(draft.form_data.action)} (${escapeHtml(draft.form_data.method)})</p>` : ''}${(draft.form_data.fields || []).map((field) => field.type === 'file' ? (() => {
       const assignment = draft.form_data.attachments?.[String(field.index)] || {};
@@ -321,6 +330,7 @@ async function showApplication(id) {
 }
 
 async function saveApplication(id, draft) {
+  const lines = (value) => value.split('\n').map((x) => x.trim()).filter(Boolean);
   const answers = {};
   document.querySelectorAll('[data-answer]').forEach((field) => { answers[field.dataset.answer] = field.value; });
   const attachments = {};
@@ -340,8 +350,28 @@ async function saveApplication(id, draft) {
   const kind = $('#draft-destination-kind').value;
   const value = $('#draft-destination').value.trim();
   const destination = kind === 'email' ? {kind, email:value} : {kind, url:value};
-  const projects = (draft.resume_data.projects || []).map((project, index) => ({...project, bullets:document.querySelector(`[data-project-bullets="${index}"]`).value.split('\n').map((x) => x.trim()).filter(Boolean)}));
-  const payload = {resume_data:{...draft.resume_data, summary:$('#draft-summary').value, projects}, message_data:{subject:$('#draft-subject').value, body:$('#draft-body').value}, form_data:{...draft.form_data, answers, attachments}, destination};
+  const experience = (draft.resume_data.experience || []).map((item, index) => ({...item,
+    company:document.querySelector(`[data-experience-company="${index}"]`).value,
+    role:document.querySelector(`[data-experience-role="${index}"]`).value,
+    dates:document.querySelector(`[data-experience-dates="${index}"]`).value,
+    bullets:lines(document.querySelector(`[data-experience-bullets="${index}"]`).value)}));
+  const projects = (draft.resume_data.projects || []).map((project, index) => ({...project,
+    title:document.querySelector(`[data-project-title="${index}"]`).value,
+    repository_url:document.querySelector(`[data-project-url="${index}"]`).value,
+    tech_stack:document.querySelector(`[data-project-stack="${index}"]`).value.split(',').map((x) => x.trim()).filter(Boolean),
+    bullets:lines(document.querySelector(`[data-project-bullets="${index}"]`).value)}));
+  const education = (draft.resume_data.education || []).map((item, index) => ({...(typeof item === 'string' ? {} : item),
+    school:document.querySelector(`[data-education-school="${index}"]`).value,
+    degree:document.querySelector(`[data-education-degree="${index}"]`).value,
+    dates:document.querySelector(`[data-education-dates="${index}"]`).value}));
+  const skill_groups = Object.fromEntries(lines($('#draft-skill-groups').value).map((line) => {
+    const colon = line.indexOf(':'); return colon < 0 ? [line, ''] : [line.slice(0, colon).trim(), line.slice(colon + 1).trim()];
+  }));
+  const resume_data = {...draft.resume_data, name:$('#draft-name').value, email:$('#draft-email').value,
+    phone:$('#draft-phone').value, links:lines($('#draft-links').value), summary:$('#draft-summary').value,
+    experience, projects, education, achievements:lines($('#draft-achievements').value),
+    skills:lines($('#draft-skills').value), skill_groups};
+  const payload = {resume_data, message_data:{subject:$('#draft-subject').value, body:$('#draft-body').value}, form_data:{...draft.form_data, answers, attachments}, destination};
   await api(`/api/applications/${id}`, {method:'PATCH', body:JSON.stringify(payload)});
   notice('Application saved');
 }

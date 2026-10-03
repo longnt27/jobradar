@@ -84,3 +84,5 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 #project-review-status:not(:empty){color:#28684b}
 @media(max-width:900px){.project-workspace{grid-template-columns:1fr}#evidence-list{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:600px){.project-add-form,.project-repo-row{display:block}.project-add-form button{margin-top:12px}.project-repo-row .actions{margin-top:10px}#evidence-list{grid-template-columns:1fr}}
+.review-section > h4:not(:first-child){margin-top:22px}
+.review-subsection{border:1px solid #e3eae6;border-radius:10px;padding:14px;margin:12px 0;display:grid;gap:12px}

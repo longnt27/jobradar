@@ -1,6 +1,6 @@
 # Application review cannot edit all content in the generated resume
 
-- **Status:** Open
+- **Status:** Closed
 - **Severity:** Medium
 - **Labels:** `bug`, `applications`, `ui`
 
@@ -29,3 +29,7 @@ No controls exist for those sections in the draft review; saving serializes only
 ## Acceptance criteria
 
 Add draft-level controls for all rendered sections or a clear route that regenerates the current draft after source edits.
+
+## Resolution
+
+Application review now exposes draft-level controls for contact details, summary, each experience and project entry, education, achievements, skills, and skill groups. Saving regenerates the PDF; a regression test confirms edits to experience, education, and achievements appear in the rendered file.

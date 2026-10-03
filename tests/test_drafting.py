@@ -37,6 +37,15 @@ def test_draft_uses_approved_evidence_and_renders_resume(tmp_path: Path) -> None
     revised = client.patch(f"/api/applications/{draft['id']}", json={"resume_data": {**draft["resume_data"], "summary": "Python search engineer"}}).json()
     assert revised["resume_path"] != draft["resume_path"]
     assert Path(draft["resume_path"]).exists()
+    sections = {**revised["resume_data"],
+                "experience": [{**revised["resume_data"]["experience"][0], "bullets": ["Corrected experience bullet."]}],
+                "education": [{"school": "Example University", "degree": "BSc Computer Science", "dates": "2023 – 2027"}],
+                "achievements": ["Corrected achievement."]}
+    updated = client.patch(f"/api/applications/{draft['id']}", json={"resume_data": sections}).json()
+    text = PdfReader(Path(updated["resume_path"])).pages[0].extract_text()
+    assert "Corrected experience bullet." in text
+    assert "2023 – 2027" in text
+    assert "Corrected achievement." in text
 
 
 def test_codex_provider_uses_scoped_cli_and_schema(monkeypatch) -> None:
