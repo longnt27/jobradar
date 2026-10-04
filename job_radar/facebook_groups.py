@@ -33,8 +33,9 @@ def group_from_url(url: str) -> tuple[str, str]:
 
 
 def clean_group_title(value: str) -> str | None:
-    title = re.sub(r"\s*[|·–-]\s*Facebook.*$", "", value, flags=re.I).strip()
-    if title.casefold() in {"facebook", "groups", "log in", "log in to facebook", "sign up", "facebook groups"}:
+    title = re.sub(r"^\(\d+\)\s*", "", value).strip()
+    title = re.sub(r"\s*[|·–-]\s*Facebook.*$", "", title, flags=re.I).strip()
+    if title.casefold() in {"facebook", "groups", "chats", "log in", "log in to facebook", "sign up", "facebook groups"}:
         return None
     return title[:100] if 2 <= len(title) <= 160 else None
 
@@ -49,8 +50,8 @@ async def lookup_facebook_group_name(settings: Settings, url: str) -> str | None
             await page.goto(url, wait_until="domcontentloaded", timeout=12000)
             values = await page.evaluate("""() => [
                 document.querySelector('meta[property="og:title"]')?.content || '',
-                document.querySelector('h1')?.innerText || '',
-                document.title || ''
+                document.title || '',
+                document.querySelector('h1')?.innerText || ''
             ]""")
             return next((name for value in values if (name := clean_group_title(value))), None)
         finally:

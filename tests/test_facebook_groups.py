@@ -13,6 +13,8 @@ def test_group_links_produce_a_canonical_url_and_readable_name() -> None:
     assert group_from_url("https://www.facebook.com/groups/123456789/?ref=share") == (
         "https://www.facebook.com/groups/123456789/", "Facebook group 123456789")
     assert clean_group_title("Vietnam AI Jobs | Facebook") == "Vietnam AI Jobs"
+    assert clean_group_title("(17) Vietnam AI Jobs | Facebook") == "Vietnam AI Jobs"
+    assert clean_group_title("Chats") is None
     assert clean_group_title("Log in to Facebook") is None
 
 

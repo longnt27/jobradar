@@ -200,7 +200,7 @@ async def _collect_linkedin_search_results(page: Page, source: dict) -> list[Obs
     return jobs
 
 
-RECRUITING = re.compile(r"\b(hiring|recruit|vacancy|apply|tuyển dụng|tuyển|cần tìm|cần tuyển|job opening|we are looking)\b", re.I)
+RECRUITING = re.compile(r"\b(hiring|recruit|vacancy|apply|tuyển dụng|tuyển|cần tìm|cần tuyển|job opening|we are looking)\b|\bcần\s+(?:\d+\s*)?(?:mid|sen|junior|senior|fresher|intern|data|ai|ml|kỹ|lập)", re.I)
 ROLE = re.compile(r"\b(ai|ml|machine learning|engineer|engineering|developer|devops|research|data scientist|data analyst|data analytics|data architect|business analyst|llm|computer vision|software|architect|fullstack|backend|frontend|technical lead|tech lead|cloud|security|cyber|database|network|kỹ sư|lập trình|trí tuệ nhân tạo|công nghệ thông tin|khoa học dữ liệu|phần mềm|phầm mềm|an ninh|bảo mật|quản trị ứng dụng|cơ sở dữ liệu|phân tích nghiệp vụ|chuyển đổi số|kiểm thử)\b", re.I)
 
 
@@ -213,8 +213,8 @@ async def collect_facebook(context: BrowserContext, source: dict) -> list[Observ
         _check_auth(page.url, body)
         titles = await page.evaluate("""() => [
             document.querySelector('meta[property="og:title"]')?.content || '',
-            document.querySelector('h1')?.innerText || '',
-            document.title || ''
+            document.title || '',
+            document.querySelector('h1')?.innerText || ''
         ]""")
         if name := next((cleaned for title in titles if (cleaned := clean_group_title(title))), None):
             source["resolved_name"] = name
@@ -227,8 +227,47 @@ async def collect_facebook(context: BrowserContext, source: dict) -> list[Observ
             url: [...node.querySelectorAll('a[href]')].map(a => a.href).find(h => /\\/groups\\/[^/]+\\/(posts|permalink)\\//.test(h)) || '',
             links: [...node.querySelectorAll('a[href]')].map(a => a.href).filter(h => h.startsWith('http'))
         }))""")
+        posts = [post for post in posts if post["text"].strip() and post["url"]
+                 and "comment_id=" not in post["url"]]
         if not posts:
-            raise RuntimeError("No group posts were visible; check group access or sign-in")
+            messages = page.locator('[data-ad-rendering-role="story_message"]')
+            message_count = await messages.count()
+            if not message_count:
+                raise RuntimeError("No group posts were visible; check group access or sign-in")
+            for index in range(min(message_count, max_posts)):
+                message = messages.nth(index)
+                try:
+                    text = (await message.inner_text()).strip()
+                    if len(text) < 40 or not RECRUITING.search(text) or not ROLE.search(text):
+                        continue
+                    external = await message.locator('a[href]').evaluate_all(
+                        "links => links.map(a => a.href).filter(h => !h.includes('facebook.com'))")
+                    timestamp = await message.evaluate_handle("""node => {
+                      let parent = node;
+                      while (parent && parent.getAttribute('role') !== 'feed') {
+                        const link = [...parent.querySelectorAll('a[href]')].find(a => {
+                          const url = new URL(a.href);
+                          return url.searchParams.has('__cft__[0]') && /^\\/groups\\/[^/]+\\/?$/.test(url.pathname);
+                        });
+                        if (link) return link;
+                        parent = parent.parentElement;
+                      }
+                      return null;
+                    }""")
+                    if not await timestamp.evaluate("link => !!link && !!link.getClientRects().length"):
+                        continue
+                    await timestamp.click(timeout=5000)
+                    await page.wait_for_url(re.compile(r"/groups/[^/]+/(?:posts|permalink)/[^/?#]+"), timeout=5000)
+                    post_url = urlsplit(page.url)._replace(query="", fragment="").geturl()
+                    posts.append({"text": text, "url": post_url, "links": external})
+                    await page.go_back(wait_until="domcontentloaded", timeout=10000)
+                    await page.wait_for_timeout(200)
+                except Exception:
+                    if "/posts/" in page.url or "/permalink/" in page.url:
+                        await page.go_back(wait_until="domcontentloaded", timeout=10000)
+                    continue
+        if not posts:
+            raise RuntimeError("Facebook showed posts, but their links or content could not be read")
         jobs: list[ObservedJob] = []
         for post in posts[:max_posts]:
             text = post["text"].strip()
