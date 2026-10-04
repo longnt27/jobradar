@@ -45,12 +45,13 @@ function renderJobAnalysis(job, score) {
     ${facts.summary ? `<p>${escapeHtml(facts.summary)}</p>` : ''}
     <div class="fact-grid"><div><strong>Role</strong><p>${escapeHtml([facts.role, facts.seniority].filter(Boolean).join(' · ') || 'Not stated')}</p></div>
     <div><strong>Experience</strong><p>${facts.years_required == null ? 'Not stated' : `${escapeHtml(facts.years_required)} years required`}</p></div>
-    <div><strong>Location and mode</strong><p>${escapeHtml([facts.location, facts.work_mode].filter(Boolean).join(' · ') || 'Not stated')}</p></div></div>
-    <div class="fact-grid">${list('Required skills', facts.required_skills)}${list('Preferred skills', facts.preferred_skills)}${list('Responsibilities', facts.responsibilities)}${list('Education', facts.education)}${list('Languages', facts.languages)}</div></div>` : '';
+    <div><strong>Location and mode</strong><p>${escapeHtml([facts.location, facts.work_mode].filter(Boolean).join(' · ') || 'Not stated')}</p></div>
+    <div><strong>Salary range</strong><p>${escapeHtml(facts.salary_range || 'Not stated')}</p></div></div>
+    <div class="fact-grid">${list('Required skills', facts.required_skills)}${list('Preferred skills', facts.preferred_skills)}${list('Responsibilities', facts.responsibilities)}${list('Education', facts.education)}${list('Spoken languages', facts.languages)}</div></div>` : '';
   const labels = {role:'Role', required_skills:'Required skills', preferred_skills:'Preferred skills', experience:'Experience',
     responsibilities:'Responsibilities', research:'Research', location:'Location', work_mode:'Work mode', education:'Education', freshness:'Freshness'};
   const criteria = completed && score?.criteria ? `<div class="review-section"><h4>Match breakdown · ${scoreBadge(job)} ${job.score}/100</h4><p>${escapeHtml(score.explanation || '')}</p>
-    <div class="criteria-grid">${Object.entries(labels).map(([key, label]) => { const item = score.criteria[key]; return item ? `<div class="criterion"><strong>${label} <span>${escapeHtml(item.score)}/10</span></strong><small>${escapeHtml(item.reason)}</small></div>` : ''; }).join('')}</div>
+    <div class="criteria-grid">${Object.entries(labels).map(([key, label]) => { const item = score.criteria[key]; return item ? `<div class="criterion"><strong>${label} <span>${escapeHtml(item.score)}/10</span></strong><small>${escapeHtml(item.reason)}</small></div>` : ''; }).join('')}<div class="criterion"><strong>Salary range <span>Info</span></strong><small>${escapeHtml(facts?.salary_range || 'Not stated in the posting.')} Salary is not included in the match score.</small></div></div>
     ${score.excluded_role ? `<p class="hint">Score capped at 20 because the title contains “${escapeHtml(score.excluded_role)}”.</p>` : ''}</div>` :
     '';
   return `<div class="review-section"><p class="hint">${stateMessage}</p>${retry}</div>${factsHtml}${criteria}`;

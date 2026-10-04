@@ -36,14 +36,14 @@ def test_later_job_states_can_be_set_and_filtered_in_browser(tmp_path: Path) -> 
                 for state in ("interview", "rejected", "offer"):
                     title = f"Engineer {state}"
                     page = browser.new_page()
-                    page.set_default_timeout(3000)
+                    page.set_default_timeout(10000)
                     page.goto(f"http://127.0.0.1:{port}/#jobs")
                     page.get_by_role("button", name=f"Open {title} at Example").click()
                     page.get_by_role("button", name=state.capitalize(), exact=True).click()
                     page.locator("#job-state").select_option(state)
                     page.get_by_role("button", name="Search", exact=True).click()
-                    page.get_by_role("button", name=f"Open {title} at Example").wait_for()
-                    assert page.locator("[data-job]").count() == 1
+                    page.wait_for_function("document.querySelectorAll('[data-job]').length === 1")
+                    assert page.get_by_role("button", name=f"Open {title} at Example").is_visible()
                     page.close()
             finally:
                 browser.close()

@@ -1,12 +1,13 @@
 import json
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
 from fastapi.testclient import TestClient
 
 from job_radar.ingest import ObservedJob, ingest
-from job_radar.local_analysis import Criterion, JobFacts, LocalModelUnavailable, MatchJudgment, _generate, _ground_facts, analyze_job, validate_local_model
+from job_radar.local_analysis import Criterion, JobFacts, LocalModelUnavailable, MatchJudgment, _generate, _ground_facts, analyze_job, clean_saved_analysis, extract_salary_range, freshness_criterion, validate_local_model
 from job_radar.settings import Settings
 from job_radar.web import create_app
 
@@ -68,6 +69,44 @@ def test_extraction_discards_unsupported_language_seniority_and_years() -> None:
     assert grounded.seniority == ""
     assert grounded.years_required is None
     assert grounded.education == []
+
+
+def test_language_salary_and_freshness_are_grounded_in_the_job_posting(tmp_path: Path) -> None:
+    description = ("English proficiency required. Build Python systems. "
+                   "Salary: VND 18–30 million per month. Anomaly detection and Explainable AI.")
+    facts = JobFacts(role="AI Engineer", seniority="", required_skills=["Python"],
+        preferred_skills=[], years_required=None, location="", work_mode="", responsibilities=[],
+        education=[], languages=["Python", "Anomaly detection", "English"],
+        salary_range="VND 18–30 million", summary="")
+    grounded = _ground_facts(facts, {"title": "AI Engineer", "description": description})
+    assert grounded.languages == ["English"]
+    assert grounded.salary_range == "VND 18–30 million"
+    assert extract_salary_range("Thu nhập 14–16 tháng/năm.") == ""
+    assert extract_salary_range("Lương: 20–30 triệu/tháng") == "Lương: 20–30 triệu/tháng"
+    assert freshness_criterion({"first_seen_at": datetime.now(timezone.utc).isoformat()}) == {
+        "score": 5, "reason": "Posting date not provided; job freshness is unknown."}
+    published = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+    assert freshness_criterion({"published_at": published})["score"] == 8
+
+    app = create_app(Settings(tmp_path))
+    client = TestClient(app)
+    job_id = client.post("/api/jobs/import", json={"company": "Example", "title": "AI Engineer",
+        "description": description}).json()["id"]
+    criteria = {name: {"score": 6, "reason": "Prior local result"}
+                for name in MatchJudgment.model_fields if name != "summary"}
+    criteria["freshness"] = {"score": 10, "reason": "Candidate experience is fresh."}
+    detail = {"method": "local_llm", "facts": {"languages": ["Python", "Anomaly detection", "English"]},
+              "criteria": criteria, "excluded_role": None}
+    app.state.db.execute("UPDATE vacancies SET analysis_status='done',score=64,score_detail=? WHERE id=?",
+                         (json.dumps(detail), job_id))
+    assert clean_saved_analysis(app.state.db) == 1
+    corrected = app.state.db.one("SELECT score,score_detail FROM vacancies WHERE id=?", (job_id,))
+    corrected_detail = json.loads(corrected["score_detail"])
+    assert corrected_detail["facts"]["languages"] == ["English"]
+    assert corrected_detail["facts"]["salary_range"] == "Salary: VND 18–30 million per month."
+    assert corrected_detail["criteria"]["freshness"]["score"] == 5
+    assert corrected["score"] == 59
+    assert clean_saved_analysis(app.state.db) == 0
 
 
 def test_model_setting_backfills_jobs_without_changing_drafting_provider(tmp_path: Path, monkeypatch) -> None:

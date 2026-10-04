@@ -26,7 +26,7 @@ from .evidence import generate_project_content, inspect_repository
 from .facebook_groups import group_from_url, lookup_facebook_group_name
 from .github import list_public_repositories
 from .mail_config import save_smtp, send_test_email, smtp_config, smtp_config_fingerprint
-from .local_analysis import list_local_models, validate_local_model
+from .local_analysis import clean_saved_analysis, list_local_models, validate_local_model
 from .matching import MatchManager
 from .notifications import discover_telegram_chats, save_telegram, telegram_config
 from .ranking import rescore_vacancies, score_job
@@ -149,6 +149,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings.ensure_dirs()
     db = Database(settings.database_path)
     seed(db)
+    clean_saved_analysis(db)
     scan_manager = ScanManager(db, settings)
     auto_apply_manager = AutoApplyManager(db, settings, scan_manager.browser_lock)
     match_manager = MatchManager(db, settings, scan_manager.notification_lock, auto_apply_manager)
