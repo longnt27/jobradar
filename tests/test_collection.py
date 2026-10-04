@@ -3,7 +3,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from job_radar.db import Database
+from job_radar.db import Database, new_id, now
 from job_radar.ingest import ObservedJob, ingest, normalize_url
 from job_radar.scanner import ScanManager
 from job_radar.seeds import seed
@@ -51,6 +51,23 @@ def test_scan_due_endpoint_starts_background_task(monkeypatch, tmp_path: Path) -
     response = TestClient(app).post("/api/scan/due")
     assert response.status_code == 200
     assert response.json()["queued"] > 0
+
+
+def test_interrupted_scan_is_requeued_on_restart(tmp_path: Path) -> None:
+    settings = Settings(tmp_path)
+    db = Database(settings.database_path)
+    seed(db)
+    source_id = db.one("SELECT id FROM sources WHERE enabled=1 LIMIT 1")["id"]
+    db.execute("UPDATE sources SET last_attempt_at=?,last_status='running' WHERE id=?", (now(), source_id))
+    run_id = new_id()
+    db.execute("INSERT INTO scan_runs(id,source_id,started_at,status) VALUES(?,?,?,'running')",
+               (run_id, source_id, now()))
+    manager = ScanManager(db, settings)
+    assert manager.recover_interrupted() == 1
+    assert db.one("SELECT status,finished_at FROM scan_runs WHERE id=?", (run_id,))["status"] == "interrupted"
+    assert db.one("SELECT last_attempt_at,last_status FROM sources WHERE id=?", (source_id,)) == {
+        "last_attempt_at": None, "last_status": "interrupted"}
+    assert manager.recover_interrupted() == 0
 
 
 def test_generic_group_posts_do_not_merge_by_title(tmp_path: Path) -> None:

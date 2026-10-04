@@ -28,7 +28,26 @@ class ScanManager:
         self._scheduler_task: asyncio.Task | None = None
 
     async def start(self) -> None:
+        self.recover_interrupted()
         self._scheduler_task = asyncio.create_task(self._scheduler())
+
+    def recover_interrupted(self) -> int:
+        """A prior process cannot finish its scans; make those sources due again."""
+        with self.db.connection() as conn:
+            source_ids = [row[0] for row in conn.execute(
+                "SELECT DISTINCT source_id FROM scan_runs WHERE status='running'").fetchall()]
+            if not source_ids:
+                return 0
+            conn.execute(
+                "UPDATE scan_runs SET status='interrupted',finished_at=?,"
+                "detail='Service restarted during scan; source queued to retry' WHERE status='running'",
+                (now(),),
+            )
+            conn.executemany(
+                "UPDATE sources SET last_attempt_at=NULL,last_status='interrupted' WHERE id=?",
+                [(source_id,) for source_id in source_ids],
+            )
+        return len(source_ids)
 
     async def stop(self) -> None:
         for task in (self._scheduler_task, self._due_task):
