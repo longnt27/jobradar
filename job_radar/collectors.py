@@ -234,12 +234,15 @@ async def collect_facebook(context: BrowserContext, source: dict) -> list[Observ
             message_count = await messages.count()
             if not message_count:
                 raise RuntimeError("No group posts were visible; check group access or sign-in")
+            relevant_count = 0
+            last_error = ""
             for index in range(min(message_count, max_posts)):
                 message = messages.nth(index)
                 try:
                     text = (await message.inner_text()).strip()
                     if len(text) < 40 or not RECRUITING.search(text) or not ROLE.search(text):
                         continue
+                    relevant_count += 1
                     external = await message.locator('a[href]').evaluate_all(
                         "links => links.map(a => a.href).filter(h => !h.includes('facebook.com'))")
                     timestamp = await message.evaluate_handle("""node => {
@@ -256,18 +259,19 @@ async def collect_facebook(context: BrowserContext, source: dict) -> list[Observ
                     }""")
                     if not await timestamp.evaluate("link => !!link && !!link.getClientRects().length"):
                         continue
-                    await timestamp.click(timeout=5000)
+                    await timestamp.click(timeout=5000, force=True)
                     await page.wait_for_url(re.compile(r"/groups/[^/]+/(?:posts|permalink)/[^/?#]+"), timeout=5000)
                     post_url = urlsplit(page.url)._replace(query="", fragment="").geturl()
                     posts.append({"text": text, "url": post_url, "links": external})
                     await page.go_back(wait_until="domcontentloaded", timeout=10000)
                     await page.wait_for_timeout(200)
-                except Exception:
+                except Exception as error:
+                    last_error = f"{type(error).__name__}: {str(error).splitlines()[0]}"
                     if "/posts/" in page.url or "/permalink/" in page.url:
                         await page.go_back(wait_until="domcontentloaded", timeout=10000)
                     continue
-        if not posts:
-            raise RuntimeError("Facebook showed posts, but their links or content could not be read")
+            if not posts and relevant_count:
+                raise RuntimeError(f"Facebook found {relevant_count} matching posts, but their links could not be opened: {last_error}")
         jobs: list[ObservedJob] = []
         for post in posts[:max_posts]:
             text = post["text"].strip()
