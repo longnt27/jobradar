@@ -185,6 +185,25 @@ def test_truncated_local_model_json_retries_with_more_output_space(monkeypatch) 
     assert budgets[1] > budgets[0]
 
 
+def test_job_fact_output_is_bounded_for_small_local_models(monkeypatch) -> None:
+    schema = JobFacts.model_json_schema()
+    assert schema["properties"]["responsibilities"]["maxItems"] <= 6
+    assert schema["properties"]["summary"]["maxLength"] <= 250
+    prompts = []
+    def generate(_model, prompt, result_type):
+        prompts.append(prompt)
+        if result_type is JobFacts:
+            return JobFacts(role="Engineer", seniority="", required_skills=[], preferred_skills=[],
+                years_required=None, location="", work_mode="", responsibilities=[],
+                education=[], languages=[], summary="")
+        return MatchJudgment(**{name: Criterion(score=5, reason="Neutral")
+            for name in MatchJudgment.model_fields if name != "summary"}, summary="Neutral fit")
+    monkeypatch.setattr("job_radar.local_analysis._generate", generate)
+    analyze_job({"title": "Engineer", "description": "Build Python systems."}, {}, [], "test:small")
+    assert "Do not quote the posting" in prompts[0]
+    assert "at most 6 responsibilities" in prompts[0]
+
+
 def test_failed_job_analyses_are_listed_and_can_be_retried_together(tmp_path: Path) -> None:
     app = create_app(Settings(tmp_path))
     client = TestClient(app)
