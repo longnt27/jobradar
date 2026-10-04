@@ -44,7 +44,7 @@ class MatchManager:
         model = self.db.get_setting("matching_model", "")
         if model:
             self.db.execute(
-                "UPDATE vacancies SET analysis_status='pending' WHERE analysis_status='running' "
+                "UPDATE vacancies SET analysis_status='pending',analysis_stage=NULL WHERE analysis_status='running' "
                 "OR analysis_status='not_configured' OR (analysis_status='done' AND analysis_model<>?)",
                 (model,),
             )
@@ -70,7 +70,7 @@ class MatchManager:
     def invalidate_all(self) -> None:
         if not self.db.get_setting("matching_model", ""):
             return
-        self.db.execute("UPDATE vacancies SET analysis_status='pending',analysis_error=NULL WHERE analysis_status!='pending'")
+        self.db.execute("UPDATE vacancies SET analysis_status='pending',analysis_stage=NULL,analysis_error=NULL WHERE analysis_status!='pending'")
         self._wake()
 
     def _wake(self) -> None:
@@ -85,7 +85,7 @@ class MatchManager:
             raise ValueError("Choose a local job matching model in My profile first")
         if not self.db.one("SELECT id FROM vacancies WHERE id=?", (vacancy_id,)):
             raise KeyError("Job not found")
-        self.db.execute("UPDATE vacancies SET analysis_status='pending',analysis_error=NULL WHERE id=?", (vacancy_id,))
+        self.db.execute("UPDATE vacancies SET analysis_status='pending',analysis_stage=NULL,analysis_error=NULL WHERE id=?", (vacancy_id,))
         self._wake()
 
     def failures(self) -> list[dict]:
@@ -99,7 +99,7 @@ class MatchManager:
             raise ValueError("Choose a local job matching model in My profile first")
         with self.db.connection() as conn:
             count = conn.execute(
-                "UPDATE vacancies SET analysis_status='pending',analysis_error=NULL WHERE analysis_status='failed'"
+                "UPDATE vacancies SET analysis_status='pending',analysis_stage=NULL,analysis_error=NULL WHERE analysis_status='failed'"
             ).rowcount
         self._wake()
         return count
@@ -143,7 +143,7 @@ class MatchManager:
                 except asyncio.TimeoutError:
                     pass
                 continue
-            self.db.execute("UPDATE vacancies SET analysis_status='running' WHERE id=?", (job["id"],))
+            self.db.execute("UPDATE vacancies SET analysis_status='running',analysis_stage='extracting' WHERE id=?", (job["id"],))
             profile = self.db.get_setting("profile", {})
             projects = self.db.all("SELECT title,claim,details FROM evidence WHERE kind='project' AND approved=1 ORDER BY created_at DESC LIMIT 8")
             for project in projects:
@@ -152,30 +152,35 @@ class MatchManager:
                 except ValueError:
                     project["details"] = {}
             try:
-                score, detail = await asyncio.to_thread(analyze_job, job, profile, projects, model)
+                score, detail = await asyncio.to_thread(
+                    analyze_job, job, profile, projects, model,
+                    lambda stage: self.db.execute(
+                        "UPDATE vacancies SET analysis_stage=? WHERE id=? AND analysis_status='running'",
+                        (stage, job["id"])),
+                )
                 self.service_error = None
                 if model != self.db.get_setting("matching_model", ""):
-                    self.db.execute("UPDATE vacancies SET analysis_status='pending' WHERE id=? AND analysis_status='running'", (job["id"],))
+                    self.db.execute("UPDATE vacancies SET analysis_status='pending',analysis_stage=NULL WHERE id=? AND analysis_status='running'", (job["id"],))
                     continue
                 with self.db.connection() as conn:
                     changed = conn.execute(
-                        "UPDATE vacancies SET score=?,score_detail=?,analysis_status='done',analysis_model=?,"
+                        "UPDATE vacancies SET score=?,score_detail=?,analysis_status='done',analysis_stage=NULL,analysis_model=?,"
                         "analysis_error=NULL,analyzed_at=?,updated_at=? WHERE id=? AND analysis_status='running' AND updated_at=?",
                         (score, json.dumps(detail, ensure_ascii=False), model, now(), now(), job["id"], job["updated_at"]),
                     ).rowcount
                 if not changed:
-                    self.db.execute("UPDATE vacancies SET analysis_status='pending' WHERE id=? AND analysis_status='running'", (job["id"],))
+                    self.db.execute("UPDATE vacancies SET analysis_status='pending',analysis_stage=NULL WHERE id=? AND analysis_status='running'", (job["id"],))
                 elif self.auto_apply:
                     self.auto_apply.wake()
             except asyncio.CancelledError:
-                self.db.execute("UPDATE vacancies SET analysis_status='pending' WHERE id=? AND analysis_status='running'", (job["id"],))
+                self.db.execute("UPDATE vacancies SET analysis_status='pending',analysis_stage=NULL WHERE id=? AND analysis_status='running'", (job["id"],))
                 raise
             except LocalModelUnavailable as error:
                 self.service_error = str(error)
-                self.db.execute("UPDATE vacancies SET analysis_status='pending' WHERE id=? AND analysis_status='running'", (job["id"],))
+                self.db.execute("UPDATE vacancies SET analysis_status='pending',analysis_stage=NULL WHERE id=? AND analysis_status='running'", (job["id"],))
                 await asyncio.sleep(15)
             except Exception as error:
                 log.warning("Local analysis failed for job %s: %s", job["id"], error)
-                self.db.execute("UPDATE vacancies SET analysis_status='failed',analysis_error=? WHERE id=? AND analysis_status='running'",
+                self.db.execute("UPDATE vacancies SET analysis_status='failed',analysis_stage=NULL,analysis_error=? WHERE id=? AND analysis_status='running'",
                                 (str(error)[:240], job["id"]))
             await asyncio.sleep(0.1)

@@ -199,6 +199,65 @@ async function loadHome() {
   ).join('') : '<div class="empty">No scans yet. Your enabled sources will appear here.</div>';
 }
 
+function queueRow(item, kind, label, position = null, active = false) {
+  const name = kind === 'scan' ? item.name : item.title;
+  const detail = kind === 'scan' ? item.kind : `${item.company}${item.score == null ? '' : ` · ${item.score}/100`}`;
+  return `<button type="button" class="queue-row ${active ? 'is-active' : ''}" data-queue-kind="${kind}" data-queue-id="${item.id}" ${item.draft_id ? `data-queue-draft="${item.draft_id}"` : ''}>
+    <span class="queue-row-order">${active ? '●' : position}</span>
+    <span class="queue-row-copy"><strong>${escapeHtml(name)}</strong><small>${escapeHtml(detail)}</small></span>
+    <span class="queue-row-state">${escapeHtml(label)}</span>
+  </button>`;
+}
+
+function queueWaiting(target, items, kind, labelFor) {
+  const scrollTop = target.querySelector('.queue-scroll')?.scrollTop || 0;
+  target.innerHTML = items.length ? `<div class="queue-waiting-head">Waiting <span>${items.length}</span></div><div class="queue-scroll">${items.map((item, index) => queueRow(item, kind, labelFor(item), item.position || index + 1)).join('')}</div>`
+    : '<p class="queue-empty">Nothing waiting.</p>';
+  if (target.querySelector('.queue-scroll')) target.querySelector('.queue-scroll').scrollTop = scrollTop;
+}
+
+async function loadQueue() {
+  clearTimeout(window.queuePoll);
+  const data = await api('/api/queue');
+  const scans = data.scans, analysis = data.analysis, drafts = data.drafts;
+  const total = [scans, analysis, drafts].reduce((sum, lane) => sum + lane.active.length + lane.waiting.length, 0);
+  $('#queue-summary').innerHTML = `<div><strong>${total}</strong><span>work items in progress or waiting</span></div><div><strong>${scans.active.length + scans.waiting.length}</strong><span>scans</span></div><div><strong>${analysis.active.length + analysis.waiting.length}</strong><span>job analyses</span></div><div><strong>${drafts.active.length + drafts.waiting.length}</strong><span>drafts</span></div>`;
+  for (const [id, lane] of [['scan', scans], ['analysis', analysis], ['draft', drafts]]) {
+    $(`#queue-${id}-count`).textContent = `${lane.active.length} running · ${lane.waiting.length} waiting`;
+  }
+  $('#queue-scan-active').innerHTML = scans.active.length
+    ? `<div class="queue-now-head">Scanning now</div>${scans.active.map((item) => queueRow(item, 'scan', item.started_at ? `Started ${when(item.started_at)}` : 'Running', null, true)).join('')}`
+    : '<p class="queue-empty">No scan running.</p>';
+  queueWaiting($('#queue-scan-waiting'), scans.waiting, 'scan', (item) => item.requested_by === 'you' ? 'Requested by you' : 'Scheduled');
+  $('#queue-analysis-active').innerHTML = analysis.active.length
+    ? `<div class="queue-now-head">Working now</div>${analysis.active.map((item) => queueRow(item, 'analysis', item.stage === 'scoring' ? 'Scoring match' : 'Extracting details', null, true)).join('')}`
+    : '<p class="queue-empty">No job being analyzed.</p>';
+  queueWaiting($('#queue-analysis-waiting'), analysis.waiting, 'analysis', () => 'Extract, then score');
+  if (analysis.service_error) $('#queue-analysis-waiting').insertAdjacentHTML('beforeend', `<p class="queue-attention">${escapeHtml(analysis.service_error)}</p>`);
+  else if (!analysis.model) $('#queue-analysis-waiting').insertAdjacentHTML('beforeend', '<p class="queue-attention">Choose a local model in My profile to start analysis.</p>');
+  $('#queue-draft-active').innerHTML = drafts.active.length
+    ? `<div class="queue-now-head">Preparing now</div>${drafts.active.map((item) => queueRow(item, 'draft', item.stage === 'regenerating' ? 'Regenerating' : 'Preparing draft', null, true)).join('')}`
+    : '<p class="queue-empty">No draft being prepared.</p>';
+  queueWaiting($('#queue-draft-waiting'), drafts.waiting, 'draft', (item) => item.waiting_for_score
+    ? item.stage === 'failed' ? 'Analysis failed' : 'Waiting for score' : drafts.enabled ? 'Ready to draft' : 'Automation off');
+  $('#queue-draft-review').innerHTML = drafts.review_ready ? `<button type="button" class="text-button" id="queue-open-reviews">${drafts.review_ready} draft${drafts.review_ready === 1 ? '' : 's'} ready for review →</button>` : '';
+  $('#queue-open-reviews')?.addEventListener('click', () => showTab('applications'));
+  document.querySelectorAll('#queue [data-queue-kind]').forEach((button) => button.addEventListener('click', async () => {
+    const kind = button.dataset.queueKind, id = button.dataset.queueId;
+    if (kind === 'scan') {
+      $('#source-kind').value = '';
+      await showTab('sources');
+      const card = [...document.querySelectorAll('#source-list [data-source-id]')].find((node) => node.dataset.sourceId === id);
+      card?.scrollIntoView({behavior:'smooth', block:'center'});
+    } else if (kind === 'draft' && button.dataset.queueDraft) {
+      await showTab('applications'); await showApplication(button.dataset.queueDraft);
+    } else {
+      await showTab('jobs'); await showJob(id);
+    }
+  }));
+  if ($('#queue').classList.contains('active')) window.queuePoll = setTimeout(() => loadQueue().catch((error) => notice(error.message, true)), 5000);
+}
+
 async function loadJobs() {
   clearTimeout(window.jobPoll);
   const query = new URLSearchParams({q: $('#job-query').value, state: $('#job-state').value});
@@ -286,7 +345,7 @@ async function loadSources() {
     const latest = source.latest_observed_count;
     const cap = Number(source.config?.max_results || source.config?.max_posts || 0);
     const latestText = latest == null ? 'No completed scan for this search' : `${latest} postings checked in latest scan${cap && latest >= cap ? ` · limit ${cap} reached` : ''}`;
-    return `<div class="item"><div class="item-title">${escapeHtml(source.name)} <span class="pill muted">${escapeHtml(source.kind)}</span> <span class="pill ${['scanning','success','queued'].includes(state) ? '' : 'warning'}">${escapeHtml(status)}</span></div><div class="item-meta source-job-count"><strong>${total} ${total === 1 ? 'unique job' : 'unique jobs'} credited here</strong>${source.last_success_at ? ` <span class="pill ${recent ? '' : 'muted'}">${recent} new in latest scan</span>` : ''}</div><div class="item-meta">${escapeHtml(latestText)} · Last success ${when(source.last_success_at)}</div><div class="actions"><button data-scan="${source.id}" ${['scanning','queued'].includes(state) ? 'disabled' : ''}>${state === 'scanning' ? 'Scanning…' : state === 'queued' ? 'Queued' : 'Scan now'}</button><a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer">Open source ↗</a><label class="source-auto"><input type="checkbox" data-toggle="${source.id}" ${source.enabled ? 'checked' : ''}> Automatic every ${source.interval_minutes / 60} hours</label></div></div>`;
+    return `<div class="item" data-source-id="${source.id}"><div class="item-title">${escapeHtml(source.name)} <span class="pill muted">${escapeHtml(source.kind)}</span> <span class="pill ${['scanning','success','queued'].includes(state) ? '' : 'warning'}">${escapeHtml(status)}</span></div><div class="item-meta source-job-count"><strong>${total} ${total === 1 ? 'unique job' : 'unique jobs'} credited here</strong>${source.last_success_at ? ` <span class="pill ${recent ? '' : 'muted'}">${recent} new in latest scan</span>` : ''}</div><div class="item-meta">${escapeHtml(latestText)} · Last success ${when(source.last_success_at)}</div><div class="actions"><button data-scan="${source.id}" ${['scanning','queued'].includes(state) ? 'disabled' : ''}>${state === 'scanning' ? 'Scanning…' : state === 'queued' ? 'Queued' : 'Scan now'}</button><a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer">Open source ↗</a><label class="source-auto"><input type="checkbox" data-toggle="${source.id}" ${source.enabled ? 'checked' : ''}> Automatic every ${source.interval_minutes / 60} hours</label></div></div>`;
   }).join('') : '<div class="empty">No sources configured for this filter.</div>';
   document.querySelectorAll('[data-toggle]').forEach((input) => input.addEventListener('change', async () => {
     try { await api(`/api/sources/${input.dataset.toggle}`, {method:'PATCH', body:JSON.stringify({enabled:input.checked})}); await loadSources(); }
@@ -467,18 +526,19 @@ function showTab(name, historyMode = 'push') {
   if (name !== 'profile') clearTimeout(window.matchingPoll);
   if (name !== 'jobs') clearTimeout(window.jobPoll);
   if (name !== 'applications') clearTimeout(window.autoApplyPoll);
+  if (name !== 'queue') clearTimeout(window.queuePoll);
   if (name !== 'sources') clearTimeout(window.sourcePoll);
   document.querySelectorAll('.tab').forEach((tab) => tab.classList.toggle('active', tab.id === name));
   const nav = ['personal','experience','projects'].includes(name) ? 'profile' : name === 'employers' ? 'sources' : name;
   document.querySelectorAll('.sidebar nav [data-tab]').forEach((button) => button.classList.toggle('active', button.dataset.tab === nav));
-  $('#page-title').textContent = ({home:'Home',jobs:'Jobs',applications:'Applications',profile:'My profile',
+  $('#page-title').textContent = ({home:'Home',queue:'Queue',jobs:'Jobs',applications:'Applications',profile:'My profile',
     personal:'Personal details',experience:'Work history',projects:'GitHub projects',sources:'Job sources',employers:'Employers'})[name];
   const desiredHash = selectedDraft ? `#applications/${selectedDraft}` : `#${name}`;
   if (historyMode === 'replace') history.replaceState({tab:name}, '', desiredHash);
   else if (historyMode === 'push' && location.hash !== desiredHash) history.pushState({tab:name}, '', desiredHash);
   window.scrollTo(0, 0);
   if (!['home', 'profile'].includes(name)) refreshSocialAuth().catch((error) => notice(error.message, true));
-  const loader = ({home:loadHome,jobs:loadJobs,applications:loadApplications,personal:loadPersonalDetails,
+  const loader = ({home:loadHome,queue:loadQueue,jobs:loadJobs,applications:loadApplications,personal:loadPersonalDetails,
     experience:loadPositions,projects:loadEvidence,sources:loadSources,employers:loadEmployers,profile:loadProfile})[name];
   return loader?.(selectedDraft).catch((error) => notice(error.message, true));
 }
@@ -772,6 +832,7 @@ $('#job-search').addEventListener('click', () => loadJobs().catch((error) => not
 $('#job-query').addEventListener('keydown', (event) => { if (event.key === 'Enter') loadJobs().catch((error) => notice(error.message, true)); });
 $('#job-state').addEventListener('change', () => loadJobs().catch((error) => notice(error.message, true)));
 $('#source-kind').addEventListener('change', () => loadSources().catch((error) => notice(error.message, true)));
+$('#queue-refresh').addEventListener('click', () => loadQueue().catch((error) => notice(error.message, true)));
 $('#employer-search').addEventListener('click', () => loadEmployers().catch((error) => notice(error.message, true)));
 
 for (const site of ['linkedin', 'facebook']) {

@@ -95,6 +95,7 @@ CREATE TABLE IF NOT EXISTS vacancies (
   score INTEGER,
   score_detail TEXT,
   analysis_status TEXT NOT NULL DEFAULT 'not_configured',
+  analysis_stage TEXT,
   analysis_model TEXT,
   analysis_error TEXT,
   analyzed_at TEXT,
@@ -215,6 +216,7 @@ class Database:
             vacancy_columns = {row[1] for row in conn.execute("PRAGMA table_info(vacancies)")}
             for name, definition in (
                 ("analysis_status", "TEXT NOT NULL DEFAULT 'not_configured'"),
+                ("analysis_stage", "TEXT"),
                 ("analysis_model", "TEXT"),
                 ("analysis_error", "TEXT"),
                 ("analyzed_at", "TEXT"),

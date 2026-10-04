@@ -38,6 +38,7 @@ from .settings import Settings
 from .scanner import ScanManager
 from .service import service_path
 from .social_browser import social_login_at
+from .work_queue import work_queue
 
 
 class SourceInput(BaseModel):
@@ -235,6 +236,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             counts["career_sources_enabled"] = conn.execute("SELECT COUNT(*) FROM sources WHERE enabled=1 AND kind='career'").fetchone()[0]
         recent = db.all("SELECT scan_runs.*, sources.name AS source_name FROM scan_runs JOIN sources ON sources.id=scan_runs.source_id ORDER BY started_at DESC LIMIT 10")
         return {"counts": counts, "recent_runs": recent, "data_dir": str(settings.data_dir)}
+
+    @app.get("/api/queue")
+    async def queue():
+        return work_queue(db, scan_manager, match_manager, auto_apply_manager)
 
     @app.get("/api/setup")
     def setup_status():

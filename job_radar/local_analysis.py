@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from datetime import datetime, timezone
+from collections.abc import Callable
 from typing import Annotated, Any
 
 import httpx
@@ -254,7 +255,8 @@ def _ground_facts(facts: JobFacts, posting: dict) -> JobFacts:
     return JobFacts.model_validate(values)
 
 
-def analyze_job(job: dict, profile: dict, projects: list[dict], model: str) -> tuple[int, dict]:
+def analyze_job(job: dict, profile: dict, projects: list[dict], model: str,
+                on_stage: Callable[[str], None] | None = None) -> tuple[int, dict]:
     posting = {key: job.get(key) for key in ("company", "title", "location", "work_mode")}
     posting["description"] = (job.get("description") or "")[:16_000]
     facts_prompt = (
@@ -268,6 +270,8 @@ def analyze_job(job: dict, profile: dict, projects: list[dict], model: str) -> t
         + json.dumps(posting, ensure_ascii=False)
     )
     facts = _ground_facts(_generate(model, facts_prompt, JobFacts), posting)
+    if on_stage:
+        on_stage("scoring")
     candidate = {
         "skills": profile.get("skills", []), "location": profile.get("location", ""),
         "relocation": profile.get("relocation", ""),

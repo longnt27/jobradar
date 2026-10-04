@@ -15,6 +15,7 @@
       <p class="sidebar-caption">Your job search workspace</p>
       <nav aria-label="Main navigation">
         <button data-tab="home" class="active">Home</button>
+        <button data-tab="queue">Queue</button>
         <button data-tab="jobs">Jobs</button>
         <button data-tab="sources">Job sources</button>
         <button data-tab="applications">Applications</button>
@@ -39,7 +40,17 @@
         <p id="source-summary" class="hint source-summary"></p>
         <div class="two-col home-grid">
           <div class="panel"><h3>Next steps</h3><div id="home-steps" class="stack"></div></div>
-          <div class="panel"><h3>Live activity</h3><div id="recent-scans" class="stack"></div></div>
+          <div class="panel"><div class="section-head"><h3>Live activity</h3><button class="text-button" data-tab="queue" type="button">View queue →</button></div><div id="recent-scans" class="stack"></div></div>
+        </div>
+      </section>
+
+      <section id="queue" class="tab">
+        <div class="section-head"><p>See what's running and what will run next. Scans, local job analysis, and draft preparation update automatically.</p><button id="queue-refresh" class="secondary" type="button">Refresh</button></div>
+        <div id="queue-summary" class="queue-summary" role="status" aria-live="polite"></div>
+        <div class="queue-grid">
+          <section class="panel queue-panel" aria-labelledby="queue-scan-title"><div class="queue-panel-head"><div><h3 id="queue-scan-title">Job scans</h3><p>Company pages, LinkedIn searches, and Facebook groups</p></div><span id="queue-scan-count" class="pill muted"></span></div><div id="queue-scan-active"></div><div id="queue-scan-waiting"></div></section>
+          <section class="panel queue-panel" aria-labelledby="queue-analysis-title"><div class="queue-panel-head"><div><h3 id="queue-analysis-title">Extract & score</h3><p>Local model reads each posting, then scores the match</p></div><span id="queue-analysis-count" class="pill muted"></span></div><div id="queue-analysis-active"></div><div id="queue-analysis-waiting"></div></section>
+          <section class="panel queue-panel" aria-labelledby="queue-draft-title"><div class="queue-panel-head"><div><h3 id="queue-draft-title">Prepare drafts</h3><p>Application details and English CVs, ready for your review</p></div><span id="queue-draft-count" class="pill muted"></span></div><div id="queue-draft-active"></div><div id="queue-draft-waiting"></div><p id="queue-draft-review" class="hint"></p></section>
         </div>
       </section>
 

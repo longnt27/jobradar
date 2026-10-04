@@ -14,6 +14,7 @@ from job_radar.web import create_app
 
 def test_local_analysis_extracts_facts_and_sums_ten_scores(monkeypatch) -> None:
     prompts = []
+    stages = []
 
     def generate(_model, prompt, result_type):
         prompts.append(prompt)
@@ -33,12 +34,14 @@ def test_local_analysis_extracts_facts_and_sums_ten_scores(monkeypatch) -> None:
         {"skills": ["Python"], "location": "Hanoi", "experience": [{"role": "ML Engineer", "dates": "2022-2025"}]},
         [{"title": "Vision", "claim": "Built a model", "details": {"bullets": ["Built a model"], "tech_stack": ["Python"]}}],
         "test:small",
+        stages.append,
     )
     assert score == 62
     assert len(detail["criteria"]) == 10
     assert detail["facts"]["required_skills"] == ["Python"]
     assert detail["method"] == "local_llm"
     assert "ML Engineer" in prompts[1] and "Vision" in prompts[1]
+    assert stages == ["scoring"]
 
 
 def test_unstated_requirements_get_neutral_score(monkeypatch) -> None:
