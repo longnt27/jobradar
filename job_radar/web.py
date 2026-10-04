@@ -473,7 +473,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/sources")
     def sources(kind: str | None = None):
-        rows = db.all("SELECT s.* FROM sources s WHERE (? IS NULL OR s.kind=?) AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=s.employer_id AND e.coverage_status='excluded_hcm') ORDER BY s.kind,s.name", (kind, kind))
+        rows = db.all("""
+            WITH latest_scan AS (
+                SELECT source_id, started_at, finished_at FROM (
+                    SELECT source_id, started_at, finished_at,
+                           ROW_NUMBER() OVER (PARTITION BY source_id ORDER BY started_at DESC, rowid DESC) AS rank
+                    FROM scan_runs WHERE status IN ('success', 'empty')
+                ) WHERE rank=1
+            ), job_counts AS (
+                SELECT o.source_id, COUNT(DISTINCT vo.vacancy_id) AS job_count,
+                       COUNT(DISTINCT CASE WHEN o.first_seen_at BETWEEN l.started_at AND l.finished_at
+                                           THEN vo.vacancy_id END) AS new_job_count
+                FROM observations o
+                JOIN vacancy_observations vo ON vo.observation_id=o.id
+                LEFT JOIN latest_scan l ON l.source_id=o.source_id
+                GROUP BY o.source_id
+            )
+            SELECT s.*, COALESCE(c.job_count,0) AS job_count,
+                   COALESCE(c.new_job_count,0) AS new_job_count
+            FROM sources s LEFT JOIN job_counts c ON c.source_id=s.id
+            WHERE (? IS NULL OR s.kind=?) AND NOT EXISTS(
+                SELECT 1 FROM employers e WHERE e.id=s.employer_id AND e.coverage_status='excluded_hcm')
+            ORDER BY s.kind,s.name
+        """, (kind, kind))
         for row in rows:
             row["config"] = json.loads(row["config"])
             row["enabled"] = bool(row["enabled"])

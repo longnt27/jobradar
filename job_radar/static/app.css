@@ -183,3 +183,6 @@ input,textarea,select{font-weight:400}
 .action-card::after{content:'→';position:absolute;right:17px;top:50%;transform:translateY(-50%);color:#6f9580;font-size:18px}
 #personal .panel>.hint{margin:-7px 0 20px}
 #profile-form[hidden],#personal-loading[hidden]{display:none}
+.source-job-count{display:flex;align-items:center;gap:4px;margin-top:8px}
+.source-job-count strong{font-size:13px;color:#29473b}
+.source-job-count .pill{margin-left:0}

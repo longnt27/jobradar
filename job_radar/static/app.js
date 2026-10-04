@@ -273,9 +273,11 @@ async function showJob(id, pin = false) {
 async function loadSources() {
   const kind = $('#source-kind').value;
   const sources = await api(`/api/sources${kind ? `?kind=${kind}` : ''}`);
-  $('#source-list').innerHTML = sources.length ? sources.map((source) =>
-    `<div class="item"><div class="item-title">${escapeHtml(source.name)} <span class="pill muted">${escapeHtml(source.kind)}</span> <span class="pill ${source.last_status === 'success' ? '' : 'warning'}">${escapeHtml(source.last_status || 'not scanned')}</span></div><div class="item-meta">Every ${source.interval_minutes / 60} hours · Last success ${when(source.last_success_at)}</div><div class="actions"><button data-scan="${source.id}">Scan now</button><button data-toggle="${source.id}" data-enabled="${source.enabled}">${source.enabled ? 'Pause' : 'Enable'}</button><a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer">Open source ↗</a></div></div>`
-  ).join('') : '<div class="empty">No sources configured for this filter.</div>';
+  $('#source-list').innerHTML = sources.length ? sources.map((source) => {
+    const total = Number(source.job_count) || 0;
+    const recent = Number(source.new_job_count) || 0;
+    return `<div class="item"><div class="item-title">${escapeHtml(source.name)} <span class="pill muted">${escapeHtml(source.kind)}</span> <span class="pill ${source.last_status === 'success' ? '' : 'warning'}">${escapeHtml(source.last_status || 'not scanned')}</span></div><div class="item-meta source-job-count"><strong>${total} ${total === 1 ? 'job' : 'jobs'}</strong>${source.last_success_at ? ` <span class="pill ${recent ? '' : 'muted'}">${recent} new</span>` : ''}</div><div class="item-meta">Every ${source.interval_minutes / 60} hours · Last success ${when(source.last_success_at)}</div><div class="actions"><button data-scan="${source.id}">Scan now</button><button data-toggle="${source.id}" data-enabled="${source.enabled}">${source.enabled ? 'Pause' : 'Enable'}</button><a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer">Open source ↗</a></div></div>`;
+  }).join('') : '<div class="empty">No sources configured for this filter.</div>';
   document.querySelectorAll('[data-toggle]').forEach((button) => button.addEventListener('click', async () => {
     try { await api(`/api/sources/${button.dataset.toggle}`, {method:'PATCH', body:JSON.stringify({enabled:button.dataset.enabled !== 'true'})}); await loadSources(); }
     catch(error) { notice(error.message, true); }
@@ -286,7 +288,7 @@ async function loadSources() {
       notice('Scan started');
       const result = await api(`/api/sources/${button.dataset.scan}/scan`, {method:'POST'});
       await Promise.all([loadSources(), loadHome()]);
-      const message = result.status === 'success' ? `Scan complete: ${result.observed} seen, ${result.new} new.`
+      const message = result.status === 'success' ? `Scan complete: ${result.observed} jobs seen. Source counts updated.`
         : result.status === 'empty' ? 'Scan finished: no jobs found.'
         : result.status === 'already_running' ? 'This source is already scanning.'
         : `Scan ${result.status}: ${result.error || 'Check this source before trying again.'}`;
