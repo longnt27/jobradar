@@ -223,7 +223,9 @@ async def _collect_linkedin_search_results(page: Page, source: dict) -> list[Obs
                 continue
         if len(seen_ids) >= max_results:
             break
-        next_button = page.get_by_role("button", name="Next", exact=True)
+        next_button = page.get_by_test_id("pagination-controls-next-button-visible")
+        if not await next_button.count():
+            next_button = page.get_by_role("button", name="Next", exact=True).first
         if not await next_button.count() or not await next_button.is_enabled():
             break
         await next_button.click(timeout=8000)

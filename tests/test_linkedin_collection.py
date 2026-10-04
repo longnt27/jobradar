@@ -56,7 +56,8 @@ def test_linkedin_results_continue_to_next_page() -> None:
                       AI Engineer<br>AI Engineer<br>Acme<br>Hanoi<br>Posted 2 hours ago
                     </div>
                   </div>
-                  <button id="next" onclick="nextPage()">Next</button>
+                  <button aria-label="Next" data-testid="carousel-inline-right-button">Next</button>
+                  <button id="next" data-testid="pagination-controls-next-button-visible" onclick="nextPage()">Next</button>
                   <a id="job-link" href="https://www.linkedin.com/jobs/view/101/">AI Engineer</a>
                   <section><div><h2>About the job</h2></div><p id="description">Build production AI systems using Python and machine learning.</p></section>
                   <script>
