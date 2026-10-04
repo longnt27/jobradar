@@ -223,7 +223,7 @@ async function loadQueue() {
   const total = [scans, analysis, drafts].reduce((sum, lane) => sum + lane.active.length + lane.waiting.length, 0);
   $('#queue-summary').innerHTML = `<div><strong>${total}</strong><span>work items in progress or waiting</span></div><div><strong>${scans.active.length + scans.waiting.length}</strong><span>scans</span></div><div><strong>${analysis.active.length + analysis.waiting.length}</strong><span>job analyses</span></div><div><strong>${drafts.active.length + drafts.waiting.length}</strong><span>drafts</span></div>`;
   for (const [id, lane] of [['scan', scans], ['analysis', analysis], ['draft', drafts]]) {
-    const blocked = id === 'analysis' ? analysis.failed.length : id === 'draft' ? drafts.blocked.length : 0;
+    const blocked = id === 'analysis' ? analysis.failed.length : 0;
     $(`#queue-${id}-count`).textContent = `${lane.active.length} running · ${lane.waiting.length} waiting${blocked ? ` · ${blocked} needs attention` : ''}`;
   }
   $('#queue-scan-active').innerHTML = scans.active.length
@@ -240,9 +240,7 @@ async function loadQueue() {
   $('#queue-draft-active').innerHTML = drafts.active.length
     ? `<div class="queue-now-head">Preparing now</div>${drafts.active.map((item) => queueRow(item, 'draft', item.stage === 'regenerating' ? 'Regenerating' : 'Preparing draft', null, true)).join('')}`
     : '<p class="queue-empty">No draft being prepared.</p>';
-  queueWaiting($('#queue-draft-waiting'), drafts.waiting, 'draft', (item) => item.waiting_for_score
-    ? 'Waiting for score' : drafts.enabled ? 'Ready to draft' : 'Automation off');
-  $('#queue-draft-blocked').innerHTML = drafts.blocked.length ? `<div class="queue-waiting-head queue-failed-head">Needs attention <span>${drafts.blocked.length}</span></div>${drafts.blocked.map((item) => queueRow(item, 'draft', item.stage === 'failed' ? 'Analysis failed' : 'Choose a model', '!')).join('')}` : '';
+  queueWaiting($('#queue-draft-waiting'), drafts.waiting, 'draft', () => drafts.enabled ? 'Ready to draft' : 'Automation off');
   $('#queue-draft-review').innerHTML = drafts.review_ready ? `<button type="button" class="text-button" id="queue-open-reviews">${drafts.review_ready} draft${drafts.review_ready === 1 ? '' : 's'} ready for review →</button>` : '';
   $('#queue-open-reviews')?.addEventListener('click', () => showTab('applications'));
   document.querySelectorAll('#queue [data-queue-kind]').forEach((button) => button.addEventListener('click', async () => {

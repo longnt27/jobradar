@@ -50,8 +50,7 @@ def test_one_queue_reports_real_worker_order_and_analysis_stage(tmp_path: Path) 
     assert data["analysis"]["active"][0]["id"] == running
     assert data["analysis"]["active"][0]["stage"] == "scoring"
     assert [row["id"] for row in data["analysis"]["waiting"]] == [pending, waiting_score]
-    assert [row["id"] for row in data["drafts"]["waiting"]] == [queued_draft, automatic_draft, waiting_score]
-    assert data["drafts"]["waiting"][-1]["waiting_for_score"] is True
+    assert [row["id"] for row in data["drafts"]["waiting"]] == [queued_draft, automatic_draft]
     assert [row["id"] for row in data["analysis"]["failed"]] == [failed]
-    assert [row["id"] for row in data["drafts"]["blocked"]] == [failed]
+    assert "blocked" not in data["drafts"]
     assert data["drafts"]["review_ready"] == 1

@@ -53,21 +53,9 @@ def work_queue(db: Database, scans: ScanManager, matching: MatchManager,
         "AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm') "
         "AND NOT EXISTS(SELECT 1 FROM auto_application_attempts a WHERE a.vacancy_id=v.id) "
         "ORDER BY v.score DESC,v.first_seen_at DESC", (draft_config["threshold"],)) if draft_config["enabled"] else []
-    waiting_for_score = db.all(
-        "SELECT a.vacancy_id AS id,a.draft_id,v.title,v.company,v.score,a.created_at,v.analysis_status AS stage "
-        "FROM auto_application_attempts a JOIN vacancies v ON v.id=a.vacancy_id "
-        "WHERE a.status='queued' AND v.analysis_status IN ('pending','running') "
-        "ORDER BY a.created_at")
-    draft_blocked = db.all(
-        "SELECT a.vacancy_id AS id,a.draft_id,v.title,v.company,v.score,"
-        "v.analysis_status AS stage,v.analysis_error AS detail "
-        "FROM auto_application_attempts a JOIN vacancies v ON v.id=a.vacancy_id "
-        "WHERE a.status='queued' AND v.analysis_status NOT IN ('done','pending','running') "
-        "ORDER BY a.created_at")
-    draft_waiting = explicit_ready + implicit_ready + waiting_for_score
+    draft_waiting = explicit_ready + implicit_ready
     for position, row in enumerate(draft_waiting, 1):
         row["position"] = position
-        row["waiting_for_score"] = position > len(explicit_ready) + len(implicit_ready)
     review_ready = db.one(
         "SELECT COUNT(*) AS count FROM auto_application_attempts "
         "WHERE status IN ('awaiting_review','needs_review')")["count"]
@@ -76,7 +64,7 @@ def work_queue(db: Database, scans: ScanManager, matching: MatchManager,
         "scans": {"active": scan_active, "waiting": scan_waiting},
         "analysis": {"active": analysis_active, "waiting": analysis_waiting, "failed": analysis_failed,
                      "model": db.get_setting("matching_model", ""), "service_error": matching.service_error},
-        "drafts": {"active": draft_active, "waiting": draft_waiting, "blocked": draft_blocked,
+        "drafts": {"active": draft_active, "waiting": draft_waiting,
                    "enabled": draft_config["enabled"], "threshold": draft_config["threshold"],
                    "review_ready": review_ready},
     }
