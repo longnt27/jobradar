@@ -37,6 +37,22 @@ def test_setup_saves_secrets_without_returning_them(tmp_path: Path) -> None:
     assert "1234567890:secret" not in json.dumps(status)
 
 
+def test_gmail_smtp_requires_its_own_app_password(tmp_path: Path) -> None:
+    client = TestClient(create_app(Settings(tmp_path)))
+    generic = {"host": "mail.example.org", "port": 587, "user": "alex", "password": "old-secret", "from_address": "alex@example.org"}
+    assert client.post("/api/setup/smtp", json=generic).status_code == 200
+    gmail = {"host": "smtp.gmail.com", "port": 465, "user": "alex@gmail.com", "password": "", "from_address": "alex@gmail.com"}
+    rejected = client.post("/api/setup/smtp", json=gmail)
+    assert rejected.status_code == 422
+    assert "app password" in rejected.json()["detail"].lower()
+    assert json.loads((tmp_path / "smtp.json").read_text())["host"] == "mail.example.org"
+    gmail["password"] = "gmail-app-password"
+    assert client.post("/api/setup/smtp", json=gmail).status_code == 200
+    gmail["password"] = ""
+    assert client.post("/api/setup/smtp", json=gmail).status_code == 200
+    assert client.get("/api/setup").json()["smtp_configured"] is True
+
+
 def test_telegram_first_time_blank_token_returns_validation_error(tmp_path: Path) -> None:
     client = TestClient(create_app(Settings(tmp_path)))
     response = client.post("/api/setup/telegram", json={"token": "", "chat_id": "42"})

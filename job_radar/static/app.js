@@ -173,6 +173,7 @@ async function loadHome() {
     {label:'Choose a local matching model', detail:'Extract job requirements and score fit on this Mac', done:!!setup.matching.model, tab:'profile', panel:'matching-panel'},
     {label:setup.browser.sites.length ? 'Sign in to social sites again' : 'Connect LinkedIn and Facebook', detail:setup.browser.sites.length ? `${socialSiteNames(setup.browser)} session expired` : 'Separate one-time sign-in for each site', done:setup.browser.connected_sites.length === 2 && !setup.browser.sites.length, tab:'profile', socialAuth:true},
     {label:'Telegram reviews and job alerts', detail:'Connect a private bot chat to review application drafts', done:setup.telegram_configured, tab:'profile', panel:'telegram-panel', optional:true},
+    {label:'Email applications', detail:'Connect Gmail or another SMTP account for approved email applications', done:setup.smtp_configured, tab:'profile', panel:'smtp-panel', optional:true},
     {label:'Select your projects', detail:'Choose GitHub repositories for tailored applications', done:setup.approved_evidence > 0, tab:'projects'},
     {label:'Review live jobs', detail:`${c.vacancies} job${c.vacancies === 1 ? '' : 's'} found; check original postings`, done:false, tab:'jobs'},
   ];
@@ -766,6 +767,19 @@ $('#setup-smtp-form').addEventListener('submit', async (event) => {
     event.target.elements.password.value = '';
     await loadSetup(); notice('Email settings saved');
   } catch(error) { notice(error.message, true); }
+});
+
+$('#smtp-gmail-preset').addEventListener('click', async () => {
+  try {
+    const profile = await api('/api/profile');
+    const form = $('#setup-smtp-form');
+    form.elements.host.value = 'smtp.gmail.com';
+    form.elements.port.value = '465';
+    form.elements.user.value = profile.email || '';
+    form.elements.from_address.value = profile.email || '';
+    form.elements.password.value = '';
+    form.elements.user.focus();
+  } catch (error) { notice(error.message, true); }
 });
 
 $('#setup-smtp-remove').addEventListener('click', async () => {

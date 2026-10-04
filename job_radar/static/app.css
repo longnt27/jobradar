@@ -32,6 +32,11 @@
 .inline-details[open] summary{margin-bottom:15px}
 .inline-details form{margin-top:14px}
 .connection-stack{margin-top:18px}
+.smtp-guide{display:flex;align-items:center;justify-content:space-between;gap:18px;margin:18px 23px;padding:16px 18px;background:#f5f9f6;border:1px solid #e0eae2;border-radius:10px}
+.smtp-guide strong{font-size:13px;color:#214c38}
+.smtp-guide p{margin:5px 0 0;max-width:680px}
+.smtp-guide button{flex:none}
+@media(max-width:700px){.smtp-guide{align-items:flex-start;flex-direction:column}}
 .preferences-grid{padding-top:14px}
 .back-link{background:transparent;border:0;color:#287451;padding:0 0 16px;font-size:13px;font-weight:700}
 .subpage .section-head{margin-bottom:20px}

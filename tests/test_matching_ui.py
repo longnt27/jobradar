@@ -101,6 +101,17 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 assert app.state.db.get_setting("profile", {})["name"] == "Alex Example"
                 page.locator("#personal [data-tab='profile']").click()
                 page.locator("#resume-status.pill:not(.warning)").wait_for()
+                page.locator("#smtp-panel summary").click()
+                page.locator("#smtp-panel[open]").wait_for()
+                page.locator("#smtp-gmail-preset").click()
+                page.wait_for_function("document.querySelector('#setup-smtp-form input[name=host]').value === 'smtp.gmail.com'")
+                assert page.locator("#setup-smtp-form input[name='host']").input_value() == "smtp.gmail.com"
+                assert page.locator("#setup-smtp-form select[name='port']").input_value() == "465"
+                assert page.locator("#setup-smtp-form input[name='user']").input_value() == "alex@example.org"
+                page.locator("#setup-smtp-form input[name='password']").fill("test-app-password")
+                page.locator("#setup-smtp-form button[type='submit']").click()
+                page.locator("#setup-smtp-status.pill:not(.muted)").wait_for()
+                assert json.loads((tmp_path / "smtp.json").read_text())["host"] == "smtp.gmail.com"
                 app.state.db.set_setting("profile", {"name": "Alex Example", "email": "alex@example.org", "drafting_provider": "codex", "experience": []})
                 app.state.db.set_setting("matching_model", "test:small")
                 monkeypatch.setattr(app.state.login_manager, "status", lambda: {"sites": [], "connected_sites": ["linkedin", "facebook"], "state": "idle", "error": None, "last_saved_at": None})

@@ -239,7 +239,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "facebook_groups": db.one("SELECT COUNT(*) AS count FROM sources WHERE kind='facebook' AND enabled=1")["count"],
             "linkedin_searches": db.one("SELECT COUNT(*) AS count FROM sources WHERE kind='linkedin' AND enabled=1")["count"],
             "browser": login_manager.status(),
-            "smtp_configured": bool(mail.get("host") and mail.get("from")),
+            "smtp_configured": bool(mail.get("host") and mail.get("from") and
+                                    (mail.get("host", "").lower() != "smtp.gmail.com" or
+                                     (mail.get("user") and mail.get("password")))),
             "smtp_host": mail.get("host", ""),
             "smtp_port": mail.get("port", 587),
             "smtp_user": mail.get("user", ""),
@@ -262,8 +264,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/setup/smtp")
     def configure_mail(payload: SmtpInput):
-        save_smtp(settings, {"host": payload.host, "port": payload.port, "user": payload.user,
-                             "password": payload.password or smtp_config(settings).get("password", ""), "from": payload.from_address})
+        previous = smtp_config(settings)
+        host = payload.host.strip()
+        password = payload.password or (previous.get("password", "") if host.lower() == previous.get("host", "").lower() else "")
+        if host.lower() == "smtp.gmail.com" and (not payload.user.strip() or not password):
+            raise HTTPException(422, "Gmail needs your full email address and a Google app password")
+        save_smtp(settings, {"host": host, "port": payload.port, "user": payload.user.strip(),
+                             "password": password, "from": payload.from_address.strip()})
         return {"configured": True}
 
     @app.delete("/api/setup/smtp")

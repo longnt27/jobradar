@@ -113,6 +113,15 @@
           <p class="hint">Create a bot with <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer">BotFather</a>, then message it in a private chat. Job Radar sends new job alerts above your alert score and delivers complete application drafts with their resume PDF for approval. Telegram's Edit button opens the draft on this Mac.</p>
           <form id="setup-telegram-form" class="form-grid"><label class="full">Bot token<input name="token" type="password" autocomplete="off" placeholder="Leave blank to keep the saved token"></label><label>Chat ID<input name="chat_id" required></label><label>Minimum match score<input name="min_score" type="number" min="0" max="100" value="60" required></label><button id="telegram-find-chat" class="secondary" type="button">Find my chat ID</button><button class="primary" type="submit">Save Telegram alerts</button><button id="setup-telegram-remove" class="secondary" type="button">Remove settings</button><div id="telegram-chat-results" class="full"></div><p id="setup-telegram-message" class="full hint" role="status"></p></form>
         </details>
+        <details class="panel flow-panel" id="smtp-panel">
+          <summary><span><span class="step-number">6</span><strong>Email applications</strong></span><span id="setup-smtp-status" class="pill muted">Optional</span></summary>
+          <p class="hint">Connect an email account to send applications after you approve them. Email setup is optional for jobs with application forms.</p>
+          <div class="smtp-guide">
+            <div><strong>Use Gmail</strong><p class="hint">Turn on <a href="https://support.google.com/accounts/answer/185839" target="_blank" rel="noopener noreferrer">2-Step Verification</a>, then create an <a href="https://support.google.com/accounts/answer/185833" target="_blank" rel="noopener noreferrer">app password</a>. Enter that app password below; your regular Google password will not work here.</p></div>
+            <button id="smtp-gmail-preset" class="secondary" type="button">Use Gmail settings</button>
+          </div>
+          <form id="setup-smtp-form" class="form-grid"><label>SMTP host<input name="host" placeholder="smtp.gmail.com" required></label><label>Port<select name="port"><option value="587">587 (STARTTLS)</option><option value="465">465 (TLS)</option></select></label><label>SMTP username <span class="hint">For Gmail, your full email address</span><input name="user" autocomplete="username"></label><label>Password or app password <span class="hint">For Gmail, use an app password. Leave blank only to keep a password saved for this server.</span><input name="password" type="password" autocomplete="new-password"></label><label class="full">From address<input name="from_address" type="email" required></label><button class="primary" type="submit">Save email settings</button><button id="setup-smtp-remove" class="secondary" type="button">Remove settings</button></form>
+        </details>
         <div class="panel" id="profile-summary-panel">
           <div class="section-head"><h3>Your resume</h3><span id="profile-summary-status" class="pill warning">Needs details</span></div>
           <p id="profile-summary" class="hint">Add your resume or enter your details manually.</p>
@@ -122,12 +131,6 @@
             <button id="open-projects-button" data-tab="projects" class="action-card" type="button"><strong>GitHub projects</strong><span id="project-count">Selected repositories</span></button>
           </div>
         </div>
-        <details class="panel" id="connections-panel">
-          <summary>Email application settings</summary>
-          <div class="connection-stack">
-            <details class="inline-details"><summary>Email applications <span id="setup-smtp-status" class="pill muted">Optional</span></summary><form id="setup-smtp-form" class="form-grid"><label>SMTP host<input name="host" placeholder="smtp.example.com" required></label><label>Port<select name="port"><option value="587">587 (STARTTLS)</option><option value="465">465 (TLS)</option></select></label><label>Username<input name="user" autocomplete="username"></label><label>Password or app password<input name="password" type="password" autocomplete="new-password" placeholder="Leave blank to keep saved password"></label><label class="full">From address<input name="from_address" type="email" required></label><button class="primary" type="submit">Save email settings</button><button id="setup-smtp-remove" class="secondary" type="button">Remove settings</button></form></details>
-          </div>
-        </details>
       </section>
 
       <section id="personal" class="tab subpage">
