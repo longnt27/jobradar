@@ -43,6 +43,14 @@
 
       <section id="jobs" class="tab">
         <div class="section-head"><p>Open a posting, check its source, then prepare an application.</p><div class="actions"><button class="secondary" data-tab="sources">Sources</button><button class="secondary" data-tab="employers">Employers</button><button class="secondary" id="scan-all">Scan now</button></div></div>
+        <div class="panel job-analysis-panel" aria-label="Local job analysis">
+          <div class="job-analysis-heading"><div><strong>Local job analysis</strong><p id="job-analysis-model" class="hint">Checking model…</p></div><button id="job-analysis-settings" class="text-button" type="button">Change model</button></div>
+          <div id="matching-overview" class="matching-overview" role="status" aria-live="polite"></div>
+          <section id="matching-failures" class="matching-failures" aria-label="Failed job analyses" hidden>
+            <div class="matching-failures-head"><div><strong id="matching-failures-title">Jobs needing attention</strong><p>These jobs have no completed local score yet.</p></div><button id="matching-retry-all" class="secondary" type="button">Retry all</button></div>
+            <div id="matching-failure-list" class="matching-failure-list"></div>
+          </section>
+        </div>
         <div class="toolbar"><input id="job-query" type="search" placeholder="Search jobs, skills, or companies" aria-label="Search jobs"><select id="job-state" aria-label="Job state"><option value="">All jobs</option><option value="new">New</option><option value="interesting">Interesting</option><option value="prepare">Prepare</option><option value="ready">Ready</option><option value="applied">Applied</option><option value="interview">Interview</option><option value="rejected">Rejected</option><option value="offer">Offer</option><option value="ignored">Ignored</option></select><button id="job-search">Search</button></div>
         <div class="two-col jobs-layout"><div id="job-list" class="stack"></div><div id="job-detail" class="panel detail"><div class="empty">Select a job to see details.</div></div></div>
         <details class="panel"><summary>Add a job from a description</summary><form id="job-import" class="form-grid"><label>Company<input name="company" required></label><label>Title<input name="title" required></label><label>Location<input name="location"></label><label>Application URL<input name="apply_url" type="url"></label><label class="full">Description<textarea name="description" required rows="6"></textarea></label><button class="primary" type="submit">Add job</button></form></details>
@@ -86,12 +94,7 @@
               <button id="matching-refresh" class="text-button" type="button">Refresh models</button>
             </div>
             <button id="matching-download" class="secondary" type="button">Download recommended small model</button>
-            <div id="matching-overview" class="matching-overview" role="status"></div>
             <p id="matching-model-detail" class="hint" role="status"></p>
-            <section id="matching-failures" class="matching-failures" aria-label="Failed job analyses" hidden>
-              <div class="matching-failures-head"><div><strong id="matching-failures-title">Jobs needing attention</strong><p>These jobs have no completed local score yet.</p></div><button id="matching-retry-all" class="secondary" type="button">Retry all</button></div>
-              <div id="matching-failure-list" class="matching-failure-list"></div>
-            </section>
           </div>
         </details>
         <details class="panel flow-panel" id="social-sign-in-panel">
@@ -114,9 +117,9 @@
           <div class="section-head"><h3>Your resume</h3><span id="profile-summary-status" class="pill warning">Needs details</span></div>
           <p id="profile-summary" class="hint">Add your resume or enter your details manually.</p>
           <div class="action-cards">
-            <button id="edit-profile-button" class="action-card" type="button"><strong>Personal details</strong><span>Contact, education, skills</span></button>
-            <button data-tab="experience" class="action-card" type="button"><strong>Work history</strong><span id="position-count">Previous positions</span></button>
-            <button data-tab="projects" class="action-card" type="button"><strong>GitHub projects</strong><span id="project-count">Selected repositories</span></button>
+            <button id="edit-profile-button" class="action-card" type="button" aria-controls="profile-edit-panel" aria-expanded="false"><strong>Personal details</strong><span>Contact, education, skills</span></button>
+            <button id="open-experience-button" class="action-card" type="button" aria-controls="experience-panel" aria-expanded="false"><strong>Work history</strong><span id="position-count">Previous positions</span></button>
+            <button id="open-projects-button" class="action-card" type="button" aria-controls="projects-panel" aria-expanded="false"><strong>GitHub projects</strong><span id="project-count">Selected repositories</span></button>
           </div>
         </div>
         <details class="panel" id="profile-edit-panel">
@@ -140,41 +143,41 @@
             <button class="primary" type="submit">Save details</button>
           </form>
         </details>
+        <details class="panel resume-editor" id="experience-panel">
+          <summary>Work history</summary>
+          <p class="hint">Previous jobs appear in the Experience section of your resume.</p>
+          <div class="two-col">
+            <div class="panel"><h3>Add a position</h3><form id="position-form" class="form-grid"><label>Company<input name="company" required></label><label>Role<input name="role" required></label><label class="full">Dates<input name="dates" placeholder="Dec 2025 – May 2026" required></label><label class="full">Work and outcomes <span class="hint">One bullet per line</span><textarea name="bullets" rows="4" required></textarea></label><button class="primary" type="submit">Add position</button></form></div>
+            <div class="panel"><h3>Previous positions</h3><div id="position-list" class="stack"></div></div>
+          </div>
+        </details>
+
+        <details class="panel resume-editor" id="projects-panel">
+          <summary>GitHub projects</summary>
+          <div class="panel project-add-panel">
+            <h3>Add a GitHub project</h3>
+            <p class="hint">Enter your GitHub username to browse your public repos, or paste a repository URL to add it directly.</p>
+            <form id="project-add-form" class="project-add-form">
+              <label class="full">GitHub username or repository URL<input id="project-github-input" name="github" placeholder="your-username or https://github.com/you/project" autocomplete="off" required></label>
+              <button class="primary" type="submit">Continue</button>
+            </form>
+            <p id="project-provider-status" class="hint"></p>
+            <button id="project-provider-action" class="text-button" type="button" hidden>Choose a provider in My profile →</button>
+            <p id="project-add-status" class="hint" role="status" aria-live="polite"></p>
+            <div id="github-repos"></div>
+          </div>
+          <div class="panel">
+            <div class="section-head"><div><h3>Your projects</h3><p class="hint">Review a draft before using it in tailored resumes.</p></div><span id="selected-project-count" class="pill muted"></span></div>
+            <div class="project-workspace"><div id="evidence-list" class="stack"></div><div id="project-editor"></div></div>
+          </div>
+        </details>
+
         <details class="panel" id="connections-panel">
           <summary>Email application settings</summary>
           <div class="connection-stack">
             <details class="inline-details"><summary>Email applications <span id="setup-smtp-status" class="pill muted">Optional</span></summary><form id="setup-smtp-form" class="form-grid"><label>SMTP host<input name="host" placeholder="smtp.example.com" required></label><label>Port<select name="port"><option value="587">587 (STARTTLS)</option><option value="465">465 (TLS)</option></select></label><label>Username<input name="user" autocomplete="username"></label><label>Password or app password<input name="password" type="password" autocomplete="new-password" placeholder="Leave blank to keep saved password"></label><label class="full">From address<input name="from_address" type="email" required></label><button class="primary" type="submit">Save email settings</button><button id="setup-smtp-remove" class="secondary" type="button">Remove settings</button></form></details>
           </div>
         </details>
-      </section>
-
-      <section id="experience" class="tab subpage">
-        <button class="back-link" data-tab="profile">← My profile</button>
-        <div class="section-head"><p>Previous jobs appear in the Experience section of your resume.</p></div>
-        <div class="two-col">
-          <div class="panel"><h3>Add a position</h3><form id="position-form" class="form-grid"><label>Company<input name="company" required></label><label>Role<input name="role" required></label><label class="full">Dates<input name="dates" placeholder="Dec 2025 – May 2026" required></label><label class="full">Work and outcomes <span class="hint">One bullet per line</span><textarea name="bullets" rows="4" required></textarea></label><button class="primary" type="submit">Add position</button></form></div>
-          <div class="panel"><h3>Previous positions</h3><div id="position-list" class="stack"></div></div>
-        </div>
-      </section>
-
-      <section id="projects" class="tab subpage">
-        <button class="back-link" data-tab="profile">← My profile</button>
-        <div class="panel project-add-panel">
-          <h3>Add a GitHub project</h3>
-          <p class="hint">Enter your GitHub username to browse your public repos, or paste a repository URL to add it directly.</p>
-          <form id="project-add-form" class="project-add-form">
-            <label class="full">GitHub username or repository URL<input id="project-github-input" name="github" placeholder="your-username or https://github.com/you/project" autocomplete="off" required></label>
-            <button class="primary" type="submit">Continue</button>
-          </form>
-          <p id="project-provider-status" class="hint"></p>
-          <button id="project-provider-action" class="text-button" type="button" hidden>Choose a provider in My profile →</button>
-          <p id="project-add-status" class="hint" role="status" aria-live="polite"></p>
-          <div id="github-repos"></div>
-        </div>
-        <div class="panel">
-          <div class="section-head"><div><h3>Your projects</h3><p class="hint">Review a draft before using it in tailored resumes.</p></div><span id="selected-project-count" class="pill muted"></span></div>
-          <div class="project-workspace"><div id="evidence-list" class="stack"></div><div id="project-editor"></div></div>
-        </div>
       </section>
 
       <section id="sources" class="tab subpage">

@@ -151,3 +151,16 @@ input,textarea,select{font-weight:400}
 .matching-failure-actions{display:flex;gap:7px;flex:none}
 .matching-failure-actions button{font-size:12px;padding:8px 10px}
 @media(max-width:700px){.matching-panel-body{padding:18px}#matching-model-form{flex-wrap:wrap}#matching-model-form label{flex-basis:100%}.matching-controls>.text-button{padding-left:0}.matching-failures-head,.matching-failure-row{align-items:flex-start;flex-direction:column}.matching-failure-actions{width:100%}}
+.job-analysis-panel{padding:18px 22px}
+.job-analysis-heading{display:flex;justify-content:space-between;align-items:center;gap:16px}
+.job-analysis-heading strong{font-size:14px;color:#173e32}
+.job-analysis-heading .hint{margin:4px 0 0}
+.job-analysis-panel .matching-overview{margin-top:15px;padding:14px 0 0;max-width:none;border-bottom:0}
+.job-analysis-panel .matching-failures{max-width:none;margin-top:16px}
+.resume-editor>p.hint{margin:0 0 18px}
+.resume-editor>.panel{padding:0;border:0;box-shadow:none;margin-bottom:18px}
+.resume-editor>.panel:last-child{margin-bottom:0}
+.resume-editor>.two-col>.panel{background:#f8faf8;box-shadow:none;margin-bottom:0}
+.resume-editor .project-workspace{margin-top:18px}
+.action-card[aria-expanded="true"]{border-color:#58a57a;background:#f2f8f3}
+@media(max-width:900px){.resume-editor>.two-col>.panel{margin-bottom:14px}}

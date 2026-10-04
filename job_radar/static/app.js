@@ -10,6 +10,7 @@ function scoreBadge(job) {
   return `<span class="score score-${range}" aria-label="Match score ${job.score} out of 100">${job.score}</span>`;
 }
 let activeJob = null;
+let activeJobPinned = false;
 let projectCards = [];
 let discoveredRepos = [];
 let selectedProjectId = null;
@@ -123,9 +124,7 @@ async function loadSetup() {
   const badge = (selector, label, ready) => { const node = $(selector); node.textContent = label; node.className = `pill ${ready ? '' : 'warning'}`; };
   badge('#setup-smtp-status', data.smtp_configured ? 'Configured' : 'Optional', data.smtp_configured);
   badge('#setup-telegram-status', data.telegram_configured ? 'Configured' : 'Optional', data.telegram_configured);
-  $('#matching-status').textContent = data.matching.model
-    ? `${data.matching.model}${data.matching.failed ? ` · ${data.matching.failed} need attention` : data.matching.pending ? ` · ${data.matching.pending} in queue` : ' · Ready'}`
-    : 'Choose a model';
+  $('#matching-status').textContent = data.matching.model ? `Using ${data.matching.model}` : 'Choose a model';
   renderSocialAuth(data.browser);
   $('#setup-browser-detail').textContent = data.browser.error || (data.browser.state === 'opening' ? 'Opening Chrome…' : data.browser.state === 'open' ? `Waiting for ${data.browser.active_site === 'linkedin' ? 'LinkedIn' : 'Facebook'} sign-in in Chrome. The window closes automatically when the account page loads.` : data.browser.state === 'reauth_required' ? `${socialSiteNames(data.browser)} needs a new sign-in. Other sources keep scanning.` : data.browser.last_saved_at ? `Saved session last updated ${when(data.browser.last_saved_at)}. Upcoming scans will verify site access.` : 'Choose a site to begin. Google sign-in opens in regular Chrome.');
   const mailForm = $('#setup-smtp-form');
@@ -142,7 +141,7 @@ async function loadSetup() {
     alertForm.elements.min_score.value = data.telegram_min_score ?? 60;
     alertForm.dataset.initialized = 'true';
   }
-  if ((['opening', 'open'].includes(data.browser.state) || data.matching.pending || data.matching.download_state === 'downloading') && $('#profile').classList.contains('active')) window.setupPoll = setTimeout(() => loadSetup().catch((error) => notice(error.message, true)), 2000);
+  if ((['opening', 'open'].includes(data.browser.state) || data.matching.download_state === 'downloading') && $('#profile').classList.contains('active')) window.setupPoll = setTimeout(() => loadSetup().catch((error) => notice(error.message, true)), 2000);
   return data;
 }
 
@@ -190,7 +189,7 @@ async function loadHome() {
 async function loadJobs() {
   clearTimeout(window.jobPoll);
   const query = new URLSearchParams({q: $('#job-query').value, state: $('#job-state').value});
-  const jobs = await api(`/api/jobs?${query}`);
+  const [jobs, analysis] = await Promise.all([api(`/api/jobs?${query}`), loadJobAnalysis()]);
   const sourceLabel = (source) => !source ? 'Manually added' : source.kind === 'career' ? 'Company career page' : source.kind === 'linkedin' ? 'LinkedIn listing' : 'Facebook group lead';
   $('#job-list').innerHTML = jobs.length ? jobs.map((job) =>
     `<div class="item job-card"><button type="button" class="card-select" data-job="${job.id}" aria-label="Open ${escapeHtml(job.title)} at ${escapeHtml(job.company)}">${scoreBadge(job)}<div class="item-title">${escapeHtml(job.title)}</div><div class="item-meta">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div><div class="item-meta">${escapeHtml(sourceLabel(job.source))}${job.source ? ` · Checked ${when(job.source.last_seen_at)}` : ''}</div><div class="item-meta">First seen ${when(job.first_seen_at)} <span class="pill muted">${escapeHtml(job.state)}</span> · ${job.analysis_status === 'done' ? 'Local match' : job.analysis_status === 'failed' ? 'Analysis failed' : ['pending','running'].includes(job.analysis_status) ? 'Analyzing locally' : 'Waiting for local model'}</div></button>${job.source ? `<a href="${escapeHtml(job.source.url)}" target="_blank" rel="noopener noreferrer">Original posting ↗</a>` : ''}</div>`
@@ -201,18 +200,20 @@ async function loadJobs() {
       if (window.matchMedia('(max-width: 900px)').matches) $('#job-detail').scrollIntoView({behavior:'smooth', block:'start'});
     } catch(error) { notice(error.message, true); }
   }));
-  if (activeJob && jobs.some((job) => job.id === activeJob)) await showJob(activeJob);
+  if (activeJob && (activeJobPinned || jobs.some((job) => job.id === activeJob))) await showJob(activeJob, activeJobPinned);
   else {
     activeJob = null;
+    activeJobPinned = false;
     $('#job-detail').innerHTML = `<div class="empty">${jobs.length ? 'Select a job to see details.' : 'No job matches this search.'}</div>`;
   }
-  if (jobs.some((job) => ['pending','running'].includes(job.analysis_status)) && $('#jobs').classList.contains('active')) {
+  if ((analysis.pending || jobs.some((job) => ['pending','running'].includes(job.analysis_status))) && $('#jobs').classList.contains('active')) {
     window.jobPoll = setTimeout(() => loadJobs().catch((error) => notice(error.message, true)), 5000);
   }
 }
 
-async function showJob(id) {
+async function showJob(id, pin = false) {
   activeJob = id;
+  activeJobPinned = pin;
   document.querySelectorAll('[data-job]').forEach((node) => node.closest('.item').classList.toggle('is-selected', node.dataset.job === id));
   const job = await api(`/api/jobs/${id}`);
   const profile = await api('/api/profile');
@@ -314,7 +315,7 @@ async function loadProfile() {
   $('#resume-panel-label').textContent = hasResume ? 'Your resume details' : 'Import your resume';
   $('#resume-status').textContent = hasResume ? 'Replace or update' : 'PDF or manual entry';
   $('#resume-panel').open = Boolean(profile.drafting_provider && !hasResume);
-  $('#matching-panel').open = Boolean(hasResume && (!setup.matching.model || setup.matching.failed));
+  if (hasResume && !setup.matching.model) $('#matching-panel').open = true;
   $('#social-sign-in-panel').open = Boolean(profile.drafting_provider && hasResume && (setup.browser.sites.length || setup.browser.connected_sites.length < 2));
   $('#telegram-panel').open = Boolean(hasResume && setup.matching.model && !setup.telegram_configured);
   $('#pdf-resume-form button[type="submit"]').disabled = !profile.drafting_provider || !availability[profile.drafting_provider];
@@ -337,7 +338,7 @@ async function loadProfile() {
 
 async function loadMatchingModels() {
   clearTimeout(window.matchingPoll);
-  const [data, failures] = await Promise.all([api('/api/matching/models'), api('/api/matching/failures')]);
+  const data = await api('/api/matching/models');
   const select = $('#matching-model-form').elements.model;
   const saved = data.matching.model;
   $('#matching-model-form').dataset.saved = saved || '';
@@ -352,29 +353,36 @@ async function loadMatchingModels() {
   $('#matching-download').hidden = data.models.some((model) => model.name === data.matching.recommended) && state !== 'downloading';
   $('#matching-download').disabled = state === 'downloading';
   $('#matching-download').textContent = state === 'downloading' ? 'Downloading model…' : `Download ${data.matching.recommended} (about 2 GB)`;
-  $('#matching-overview').innerHTML = [
-    [data.matching.completed, 'analyzed', ''],
-    [data.matching.pending, 'in queue', ''],
-    [data.matching.failed, 'need attention', data.matching.failed ? 'needs-attention' : ''],
-  ].map(([count, label, tone]) => `<div class="matching-stat ${tone}"><strong>${count}</strong><span>${label}</span></div>`).join('');
   $('#matching-model-detail').textContent = data.matching.download_error || data.matching.service_error || data.error ||
     (state === 'downloading' ? 'Downloading in the background. Job Radar will select it when ready.' :
      saved ? '' : 'Choose an installed model to analyze jobs locally.');
+  if (state === 'downloading' && $('#profile').classList.contains('active')) window.matchingPoll = setTimeout(() => loadMatchingModels().then(loadSetup).catch((error) => notice(error.message, true)), 5000);
+  return data;
+}
+
+async function loadJobAnalysis() {
+  const [setup, failures] = await Promise.all([api('/api/setup'), api('/api/matching/failures')]);
+  const matching = setup.matching;
+  $('#job-analysis-model').textContent = matching.model ? `Using ${matching.model}` : 'Choose a local model to score jobs';
+  $('#matching-overview').innerHTML = [
+    [matching.completed, 'analyzed', ''],
+    [matching.pending, 'in queue', ''],
+    [matching.failed, 'need attention', matching.failed ? 'needs-attention' : ''],
+  ].map(([count, label, tone]) => `<div class="matching-stat ${tone}"><strong>${count}</strong><span>${label}</span></div>`).join('');
   $('#matching-failures').hidden = !failures.length;
   $('#matching-failures-title').textContent = `${failures.length} job${failures.length === 1 ? '' : 's'} need attention`;
   $('#matching-retry-all').textContent = `Retry all ${failures.length}`;
   $('#matching-failure-list').innerHTML = failures.map((job) => `<div class="matching-failure-row"><div class="matching-failure-copy"><strong>${escapeHtml(job.title)}</strong><small>${escapeHtml(job.company)} · ${escapeHtml(job.error || 'Local analysis failed')}</small></div><div class="matching-failure-actions"><button type="button" class="secondary" data-matching-open="${job.id}">View job</button><button type="button" class="secondary" data-matching-retry="${job.id}">Retry</button></div></div>`).join('');
   $('#matching-failure-list').querySelectorAll('[data-matching-open]').forEach((button) => button.addEventListener('click', async () => {
-    try { await showTab('jobs'); await showJob(button.dataset.matchingOpen); }
+    try { await showJob(button.dataset.matchingOpen, true); $('#job-detail').scrollIntoView({behavior:'smooth', block:'start'}); }
     catch (error) { notice(error.message, true); }
   }));
   $('#matching-failure-list').querySelectorAll('[data-matching-retry]').forEach((button) => button.addEventListener('click', async () => {
     button.disabled = true;
-    try { await api(`/api/jobs/${button.dataset.matchingRetry}/analyze`, {method:'POST'}); await loadMatchingModels(); await loadSetup(); notice('Job analysis queued.'); }
+    try { await api(`/api/jobs/${button.dataset.matchingRetry}/analyze`, {method:'POST'}); await loadJobs(); notice('Job analysis queued.'); }
     catch (error) { button.disabled = false; notice(error.message, true); }
   }));
-  if ((state === 'downloading' || data.matching.pending) && $('#profile').classList.contains('active')) window.matchingPoll = setTimeout(() => loadMatchingModels().then(loadSetup).catch((error) => notice(error.message, true)), 5000);
-  return data;
+  return matching;
 }
 
 $('#matching-model-form select').addEventListener('change', (event) => {
@@ -389,8 +397,7 @@ $('#matching-retry-all').addEventListener('click', async (event) => {
   button.textContent = 'Queueing…';
   try {
     const result = await api('/api/matching/retry-failed', {method:'POST'});
-    await loadMatchingModels();
-    await loadSetup();
+    await loadJobs();
     notice(`${result.queued} job${result.queued === 1 ? '' : 's'} queued for analysis.`);
   } catch (error) { button.disabled = false; notice(error.message, true); }
 });
@@ -416,6 +423,8 @@ function showTab(name, historyMode = 'push') {
   const requested = name.split('/');
   const selectedDraft = requested[0] === 'applications' ? requested[1] : null;
   name = requested[0];
+  const resumePanel = name === 'experience' ? 'experience-panel' : name === 'projects' ? 'projects-panel' : null;
+  if (resumePanel) name = 'profile';
   if (name === 'setup') name = 'profile';
   if (name === 'overview') name = 'home';
   if (!document.getElementById(name)?.classList.contains('tab')) name = 'home';
@@ -424,17 +433,18 @@ function showTab(name, historyMode = 'push') {
   if (name !== 'jobs') clearTimeout(window.jobPoll);
   if (name !== 'applications') clearTimeout(window.autoApplyPoll);
   document.querySelectorAll('.tab').forEach((tab) => tab.classList.toggle('active', tab.id === name));
-  const nav = ['experience','projects'].includes(name) ? 'profile' : ['sources','employers'].includes(name) ? 'jobs' : name;
+  const nav = ['sources','employers'].includes(name) ? 'jobs' : name;
   document.querySelectorAll('.sidebar nav [data-tab]').forEach((button) => button.classList.toggle('active', button.dataset.tab === nav));
-  $('#page-title').textContent = ({home:'Home',jobs:'Jobs',applications:'Applications',profile:'My profile',
-    experience:'Work history',projects:'GitHub projects',sources:'Job sources',employers:'Employers'})[name];
+  $('#page-title').textContent = ({home:'Home',jobs:'Jobs',applications:'Applications',profile:'My profile',sources:'Job sources',employers:'Employers'})[name];
   const desiredHash = selectedDraft ? `#applications/${selectedDraft}` : `#${name}`;
   if (historyMode === 'replace') history.replaceState({tab:name}, '', desiredHash);
   else if (historyMode === 'push' && location.hash !== desiredHash) history.pushState({tab:name}, '', desiredHash);
   window.scrollTo(0, 0);
   if (!['home', 'profile'].includes(name)) refreshSocialAuth().catch((error) => notice(error.message, true));
-  const loader = ({home:loadHome,jobs:loadJobs,applications:loadApplications,experience:loadPositions,projects:loadEvidence,sources:loadSources,employers:loadEmployers,profile:loadProfile})[name];
-  return loader?.(selectedDraft).catch((error) => notice(error.message, true));
+  const loader = ({home:loadHome,jobs:loadJobs,applications:loadApplications,sources:loadSources,employers:loadEmployers,profile:loadProfile})[name];
+  const loading = loader?.(selectedDraft).catch((error) => notice(error.message, true));
+  if (resumePanel) return Promise.resolve(loading).then(() => openResumeEditor(resumePanel));
+  return loading;
 }
 
 async function loadApplications(selectedId = null) {
@@ -704,10 +714,24 @@ async function loadEvidence(focusId = null) {
 document.querySelectorAll('[data-tab]').forEach((button) => button.addEventListener('click', () => button.dataset.socialAuth === 'true' ? openSocialSignIn() : button.dataset.setupPanel ? openSetupPanel(button.dataset.setupPanel) : showTab(button.dataset.tab)));
 $('#social-auth-action').addEventListener('click', openSocialSignIn);
 setInterval(() => refreshSocialAuth().catch(() => {}), 60000);
-$('#edit-profile-button').addEventListener('click', () => {
-  $('#profile-edit-panel').open = true;
-  $('#profile-edit-panel').scrollIntoView({behavior:'smooth', block:'start'});
+async function openResumeEditor(id) {
+  for (const panelId of ['profile-edit-panel', 'experience-panel', 'projects-panel']) {
+    const open = panelId === id;
+    $(`#${panelId}`).open = open;
+    document.querySelector(`.action-card[aria-controls="${panelId}"]`).setAttribute('aria-expanded', String(open));
+  }
+  const panel = $(`#${id}`);
+  panel.scrollIntoView({behavior:'smooth', block:'start'});
+  if (id === 'experience-panel') await loadPositions();
+  if (id === 'projects-panel') await loadEvidence();
+}
+document.querySelectorAll('.action-card[aria-controls]').forEach((button) => {
+  $(`#${button.getAttribute('aria-controls')}`).addEventListener('toggle', (event) => button.setAttribute('aria-expanded', String(event.target.open)));
 });
+$('#edit-profile-button').addEventListener('click', () => openResumeEditor('profile-edit-panel').catch((error) => notice(error.message, true)));
+$('#open-experience-button').addEventListener('click', () => openResumeEditor('experience-panel').catch((error) => notice(error.message, true)));
+$('#open-projects-button').addEventListener('click', () => openResumeEditor('projects-panel').catch((error) => notice(error.message, true)));
+$('#job-analysis-settings').addEventListener('click', () => openSetupPanel('matching-panel').catch((error) => notice(error.message, true)));
 $('#clock').textContent = new Date().toLocaleDateString(undefined, {weekday:'long', day:'numeric', month:'long'});
 $('#job-search').addEventListener('click', () => loadJobs().catch((error) => notice(error.message, true)));
 $('#job-query').addEventListener('keydown', (event) => { if (event.key === 'Enter') loadJobs().catch((error) => notice(error.message, true)); });

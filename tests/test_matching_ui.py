@@ -55,6 +55,22 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 page.get_by_role("button", name="Telegram reviews and job alerts").click()
                 page.locator("#telegram-panel[open]").wait_for()
                 assert page.get_by_role("button", name="Find my chat ID").is_visible()
+                page.locator("#edit-profile-button").click()
+                assert page.locator("#profile-edit-panel").get_attribute("open") is not None
+                page.locator("#open-experience-button").click()
+                assert page.locator("#experience-panel").get_attribute("open") is not None
+                assert page.locator("#open-experience-button").get_attribute("aria-expanded") == "true"
+                assert page.locator("#position-form").is_visible()
+                assert page.url.endswith("#profile")
+                page.locator("#open-projects-button").click()
+                assert page.locator("#projects-panel").get_attribute("open") is not None
+                assert page.locator("#open-experience-button").get_attribute("aria-expanded") == "false"
+                assert page.locator("#project-add-form").is_visible()
+                assert page.url.endswith("#profile")
+                page.goto("about:blank")
+                page.goto(f"http://127.0.0.1:{port}/#projects")
+                page.locator("#projects-panel[open]").wait_for()
+                assert page.url.endswith("#profile")
                 page.get_by_role("button", name="Applications", exact=True).first.click()
                 page.locator("#auto-apply-panel summary").click()
                 assert page.locator("#auto-apply-form input[name='enabled']").is_visible()
@@ -79,7 +95,7 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
         thread.join(timeout=5)
 
 
-def test_failed_matching_jobs_are_visible_and_retryable_from_profile(tmp_path: Path, monkeypatch) -> None:
+def test_failed_matching_jobs_are_visible_and_retryable_from_jobs(tmp_path: Path, monkeypatch) -> None:
     from fastapi.testclient import TestClient
     app = create_app(Settings(tmp_path))
     db = app.state.db
@@ -111,18 +127,24 @@ def test_failed_matching_jobs_are_visible_and_retryable_from_profile(tmp_path: P
             browser = playwright.chromium.launch(headless=True)
             try:
                 page = browser.new_page()
-                page.goto(f"http://127.0.0.1:{port}/#profile")
+                page.goto(f"http://127.0.0.1:{port}/#jobs")
+                assert page.locator("#matching-overview .needs-attention strong").inner_text() == "2"
                 page.locator("#matching-failures").wait_for(state="visible")
                 assert "2 jobs need attention" in page.locator("#matching-failures-title").inner_text()
                 assert "Engineer 1" in page.locator("#matching-failure-list").inner_text()
                 assert "Model output was cut off" in page.locator("#matching-failure-list").inner_text()
                 page.get_by_role("button", name="View job").first.click()
                 page.get_by_role("heading", name="Engineer 1").wait_for()
-                page.get_by_role("button", name="My profile", exact=True).first.click()
-                page.locator("#matching-failures").wait_for(state="visible")
+                page.locator("#job-query").fill("no matching title")
+                page.evaluate("loadJobs()")
+                assert page.get_by_role("heading", name="Engineer 1").is_visible()
                 page.locator("#matching-retry-all").click()
                 page.locator("#matching-failures").wait_for(state="hidden")
                 assert db.one("SELECT COUNT(*) AS n FROM vacancies WHERE analysis_status='failed'")["n"] == 0
+                page.get_by_role("button", name="My profile", exact=True).first.click()
+                page.locator("#matching-panel summary").click()
+                assert "need attention" not in page.locator("#matching-status").inner_text()
+                assert page.locator("#matching-panel").get_attribute("open") is not None
             finally:
                 browser.close()
     finally:
