@@ -1,3 +1,5 @@
+<img src="job_radar/static/logo.svg" alt="Job Radar logo" width="72" height="72">
+
 # Job Radar
 
 Job Radar finds jobs, analyzes how well they fit your experience, and prepares tailored applications for your review. It runs as a browser interface on your Mac, keeps its database and browser sessions locally, and continues scanning in the background after you close the tab.

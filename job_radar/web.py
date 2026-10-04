@@ -214,6 +214,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def stylesheet():
         return FileResponse(Path(__file__).parent / "static" / "app.css", media_type="text/css")
 
+    @app.get("/logo.svg")
+    def logo():
+        return FileResponse(Path(__file__).parent / "static" / "logo.svg", media_type="image/svg+xml")
+
     @app.get("/api/status")
     def status():
         counts = {}
