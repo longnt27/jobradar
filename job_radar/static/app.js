@@ -80,15 +80,22 @@ function socialSiteNames(browser) {
   return (browser.sites || []).map((site) => site === 'linkedin' ? 'LinkedIn' : 'Facebook').join(' and ');
 }
 
+function setStepStatus(selector, label, tone = '') {
+  const node = $(selector);
+  node.textContent = label;
+  node.className = `pill ${tone}`.trim();
+}
+
 function renderSocialAuth(browser) {
   const expired = (browser.sites || []).length > 0;
   const connected = browser.connected_sites || [];
   $('#social-auth-banner').hidden = !expired;
   $('#social-auth-message').textContent = expired
     ? `${socialSiteNames(browser)} sign-in expired. Sign in again to resume those scans.` : '';
-  $('#social-sign-in-status').textContent = expired ? 'Sign in again'
+  const socialReady = !expired && connected.length === 2 && !['opening', 'open'].includes(browser.state);
+  setStepStatus('#social-sign-in-status', expired ? 'Sign in again'
     : ['opening', 'open'].includes(browser.state) ? 'Waiting for sign-in'
-    : connected.length === 2 ? 'Both connected' : `${connected.length} of 2 connected`;
+    : socialReady ? 'Both connected' : `${connected.length} of 2 connected`, socialReady ? '' : 'warning');
   for (const site of ['linkedin', 'facebook']) {
     const label = site === 'linkedin' ? 'LinkedIn' : 'Facebook';
     const needsSignIn = !connected.includes(site) || (browser.sites || []).includes(site);
@@ -121,10 +128,9 @@ async function openSetupPanel(id) {
 async function loadSetup() {
   clearTimeout(window.setupPoll);
   const data = await api('/api/setup');
-  const badge = (selector, label, ready) => { const node = $(selector); node.textContent = label; node.className = `pill ${ready ? '' : 'warning'}`; };
-  badge('#setup-smtp-status', data.smtp_configured ? 'Configured' : 'Optional', data.smtp_configured);
-  badge('#setup-telegram-status', data.telegram_configured ? 'Configured' : 'Optional', data.telegram_configured);
-  $('#matching-status').textContent = data.matching.model ? `Using ${data.matching.model}` : 'Choose a model';
+  setStepStatus('#setup-smtp-status', data.smtp_configured ? 'Configured' : 'Optional', data.smtp_configured ? '' : 'muted');
+  setStepStatus('#setup-telegram-status', data.telegram_configured ? 'Configured' : 'Optional', data.telegram_configured ? '' : 'muted');
+  setStepStatus('#matching-status', data.matching.model ? `Configured · ${data.matching.model}` : 'Choose a model', data.matching.model ? '' : 'warning');
   renderSocialAuth(data.browser);
   $('#setup-browser-detail').textContent = data.browser.error || (data.browser.state === 'opening' ? 'Opening Chrome…' : data.browser.state === 'open' ? `Waiting for ${data.browser.active_site === 'linkedin' ? 'LinkedIn' : 'Facebook'} sign-in in Chrome. The window closes automatically when the account page loads.` : data.browser.state === 'reauth_required' ? `${socialSiteNames(data.browser)} needs a new sign-in. Other sources keep scanning.` : data.browser.last_saved_at ? `Saved session last updated ${when(data.browser.last_saved_at)}. Upcoming scans will verify site access.` : 'Choose a site to begin. Google sign-in opens in regular Chrome.');
   const mailForm = $('#setup-smtp-form');
@@ -309,11 +315,11 @@ async function loadProfile() {
   providerForm.querySelectorAll('option[value]').forEach((option) => { if (option.value) option.disabled = !availability[option.value]; });
   providerForm.elements.provider.value = profile.drafting_provider || '';
   $('#provider-panel-label').textContent = profile.drafting_provider ? 'AI provider' : 'Choose your AI provider';
-  $('#provider-status').textContent = profile.drafting_provider ? `Using ${profile.drafting_provider}` : 'Start here';
+  setStepStatus('#provider-status', profile.drafting_provider ? `Configured · ${profile.drafting_provider}` : 'Choose a provider', profile.drafting_provider ? '' : 'warning');
   $('#provider-panel').open = !profile.drafting_provider;
   const hasResume = Boolean(profile.name && profile.email);
   $('#resume-panel-label').textContent = hasResume ? 'Your resume details' : 'Import your resume';
-  $('#resume-status').textContent = hasResume ? 'Replace or update' : 'PDF or manual entry';
+  setStepStatus('#resume-status', hasResume ? 'Details ready' : 'Needs details', hasResume ? '' : 'warning');
   $('#resume-panel').open = Boolean(profile.drafting_provider && !hasResume);
   if (hasResume && !setup.matching.model) $('#matching-panel').open = true;
   $('#social-sign-in-panel').open = Boolean(profile.drafting_provider && hasResume && (setup.browser.sites.length || setup.browser.connected_sites.length < 2));
@@ -327,13 +333,28 @@ async function loadProfile() {
   $('#profile-summary-status').className = `pill ${hasResume ? '' : 'warning'}`;
   $('#position-count').textContent = `${(profile.experience || []).length} previous position${profile.experience?.length === 1 ? '' : 's'}`;
   $('#project-count').textContent = `${projectCount} selected project${projectCount === 1 ? '' : 's'}`;
+}
+
+async function loadPersonalDetails() {
   const form = $('#profile-form');
-  for (const key of ['name','given_name','family_name','email','phone','location','summary','salary_expectation','work_authorization','notice_period','relocation']) form.elements[key].value = profile[key] || '';
-  form.elements.skills.value = (profile.skills || []).join('\n');
-  form.elements.links.value = (profile.links || []).join('\n');
-  form.elements.education.value = (profile.education || []).map((item) => typeof item === 'string' ? item : [item.school || '', item.degree || '', item.dates || ''].join(' | ')).join('\n');
-  form.elements.achievements.value = (profile.achievements || []).join('\n');
-  form.elements.skill_groups.value = Object.entries(profile.skill_groups || {}).map(([label, value]) => `${label}: ${Array.isArray(value) ? value.join(', ') : value}`).join('\n');
+  const loading = $('#personal-loading');
+  form.hidden = true;
+  loading.hidden = false;
+  loading.textContent = 'Loading personal details…';
+  try {
+    const profile = await api('/api/profile');
+    for (const key of ['name','given_name','family_name','email','phone','location','summary','salary_expectation','work_authorization','notice_period','relocation']) form.elements[key].value = profile[key] || '';
+    form.elements.skills.value = (profile.skills || []).join('\n');
+    form.elements.links.value = (profile.links || []).join('\n');
+    form.elements.education.value = (profile.education || []).map((item) => typeof item === 'string' ? item : [item.school || '', item.degree || '', item.dates || ''].join(' | ')).join('\n');
+    form.elements.achievements.value = (profile.achievements || []).join('\n');
+    form.elements.skill_groups.value = Object.entries(profile.skill_groups || {}).map(([label, value]) => `${label}: ${Array.isArray(value) ? value.join(', ') : value}`).join('\n');
+    form.hidden = false;
+    loading.hidden = true;
+  } catch (error) {
+    loading.textContent = error.message;
+    throw error;
+  }
 }
 
 async function loadMatchingModels() {
@@ -423,8 +444,6 @@ function showTab(name, historyMode = 'push') {
   const requested = name.split('/');
   const selectedDraft = requested[0] === 'applications' ? requested[1] : null;
   name = requested[0];
-  const resumePanel = name === 'experience' ? 'experience-panel' : name === 'projects' ? 'projects-panel' : null;
-  if (resumePanel) name = 'profile';
   if (name === 'setup') name = 'profile';
   if (name === 'overview') name = 'home';
   if (!document.getElementById(name)?.classList.contains('tab')) name = 'home';
@@ -433,18 +452,18 @@ function showTab(name, historyMode = 'push') {
   if (name !== 'jobs') clearTimeout(window.jobPoll);
   if (name !== 'applications') clearTimeout(window.autoApplyPoll);
   document.querySelectorAll('.tab').forEach((tab) => tab.classList.toggle('active', tab.id === name));
-  const nav = ['sources','employers'].includes(name) ? 'jobs' : name;
+  const nav = ['personal','experience','projects'].includes(name) ? 'profile' : ['sources','employers'].includes(name) ? 'jobs' : name;
   document.querySelectorAll('.sidebar nav [data-tab]').forEach((button) => button.classList.toggle('active', button.dataset.tab === nav));
-  $('#page-title').textContent = ({home:'Home',jobs:'Jobs',applications:'Applications',profile:'My profile',sources:'Job sources',employers:'Employers'})[name];
+  $('#page-title').textContent = ({home:'Home',jobs:'Jobs',applications:'Applications',profile:'My profile',
+    personal:'Personal details',experience:'Work history',projects:'GitHub projects',sources:'Job sources',employers:'Employers'})[name];
   const desiredHash = selectedDraft ? `#applications/${selectedDraft}` : `#${name}`;
   if (historyMode === 'replace') history.replaceState({tab:name}, '', desiredHash);
   else if (historyMode === 'push' && location.hash !== desiredHash) history.pushState({tab:name}, '', desiredHash);
   window.scrollTo(0, 0);
   if (!['home', 'profile'].includes(name)) refreshSocialAuth().catch((error) => notice(error.message, true));
-  const loader = ({home:loadHome,jobs:loadJobs,applications:loadApplications,sources:loadSources,employers:loadEmployers,profile:loadProfile})[name];
-  const loading = loader?.(selectedDraft).catch((error) => notice(error.message, true));
-  if (resumePanel) return Promise.resolve(loading).then(() => openResumeEditor(resumePanel));
-  return loading;
+  const loader = ({home:loadHome,jobs:loadJobs,applications:loadApplications,personal:loadPersonalDetails,
+    experience:loadPositions,projects:loadEvidence,sources:loadSources,employers:loadEmployers,profile:loadProfile})[name];
+  return loader?.(selectedDraft).catch((error) => notice(error.message, true));
 }
 
 async function loadApplications(selectedId = null) {
@@ -714,23 +733,6 @@ async function loadEvidence(focusId = null) {
 document.querySelectorAll('[data-tab]').forEach((button) => button.addEventListener('click', () => button.dataset.socialAuth === 'true' ? openSocialSignIn() : button.dataset.setupPanel ? openSetupPanel(button.dataset.setupPanel) : showTab(button.dataset.tab)));
 $('#social-auth-action').addEventListener('click', openSocialSignIn);
 setInterval(() => refreshSocialAuth().catch(() => {}), 60000);
-async function openResumeEditor(id) {
-  for (const panelId of ['profile-edit-panel', 'experience-panel', 'projects-panel']) {
-    const open = panelId === id;
-    $(`#${panelId}`).open = open;
-    document.querySelector(`.action-card[aria-controls="${panelId}"]`).setAttribute('aria-expanded', String(open));
-  }
-  const panel = $(`#${id}`);
-  panel.scrollIntoView({behavior:'smooth', block:'start'});
-  if (id === 'experience-panel') await loadPositions();
-  if (id === 'projects-panel') await loadEvidence();
-}
-document.querySelectorAll('.action-card[aria-controls]').forEach((button) => {
-  $(`#${button.getAttribute('aria-controls')}`).addEventListener('toggle', (event) => button.setAttribute('aria-expanded', String(event.target.open)));
-});
-$('#edit-profile-button').addEventListener('click', () => openResumeEditor('profile-edit-panel').catch((error) => notice(error.message, true)));
-$('#open-experience-button').addEventListener('click', () => openResumeEditor('experience-panel').catch((error) => notice(error.message, true)));
-$('#open-projects-button').addEventListener('click', () => openResumeEditor('projects-panel').catch((error) => notice(error.message, true)));
 $('#job-analysis-settings').addEventListener('click', () => openSetupPanel('matching-panel').catch((error) => notice(error.message, true)));
 $('#clock').textContent = new Date().toLocaleDateString(undefined, {weekday:'long', day:'numeric', month:'long'});
 $('#job-search').addEventListener('click', () => loadJobs().catch((error) => notice(error.message, true)));
@@ -814,8 +816,7 @@ $('#profile-form').addEventListener('submit', async (event) => {
     profile.education = form.elements.education.value.split('\n').map((x) => x.trim()).filter(Boolean).map((line) => { const [school, degree, dates] = line.split('|').map((x) => x.trim()); return {school, degree:degree || '', dates:dates || ''}; });
     profile.skill_groups = Object.fromEntries(form.elements.skill_groups.value.split('\n').map((x) => x.trim()).filter(Boolean).map((line) => { const colon = line.indexOf(':'); return colon < 0 ? [line, ''] : [line.slice(0, colon).trim(), line.slice(colon + 1).trim()]; }));
     await api('/api/profile', {method:'PUT', body:JSON.stringify(profile)});
-    await loadProfile();
-    $('#profile-edit-panel').open = false;
+    await loadPersonalDetails();
     notice('Personal details saved');
   } catch(error) { notice(error.message, true); }
 });
@@ -859,10 +860,8 @@ $('#pdf-resume-form').addEventListener('submit', async (event) => {
   try {
     const result = await api('/api/profile/resume/pdf', {method:'POST', body:new FormData(event.target)});
     event.target.reset();
-    await loadProfile();
-    $('#profile-edit-panel').open = true;
-    $('#profile-edit-panel').scrollIntoView({behavior:'smooth', block:'start'});
-    $('#pdf-import-status').textContent = `Extracted ${result.positions} positions, ${result.education} education entries, and ${result.achievements} achievements. Review your details below and positions in Experience.`;
+    $('#pdf-import-status').textContent = `Extracted ${result.positions} positions, ${result.education} education entries, and ${result.achievements} achievements. Review Personal details and Work history.`;
+    await showTab('personal');
     notice('Resume details extracted. Review them before applying.');
   } catch(error) { $('#pdf-import-status').textContent = error.message; notice(error.message, true); }
   finally { button.textContent = 'Extract resume details'; const selected = $('#provider-form').elements.provider.selectedOptions[0]; button.disabled = !selected?.value || selected.disabled; }
@@ -874,9 +873,7 @@ $('#latex-import-form').addEventListener('submit', async (event) => {
     const latex = event.target.elements.latex.value;
     const result = await api('/api/profile/import-latex', {method:'POST', body:JSON.stringify({latex})});
     event.target.reset();
-    await loadProfile();
-    $('#profile-edit-panel').open = true;
-    $('#profile-edit-panel').scrollIntoView({behavior:'smooth', block:'start'});
+    await showTab('personal');
     notice(`Imported ${result.positions} positions, ${result.education} education entries, and ${result.achievements} achievements`);
   } catch(error) { notice(error.message, true); }
 });

@@ -56,21 +56,23 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 page.locator("#telegram-panel[open]").wait_for()
                 assert page.get_by_role("button", name="Find my chat ID").is_visible()
                 page.locator("#edit-profile-button").click()
-                assert page.locator("#profile-edit-panel").get_attribute("open") is not None
+                page.locator("#personal.active #profile-form").wait_for()
+                assert page.url.endswith("#personal")
+                page.locator("#personal [data-tab='profile']").click()
+                assert page.locator("#profile-edit-panel").count() == 0
                 page.locator("#open-experience-button").click()
-                assert page.locator("#experience-panel").get_attribute("open") is not None
-                assert page.locator("#open-experience-button").get_attribute("aria-expanded") == "true"
+                page.locator("#experience.active #position-form").wait_for()
                 assert page.locator("#position-form").is_visible()
-                assert page.url.endswith("#profile")
+                assert page.url.endswith("#experience")
+                page.locator("#experience [data-tab='profile']").click()
                 page.locator("#open-projects-button").click()
-                assert page.locator("#projects-panel").get_attribute("open") is not None
-                assert page.locator("#open-experience-button").get_attribute("aria-expanded") == "false"
+                page.locator("#projects.active #project-add-form").wait_for()
                 assert page.locator("#project-add-form").is_visible()
-                assert page.url.endswith("#profile")
+                assert page.url.endswith("#projects")
                 page.goto("about:blank")
                 page.goto(f"http://127.0.0.1:{port}/#projects")
-                page.locator("#projects-panel[open]").wait_for()
-                assert page.url.endswith("#profile")
+                page.locator("#projects.active #project-add-form").wait_for()
+                assert page.url.endswith("#projects")
                 page.get_by_role("button", name="Applications", exact=True).first.click()
                 page.locator("#auto-apply-panel summary").click()
                 assert page.locator("#auto-apply-form input[name='enabled']").is_visible()
@@ -88,6 +90,25 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 high_color = page.get_by_role("button", name="Open AI Engineer at Example").locator(".score-high").evaluate("node => getComputedStyle(node).backgroundColor")
                 pending_color = pending_card.locator(".score-pending").evaluate("node => getComputedStyle(node).backgroundColor")
                 assert high_color != pending_color
+                page.get_by_role("button", name="My profile", exact=True).first.click()
+                page.locator("#edit-profile-button").click()
+                page.locator("#personal.active #profile-form").wait_for()
+                page.locator("#profile-form input[name='name']").fill("Alex Example")
+                page.locator("#profile-form input[name='email']").fill("alex@example.org")
+                page.get_by_role("button", name="Save details").click()
+                page.get_by_role("status").filter(has_text="Personal details saved").wait_for()
+                assert page.url.endswith("#personal")
+                assert app.state.db.get_setting("profile", {})["name"] == "Alex Example"
+                page.locator("#personal [data-tab='profile']").click()
+                page.locator("#resume-status.pill:not(.warning)").wait_for()
+                app.state.db.set_setting("profile", {"name": "Alex Example", "email": "alex@example.org", "drafting_provider": "codex", "experience": []})
+                app.state.db.set_setting("matching_model", "test:small")
+                monkeypatch.setattr(app.state.login_manager, "status", lambda: {"sites": [], "connected_sites": ["linkedin", "facebook"], "state": "idle", "error": None, "last_saved_at": None})
+                monkeypatch.setattr("job_radar.web.telegram_config", lambda _settings: {"token": "test-token", "chat_id": "123"})
+                page.goto("about:blank")
+                page.goto(f"http://127.0.0.1:{port}/#profile")
+                for selector in ("#provider-status", "#resume-status", "#matching-status", "#social-sign-in-status", "#setup-telegram-status"):
+                    page.locator(f"{selector}.pill:not(.warning):not(.muted)").wait_for()
             finally:
                 browser.close()
     finally:
@@ -133,7 +154,7 @@ def test_failed_matching_jobs_are_visible_and_retryable_from_jobs(tmp_path: Path
                 assert "2 jobs need attention" in page.locator("#matching-failures-title").inner_text()
                 assert "Engineer 1" in page.locator("#matching-failure-list").inner_text()
                 assert "Model output was cut off" in page.locator("#matching-failure-list").inner_text()
-                page.get_by_role("button", name="View job").first.click()
+                page.locator("#matching-failure-list .matching-failure-row").filter(has_text="Engineer 1").get_by_role("button", name="View job").click()
                 page.get_by_role("heading", name="Engineer 1").wait_for()
                 page.locator("#job-query").fill("no matching title")
                 page.evaluate("loadJobs()")
