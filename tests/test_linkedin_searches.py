@@ -12,7 +12,7 @@ def test_linkedin_search_link_provides_name_and_stable_url() -> None:
         "https://www.linkedin.com/jobs/search-results/?location=Hanoi%2C+Vietnam&"
         "currentJobId=123&keywords=Data+Analyst&f_TPR=r86400&trackingId=ignored"
     ) == (
-        "https://www.linkedin.com/jobs/search/?f_TPR=r86400&keywords=Data+Analyst&location=Hanoi%2C+Vietnam",
+        "https://www.linkedin.com/jobs/search/?f_TPR=r86400&keywords=Data+Analyst+in+Hanoi%2C+Vietnam",
         "Data Analyst · Hanoi, Vietnam",
     )
 

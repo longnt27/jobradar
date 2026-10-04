@@ -271,32 +271,39 @@ async function showJob(id, pin = false) {
 }
 
 async function loadSources() {
+  clearTimeout(window.sourcePoll);
   const kind = $('#source-kind').value;
   const sources = await api(`/api/sources${kind ? `?kind=${kind}` : ''}`);
+  const running = sources.filter((source) => source.scan_state === 'scanning').length;
+  const waiting = sources.filter((source) => source.scan_state === 'queued').length;
+  const unscanned = sources.filter((source) => source.enabled && !source.last_success_at && !['queued', 'scanning'].includes(source.scan_state)).length;
+  $('#source-queue-summary').textContent = `${running} scanning · ${waiting} queued · ${unscanned} awaiting a successful scan${kind ? ' in this view' : ''}. LinkedIn and Facebook use one browser, so queued scans run in order.`;
   $('#source-list').innerHTML = sources.length ? sources.map((source) => {
     const total = Number(source.job_count) || 0;
     const recent = Number(source.new_job_count) || 0;
-    return `<div class="item"><div class="item-title">${escapeHtml(source.name)} <span class="pill muted">${escapeHtml(source.kind)}</span> <span class="pill ${source.last_status === 'success' ? '' : 'warning'}">${escapeHtml(source.last_status || 'not scanned')}</span></div><div class="item-meta source-job-count"><strong>${total} ${total === 1 ? 'job' : 'jobs'}</strong>${source.last_success_at ? ` <span class="pill ${recent ? '' : 'muted'}">${recent} new</span>` : ''}</div><div class="item-meta">Every ${source.interval_minutes / 60} hours · Last success ${when(source.last_success_at)}</div><div class="actions"><button data-scan="${source.id}">Scan now</button><button data-toggle="${source.id}" data-enabled="${source.enabled}">${source.enabled ? 'Pause' : 'Enable'}</button><a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer">Open source ↗</a></div></div>`;
+    const state = source.scan_state;
+    const status = state === 'queued' ? `Queued · #${source.queue_position}` : ({scanning:'Scanning',auto_off:'Auto scan off',needs_refresh:'Needs refresh',not_scanned:'Not scanned',success:'Scanned',empty:'No jobs found',failed:'Scan failed',auth_required:'Sign-in needed',interrupted:'Retry queued soon'})[state] || state;
+    const latest = source.latest_observed_count;
+    const cap = Number(source.config?.max_results || source.config?.max_posts || 0);
+    const latestText = latest == null ? 'No completed scan for this search' : `${latest} postings checked in latest scan${cap && latest >= cap ? ` · limit ${cap} reached` : ''}`;
+    return `<div class="item"><div class="item-title">${escapeHtml(source.name)} <span class="pill muted">${escapeHtml(source.kind)}</span> <span class="pill ${['scanning','success','queued'].includes(state) ? '' : 'warning'}">${escapeHtml(status)}</span></div><div class="item-meta source-job-count"><strong>${total} ${total === 1 ? 'unique job' : 'unique jobs'} credited here</strong>${source.last_success_at ? ` <span class="pill ${recent ? '' : 'muted'}">${recent} new in latest scan</span>` : ''}</div><div class="item-meta">${escapeHtml(latestText)} · Last success ${when(source.last_success_at)}</div><div class="actions"><button data-scan="${source.id}" ${['scanning','queued'].includes(state) ? 'disabled' : ''}>${state === 'scanning' ? 'Scanning…' : state === 'queued' ? 'Queued' : 'Scan now'}</button><a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer">Open source ↗</a><label class="source-auto"><input type="checkbox" data-toggle="${source.id}" ${source.enabled ? 'checked' : ''}> Automatic every ${source.interval_minutes / 60} hours</label></div></div>`;
   }).join('') : '<div class="empty">No sources configured for this filter.</div>';
-  document.querySelectorAll('[data-toggle]').forEach((button) => button.addEventListener('click', async () => {
-    try { await api(`/api/sources/${button.dataset.toggle}`, {method:'PATCH', body:JSON.stringify({enabled:button.dataset.enabled !== 'true'})}); await loadSources(); }
+  document.querySelectorAll('[data-toggle]').forEach((input) => input.addEventListener('change', async () => {
+    try { await api(`/api/sources/${input.dataset.toggle}`, {method:'PATCH', body:JSON.stringify({enabled:input.checked})}); await loadSources(); }
     catch(error) { notice(error.message, true); }
   }));
   document.querySelectorAll('[data-scan]').forEach((button) => button.addEventListener('click', async () => {
     try {
       button.disabled = true;
-      notice('Scan started');
+      notice('Scan added to the queue');
       const result = await api(`/api/sources/${button.dataset.scan}/scan`, {method:'POST'});
       await Promise.all([loadSources(), loadHome()]);
-      const message = result.status === 'success' ? `Scan complete: ${result.observed} jobs seen. Source counts updated.`
-        : result.status === 'empty' ? 'Scan finished: no jobs found.'
-        : result.status === 'already_running' ? 'This source is already scanning.'
-        : `Scan ${result.status}: ${result.error || 'Check this source before trying again.'}`;
-      notice(message, ['failed', 'auth_required'].includes(result.status));
+      notice(result.status === 'queued' ? `Scan queued${result.position ? ` at position ${result.position}` : ''}. It will run in the background.` : 'This source is already queued or scanning.');
     }
     catch(error) { notice(error.message, true); }
     finally { button.disabled = false; }
   }));
+  if ($('#sources').classList.contains('active')) window.sourcePoll = setTimeout(() => loadSources().catch(() => {}), 15000);
 }
 
 async function loadEmployers() {
@@ -460,6 +467,7 @@ function showTab(name, historyMode = 'push') {
   if (name !== 'profile') clearTimeout(window.matchingPoll);
   if (name !== 'jobs') clearTimeout(window.jobPoll);
   if (name !== 'applications') clearTimeout(window.autoApplyPoll);
+  if (name !== 'sources') clearTimeout(window.sourcePoll);
   document.querySelectorAll('.tab').forEach((tab) => tab.classList.toggle('active', tab.id === name));
   const nav = ['personal','experience','projects'].includes(name) ? 'profile' : name === 'employers' ? 'sources' : name;
   document.querySelectorAll('.sidebar nav [data-tab]').forEach((button) => button.classList.toggle('active', button.dataset.tab === nav));
@@ -1058,7 +1066,11 @@ $('#project-add-form').addEventListener('submit', async (event) => {
 });
 
 $('#scan-due').addEventListener('click', async () => {
-  try { const result = await api('/api/scan/due', {method:'POST'}); notice(`${result.queued} due sources queued for scanning`); }
+  try { const result = await api('/api/scan/due', {method:'POST'}); await loadSources(); notice(result.queued ? `${result.queued} due sources added to the scan queue.` : 'All due sources are already queued or scanning.'); }
+  catch(error) { notice(error.message, true); }
+});
+$('#scan-unscanned').addEventListener('click', async () => {
+  try { const result = await api('/api/scan/unscanned', {method:'POST'}); await loadSources(); notice(result.queued || result.prioritized ? `${result.queued} added and ${result.prioritized} moved forward. ${result.waiting} waiting, ${result.scanning} scanning.` : 'All unscanned sources are already first in the queue or need sign-in.'); }
   catch(error) { notice(error.message, true); }
 });
 

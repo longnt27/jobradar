@@ -53,6 +53,41 @@ def test_scan_due_endpoint_starts_background_task(monkeypatch, tmp_path: Path) -
     assert response.json()["queued"] > 0
 
 
+def test_unscanned_sources_join_a_running_queue(monkeypatch, tmp_path: Path) -> None:
+    settings = Settings(tmp_path)
+    db = Database(settings.database_path)
+    seed(db)
+    first, second = [row["id"] for row in db.all("SELECT id FROM sources WHERE kind='career' LIMIT 2")]
+    db.execute("UPDATE sources SET enabled=0")
+    db.execute("UPDATE sources SET enabled=1 WHERE id=?", (first,))
+    gate = asyncio.Event()
+
+    async def fake_collect(_settings, source):
+        if source["id"] == first:
+            await gate.wait()
+        return [ObservedJob(f"https://example.org/{source['id']}", "AI Engineer", "Example",
+                            "Build production AI systems with Python.")]
+
+    monkeypatch.setattr("job_radar.scanner.collect_source", fake_collect)
+
+    async def run():
+        manager = ScanManager(db, settings)
+        assert manager.queue_due() == 1
+        await asyncio.sleep(0)
+        assert first in manager.active
+        db.execute("UPDATE sources SET enabled=1 WHERE id=?", (second,))
+        assert manager.queue_unscanned()["queued"] == 1
+        assert manager.queue_position(second) == 1
+        assert manager.queue_unscanned()["queued"] == 0
+        gate.set()
+        await manager._due_task
+        assert manager.queue_position(second) is None
+        assert [db.one("SELECT last_status FROM sources WHERE id=?", (item,))["last_status"]
+                for item in (first, second)] == ["success", "success"]
+
+    asyncio.run(run())
+
+
 def test_interrupted_scan_is_requeued_on_restart(tmp_path: Path) -> None:
     settings = Settings(tmp_path)
     db = Database(settings.database_path)

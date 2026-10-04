@@ -152,11 +152,15 @@ def seed(db: Database) -> None:
         existing = conn.execute("SELECT COUNT(*) FROM sources WHERE kind='linkedin'").fetchone()[0]
         for role in ROLE_TERMS:
             for location in ("Hanoi, Vietnam", "Vietnam", "Remote"):
-                query = {"keywords": role, "location": location}
-                if location == "Remote":
-                    query["f_WT"] = "2"
                 name = f"{role} · {location}"
-                url = f"https://www.linkedin.com/jobs/search/?{urlencode(query)}"
+                # LinkedIn's AI search currently drops the separate location
+                # parameter. Put the location in the query it actually uses.
+                keywords = f"{role} remote" if location == "Remote" else f"{role} in {location}"
+                url = f"https://www.linkedin.com/jobs/search/?{urlencode({'keywords': keywords})}"
+                previous_query = {"keywords": role, "location": location}
+                if location == "Remote":
+                    previous_query["f_WT"] = "2"
+                previous_url = f"https://www.linkedin.com/jobs/search/?{urlencode(previous_query)}"
                 # The original URLs put f_TPR before f_WT for remote searches.
                 old_query = {"keywords": role, "location": location, "f_TPR": "r86400"}
                 if location == "Remote":
@@ -170,8 +174,8 @@ def seed(db: Database) -> None:
                     )
                     continue
                 saved = conn.execute(
-                    "SELECT id,config FROM sources WHERE kind='linkedin' AND name=? AND url=?",
-                    (name, old_url),
+                    "SELECT id,config FROM sources WHERE kind='linkedin' AND name=? AND url IN (?,?)",
+                    (name, old_url, previous_url),
                 ).fetchone()
                 if saved:
                     config = json.loads(saved[1])

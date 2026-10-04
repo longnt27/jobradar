@@ -19,11 +19,18 @@ def search_from_url(url: str) -> tuple[str, str]:
         raise ValueError("Paste a LinkedIn Jobs search link, not an individual job link")
     query = [(key, value) for key, value in parse_qsl(parts.query, keep_blank_values=False)
              if key.casefold() not in _IGNORED_PARAMETERS]
-    query.sort(key=lambda item: (item[0], item[1]))
-    canonical = urlunsplit(("https", "www.linkedin.com", "/jobs/search/", urlencode(query), ""))
     filters = dict(query)
     keywords = re.sub(r"\s+", " ", filters.get("keywords", "")).strip()
     location = re.sub(r"\s+", " ", filters.get("location", "")).strip()
+    remote = filters.get("f_WT") == "2" or location.casefold() == "remote"
+    if location and location.casefold() != "remote" and location.casefold() not in keywords.casefold():
+        filters["keywords"] = f"{keywords} in {location}" if keywords else f"Jobs in {location}"
+    if remote and "remote" not in filters.get("keywords", keywords).casefold():
+        filters["keywords"] = f"{filters.get('keywords', keywords)} remote".strip()
+    filters.pop("location", None)
+    filters.pop("f_WT", None)
+    query = sorted(filters.items(), key=lambda item: (item[0], item[1]))
+    canonical = urlunsplit(("https", "www.linkedin.com", "/jobs/search/", urlencode(query), ""))
     if keywords and location:
         name = f"{keywords} · {location}"
     elif keywords:

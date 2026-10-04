@@ -23,6 +23,7 @@ class ScanManager:
         self.settings = settings
         self.browser_lock = asyncio.Lock()
         self.active: set[str] = set()
+        self.pending: list[tuple[str, bool]] = []
         self._due_task: asyncio.Task | None = None
         self._scheduler_task: asyncio.Task | None = None
 
@@ -56,6 +57,7 @@ class ScanManager:
                     await task
                 except asyncio.CancelledError:
                     pass
+        self.pending.clear()
 
     async def _scheduler(self) -> None:
         while True:
@@ -66,8 +68,6 @@ class ScanManager:
             await asyncio.sleep(60)
 
     def queue_due(self) -> int:
-        if self._due_task and not self._due_task.done():
-            return 0
         sources = self.db.all("SELECT id,last_attempt_at,interval_minutes,kind FROM sources WHERE enabled=1")
         current = datetime.now(timezone.utc)
         due = []
@@ -82,13 +82,52 @@ class ScanManager:
                 last = None
             if last is None or last + timedelta(minutes=source["interval_minutes"]) <= current:
                 due.append(source["id"])
-        if due:
-            self._due_task = asyncio.create_task(self._run_due(due))
-        return len(due)
+        return self.queue_sources(due)
 
-    async def _run_due(self, due: list[str]) -> None:
-        for source_id in due:
+    def queue_unscanned(self) -> dict[str, int]:
+        sources = self.db.all("SELECT id,kind FROM sources WHERE enabled=1 AND last_success_at IS NULL")
+        ids = [source["id"] for source in sources]
+        old_positions = {source_id: index for index, (source_id, _) in enumerate(self.pending)}
+        added = self.queue_sources(ids)
+        selected = set(ids)
+        self.pending[:] = ([item for item in self.pending if item[0] in selected] +
+                           [item for item in self.pending if item[0] not in selected])
+        promoted = sum(self.queue_position(source_id) is not None and
+                       self.queue_position(source_id) - 1 < old_position
+                       for source_id, old_position in old_positions.items() if source_id in selected)
+        return {"queued": added, "prioritized": promoted}
+
+    def queue_sources(self, source_ids: list[str], *, manual: bool = False) -> int:
+        waiting = {source_id for source_id, _ in self.pending}
+        added = 0
+        for source_id in source_ids:
+            if source_id in waiting or source_id in self.active:
+                continue
+            source = self.db.one("SELECT kind FROM sources WHERE id=?", (source_id,))
+            if not source:
+                continue
+            kind = source["kind"]
+            if kind in ("linkedin", "facebook") and (
+                not social_login_at(self.db, kind) or self.db.get_setting(f"social_reauth_required_{kind}")
+            ):
+                continue
+            self.pending.append((source_id, manual))
+            waiting.add(source_id)
+            added += 1
+        if self.pending and (self._due_task is None or self._due_task.done()):
+            self._due_task = asyncio.create_task(self._run_due(self.pending))
+        return added
+
+    def queue_position(self, source_id: str) -> int | None:
+        return next((index for index, (queued_id, _) in enumerate(self.pending, 1)
+                     if queued_id == source_id), None)
+
+    async def _run_due(self, due: list[tuple[str, bool]]) -> None:
+        while due:
+            source_id, manual = due.pop(0)
             try:
+                if not manual and not self.db.one("SELECT id FROM sources WHERE id=? AND enabled=1", (source_id,)):
+                    continue
                 await self.run_source(source_id)
             except Exception:
                 log.exception("Source scan failed: %s", source_id)

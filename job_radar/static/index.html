@@ -68,7 +68,7 @@
             <label>Minimum score to include<input name="threshold" type="number" min="0" max="100" value="80" required></label>
             <button class="primary" type="submit">Save draft automation</button>
           </form>
-          <div class="existing-drafts-action"><button id="queue-existing-drafts" class="secondary" type="button">Include existing jobs</button><span id="existing-draft-count" class="hint" role="status"></span></div>
+          <div class="existing-drafts-action"><button id="queue-existing-drafts" class="secondary" type="button" disabled>Include existing jobs</button><span id="existing-draft-count" class="hint" role="status"></span></div>
           <div id="auto-apply-activity" class="stack"></div>
         </details>
         <div class="two-col jobs-layout"><div id="application-list" class="stack"></div><div id="application-detail" class="panel detail"><div class="empty">No application selected.</div></div></div>
@@ -193,9 +193,9 @@
       </section>
 
       <section id="sources" class="tab">
-        <div class="section-head"><p>Company feeds scan every four hours. LinkedIn and Facebook scans require browser sign-in.</p><div class="actions"><button class="secondary" data-tab="employers">Employers</button><button class="secondary" id="scan-due">Scan due sources</button></div></div>
+        <div class="section-head"><p>Enabled sources scan every four hours. LinkedIn and Facebook share one signed-in browser and scan in order.</p><div class="actions"><button class="secondary" data-tab="employers">Employers</button><button class="primary" id="scan-unscanned">Scan all unscanned</button><button class="secondary" id="scan-due">Scan due sources</button></div></div>
         <details class="panel"><summary>Add a source</summary><form id="source-form" class="form-grid"><label>Type<select name="kind"><option value="facebook">Facebook group</option><option value="career">Career page</option><option value="linkedin">LinkedIn search</option></select></label><label id="source-name-label">Name<input name="name"></label><label class="full">URL<input name="url" type="url" placeholder="https://www.facebook.com/groups/..." required></label><p id="source-url-hint" class="full hint">Paste a Facebook group link. Job Radar names it from the page or link.</p><button class="primary" type="submit">Add source</button></form></details>
-        <div class="panel"><div class="section-head"><h3>Configured sources</h3><select id="source-kind" aria-label="Source type"><option value="">All</option><option value="linkedin">LinkedIn</option><option value="facebook">Facebook</option><option value="career">Career</option></select></div><div id="source-list" class="stack"></div></div>
+        <div class="panel"><div class="section-head"><h3>Configured sources</h3><select id="source-kind" aria-label="Source type"><option value="">All</option><option value="linkedin">LinkedIn</option><option value="facebook">Facebook</option><option value="career">Career</option></select></div><p id="source-queue-summary" class="hint"></p><div id="source-list" class="stack"></div></div>
       </section>
 
       <section id="employers" class="tab subpage">

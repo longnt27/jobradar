@@ -186,3 +186,6 @@ input,textarea,select{font-weight:400}
 .source-job-count{display:flex;align-items:center;gap:4px;margin-top:8px}
 .source-job-count strong{font-size:13px;color:#29473b}
 .source-job-count .pill{margin-left:0}
+.source-auto{display:inline-flex;align-items:center;gap:7px;margin-left:auto;font-size:12px;font-weight:600;color:#526b60;white-space:nowrap}
+.source-auto input{width:16px;height:16px;margin:0;accent-color:#28734f}
+#source-queue-summary{margin:-7px 0 16px}

@@ -475,23 +475,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def sources(kind: str | None = None):
         rows = db.all("""
             WITH latest_scan AS (
-                SELECT source_id, started_at, finished_at FROM (
-                    SELECT source_id, started_at, finished_at,
+                SELECT source_id, started_at, finished_at, observed_count, new_count FROM (
+                    SELECT source_id, started_at, finished_at, observed_count, new_count,
                            ROW_NUMBER() OVER (PARTITION BY source_id ORDER BY started_at DESC, rowid DESC) AS rank
                     FROM scan_runs WHERE status IN ('success', 'empty')
                 ) WHERE rank=1
-            ), job_counts AS (
-                SELECT o.source_id, COUNT(DISTINCT vo.vacancy_id) AS job_count,
-                       COUNT(DISTINCT CASE WHEN o.first_seen_at BETWEEN l.started_at AND l.finished_at
-                                           THEN vo.vacancy_id END) AS new_job_count
+            ), first_source AS (
+                SELECT vo.vacancy_id, o.source_id,
+                       ROW_NUMBER() OVER (PARTITION BY vo.vacancy_id ORDER BY o.first_seen_at, o.id) AS rank
                 FROM observations o
                 JOIN vacancy_observations vo ON vo.observation_id=o.id
-                LEFT JOIN latest_scan l ON l.source_id=o.source_id
-                GROUP BY o.source_id
+            ), job_counts AS (
+                SELECT source_id, COUNT(*) AS job_count FROM first_source WHERE rank=1 GROUP BY source_id
             )
             SELECT s.*, COALESCE(c.job_count,0) AS job_count,
-                   COALESCE(c.new_job_count,0) AS new_job_count
+                   CASE WHEN s.last_success_at IS NOT NULL THEN COALESCE(l.new_count,0) ELSE 0 END AS new_job_count,
+                   CASE WHEN s.last_success_at IS NOT NULL THEN l.observed_count END AS latest_observed_count
             FROM sources s LEFT JOIN job_counts c ON c.source_id=s.id
+            LEFT JOIN latest_scan l ON l.source_id=s.id
             WHERE (? IS NULL OR s.kind=?) AND NOT EXISTS(
                 SELECT 1 FROM employers e WHERE e.id=s.employer_id AND e.coverage_status='excluded_hcm')
             ORDER BY s.kind,s.name
@@ -499,6 +500,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         for row in rows:
             row["config"] = json.loads(row["config"])
             row["enabled"] = bool(row["enabled"])
+            row["queue_position"] = scan_manager.queue_position(row["id"])
+            row["scan_state"] = (
+                "scanning" if row["id"] in scan_manager.active else
+                "queued" if row["queue_position"] is not None else
+                "auto_off" if not row["enabled"] else
+                row["last_status"] or "not_scanned"
+            )
         return rows
 
     @app.post("/api/sources", status_code=201)
@@ -582,11 +590,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def scan_one(source_id: str):
         if not db.one("SELECT id FROM sources WHERE id=?", (source_id,)):
             raise HTTPException(404, "Source not found")
-        return await scan_manager.run_source(source_id)
+        queued = scan_manager.queue_sources([source_id], manual=True)
+        if not queued and source_id not in scan_manager.active and scan_manager.queue_position(source_id) is None:
+            raise HTTPException(409, "Sign in to this source in My profile before scanning")
+        return {"status": "queued" if queued else "already_queued",
+                "position": scan_manager.queue_position(source_id)}
 
     @app.post("/api/scan/due")
     async def scan_due():
         return {"queued": scan_manager.queue_due()}
+
+    @app.post("/api/scan/unscanned")
+    async def scan_unscanned():
+        return {**scan_manager.queue_unscanned(),
+                "waiting": len(scan_manager.pending), "scanning": len(scan_manager.active)}
 
     @app.get("/api/employers")
     def employers(q: str = "", category: str = "", limit: int = Query(300, ge=1, le=2000)):
