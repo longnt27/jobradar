@@ -33,7 +33,32 @@ def normalize_url(url: str) -> str:
 
 
 def normalize_text(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", value.casefold()).strip()
+    return re.sub(r"[^\w]+", " ", value.casefold(), flags=re.UNICODE).strip()
+
+
+def _text_overlap(left: str, right: str) -> float:
+    first, second = set(normalize_text(left).split()), set(normalize_text(right).split())
+    return len(first & second) / len(first | second) if first and second else 0.0
+
+
+def _contacts(value: str) -> set[str]:
+    emails = re.findall(r"[\w.+-]+@[\w.-]+\.[a-z]{2,}", value.casefold())
+    phones = [re.sub(r"\D", "", phone) for phone in re.findall(r"(?:\+?\d[\d .()-]{7,}\d)", value)]
+    return set(emails) | {phone for phone in phones if len(phone) >= 9}
+
+
+def _same_facebook_job(job: ObservedJob, candidate: dict) -> bool:
+    if (job.company != "Facebook post" and candidate["company"] != "Facebook post"
+            and normalize_text(job.company) != normalize_text(candidate["company"])):
+        return False
+    if _text_overlap(job.title, candidate["title"]) < 0.3:
+        return False
+    if job.apply_url and candidate["apply_url"] and normalize_url(job.apply_url) == candidate["apply_url"]:
+        return True
+    if min(len(normalize_text(job.description)), len(normalize_text(candidate["description"]))) < 100:
+        return False
+    overlap = _text_overlap(job.description[:5000], candidate["description"][:5000])
+    return overlap >= 0.88 or (overlap >= 0.68 and bool(_contacts(job.description) & _contacts(candidate["description"])))
 
 
 def _employer_id(conn, company: str) -> str | None:
@@ -95,6 +120,30 @@ def ingest(db: Database, source_id: str, job: ObservedJob) -> tuple[str, bool]:
                 (observation_id, source_id, job.external_id, url, digest, raw,
                  json.dumps(job.__dict__, ensure_ascii=False), job.published_at, timestamp, timestamp),
             )
+
+        # One vacancy can be observed by multiple search feeds or reposted in groups.
+        duplicate = conn.execute(
+            "SELECT vo.vacancy_id FROM observations o JOIN vacancy_observations vo ON vo.observation_id=o.id "
+            "WHERE o.url=? AND o.id<>? LIMIT 1", (url, observation_id),
+        ).fetchone()
+        merge_reason = "same_url" if duplicate else None
+        if not duplicate and urlsplit(url).hostname in {"facebook.com", "www.facebook.com"}:
+            candidates = conn.execute(
+                "SELECT DISTINCT v.id,v.title,v.company,v.description,v.apply_url FROM vacancies v "
+                "JOIN vacancy_observations vo ON vo.vacancy_id=v.id "
+                "JOIN observations o ON o.id=vo.observation_id "
+                "JOIN sources s ON s.id=o.source_id WHERE s.kind='facebook' "
+                "ORDER BY v.first_seen_at DESC LIMIT 1000"
+            ).fetchall()
+            duplicate = next((candidate for candidate in candidates if _same_facebook_job(job, dict(candidate))), None)
+            if duplicate:
+                merge_reason = "facebook_content"
+        if duplicate:
+            vacancy_id = duplicate["vacancy_id"] if "vacancy_id" in duplicate.keys() else duplicate["id"]
+            conn.execute("INSERT OR IGNORE INTO vacancy_observations(vacancy_id,observation_id,merge_reason) VALUES(?,?,?)",
+                         (vacancy_id, observation_id, merge_reason))
+            conn.execute("UPDATE vacancies SET last_seen_at=? WHERE id=?", (timestamp, vacancy_id))
+            return vacancy_id, False
 
         vacancy_id = new_id()
         employer_id = _employer_id(conn, job.company)

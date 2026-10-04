@@ -79,6 +79,47 @@ def test_generic_group_posts_do_not_merge_by_title(tmp_path: Path) -> None:
     assert ingest(db, source, first)[0] != ingest(db, source, second)[0]
 
 
+def test_same_linkedin_job_in_two_searches_is_one_vacancy(tmp_path: Path) -> None:
+    db = Database(tmp_path / "db.sqlite3")
+    seed(db)
+    sources = db.all("SELECT id FROM sources WHERE kind='linkedin' LIMIT 2")
+    job = ObservedJob("https://www.linkedin.com/jobs/view/123/", "AI Engineer", "Acme",
+                      "Build production AI services with Python and evaluate models.")
+    first_id, _ = ingest(db, sources[0]["id"], job)
+    second_id, is_new = ingest(db, sources[1]["id"], job)
+    assert second_id == first_id
+    assert not is_new
+    assert db.one("SELECT COUNT(*) AS count FROM observations")["count"] == 2
+    assert db.one("SELECT COUNT(*) AS count FROM vacancies")["count"] == 1
+
+
+def test_reposted_facebook_job_merges_by_content_and_contact(tmp_path: Path) -> None:
+    db = Database(tmp_path / "db.sqlite3")
+    seed(db)
+    first_source, second_source = new_id(), new_id()
+    for source_id, group in ((first_source, "one"), (second_source, "two")):
+        db.execute("INSERT INTO sources(id,kind,name,url,created_at) VALUES(?,'facebook',?,?,?)",
+                   (source_id, group, f"https://www.facebook.com/groups/{group}/", now()))
+    original = ObservedJob(
+        "https://www.facebook.com/groups/one/posts/10", "AI Engineer - Computer Vision", "Facebook post",
+        "Hiring AI Engineer for computer vision in Hanoi. Build image detection and segmentation models "
+        "with Python and PyTorch. Work with the robotics team to deploy models. Send CV to jobs@example.com.")
+    repost = ObservedJob(
+        "https://www.facebook.com/groups/two/posts/20", "Computer Vision AI Engineer", "Facebook post",
+        "AI Engineer in Hanoi needed for computer vision. Build image detection and segmentation models "
+        "with Python and PyTorch. Work with the robotics team to deploy models. CV: jobs@example.com.")
+    different = ObservedJob(
+        "https://www.facebook.com/groups/two/posts/30", "AI Engineer - Computer Vision", "Facebook post",
+        "Hiring AI Engineer for computer vision in Hanoi. Create entirely new 3D mapping pipelines "
+        "and lead an unrelated sensor platform. Send CV to other@example.com.")
+    first_id, _ = ingest(db, first_source, original)
+    second_id, is_new = ingest(db, second_source, repost)
+    assert second_id == first_id
+    assert not is_new
+    assert ingest(db, second_source, different)[0] != first_id
+    assert db.one("SELECT COUNT(*) AS count FROM vacancy_observations WHERE vacancy_id=?", (first_id,))["count"] == 2
+
+
 def test_same_posting_refreshes_destination_even_without_description_change(tmp_path: Path) -> None:
     db = Database(tmp_path / "db.sqlite3")
     seed(db)
