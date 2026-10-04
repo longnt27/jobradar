@@ -16,6 +16,7 @@
       <nav aria-label="Main navigation">
         <button data-tab="home" class="active">Home</button>
         <button data-tab="jobs">Jobs</button>
+        <button data-tab="sources">Job sources</button>
         <button data-tab="applications">Applications</button>
         <button data-tab="profile">My profile</button>
       </nav>
@@ -38,12 +39,12 @@
         <p id="source-summary" class="hint source-summary"></p>
         <div class="two-col home-grid">
           <div class="panel"><h3>Next steps</h3><div id="home-steps" class="stack"></div></div>
-          <div class="panel"><div class="section-head"><h3>Live activity</h3><button class="text-button" data-tab="sources">Manage sources</button></div><div id="recent-scans" class="stack"></div></div>
+          <div class="panel"><h3>Live activity</h3><div id="recent-scans" class="stack"></div></div>
         </div>
       </section>
 
       <section id="jobs" class="tab">
-        <div class="section-head"><p>Open a posting, check its source, then prepare an application.</p><div class="actions"><button class="secondary" data-tab="sources">Sources</button><button class="secondary" data-tab="employers">Employers</button><button class="secondary" id="scan-all">Scan now</button></div></div>
+        <div class="section-head"><p>Open a posting, check its source, then prepare an application.</p></div>
         <div class="panel job-analysis-panel" aria-label="Local job analysis">
           <div class="job-analysis-heading"><div><strong>Local job analysis</strong><p id="job-analysis-model" class="hint">Checking model…</p></div><button id="job-analysis-settings" class="text-button" type="button">Change model</button></div>
           <div id="matching-overview" class="matching-overview" role="status" aria-live="polite"></div>
@@ -106,8 +107,6 @@
             <div class="social-site-row"><span><strong>LinkedIn</strong><small id="linkedin-sign-in-status">Sign-in needed</small></span><button id="setup-linkedin-start" class="primary" type="button">Sign in to LinkedIn</button></div>
             <div class="social-site-row"><span><strong>Facebook</strong><small id="facebook-sign-in-status">Sign-in needed</small></span><button id="setup-facebook-start" class="primary" type="button">Sign in to Facebook</button></div>
             <p id="setup-browser-detail" class="hint"></p>
-            <details class="inline-details"><summary>Add a Facebook group to scan</summary><form id="setup-facebook-form" class="form-grid"><label class="full">Facebook group URL<input name="url" type="url" placeholder="https://www.facebook.com/groups/..." required></label><p class="full hint">Job Radar names the group from its page or link.</p><button class="secondary" type="submit">Add group</button></form></details>
-            <button class="text-button" data-tab="sources">Manage all sources →</button>
           </div>
         </details>
         <details class="panel flow-panel" id="telegram-panel">
@@ -192,15 +191,14 @@
         </div>
       </section>
 
-      <section id="sources" class="tab subpage">
-        <button class="back-link" data-tab="jobs">← Jobs</button>
-        <div class="section-head"><p>Company feeds scan every four hours. LinkedIn and Facebook scans require browser sign-in.</p><button class="secondary" id="scan-due">Scan due sources</button></div>
-        <details class="panel"><summary>Add a source</summary><form id="source-form" class="form-grid"><label>Type<select name="kind"><option value="facebook">Facebook group</option><option value="career">Career page</option><option value="linkedin">LinkedIn search</option></select></label><label id="source-name-label">Name<input name="name"></label><label class="full">URL<input name="url" type="url" required></label><button class="primary" type="submit">Add source</button></form></details>
+      <section id="sources" class="tab">
+        <div class="section-head"><p>Company feeds scan every four hours. LinkedIn and Facebook scans require browser sign-in.</p><div class="actions"><button class="secondary" data-tab="employers">Employers</button><button class="secondary" id="scan-due">Scan due sources</button></div></div>
+        <details class="panel"><summary>Add a source</summary><form id="source-form" class="form-grid"><label>Type<select name="kind"><option value="facebook">Facebook group</option><option value="career">Career page</option><option value="linkedin">LinkedIn search</option></select></label><label id="source-name-label">Name<input name="name"></label><label class="full">URL<input name="url" type="url" placeholder="https://www.facebook.com/groups/..." required></label><p id="source-url-hint" class="full hint">Paste a Facebook group link. Job Radar names it from the page or link.</p><button class="primary" type="submit">Add source</button></form></details>
         <div class="panel"><div class="section-head"><h3>Configured sources</h3><select id="source-kind" aria-label="Source type"><option value="">All</option><option value="linkedin">LinkedIn</option><option value="facebook">Facebook</option><option value="career">Career</option></select></div><div id="source-list" class="stack"></div></div>
       </section>
 
       <section id="employers" class="tab subpage">
-        <button class="back-link" data-tab="jobs">← Jobs</button>
+        <button class="back-link" data-tab="sources">← Job sources</button>
         <div class="section-head"><p>A company is actively scanned only when it has an enabled source.</p></div>
         <div class="toolbar"><input id="employer-query" type="search" placeholder="Find an employer" aria-label="Search employers"><button id="employer-search">Search</button></div>
         <div class="panel"><div id="employer-count" class="hint"></div><div id="employer-list" class="employer-grid"></div></div>

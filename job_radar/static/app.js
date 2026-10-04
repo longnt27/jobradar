@@ -459,7 +459,7 @@ function showTab(name, historyMode = 'push') {
   if (name !== 'jobs') clearTimeout(window.jobPoll);
   if (name !== 'applications') clearTimeout(window.autoApplyPoll);
   document.querySelectorAll('.tab').forEach((tab) => tab.classList.toggle('active', tab.id === name));
-  const nav = ['personal','experience','projects'].includes(name) ? 'profile' : ['sources','employers'].includes(name) ? 'jobs' : name;
+  const nav = ['personal','experience','projects'].includes(name) ? 'profile' : name === 'employers' ? 'sources' : name;
   document.querySelectorAll('.sidebar nav [data-tab]').forEach((button) => button.classList.toggle('active', button.dataset.tab === nav));
   $('#page-title').textContent = ({home:'Home',jobs:'Jobs',applications:'Applications',profile:'My profile',
     personal:'Personal details',experience:'Work history',projects:'GitHub projects',sources:'Job sources',employers:'Employers'})[name];
@@ -755,15 +755,6 @@ for (const site of ['linkedin', 'facebook']) {
   });
 }
 
-$('#setup-facebook-form').addEventListener('submit', async (event) => {
-  event.preventDefault();
-  try {
-    const data = Object.fromEntries(new FormData(event.target));
-    const result = await api('/api/sources', {method:'POST', body:JSON.stringify({...data, kind:'facebook'})});
-    event.target.reset(); await loadSetup(); notice(`${result.name} added to four-hour scans`);
-  } catch(error) { notice(error.message, true); }
-});
-
 $('#setup-smtp-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   try {
@@ -939,6 +930,8 @@ function syncSourceNameField() {
   const label = $('#source-name-label');
   label.hidden = facebook;
   form.elements.name.required = !facebook;
+  $('#source-url-hint').hidden = !facebook;
+  form.elements.url.placeholder = facebook ? 'https://www.facebook.com/groups/...' : 'https://example.com/careers';
   if (facebook) form.elements.name.value = '';
 }
 $('#source-form [name="kind"]').addEventListener('change', syncSourceNameField);
@@ -1040,7 +1033,7 @@ $('#project-add-form').addEventListener('submit', async (event) => {
   finally { button.disabled = false; }
 });
 
-for (const selector of ['#scan-due','#scan-all']) $(selector).addEventListener('click', async () => {
+$('#scan-due').addEventListener('click', async () => {
   try { const result = await api('/api/scan/due', {method:'POST'}); notice(`${result.queued} due sources queued for scanning`); }
   catch(error) { notice(error.message, true); }
 });

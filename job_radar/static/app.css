@@ -58,6 +58,8 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 #job-detail .description li{margin:0 0 8px;padding-left:3px}
 #job-list,#application-list{align-content:start}
 .source-summary{margin:-7px 0 20px}
+#source-kind{width:180px;max-width:100%;flex:none}
+@media(max-width:600px){#source-kind{width:100%}}
 #job-list{position:sticky;top:24px;align-self:start;max-height:calc(100vh - 48px);overflow-y:auto}
 #job-list .item.is-selected{border-color:#4aab78;background:#f6fbf7}
 .toolbar input{flex:1 1 300px;min-width:0}
