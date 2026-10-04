@@ -17,7 +17,7 @@ def test_linkedin_search_link_provides_name_and_stable_url() -> None:
     )
 
 
-def test_linkedin_search_url_only_reuses_existing_feed(tmp_path: Path) -> None:
+def test_linkedin_search_url_preserves_distinct_filters_and_reuses_existing_feed(tmp_path: Path) -> None:
     client = TestClient(create_app(Settings(tmp_path)))
     old = next(source for source in client.get("/api/sources?kind=linkedin").json()
                if source["name"] == "AI Engineer · Hanoi, Vietnam")
@@ -28,9 +28,14 @@ def test_linkedin_search_url_only_reuses_existing_feed(tmp_path: Path) -> None:
                "currentJobId=123&f_TPR=r86400&keywords=AI+Engineer",
     })
     assert added.status_code == 201, added.text
-    assert added.json() == {"id": old["id"], "name": old["name"], "existing": True}
-    assert next(source for source in client.get("/api/sources?kind=linkedin").json()
-                if source["id"] == old["id"])["enabled"]
+    assert added.json()["id"] != old["id"]
+    assert not next(source for source in client.get("/api/sources?kind=linkedin").json()
+                    if source["id"] == old["id"])["enabled"]
+    repeated = client.post("/api/sources", json={
+        "kind": "linkedin",
+        "url": "https://www.linkedin.com/jobs/search/?keywords=AI+Engineer&location=Hanoi%2C+Vietnam&f_TPR=r86400",
+    })
+    assert repeated.json() == {"id": added.json()["id"], "name": added.json()["name"], "existing": True}
     fresh = client.post("/api/sources", json={
         "kind": "linkedin", "url": "https://www.linkedin.com/jobs/search/?keywords=Data+Analyst&location=Hanoi",
     })

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from hashlib import sha256
 from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qsl, urljoin, urlsplit, urlunsplit, urlencode
 
@@ -66,6 +67,25 @@ def _date_from_age(text: str) -> str | None:
     unit = match.group(2)
     minutes = number if unit in ("minute", "phút") else number * 60 if unit in ("hour", "giờ") else number * 1440 if unit in ("day", "ngày") else number * 10080 if unit in ("week", "tuần") else number * 43200
     return (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat(timespec="seconds")
+
+
+def _facebook_post_url(group_url: str, links: list[str]) -> str | None:
+    group = re.search(r"/groups/([^/?#]+)", group_url)
+    if not group:
+        return None
+    group_id = group.group(1)
+    for link in links:
+        parts = urlsplit(link)
+        if parts.hostname not in {"facebook.com", "www.facebook.com", "m.facebook.com"}:
+            continue
+        match = re.fullmatch(rf"/groups/{re.escape(group_id)}/(?:posts|permalink)/(\d+)/?", parts.path)
+        if match:
+            return f"https://www.facebook.com/groups/{group_id}/posts/{match.group(1)}/"
+        query = dict(parse_qsl(parts.query))
+        photo_id = re.fullmatch(r"gm\.(\d+)", query.get("set", ""))
+        if photo_id and query.get("idorvanity") == group_id:
+            return f"https://www.facebook.com/groups/{group_id}/posts/{photo_id.group(1)}/"
+    return None
 
 
 async def _page_text(page: Page, selectors: tuple[str, ...]) -> str:
@@ -144,57 +164,76 @@ async def collect_linkedin(context: BrowserContext, source: dict) -> list[Observ
 
 
 async def _collect_linkedin_search_results(page: Page, source: dict) -> list[ObservedJob]:
-    """Read LinkedIn's newer results UI, where cards open details in the same page."""
-    cards = page.locator('[role="button"][tabindex="0"]')
-    indices = []
-    for index in range(await cards.count()):
-        if re.search(r"\bposted\s+\d+\s+(?:minute|hour|day|week|month)s?\s+ago\b", await cards.nth(index).inner_text(), re.I):
-            indices.append(index)
-    if not indices:
+    """Scroll each results page and advance through LinkedIn's paginated cards."""
+    cards = page.locator('[role="button"][componentkey^="job-card-component-ref-"]')
+    if not await cards.count():
         body = await page.locator("body").inner_text(timeout=5000)
         if re.search(r"\b0 results\b|no jobs found|no matching jobs", body, re.I):
             return []
         raise RuntimeError("LinkedIn results loaded, but job cards were not recognized")
-    jobs = []
-    for index in indices[:int(source["config"].get("max_results", 40))]:
-        card = cards.nth(index)
-        card_text = await card.inner_text()
-        lines = [line.strip() for line in card_text.splitlines() if line.strip()]
+    jobs: list[ObservedJob] = []
+    seen_ids: set[str] = set()
+    max_results = max(1, int(source["config"].get("max_results", 150)))
+    for _ in range(20):
+        ids = await cards.evaluate_all("nodes => nodes.map(n => n.getAttribute('componentkey')?.match(/\\d+$/)?.[0]).filter(Boolean)")
+        if not ids:
+            break
+        for job_id in ids:
+            if len(seen_ids) >= max_results:
+                break
+            if job_id in seen_ids:
+                continue
+            seen_ids.add(job_id)
+            card = page.locator(f'[role="button"][componentkey="job-card-component-ref-{job_id}"]')
+            try:
+                # Cards live inside LinkedIn's own scrollable results panel.
+                await card.scroll_into_view_if_needed(timeout=5000)
+                card_text = await card.inner_text(timeout=5000)
+                lines = [line.strip() for line in card_text.splitlines() if line.strip()]
+                await card.click(timeout=5000)
+                await page.wait_for_function("""id => {
+                  const link = document.querySelector(`a[href*="/jobs/view/${id}/"]`);
+                  const heading = [...document.querySelectorAll('h2')].find(e => e.textContent.trim() === 'About the job');
+                  const section = heading?.parentElement?.parentElement;
+                  return link && [...(section?.querySelectorAll('p') || [])].some(p => p.innerText.trim().length >= 30);
+                }""", arg=job_id, timeout=6500)
+                link = page.locator(f'a[href*="/jobs/view/{job_id}/"]').first
+                title = (await link.inner_text()).strip() or re.sub(r"^Selected,\s*", "", lines[0])
+                title_lines = [re.sub(r"^Selected,\s*", "", line) for line in lines]
+                company_index = next((n for n, line in enumerate(title_lines) if line == title), -1) + 1
+                while company_index < len(title_lines) and title_lines[company_index] == title:
+                    company_index += 1
+                company = title_lines[company_index] if company_index < len(title_lines) else "Unknown employer"
+                location = title_lines[company_index + 1] if company_index + 1 < len(title_lines) else ""
+                description = await page.evaluate("""() => {
+                  const heading = [...document.querySelectorAll('h2')].find(e => e.textContent.trim() === 'About the job');
+                  const section = heading?.parentElement?.parentElement;
+                  return [...(section?.querySelectorAll('p') || [])].map(p => p.innerText.trim())
+                    .sort((a, b) => b.length - a.length)[0] || '';
+                }""")
+                if not title or len(description) < 30:
+                    continue
+                jobs.append(ObservedJob(
+                    url=f"https://www.linkedin.com/jobs/view/{job_id}/",
+                    external_id=job_id, title=title[:180], company=company[:180],
+                    location=location[:250], description=description[:30000],
+                    published_at=_date_from_age(card_text), raw_text=description[:30000],
+                ))
+            except Exception:
+                continue
+        if len(seen_ids) >= max_results:
+            break
+        next_button = page.get_by_role("button", name="Next", exact=True)
+        if not await next_button.count() or not await next_button.is_enabled():
+            break
+        await next_button.click(timeout=8000)
         try:
-            await card.click(timeout=5000)
-            await page.wait_for_function("""() => {
-              const heading = [...document.querySelectorAll('h2')].find(e => e.textContent.trim() === 'About the job');
-              const section = heading?.parentElement?.parentElement;
-              return [...(section?.querySelectorAll('p') || [])].some(p => p.innerText.trim().length >= 30);
-            }""", timeout=6500)
-            link = page.locator('a[href*="/jobs/view/"]').first
-            href = await link.get_attribute("href", timeout=5000)
-            job_id = re.search(r"/jobs/view/(\d+)", href or "")
-            if not job_id:
-                continue
-            title = (await link.inner_text()).strip() or re.sub(r"^Selected,\s*", "", lines[0])
-            title_lines = [re.sub(r"^Selected,\s*", "", line) for line in lines]
-            company_index = next((n for n, line in enumerate(title_lines) if line == title), -1) + 1
-            while company_index < len(title_lines) and title_lines[company_index] == title:
-                company_index += 1
-            company = title_lines[company_index] if company_index < len(title_lines) else "Unknown employer"
-            location = title_lines[company_index + 1] if company_index + 1 < len(title_lines) else ""
-            description = await page.evaluate("""() => {
-              const heading = [...document.querySelectorAll('h2')].find(e => e.textContent.trim() === 'About the job');
-              const section = heading?.parentElement?.parentElement;
-              return [...(section?.querySelectorAll('p') || [])].map(p => p.innerText.trim())
-                .sort((a, b) => b.length - a.length)[0] || '';
-            }""")
-            if not title or len(description) < 30:
-                continue
-            jobs.append(ObservedJob(
-                url=f"https://www.linkedin.com/jobs/view/{job_id.group(1)}/",
-                external_id=job_id.group(1), title=title[:180], company=company[:180],
-                location=location[:250], description=description[:30000],
-                published_at=_date_from_age(card_text), raw_text=description[:30000],
-            ))
+            await page.wait_for_function("""first => {
+              const card = document.querySelector('[role="button"][componentkey^="job-card-component-ref-"]');
+              return card && card.getAttribute('componentkey') !== `job-card-component-ref-${first}`;
+            }""", arg=ids[0], timeout=10000)
         except Exception:
-            continue
+            break
     if not jobs:
         raise RuntimeError("LinkedIn displayed jobs, but their details could not be read")
     return jobs
@@ -207,7 +246,12 @@ ROLE = re.compile(r"\b(ai|ml|machine learning|engineer|engineering|developer|dev
 async def collect_facebook(context: BrowserContext, source: dict) -> list[ObservedJob]:
     page = await context.new_page()
     try:
-        await page.goto(source["url"], wait_until="domcontentloaded", timeout=45000)
+        # The chronological feed makes successive four-hour scans predictable.
+        parts = urlsplit(source["url"])
+        query = dict(parse_qsl(parts.query))
+        query["sorting_setting"] = "CHRONOLOGICAL"
+        feed_url = urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), ""))
+        await page.goto(feed_url, wait_until="domcontentloaded", timeout=45000)
         await page.wait_for_timeout(1600)
         body = await page.locator("body").inner_text(timeout=7000)
         _check_auth(page.url, body)
@@ -218,64 +262,89 @@ async def collect_facebook(context: BrowserContext, source: dict) -> list[Observ
         ]""")
         if name := next((cleaned for title in titles if (cleaned := clean_group_title(title))), None):
             source["resolved_name"] = name
-        max_posts = int(source["config"].get("max_posts", 50))
-        for _ in range(min(5, max_posts // 10)):
-            await page.mouse.wheel(0, 1400)
-            await page.wait_for_timeout(500)
-        posts = await page.locator('[role="article"]').evaluate_all("""nodes => nodes.map(node => ({
-            text: node.innerText || '',
-            url: [...node.querySelectorAll('a[href]')].map(a => a.href).find(h => /\\/groups\\/[^/]+\\/(posts|permalink)\\//.test(h)) || '',
-            links: [...node.querySelectorAll('a[href]')].map(a => a.href).filter(h => h.startsWith('http'))
-        }))""")
-        posts = [post for post in posts if post["text"].strip() and post["url"]
-                 and "comment_id=" not in post["url"]]
-        if not posts:
-            await page.mouse.wheel(0, -9000)
-            await page.wait_for_timeout(750)
-            messages = page.locator('[data-ad-rendering-role="story_message"]')
-            message_count = await messages.count()
-            if not message_count:
-                raise RuntimeError("No group posts were visible; check group access or sign-in")
-            relevant_count = 0
-            last_error = ""
-            for index in range(min(message_count, max_posts)):
-                message = messages.nth(index)
-                try:
-                    text = (await message.inner_text()).strip()
-                    if len(text) < 40 or not RECRUITING.search(text) or not ROLE.search(text):
-                        continue
-                    external = await message.locator('a[href]').evaluate_all(
-                        "links => links.map(a => a.href).filter(h => !h.includes('facebook.com'))")
-                    timestamp = await message.evaluate_handle("""node => {
-                      let parent = node;
-                      while (parent && parent.getAttribute('role') !== 'feed') {
-                        const link = [...parent.querySelectorAll('a[href]')].find(a => {
-                          const url = new URL(a.href);
-                          return url.searchParams.has('__cft__[0]') && /^\\/groups\\/[^/]+\\/?$/.test(url.pathname);
-                        });
-                        if (link) return link;
-                        parent = parent.parentElement;
-                      }
-                      return null;
-                    }""")
-                    if not await timestamp.evaluate("link => !!link && !!link.getClientRects().length"):
-                        continue
-                    relevant_count += 1
-                    await timestamp.click(timeout=5000, force=True)
-                    await page.wait_for_url(re.compile(r"/groups/[^/]+/(?:posts|permalink)/[^/?#]+"), timeout=5000)
-                    post_url = urlsplit(page.url)._replace(query="", fragment="").geturl()
-                    posts.append({"text": text, "url": post_url, "links": external})
-                    await page.go_back(wait_until="domcontentloaded", timeout=10000)
-                    await page.wait_for_timeout(200)
-                except Exception as error:
-                    last_error = f"{type(error).__name__}: {str(error).splitlines()[0]}"
-                    if "/posts/" in page.url or "/permalink/" in page.url:
-                        await page.go_back(wait_until="domcontentloaded", timeout=10000)
+        max_posts = max(1, int(source["config"].get("max_posts", 150)))
+        messages = page.locator('[data-ad-rendering-role="story_message"]')
+        try:
+            await messages.first.wait_for(timeout=12000)
+        except Exception as error:
+            raise RuntimeError("No group posts were visible; check group access or sign-in") from error
+        posts_by_url: dict[str, dict] = {}
+        seen: set[str] = set()
+        stale_scrolls = 0
+        matching_posts = 0
+        # Facebook unmounts older cards while new ones arrive. Read each viewport
+        # before scrolling instead of taking one final DOM snapshot.
+        for _ in range(max_posts * 2):
+            snapshot = await messages.evaluate_all("""nodes => nodes.map(node => {
+              let parent = node, links = [];
+              while (parent && parent.getAttribute('role') !== 'feed') {
+                if (parent !== node && parent.querySelectorAll('[data-ad-rendering-role="story_message"]').length > 1) break;
+                links.push(...[...parent.querySelectorAll('a[href]')].map(a => a.href));
+                parent = parent.parentElement;
+              }
+              return {text: node.innerText || '', links: [...new Set(links)],
+                external: [...node.querySelectorAll('a[href]')].map(a => a.href).filter(h => /^https?:\\/\\//.test(h) && !/facebook.com/.test(h))};
+            })""")
+            found_new = 0
+            for index, row in enumerate(snapshot):
+                text = row["text"].strip()
+                if not text:
                     continue
-            if not posts and relevant_count:
-                raise RuntimeError(f"Facebook found {relevant_count} matching posts, but their links could not be opened: {last_error}")
+                direct_url = _facebook_post_url(source["url"], row["links"])
+                post_token = next((dict(parse_qsl(urlsplit(link).query)).get("__cft__[0]")
+                                   for link in row["links"] if "__cft__" in link), None)
+                key = direct_url or post_token or sha256(re.sub(r"\s+", " ", text).encode()).hexdigest()
+                if key in seen:
+                    continue
+                seen.add(key)
+                found_new += 1
+                if len(text) < 40 or not RECRUITING.search(text) or not ROLE.search(text):
+                    continue
+                matching_posts += 1
+                try:
+                    message = messages.nth(index)
+                    see_more = message.get_by_text("See more", exact=True)
+                    if await see_more.count():
+                        await see_more.first.click(timeout=2500)
+                        text = (await message.inner_text(timeout=2500)).strip()
+                    post_url = direct_url
+                    if not post_url:
+                        timestamp = await message.evaluate_handle("""node => {
+                          let parent = node;
+                          while (parent && parent.getAttribute('role') !== 'feed') {
+                            if (parent !== node && parent.querySelectorAll('[data-ad-rendering-role="story_message"]').length > 1) break;
+                            const link = [...parent.querySelectorAll('a[href]')].find(a =>
+                              a.getClientRects().length && /\\/groups\\/[^/]+\\/\\?__cft__/.test(a.href));
+                            if (link) return link;
+                            parent = parent.parentElement;
+                          }
+                          return null;
+                        }""")
+                        if await timestamp.evaluate("link => !!link"):
+                            async with context.expect_page(timeout=7000) as opened:
+                                await timestamp.click(modifiers=["Meta"], timeout=5000)
+                            detail = await opened.value
+                            try:
+                                await detail.wait_for_url(re.compile(r"/groups/[^/]+/(?:posts|permalink)/\d+"), timeout=7000)
+                                post_url = _facebook_post_url(source["url"], [detail.url])
+                            finally:
+                                await detail.close()
+                    if post_url:
+                        if post_url not in posts_by_url or len(text) > len(posts_by_url[post_url]["text"]):
+                            posts_by_url[post_url] = {"text": text, "url": post_url, "links": row["external"]}
+                except Exception:
+                    continue
+            if len(seen) >= max_posts:
+                break
+            stale_scrolls = 0 if found_new else stale_scrolls + 1
+            if stale_scrolls >= 6:
+                break
+            await page.mouse.wheel(0, 1100)
+            await page.wait_for_timeout(500)
+        if matching_posts and not posts_by_url:
+            raise RuntimeError(f"Facebook showed {matching_posts} matching posts, but their post links could not be opened")
         jobs: list[ObservedJob] = []
-        for post in posts[:max_posts]:
+        for post in list(posts_by_url.values())[:max_posts]:
             text = post["text"].strip()
             if len(text) < 40 or not RECRUITING.search(text) or not ROLE.search(text):
                 continue
