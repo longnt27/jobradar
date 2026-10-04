@@ -64,7 +64,7 @@ class AutoApplyManager:
         waiting_existing = self.db.one("SELECT COUNT(*) AS count " + EXISTING_MATCHES_SQL + " AND v.analysis_status IN ('pending','running')")["count"]
         highest_existing_score = self.db.one("SELECT MAX(v.score) AS score " + EXISTING_MATCHES_SQL + " AND v.analysis_status='done'")["score"]
         recent = self.db.all(
-            "SELECT a.vacancy_id,a.status,a.draft_id,a.detail,a.updated_at,v.title,v.company,v.score "
+            "SELECT a.vacancy_id,a.status,a.draft_id,a.detail,a.updated_at,v.title,v.company,v.score,v.analysis_status "
             "FROM auto_application_attempts a JOIN vacancies v ON v.id=a.vacancy_id "
             "WHERE a.status!='skipped' ORDER BY a.updated_at DESC LIMIT 20")
         return {**self.config(), "counts": counts, "eligible_existing": eligible_existing,
@@ -92,21 +92,23 @@ class AutoApplyManager:
         if not config["enabled"]:
             raise ValueError("Enable automatic draft preparation first")
         with self.db.connection() as conn:
-            ids = [row["id"] for row in conn.execute(
-                "SELECT v.id " + EXISTING_MATCHES_SQL + " AND ((v.analysis_status='done' AND v.score>=?) "
+            jobs = conn.execute(
+                "SELECT v.id,v.analysis_status " + EXISTING_MATCHES_SQL + " AND ((v.analysis_status='done' AND v.score>=?) "
                 "OR v.analysis_status IN ('pending','running')) ORDER BY v.score DESC,v.first_seen_at DESC",
-                (config["threshold"],)).fetchall()]
+                (config["threshold"],)).fetchall()
             timestamp = now()
-            for job_id in ids:
+            for job in jobs:
+                detail = ("Waiting for local job analysis before draft preparation"
+                          if job["analysis_status"] != "done" else "Queued for draft preparation")
                 conn.execute(
                     "INSERT INTO auto_application_attempts(vacancy_id,status,detail,created_at,updated_at) "
-                    "VALUES(?,'queued','Existing match queued for draft preparation',?,?) "
+                    "VALUES(?,'queued',?,?,?) "
                     "ON CONFLICT(vacancy_id) DO UPDATE SET status='queued',detail=excluded.detail,updated_at=excluded.updated_at "
                     "WHERE auto_application_attempts.status='skipped'",
-                    (job_id, timestamp, timestamp),
+                    (job["id"], detail, timestamp, timestamp),
                 )
         self.wake()
-        return {"queued": len(ids)}
+        return {"queued": len(jobs)}
 
     def wake(self) -> None:
         if self.loop and self.loop.is_running():

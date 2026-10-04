@@ -117,7 +117,10 @@ def test_existing_job_waits_for_score_before_telegram_review(tmp_path: Path, mon
         app.state.auto_apply_manager.configure(True, 80)
         assert _wait_for_status(app, job_id, "skipped")
         assert client.post("/api/auto-apply/queue-existing").json() == {"queued": 1}
-        assert db.one("SELECT status FROM auto_application_attempts WHERE vacancy_id=?", (job_id,))["status"] == "queued"
+        waiting = db.one("SELECT status,detail FROM auto_application_attempts WHERE vacancy_id=?", (job_id,))
+        assert waiting["status"] == "queued"
+        assert "Waiting for local job analysis" in waiting["detail"]
+        assert client.get("/api/auto-apply").json()["recent"][0]["analysis_status"] == "pending"
         assert packets == []
         db.execute("UPDATE vacancies SET score=80,analysis_status='done' WHERE id=?", (job_id,))
         app.state.auto_apply_manager.wake()
