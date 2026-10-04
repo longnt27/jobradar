@@ -23,6 +23,7 @@ from .auto_apply import AutoApplyManager
 from .browser_login import BrowserLoginManager
 from .drafting import PROVIDERS, get_draft, prepare_draft, update_draft
 from .evidence import generate_project_content, inspect_repository
+from .facebook_groups import group_from_url, lookup_facebook_group_name
 from .github import list_public_repositories
 from .mail_config import save_smtp, send_test_email, smtp_config, smtp_config_fingerprint
 from .local_analysis import list_local_models, validate_local_model
@@ -35,11 +36,12 @@ from .seeds import seed
 from .settings import Settings
 from .scanner import ScanManager
 from .service import service_path
+from .social_browser import social_login_at
 
 
 class SourceInput(BaseModel):
     kind: Literal["linkedin", "facebook", "career"]
-    name: str = Field(min_length=2)
+    name: str = ""
     url: HttpUrl
     employer_id: str | None = None
     enabled: bool = True
@@ -481,16 +483,45 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return rows
 
     @app.post("/api/sources", status_code=201)
-    def add_source(source: SourceInput):
+    async def add_source(source: SourceInput):
         if source.employer_id and not db.one("SELECT id FROM employers WHERE id=?", (source.employer_id,)):
             raise HTTPException(404, "Employer not found")
+        name = source.name.strip()
+        url = str(source.url)
+        if source.kind == "facebook":
+            try:
+                url, name = group_from_url(url)
+            except ValueError as error:
+                raise HTTPException(422, str(error)) from error
+            existing = db.one("SELECT id,name,enabled,url FROM sources WHERE kind='facebook' AND url=?", (url,))
+            if not existing:
+                for saved in db.all("SELECT id,name,enabled,url FROM sources WHERE kind='facebook'"):
+                    try:
+                        saved_url, _ = group_from_url(saved["url"])
+                    except ValueError:
+                        continue
+                    if saved_url == url:
+                        existing = saved
+                        break
+            if existing:
+                db.execute("UPDATE sources SET enabled=1,url=? WHERE id=?", (url, existing["id"]))
+                return {"id": existing["id"], "name": existing["name"], "existing": True}
+            if (social_login_at(db, "facebook") and settings.browser_profile.is_dir()
+                    and not db.get_setting("social_reauth_required_facebook")):
+                async with scan_manager.browser_lock:
+                    try:
+                        name = await lookup_facebook_group_name(settings, url) or name
+                    except Exception:
+                        pass
+        elif len(name) < 2:
+            raise HTTPException(422, "Enter a source name")
         identifier = new_id()
         db.execute(
             "INSERT INTO sources(id,kind,name,url,employer_id,enabled,interval_minutes,config,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
-            (identifier, source.kind, source.name, str(source.url), source.employer_id,
+            (identifier, source.kind, name, url, source.employer_id,
              int(source.enabled), source.interval_minutes, json.dumps(source.config), now()),
         )
-        return {"id": identifier}
+        return {"id": identifier, "name": name}
 
     @app.patch("/api/sources/{source_id}")
     def edit_source(source_id: str, updates: dict[str, Any] = Body(...)):
@@ -502,6 +533,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(422, "Unsupported source fields")
         merged = {**row, "config": json.loads(row["config"]), **updates}
         validated = SourceInput(**merged)
+        if len(validated.name.strip()) < 2:
+            raise HTTPException(422, "Enter a source name")
         db.execute(
             "UPDATE sources SET name=?,url=?,enabled=?,interval_minutes=?,config=? WHERE id=?",
             (validated.name, str(validated.url), int(validated.enabled),

@@ -102,6 +102,9 @@ class ScanManager:
                     jobs = await collect_source(self.settings, source)
             else:
                 jobs = await collect_source(self.settings, source)
+            if source["kind"] == "facebook" and source.get("resolved_name") and source["resolved_name"] != source["name"]:
+                self.db.execute("UPDATE sources SET name=? WHERE id=?", (source["resolved_name"], source_id))
+                source["name"] = source["resolved_name"]
             new_count = 0
             new_ids = []
             for job in jobs:

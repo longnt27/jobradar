@@ -119,10 +119,11 @@ async function openSocialSignIn() {
 async function openSetupPanel(id) {
   const loading = showTab('profile');
   const panel = $(`#${id}`);
-  panel.open = true;
+  const step = panel.closest('details.flow-panel') || panel;
+  step.open = true;
   panel.scrollIntoView({behavior:'smooth', block:'start'});
   await loading;
-  panel.open = true;
+  step.open = true;
 }
 
 async function loadSetup() {
@@ -174,9 +175,8 @@ async function loadHome() {
     : 'Company career feeds scan every four hours.';
   const hasProfile = Boolean(profile.name && profile.email);
   const steps = [
-    {label:'Choose a drafting provider', detail:'For resume import and application drafts', done:!!profile.drafting_provider, tab:'profile', panel:'provider-panel'},
+    {label:'Set up AI models', detail:!profile.drafting_provider ? 'Choose an application writing provider' : !setup.matching.model ? 'Choose a local job matching model' : 'Application writing and job matching are ready', done:!!profile.drafting_provider && !!setup.matching.model, tab:'profile', panel:'provider-panel'},
     {label:'Add your resume', detail:'Import a PDF or enter details yourself', done:hasProfile, tab:'profile', panel:'resume-panel'},
-    {label:'Choose a local matching model', detail:'Extract job requirements and score fit on this Mac', done:!!setup.matching.model, tab:'profile', panel:'matching-panel'},
     {label:setup.browser.sites.length ? 'Sign in to social sites again' : 'Connect LinkedIn and Facebook', detail:setup.browser.sites.length ? `${socialSiteNames(setup.browser)} session expired` : 'Separate one-time sign-in for each site', done:setup.browser.connected_sites.length === 2 && !setup.browser.sites.length, tab:'profile', socialAuth:true},
     {label:'Telegram reviews and job alerts', detail:'Connect a private bot chat to review application drafts', done:setup.telegram_configured, tab:'profile', panel:'telegram-panel', optional:true},
     {label:'Email applications', detail:setup.smtp_test?.status === 'accepted' ? 'Mail server accepted your latest test email' : setup.smtp_test?.status === 'failed' ? 'Test failed; check your saved settings' : setup.smtp_configured ? 'Settings saved; send a test email to check them' : 'Connect Gmail or another SMTP account', done:setup.smtp_test?.status === 'accepted', tab:'profile', panel:'smtp-panel', optional:true},
@@ -321,14 +321,14 @@ async function loadProfile() {
   const providerForm = $('#provider-form');
   providerForm.querySelectorAll('option[value]').forEach((option) => { if (option.value) option.disabled = !availability[option.value]; });
   providerForm.elements.provider.value = profile.drafting_provider || '';
-  $('#provider-panel-label').textContent = profile.drafting_provider ? 'AI provider' : 'Choose your AI provider';
-  setStepStatus('#provider-status', profile.drafting_provider ? `Configured · ${profile.drafting_provider}` : 'Choose a provider', profile.drafting_provider ? '' : 'warning');
-  $('#provider-panel').open = !profile.drafting_provider;
+  const modelCount = Number(Boolean(profile.drafting_provider)) + Number(Boolean(setup.matching.model));
+  setStepStatus('#provider-status', modelCount === 2 ? 'Both configured' : modelCount ? '1 of 2 configured' : 'Choose models', modelCount === 2 ? '' : 'warning');
+  setStepStatus('#drafting-status', profile.drafting_provider ? `Using ${profile.drafting_provider}` : 'Choose a provider', profile.drafting_provider ? '' : 'warning');
+  $('#provider-panel').open = modelCount < 2;
   const hasResume = Boolean(profile.name && profile.email);
   $('#resume-panel-label').textContent = hasResume ? 'Your resume details' : 'Import your resume';
   setStepStatus('#resume-status', hasResume ? 'Details ready' : 'Needs details', hasResume ? '' : 'warning');
-  $('#resume-panel').open = Boolean(profile.drafting_provider && !hasResume);
-  if (hasResume && !setup.matching.model) $('#matching-panel').open = true;
+  $('#resume-panel').open = Boolean(modelCount === 2 && !hasResume);
   $('#social-sign-in-panel').open = Boolean(profile.drafting_provider && hasResume && (setup.browser.sites.length || setup.browser.connected_sites.length < 2));
   $('#telegram-panel').open = Boolean(hasResume && setup.matching.model && !setup.telegram_configured);
   $('#pdf-resume-form button[type="submit"]').disabled = !profile.drafting_provider || !availability[profile.drafting_provider];
@@ -759,8 +759,8 @@ $('#setup-facebook-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   try {
     const data = Object.fromEntries(new FormData(event.target));
-    await api('/api/sources', {method:'POST', body:JSON.stringify({...data, kind:'facebook'})});
-    event.target.reset(); await loadSetup(); notice('Facebook group added to four-hour scans');
+    const result = await api('/api/sources', {method:'POST', body:JSON.stringify({...data, kind:'facebook'})});
+    event.target.reset(); await loadSetup(); notice(`${result.name} added to four-hour scans`);
   } catch(error) { notice(error.message, true); }
 });
 
@@ -928,10 +928,21 @@ $('#source-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   try {
     const data = Object.fromEntries(new FormData(event.target));
-    await api('/api/sources', {method:'POST', body:JSON.stringify(data)});
-    event.target.reset(); await loadSources(); notice('Source added');
+    const result = await api('/api/sources', {method:'POST', body:JSON.stringify(data)});
+    event.target.reset(); syncSourceNameField(); await loadSources(); notice(`${result.name} added`);
   } catch(error) { notice(error.message, true); }
 });
+
+function syncSourceNameField() {
+  const form = $('#source-form');
+  const facebook = form.elements.kind.value === 'facebook';
+  const label = $('#source-name-label');
+  label.hidden = facebook;
+  form.elements.name.required = !facebook;
+  if (facebook) form.elements.name.value = '';
+}
+$('#source-form [name="kind"]').addEventListener('change', syncSourceNameField);
+syncSourceNameField();
 
 $('#employer-form').addEventListener('submit', async (event) => {
   event.preventDefault();

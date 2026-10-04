@@ -48,6 +48,17 @@ def test_social_sign_in_is_a_setup_step_and_expiry_is_visible_from_jobs(tmp_path
                 assert "LinkedIn" in banner.inner_text()
                 banner.get_by_role("button", name="Sign in again").click()
                 assert page.locator("#social-sign-in-panel").evaluate("node => node.open")
+                page.locator("#social-sign-in-panel .inline-details summary").click()
+                assert page.locator("#setup-facebook-form [name='name']").count() == 0
+                page.locator("#setup-facebook-form [name='url']").fill("https://www.facebook.com/groups/AIJobsVietnam/")
+                page.locator("#setup-facebook-form button[type='submit']").click()
+                page.get_by_text("AI Jobs Vietnam added to four-hour scans").wait_for()
+                page.locator("#social-sign-in-panel [data-tab='sources']").click()
+                page.locator("#sources details summary").filter(has_text="Add a source").click()
+                assert page.locator("#source-name-label").is_hidden()
+                page.locator("#source-form [name='kind']").select_option("career")
+                assert page.locator("#source-name-label").is_visible()
+                assert page.locator("#source-form [name='name']").get_attribute("required") is not None
             finally:
                 browser.close()
     finally:

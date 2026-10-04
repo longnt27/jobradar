@@ -11,6 +11,7 @@ from playwright.async_api import BrowserContext, Page, async_playwright
 from .ingest import ObservedJob
 from .settings import Settings
 from .social_browser import chrome_context_options
+from .facebook_groups import clean_group_title
 
 
 class AuthRequired(RuntimeError):
@@ -149,6 +150,13 @@ async def collect_facebook(context: BrowserContext, source: dict) -> list[Observ
         await page.wait_for_timeout(1600)
         body = await page.locator("body").inner_text(timeout=7000)
         _check_auth(page.url, body)
+        titles = await page.evaluate("""() => [
+            document.querySelector('meta[property="og:title"]')?.content || '',
+            document.querySelector('h1')?.innerText || '',
+            document.title || ''
+        ]""")
+        if name := next((cleaned for title in titles if (cleaned := clean_group_title(title))), None):
+            source["resolved_name"] = name
         max_posts = int(source["config"].get("max_posts", 50))
         for _ in range(min(5, max_posts // 10)):
             await page.mouse.wheel(0, 1400)
