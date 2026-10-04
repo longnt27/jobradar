@@ -94,6 +94,8 @@ async def collect_linkedin(context: BrowserContext, source: dict) -> list[Observ
         await page.goto(source["url"], wait_until="domcontentloaded", timeout=45000)
         await page.wait_for_timeout(1400)
         _check_auth(page.url, await page.locator("body").inner_text(timeout=5000))
+        if "/jobs/search-results" in page.url:
+            return await _collect_linkedin_search_results(page, source)
         urls = await page.locator('a[href*="/jobs/view/"]').evaluate_all(
             "links => [...new Set(links.map(a => a.href.split('?')[0]))]"
         )
@@ -133,10 +135,69 @@ async def collect_linkedin(context: BrowserContext, source: dict) -> list[Observ
                 raise
             except Exception:
                 continue
+        if urls and not jobs:
+            raise RuntimeError("LinkedIn displayed jobs, but their details could not be read")
         return jobs
     finally:
         await detail.close()
         await page.close()
+
+
+async def _collect_linkedin_search_results(page: Page, source: dict) -> list[ObservedJob]:
+    """Read LinkedIn's newer results UI, where cards open details in the same page."""
+    cards = page.locator('[role="button"][tabindex="0"]')
+    indices = []
+    for index in range(await cards.count()):
+        if re.search(r"\bposted\s+\d+\s+(?:minute|hour|day|week|month)s?\s+ago\b", await cards.nth(index).inner_text(), re.I):
+            indices.append(index)
+    if not indices:
+        body = await page.locator("body").inner_text(timeout=5000)
+        if re.search(r"\b0 results\b|no jobs found|no matching jobs", body, re.I):
+            return []
+        raise RuntimeError("LinkedIn results loaded, but job cards were not recognized")
+    jobs = []
+    for index in indices[:int(source["config"].get("max_results", 40))]:
+        card = cards.nth(index)
+        card_text = await card.inner_text()
+        lines = [line.strip() for line in card_text.splitlines() if line.strip()]
+        try:
+            await card.click(timeout=5000)
+            await page.wait_for_function("""() => {
+              const heading = [...document.querySelectorAll('h2')].find(e => e.textContent.trim() === 'About the job');
+              const section = heading?.parentElement?.parentElement;
+              return [...(section?.querySelectorAll('p') || [])].some(p => p.innerText.trim().length >= 30);
+            }""", timeout=6500)
+            link = page.locator('a[href*="/jobs/view/"]').first
+            href = await link.get_attribute("href", timeout=5000)
+            job_id = re.search(r"/jobs/view/(\d+)", href or "")
+            if not job_id:
+                continue
+            title = (await link.inner_text()).strip() or re.sub(r"^Selected,\s*", "", lines[0])
+            title_lines = [re.sub(r"^Selected,\s*", "", line) for line in lines]
+            company_index = next((n for n, line in enumerate(title_lines) if line == title), -1) + 1
+            while company_index < len(title_lines) and title_lines[company_index] == title:
+                company_index += 1
+            company = title_lines[company_index] if company_index < len(title_lines) else "Unknown employer"
+            location = title_lines[company_index + 1] if company_index + 1 < len(title_lines) else ""
+            description = await page.evaluate("""() => {
+              const heading = [...document.querySelectorAll('h2')].find(e => e.textContent.trim() === 'About the job');
+              const section = heading?.parentElement?.parentElement;
+              return [...(section?.querySelectorAll('p') || [])].map(p => p.innerText.trim())
+                .sort((a, b) => b.length - a.length)[0] || '';
+            }""")
+            if not title or len(description) < 30:
+                continue
+            jobs.append(ObservedJob(
+                url=f"https://www.linkedin.com/jobs/view/{job_id.group(1)}/",
+                external_id=job_id.group(1), title=title[:180], company=company[:180],
+                location=location[:250], description=description[:30000],
+                published_at=_date_from_age(card_text), raw_text=description[:30000],
+            ))
+        except Exception:
+            continue
+    if not jobs:
+        raise RuntimeError("LinkedIn displayed jobs, but their details could not be read")
+    return jobs
 
 
 RECRUITING = re.compile(r"\b(hiring|recruit|vacancy|apply|tuyển dụng|tuyển|cần tìm|cần tuyển|job opening|we are looking)\b", re.I)
