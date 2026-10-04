@@ -230,6 +230,8 @@ async def collect_facebook(context: BrowserContext, source: dict) -> list[Observ
         posts = [post for post in posts if post["text"].strip() and post["url"]
                  and "comment_id=" not in post["url"]]
         if not posts:
+            await page.mouse.wheel(0, -9000)
+            await page.wait_for_timeout(750)
             messages = page.locator('[data-ad-rendering-role="story_message"]')
             message_count = await messages.count()
             if not message_count:
@@ -242,7 +244,6 @@ async def collect_facebook(context: BrowserContext, source: dict) -> list[Observ
                     text = (await message.inner_text()).strip()
                     if len(text) < 40 or not RECRUITING.search(text) or not ROLE.search(text):
                         continue
-                    relevant_count += 1
                     external = await message.locator('a[href]').evaluate_all(
                         "links => links.map(a => a.href).filter(h => !h.includes('facebook.com'))")
                     timestamp = await message.evaluate_handle("""node => {
@@ -259,6 +260,7 @@ async def collect_facebook(context: BrowserContext, source: dict) -> list[Observ
                     }""")
                     if not await timestamp.evaluate("link => !!link && !!link.getClientRects().length"):
                         continue
+                    relevant_count += 1
                     await timestamp.click(timeout=5000, force=True)
                     await page.wait_for_url(re.compile(r"/groups/[^/]+/(?:posts|permalink)/[^/?#]+"), timeout=5000)
                     post_url = urlsplit(page.url)._replace(query="", fragment="").geturl()
