@@ -550,7 +550,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return await scan_manager.run_source(source_id)
 
     @app.post("/api/scan/due")
-    def scan_due():
+    async def scan_due():
         return {"queued": scan_manager.queue_due()}
 
     @app.get("/api/employers")

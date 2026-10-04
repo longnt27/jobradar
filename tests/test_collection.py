@@ -1,11 +1,14 @@
 import asyncio
 from pathlib import Path
 
+from fastapi.testclient import TestClient
+
 from job_radar.db import Database
 from job_radar.ingest import ObservedJob, ingest, normalize_url
 from job_radar.scanner import ScanManager
 from job_radar.seeds import seed
 from job_radar.settings import Settings
+from job_radar.web import create_app
 
 
 def test_normalization_preserves_identity_and_ingest_updates(tmp_path: Path) -> None:
@@ -37,6 +40,17 @@ def test_scan_records_observations(monkeypatch, tmp_path: Path) -> None:
     assert result["status"] == "success"
     assert result["new"] == 1
     assert db.one("SELECT status FROM scan_runs WHERE id=?", (result["run_id"],))["status"] == "success"
+
+
+def test_scan_due_endpoint_starts_background_task(monkeypatch, tmp_path: Path) -> None:
+    async def fake_run_due(self, due):
+        return None
+
+    monkeypatch.setattr(ScanManager, "_run_due", fake_run_due)
+    app = create_app(Settings(tmp_path))
+    response = TestClient(app).post("/api/scan/due")
+    assert response.status_code == 200
+    assert response.json()["queued"] > 0
 
 
 def test_generic_group_posts_do_not_merge_by_title(tmp_path: Path) -> None:
