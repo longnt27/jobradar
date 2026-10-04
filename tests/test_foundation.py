@@ -15,9 +15,29 @@ def test_first_run_seeds_employers_and_four_hour_linkedin_searches(tmp_path: Pat
     searches = client.get("/api/sources?kind=linkedin").json()
     assert len(searches) == 27
     assert all(source["interval_minutes"] == 240 for source in searches)
+    assert all("f_TPR=" not in source["url"] for source in searches)
+    assert all(source["config"]["max_results"] >= 150 for source in searches)
     assert not client.get("/api/sources?kind=facebook").json()
     gsm = next(row for row in client.get("/api/employers?q=GSM").json() if row["name"] == "GSM / Xanh SM")
     assert "GreenSM" in gsm["aliases"]
+
+
+def test_existing_default_linkedin_searches_lose_the_24_hour_filter(tmp_path: Path) -> None:
+    from job_radar.db import Database
+    from job_radar.seeds import seed
+
+    db = Database(tmp_path / "old.sqlite3")
+    seed(db)
+    default = db.one("SELECT id,url FROM sources WHERE kind='linkedin' ORDER BY name LIMIT 1")
+    old_url = default["url"] if "f_TPR=" in default["url"] else default["url"] + "&f_TPR=r86400"
+    db.execute("UPDATE sources SET url=?,config=?,last_attempt_at=? WHERE id=?",
+               (old_url, '{"max_results": 40}',
+                "2026-10-04T08:00:00+00:00", default["id"]))
+    seed(db)
+    changed = db.one("SELECT url,config,last_attempt_at FROM sources WHERE id=?", (default["id"],))
+    assert "f_TPR=" not in changed["url"]
+    assert changed["last_attempt_at"] is None
+    assert __import__("json").loads(changed["config"])["max_results"] >= 150
 
 
 def test_manual_job_search_and_state_history(tmp_path: Path) -> None:

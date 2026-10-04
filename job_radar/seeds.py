@@ -150,17 +150,37 @@ def seed(db: Database) -> None:
                     (new_id(), "career", f"{feed.employer} careers", feed.url, employer[0], 240, config, timestamp),
                 )
         existing = conn.execute("SELECT COUNT(*) FROM sources WHERE kind='linkedin'").fetchone()[0]
-        if not existing:
-            for role in ROLE_TERMS:
-                for location in ("Hanoi, Vietnam", "Vietnam", "Remote"):
-                    query = {"keywords": role, "location": location, "f_TPR": "r86400"}
-                    if location == "Remote":
-                        query["f_WT"] = "2"
+        for role in ROLE_TERMS:
+            for location in ("Hanoi, Vietnam", "Vietnam", "Remote"):
+                query = {"keywords": role, "location": location}
+                if location == "Remote":
+                    query["f_WT"] = "2"
+                name = f"{role} · {location}"
+                url = f"https://www.linkedin.com/jobs/search/?{urlencode(query)}"
+                # The original URLs put f_TPR before f_WT for remote searches.
+                old_query = {"keywords": role, "location": location, "f_TPR": "r86400"}
+                if location == "Remote":
+                    old_query["f_WT"] = "2"
+                old_url = f"https://www.linkedin.com/jobs/search/?{urlencode(old_query)}"
+                if not existing:
                     conn.execute(
                         "INSERT INTO sources(id,kind,name,url,config,created_at) VALUES(?,?,?,?,?,?)",
-                        (new_id(), "linkedin", f"{role} · {location}",
-                         f"https://www.linkedin.com/jobs/search/?{urlencode(query)}",
-                         json.dumps({"max_results": 40}), timestamp),
+                        (new_id(), "linkedin", name, url,
+                         json.dumps({"max_results": 150}), timestamp),
+                    )
+                    continue
+                saved = conn.execute(
+                    "SELECT id,config FROM sources WHERE kind='linkedin' AND name=? AND url=?",
+                    (name, old_url),
+                ).fetchone()
+                if saved:
+                    config = json.loads(saved[1])
+                    if config.get("max_results", 40) == 40:
+                        config["max_results"] = 150
+                    conn.execute(
+                        "UPDATE sources SET url=?,config=?,last_attempt_at=NULL,last_success_at=NULL,"
+                        "last_status=NULL WHERE id=?",
+                        (url, json.dumps(config), saved[0]),
                     )
     if db.get_setting("profile") is None:
         db.set_setting("profile", {
