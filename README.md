@@ -42,7 +42,7 @@ The app saves these choices. **Configured** means settings are saved. **SMTP acc
 
 - **Home** shows your next steps, counts and recent scan activity.
 - **Jobs** shows postings, their original source links, extracted facts, fit scores and the local analysis queue. Open a job to read its original description and requirements. You can also paste a job description with **Add a job from a description**. Spoken languages are shown only when the posting names a human language. Salary range shows exact pay text when stated; it is informational and does not affect the score. Freshness uses the job's published date; without one, it receives a neutral score.
-- **Job sources** is the place to add, pause, enable and scan feeds. Add a Facebook group by pasting its link. Open **Employers** from this tab for the broader company directory; an employer is actively scanned only when it has an enabled source. Add its direct career page from the employer card.
+- **Job sources** is the place to add, pause, enable and scan feeds. Add a Facebook group or LinkedIn search by pasting its link; Job Radar fills in the name. Open **Employers** from this tab for the broader company directory; an employer is actively scanned only when it has an enabled source. Add its direct career page from the employer card.
 
 The app includes [43 direct company career feeds](CAREER_FEEDS.md), which are checked on a four-hour schedule, plus LinkedIn searches that require sign-in. You can add Facebook groups and further direct career pages. The [employer directory](EMPLOYER_SCOPE.md) is larger than the active feed list; an employer entry alone does not mean its jobs are being collected. A completed empty scan means the adapter found no matching posting at that time.
 

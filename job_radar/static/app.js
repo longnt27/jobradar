@@ -942,13 +942,19 @@ $('#source-form').addEventListener('submit', async (event) => {
 
 function syncSourceNameField() {
   const form = $('#source-form');
-  const facebook = form.elements.kind.value === 'facebook';
+  const kind = form.elements.kind.value;
+  const needsName = kind === 'career';
   const label = $('#source-name-label');
-  label.hidden = facebook;
-  form.elements.name.required = !facebook;
-  $('#source-url-hint').hidden = !facebook;
-  form.elements.url.placeholder = facebook ? 'https://www.facebook.com/groups/...' : 'https://example.com/careers';
-  if (facebook) form.elements.name.value = '';
+  label.hidden = !needsName;
+  form.elements.name.required = needsName;
+  const hint = $('#source-url-hint');
+  hint.hidden = needsName;
+  hint.textContent = kind === 'linkedin'
+    ? 'Paste a LinkedIn Jobs search link. Job Radar names it from the search terms and location.'
+    : 'Paste a Facebook group link. Job Radar names it from the page or link.';
+  form.elements.url.placeholder = kind === 'linkedin' ? 'https://www.linkedin.com/jobs/search/?keywords=...'
+    : kind === 'facebook' ? 'https://www.facebook.com/groups/...' : 'https://example.com/careers';
+  if (!needsName) form.elements.name.value = '';
 }
 $('#source-form [name="kind"]').addEventListener('change', syncSourceNameField);
 syncSourceNameField();

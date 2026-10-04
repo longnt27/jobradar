@@ -63,6 +63,9 @@ def test_social_sign_in_is_a_setup_step_and_expiry_is_visible_from_jobs(tmp_path
                 page.locator("#source-form [name='kind']").select_option("career")
                 assert page.locator("#source-name-label").is_visible()
                 assert page.locator("#source-form [name='name']").get_attribute("required") is not None
+                page.locator("#source-form [name='kind']").select_option("linkedin")
+                assert page.locator("#source-name-label").is_hidden()
+                assert "LinkedIn Jobs search link" in page.locator("#source-url-hint").inner_text()
                 page.locator("#sources [data-tab='employers']").click()
                 page.locator("#employers.active").wait_for()
                 assert page.locator(".sidebar nav [data-tab='sources']").get_attribute("class") == "active"

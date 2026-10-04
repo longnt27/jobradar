@@ -24,6 +24,7 @@ from .browser_login import BrowserLoginManager
 from .drafting import PROVIDERS, get_draft, prepare_draft, update_draft
 from .evidence import generate_project_content, inspect_repository
 from .facebook_groups import group_from_url, lookup_facebook_group_name
+from .linkedin_searches import search_from_url
 from .github import list_public_repositories
 from .mail_config import save_smtp, send_test_email, smtp_config, smtp_config_fingerprint
 from .local_analysis import clean_saved_analysis, list_local_models, validate_local_model
@@ -509,6 +510,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         name = await lookup_facebook_group_name(settings, url) or name
                     except Exception:
                         pass
+        elif source.kind == "linkedin":
+            try:
+                url, name = search_from_url(url)
+            except ValueError as error:
+                raise HTTPException(422, str(error)) from error
+            existing = None
+            for saved in db.all("SELECT id,name,enabled,url FROM sources WHERE kind='linkedin'"):
+                try:
+                    saved_url, _ = search_from_url(saved["url"])
+                except ValueError:
+                    continue
+                if saved_url == url:
+                    existing = saved
+                    break
+            if existing:
+                db.execute("UPDATE sources SET enabled=1,url=? WHERE id=?", (url, existing["id"]))
+                return {"id": existing["id"], "name": existing["name"], "existing": True}
         elif len(name) < 2:
             raise HTTPException(422, "Enter a source name")
         identifier = new_id()
