@@ -53,7 +53,7 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 assert page.locator("#provider-form select").is_visible()
                 assert page.locator("#matching-model-form select").is_visible()
                 page.get_by_role("button", name="Home", exact=True).click()
-                page.get_by_role("button", name="Telegram reviews and job alerts").click()
+                page.get_by_role("button", name="Telegram application reviews").click()
                 page.locator("#telegram-panel[open]").wait_for()
                 assert page.get_by_role("button", name="Find my chat ID").is_visible()
                 page.locator("#edit-profile-button").click()

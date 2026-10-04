@@ -29,11 +29,10 @@ def test_setup_saves_secrets_without_returning_them(tmp_path: Path) -> None:
     client.post("/api/setup/smtp", json={"host": "mail.example.org", "port": 587,
         "user": "alex", "password": "", "from_address": "new@example.org"})
     assert json.loads((tmp_path / "smtp.json").read_text())["password"] == "private-password"
-    alert = client.post("/api/setup/telegram", json={"token": "1234567890:secret", "chat_id": "42", "min_score": 72})
+    alert = client.post("/api/setup/telegram", json={"token": "1234567890:secret", "chat_id": "42"})
     assert alert.status_code == 200
     status = client.get("/api/setup").json()
     assert status["smtp_configured"] and status["telegram_configured"]
-    assert status["telegram_min_score"] == 72
     assert "private-password" not in json.dumps(status)
     assert "1234567890:secret" not in json.dumps(status)
 

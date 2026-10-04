@@ -6,10 +6,11 @@ from threading import Thread
 
 from fastapi.testclient import TestClient
 
-from job_radar.auto_apply import _safe_attachments
+from job_radar.auto_apply import AutoApplyManager, _safe_attachments
 from job_radar.drafting import ModelDraft, prepare_draft
 from job_radar.ingest import ObservedJob, ingest
 from job_radar.mail_config import save_smtp
+from job_radar.notifications import save_telegram
 from job_radar.settings import Settings
 from job_radar.web import create_app
 
@@ -43,10 +44,10 @@ def test_auto_apply_prepares_new_jobs_but_waits_for_approval(tmp_path: Path, mon
     monkeypatch.setattr("job_radar.apply._send_email", lambda draft, _settings: sent.append(draft["vacancy_id"]) or "accepted")
     old_id = _scored_job(app, "Old Engineer", 99)
     with TestClient(app) as client:
-        app.state.auto_apply_manager.configure(True, 85)
+        app.state.auto_apply_manager.configure(True, 80)
         assert _wait_for_status(app, old_id, "skipped")
-        threshold_id = _scored_job(app, "Threshold Engineer", 85)
-        new_id = _scored_job(app, "New Engineer", 86)
+        threshold_id = _scored_job(app, "Below Threshold Engineer", 79)
+        new_id = _scored_job(app, "Threshold Engineer", 80)
         draft_id = _wait_for_status(app, new_id, "awaiting_review")["draft_id"]
         assert not sent
         assert app.state.db.one("SELECT state FROM vacancies WHERE id=?", (new_id,))["state"] == "prepare"
@@ -70,10 +71,10 @@ def test_existing_scored_jobs_can_be_queued_for_draft_review(tmp_path: Path) -> 
         "drafting_provider": "template"})
     save_smtp(app.state.settings, {"host": "smtp.example.org", "port": 587, "user": "", "password": "", "from": "alex@example.org"})
     old_id = _scored_job(app, "Existing Engineer", 92)
-    _scored_job(app, "Below Threshold Engineer", 85)
+    _scored_job(app, "Below Threshold Engineer", 79)
     with TestClient(app) as client:
         assert client.post("/api/auto-apply/queue-existing").status_code == 409
-        app.state.auto_apply_manager.configure(True, 85)
+        app.state.auto_apply_manager.configure(True, 80)
         assert _wait_for_status(app, old_id, "skipped")
         assert client.get("/api/auto-apply").json()["eligible_existing"] == 1
         assert client.get("/api/auto-apply").json()["highest_existing_score"] == 92
@@ -85,8 +86,47 @@ def test_existing_scored_jobs_can_be_queued_for_draft_review(tmp_path: Path) -> 
         assert attempt["draft_id"]
         status = client.get("/api/auto-apply").json()
         assert status["eligible_existing"] == 0
-        assert status["highest_existing_score"] == 85
+        assert status["highest_existing_score"] == 79
         assert not app.state.db.one("SELECT id FROM submissions WHERE vacancy_id=?", (old_id,))
+
+
+def test_existing_job_waits_for_score_before_telegram_review(tmp_path: Path, monkeypatch) -> None:
+    app = create_app(Settings(tmp_path))
+    db = app.state.db
+    db.execute("UPDATE sources SET enabled=0")
+    db.set_setting("profile", {"name": "Alex Example", "email": "alex@example.org",
+        "experience": [{"company": "Example Labs", "role": "Engineer", "dates": "2024–2026",
+                        "bullets": ["Built Python systems."]}], "drafting_provider": "template"})
+    save_smtp(app.state.settings, {"host": "smtp.example.org", "port": 587, "user": "",
+                                   "password": "", "from": "alex@example.org"})
+    save_telegram(app.state.settings, {"token": "test-token", "chat_id": "123"})
+    packets = []
+
+    async def fake_packet(_settings, draft, _blockers):
+        packets.append(draft)
+        return 42
+
+    async def quiet_telegram_loop(_self):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr("job_radar.auto_apply.send_review_packet", fake_packet)
+    monkeypatch.setattr(AutoApplyManager, "_telegram_loop", quiet_telegram_loop)
+    job_id = _scored_job(app, "Waiting Engineer", 68)
+    db.execute("UPDATE vacancies SET analysis_status='pending' WHERE id=?", (job_id,))
+    with TestClient(app) as client:
+        app.state.auto_apply_manager.configure(True, 80)
+        assert _wait_for_status(app, job_id, "skipped")
+        assert client.post("/api/auto-apply/queue-existing").json() == {"queued": 1}
+        assert db.one("SELECT status FROM auto_application_attempts WHERE vacancy_id=?", (job_id,))["status"] == "queued"
+        assert packets == []
+        db.execute("UPDATE vacancies SET score=80,analysis_status='done' WHERE id=?", (job_id,))
+        app.state.auto_apply_manager.wake()
+        attempt = _wait_for_status(app, job_id, "awaiting_review")
+        assert attempt["telegram_status"] == "sent"
+        assert len(packets) == 1
+        assert packets[0]["id"] == attempt["draft_id"]
+        assert packets[0]["job_score"] == 80
+        assert Path(packets[0]["resume_path"]).is_file()
 
 
 def test_auto_apply_missing_destination_needs_review(tmp_path: Path) -> None:

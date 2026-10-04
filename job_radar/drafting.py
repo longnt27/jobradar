@@ -252,7 +252,7 @@ def regenerate_draft(db: Database, settings: Settings, draft_id: str, prompt: st
 
 
 def get_draft(db: Database, identifier: str) -> dict:
-    row = db.one("SELECT d.*,v.title AS job_title,v.company,v.description AS job_description FROM application_drafts d JOIN vacancies v ON v.id=d.vacancy_id WHERE d.id=?", (identifier,))
+    row = db.one("SELECT d.*,v.title AS job_title,v.company,v.description AS job_description,v.score AS job_score FROM application_drafts d JOIN vacancies v ON v.id=d.vacancy_id WHERE d.id=?", (identifier,))
     if not row:
         raise KeyError("Draft not found")
     for key in ("evidence_ids", "resume_data", "message_data", "form_data", "destination", "warnings"):

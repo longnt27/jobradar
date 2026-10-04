@@ -171,6 +171,7 @@ CREATE TABLE IF NOT EXISTS telegram_review_prompts (
   message_id INTEGER PRIMARY KEY,
   draft_id TEXT NOT NULL REFERENCES application_drafts(id),
   review_hash TEXT NOT NULL,
+  action TEXT NOT NULL DEFAULT 'retry',
   created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS notification_attempts (
@@ -221,6 +222,9 @@ class Database:
             ):
                 if name not in review_columns:
                     conn.execute(f"ALTER TABLE auto_application_attempts ADD COLUMN {name} {definition}")
+            prompt_columns = {row[1] for row in conn.execute("PRAGMA table_info(telegram_review_prompts)")}
+            if "action" not in prompt_columns:
+                conn.execute("ALTER TABLE telegram_review_prompts ADD COLUMN action TEXT NOT NULL DEFAULT 'retry'")
             conn.execute("PRAGMA journal_mode=WAL")
 
     @contextmanager

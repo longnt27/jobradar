@@ -152,7 +152,6 @@ async function loadSetup() {
   const alertForm = $('#setup-telegram-form');
   if (!alertForm.dataset.initialized) {
     alertForm.elements.chat_id.value = data.telegram_chat_id || '';
-    alertForm.elements.min_score.value = data.telegram_min_score ?? 60;
     alertForm.dataset.initialized = 'true';
   }
   if ((['opening', 'open'].includes(data.browser.state) || data.matching.download_state === 'downloading') && $('#profile').classList.contains('active')) window.setupPoll = setTimeout(() => loadSetup().catch((error) => notice(error.message, true)), 2000);
@@ -179,7 +178,7 @@ async function loadHome() {
     {label:'Set up AI models', detail:!profile.drafting_provider ? 'Choose an application writing provider' : !setup.matching.model ? 'Choose a local job matching model' : 'Application writing and job matching are ready', done:!!profile.drafting_provider && !!setup.matching.model, tab:'profile', panel:'provider-panel'},
     {label:'Add your resume', detail:'Import a PDF or enter details yourself', done:hasProfile, tab:'profile', panel:'resume-panel'},
     {label:setup.browser.sites.length ? 'Sign in to social sites again' : 'Connect LinkedIn and Facebook', detail:setup.browser.sites.length ? `${socialSiteNames(setup.browser)} session expired` : 'Separate one-time sign-in for each site', done:setup.browser.connected_sites.length === 2 && !setup.browser.sites.length, tab:'profile', socialAuth:true},
-    {label:'Telegram reviews and job alerts', detail:'Connect a private bot chat to review application drafts', done:setup.telegram_configured, tab:'profile', panel:'telegram-panel', optional:true},
+    {label:'Telegram application reviews', detail:'Connect a private bot chat to review application drafts', done:setup.telegram_configured, tab:'profile', panel:'telegram-panel', optional:true},
     {label:'Email applications', detail:setup.smtp_test?.status === 'accepted' ? 'Mail server accepted your latest test email' : setup.smtp_test?.status === 'failed' ? 'Test failed; check your saved settings' : setup.smtp_configured ? 'Settings saved; send a test email to check them' : 'Connect Gmail or another SMTP account', done:setup.smtp_test?.status === 'accepted', tab:'profile', panel:'smtp-panel', optional:true},
     {label:'Select your projects', detail:'Choose GitHub repositories for tailored applications', done:setup.approved_evidence > 0, tab:'projects'},
     {label:'Review live jobs', detail:`${c.vacancies} job${c.vacancies === 1 ? '' : 's'} found; check original postings`, done:false, tab:'jobs'},
@@ -492,13 +491,13 @@ async function loadAutoApply() {
     form.elements.threshold.value = data.threshold;
     form.dataset.initialized = 'true';
   }
-  $('#auto-apply-status').textContent = data.enabled ? `On · above ${data.threshold}` : 'Off';
+  $('#auto-apply-status').textContent = data.enabled ? `On · ${data.threshold}+` : 'Off';
   $('#auto-apply-status').className = `pill ${data.enabled ? '' : 'muted'}`;
   const existingButton = $('#queue-existing-drafts');
-  existingButton.disabled = !data.enabled || !data.eligible_existing;
+  existingButton.disabled = !data.enabled || !(data.eligible_existing || data.waiting_existing);
   $('#existing-draft-count').textContent = !data.enabled ? 'Enable and save automatic drafts first.'
-    : data.eligible_existing ? `${data.eligible_existing} existing match${data.eligible_existing === 1 ? '' : 'es'} above ${data.threshold}; ${(data.counts.queued || 0)} queued.`
-    : data.highest_existing_score != null ? `No undrafted jobs score above ${data.threshold}; the highest is ${data.highest_existing_score}. Lower the threshold and save to include them.`
+    : (data.eligible_existing || data.waiting_existing) ? `${data.eligible_existing} scored match${data.eligible_existing === 1 ? '' : 'es'} at ${data.threshold}+ · ${data.waiting_existing} still analyzing · ${(data.counts.queued || 0)} queued.`
+    : data.highest_existing_score != null ? `No undrafted jobs score at least ${data.threshold}; the highest is ${data.highest_existing_score}. Lower the minimum and save to include them.`
     : `${data.counts.queued || 0} queued · No undrafted, scored jobs are ready.`;
   const activity = $('#auto-apply-activity');
   activity.innerHTML = data.recent.length ? `<h4>Draft activity</h4>${data.recent.map((item) =>
@@ -516,7 +515,7 @@ $('#auto-apply-form').addEventListener('submit', async (event) => {
     const result = await api('/api/auto-apply', {method:'PUT', body:JSON.stringify({enabled:form.elements.enabled.checked, threshold:Number(form.elements.threshold.value)})});
     delete form.dataset.initialized;
     await loadAutoApply();
-    notice(result.enabled ? `Automatic drafts enabled for new jobs scoring above ${result.threshold}. Every application waits for your approval.` : 'Automatic draft preparation paused.');
+    notice(result.enabled ? `Automatic drafts enabled for jobs scoring ${result.threshold} or higher. Every application waits for your approval.` : 'Automatic draft preparation paused.');
   } catch (error) { notice(error.message, true); }
 });
 
@@ -526,7 +525,7 @@ $('#queue-existing-drafts').addEventListener('click', async (event) => {
   try {
     const result = await api('/api/auto-apply/queue-existing', {method:'POST'});
     await loadAutoApply();
-    notice(result.queued ? `${result.queued} existing match${result.queued === 1 ? '' : 'es'} queued for draft preparation. Review each application before sending.` : 'No existing matches are ready to queue.');
+    notice(result.queued ? `${result.queued} existing job${result.queued === 1 ? '' : 's'} queued. Drafts will be prepared only for scores at or above the saved minimum, then sent to you for review.` : 'No existing jobs are ready to queue.');
   } catch (error) { notice(error.message, true); button.disabled = false; }
 });
 
@@ -833,8 +832,8 @@ $('#setup-telegram-form').addEventListener('submit', async (event) => {
     const data = Object.fromEntries(new FormData(event.target));
     await api('/api/setup/telegram', {method:'POST', body:JSON.stringify(data)});
     event.target.elements.token.value = '';
-    $('#setup-telegram-message').textContent = 'Telegram alerts configured.';
-    await loadSetup(); notice('Telegram alerts configured');
+    $('#setup-telegram-message').textContent = 'Telegram reviews configured.';
+    await loadSetup(); notice('Telegram reviews configured');
   } catch(error) { $('#setup-telegram-message').textContent = error.message; notice(error.message, true); }
 });
 
@@ -848,13 +847,13 @@ $('#telegram-find-chat').addEventListener('click', async () => {
     results.innerHTML = `<p class="hint">Choose where alerts should go:</p>${data.chats.map((chat) => `<button type="button" class="secondary" data-chat-id="${escapeHtml(chat.id)}">${escapeHtml(chat.name)} · ${escapeHtml(chat.id)}</button>`).join('')}`;
     results.querySelectorAll('[data-chat-id]').forEach((button) => button.addEventListener('click', () => {
       form.elements.chat_id.value = button.dataset.chatId;
-      results.textContent = `Selected ${button.dataset.chatId}. Save Telegram alerts to finish.`;
+      results.textContent = `Selected ${button.dataset.chatId}. Save Telegram to finish.`;
     }));
   } catch(error) { results.textContent = error.message; notice(error.message, true); }
 });
 
 $('#setup-telegram-remove').addEventListener('click', async () => {
-  try { await api('/api/setup/telegram', {method:'DELETE'}); $('#setup-telegram-form').reset(); delete $('#setup-telegram-form').dataset.initialized; await loadSetup(); notice('Telegram alerts removed'); }
+  try { await api('/api/setup/telegram', {method:'DELETE'}); $('#setup-telegram-form').reset(); delete $('#setup-telegram-form').dataset.initialized; await loadSetup(); notice('Telegram reviews removed'); }
   catch(error) { notice(error.message, true); }
 });
 

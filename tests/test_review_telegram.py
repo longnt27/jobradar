@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 
 import httpx
+import pytest
 
 from job_radar.review_telegram import format_review_details, send_review_packet
 from job_radar.drafting import ModelDraft, get_draft, prepare_draft
@@ -12,7 +13,7 @@ from job_radar.notifications import save_telegram
 
 
 def _draft(pdf: Path) -> dict:
-    return {"id": "a" * 32, "package_hash": "b" * 64, "job_title": "AI Engineer",
+    return {"id": "a" * 32, "package_hash": "b" * 64, "job_title": "AI Engineer", "job_score": 80,
             "company": "Example", "resume_path": str(pdf), "job_description": "Build reliable search services.",
             "resume_data": {"name": "Alex Example", "email": "alex@example.org", "phone": "123",
                 "summary": "Python engineer", "experience": [{"company": "Prior Co", "role": "ML Engineer",
@@ -30,7 +31,7 @@ def _draft(pdf: Path) -> dict:
 def test_review_details_include_every_application_section(tmp_path: Path) -> None:
     draft = _draft(tmp_path / "resume.pdf")
     text = format_review_details(draft, ["Check the form"])
-    for expected in ("AI Engineer", "jobs@example.org", "Build reliable search services.", "Alex Example", "Prior Co", "Built search",
+    for expected in ("AI Engineer", "80/100", "jobs@example.org", "Build reliable search services.", "Alex Example", "Prior Co", "Built search",
                      "Vision", "Trained vision models", "Example University", "Python", "Award",
                      "Application for AI Engineer", "Dear team", "Why join?", "To build useful products",
                      "Review claims", "Check the form"):
@@ -61,7 +62,7 @@ def test_review_packet_sends_full_text_pdf_and_actions(tmp_path: Path) -> None:
     assert "Trained vision models" in "\n".join(message["text"] for message in messages)
     buttons = messages[-1]["reply_markup"]["inline_keyboard"]
     assert [button["text"] for row in buttons for button in row] == ["Approve & send", "Edit", "Regenerate"]
-    assert buttons[1][0]["url"] == f"http://127.0.0.1:8787/#applications/{'a' * 32}"
+    assert buttons[1][0]["callback_data"] == f"review:edit:{'a' * 32}:{'b' * 12}"
     assert all(len(button["callback_data"].encode()) <= 64 for row in buttons for button in row if "callback_data" in button)
 
 
@@ -146,7 +147,11 @@ def test_review_notification_tracks_delivered_version(tmp_path: Path, monkeypatc
     assert attempt == {"review_hash": draft["package_hash"], "telegram_status": "sent", "telegram_message_id": 42}
 
 
-def test_telegram_retry_reply_regenerates_draft_with_custom_prompt(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize("action,instructions", [
+    ("retry", "Focus on production search"),
+    ("edit", "Correct my phone number to 555-1234"),
+])
+def test_telegram_reply_edits_or_regenerates_draft(tmp_path: Path, monkeypatch, action: str, instructions: str) -> None:
     app = create_app(Settings(tmp_path))
     db = app.state.db
     save_telegram(app.state.settings, {"token": "test-token", "chat_id": "123"})
@@ -173,12 +178,16 @@ def test_telegram_retry_reply_regenerates_draft_with_custom_prompt(tmp_path: Pat
     async def run():
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
             await app.state.auto_apply_manager.handle_telegram_update({"callback_query": {
-                "id": "retry-1", "from": {"id": 123}, "message": {"chat": {"id": 123, "type": "private"}},
-                "data": f"review:retry:{draft['id']}:{draft['package_hash'][:12]}"}}, client)
+                "id": "review-1", "from": {"id": 123}, "message": {"chat": {"id": 123, "type": "private"}},
+                "data": f"review:{action}:{draft['id']}:{draft['package_hash'][:12]}"}}, client)
             await app.state.auto_apply_manager.handle_telegram_update({"message": {
                 "message_id": 43, "chat": {"id": 123, "type": "private"}, "from": {"id": 123},
-                "reply_to_message": {"message_id": 42}, "text": "Focus on production search"}}, client)
+                "reply_to_message": {"message_id": 42}, "text": instructions}}, client)
     asyncio.run(run())
-    assert prompts[-1] == "Focus on production search"
+    if action == "edit":
+        assert prompts[-1].startswith("Make only these requested corrections")
+        assert prompts[-1].endswith(instructions)
+    else:
+        assert prompts[-1] == instructions
     assert get_draft(db, draft["id"])["package_hash"] != draft["package_hash"]
     assert db.one("SELECT status FROM auto_application_attempts WHERE vacancy_id=?", (job_id,))["status"] == "awaiting_review"

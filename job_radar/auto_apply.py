@@ -21,7 +21,7 @@ log = logging.getLogger(__name__)
 
 EXISTING_MATCHES_SQL = (
     "FROM vacancies v LEFT JOIN auto_application_attempts a ON a.vacancy_id=v.id "
-    "WHERE v.analysis_status='done' AND v.state IN ('new','interesting') "
+    "WHERE v.state IN ('new','interesting') "
     "AND (a.vacancy_id IS NULL OR a.status='skipped') "
     "AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm') "
     "AND NOT EXISTS(SELECT 1 FROM submissions s WHERE s.vacancy_id=v.id) "
@@ -54,19 +54,21 @@ class AutoApplyManager:
 
     def config(self) -> dict:
         saved = self.db.get_setting("auto_apply", {})
-        return {"enabled": bool(saved.get("enabled", False)), "threshold": int(saved.get("threshold", 85))}
+        return {"enabled": bool(saved.get("enabled", False)), "threshold": int(saved.get("threshold", 80))}
 
     def status(self) -> dict:
         counts = {row["status"]: row["count"] for row in self.db.all(
             "SELECT status,COUNT(*) AS count FROM auto_application_attempts GROUP BY status")}
         threshold = self.config()["threshold"]
-        eligible_existing = self.db.one("SELECT COUNT(*) AS count " + EXISTING_MATCHES_SQL + " AND v.score>?", (threshold,))["count"]
-        highest_existing_score = self.db.one("SELECT MAX(v.score) AS score " + EXISTING_MATCHES_SQL)["score"]
+        eligible_existing = self.db.one("SELECT COUNT(*) AS count " + EXISTING_MATCHES_SQL + " AND v.analysis_status='done' AND v.score>=?", (threshold,))["count"]
+        waiting_existing = self.db.one("SELECT COUNT(*) AS count " + EXISTING_MATCHES_SQL + " AND v.analysis_status IN ('pending','running')")["count"]
+        highest_existing_score = self.db.one("SELECT MAX(v.score) AS score " + EXISTING_MATCHES_SQL + " AND v.analysis_status='done'")["score"]
         recent = self.db.all(
             "SELECT a.vacancy_id,a.status,a.draft_id,a.detail,a.updated_at,v.title,v.company,v.score "
             "FROM auto_application_attempts a JOIN vacancies v ON v.id=a.vacancy_id "
             "WHERE a.status!='skipped' ORDER BY a.updated_at DESC LIMIT 20")
         return {**self.config(), "counts": counts, "eligible_existing": eligible_existing,
+                "waiting_existing": waiting_existing,
                 "highest_existing_score": highest_existing_score, "recent": recent}
 
     def configure(self, enabled: bool, threshold: int) -> dict:
@@ -91,7 +93,8 @@ class AutoApplyManager:
             raise ValueError("Enable automatic draft preparation first")
         with self.db.connection() as conn:
             ids = [row["id"] for row in conn.execute(
-                "SELECT v.id " + EXISTING_MATCHES_SQL + " AND v.score>? ORDER BY v.score DESC,v.first_seen_at DESC",
+                "SELECT v.id " + EXISTING_MATCHES_SQL + " AND ((v.analysis_status='done' AND v.score>=?) "
+                "OR v.analysis_status IN ('pending','running')) ORDER BY v.score DESC,v.first_seen_at DESC",
                 (config["threshold"],)).fetchall()]
             timestamp = now()
             for job_id in ids:
@@ -148,7 +151,7 @@ class AutoApplyManager:
         config = self.config()
         job = self.db.one("SELECT score,analysis_status,state FROM vacancies WHERE id=?", (job_id,))
         return bool(config["enabled"] and job and job["analysis_status"] == "done"
-                    and job["score"] is not None and job["score"] > config["threshold"]
+                    and job["score"] is not None and job["score"] >= config["threshold"]
                     and job["state"] in ("new", "interesting", "prepare"))
 
     async def _process(self, job_id: str) -> None:
@@ -292,7 +295,7 @@ class AutoApplyManager:
                     or str(message.get("from", {}).get("id")) != chat_id):
                 return
             reply_id = message.get("reply_to_message", {}).get("message_id")
-            pending = self.db.one("SELECT draft_id,review_hash FROM telegram_review_prompts WHERE message_id=?", (reply_id,)) if reply_id else None
+            pending = self.db.one("SELECT draft_id,review_hash,action FROM telegram_review_prompts WHERE message_id=?", (reply_id,)) if reply_id else None
             if not pending:
                 return
             self.db.execute("DELETE FROM telegram_review_prompts WHERE message_id=?", (reply_id,))
@@ -304,7 +307,10 @@ class AutoApplyManager:
             if not instructions or len(instructions) > 2000:
                 await _post(client, token, "sendMessage", json={"chat_id": chat_id, "text": "Send custom instructions under 2000 characters."})
                 return
-            await _post(client, token, "sendMessage", json={"chat_id": chat_id, "text": "Regenerating the application. I will send the revised draft for review."})
+            instructions = ("Make only these requested corrections to the existing application. "
+                            "Preserve all other verified facts and wording: " + instructions
+                            if pending["action"] == "edit" else instructions)
+            await _post(client, token, "sendMessage", json={"chat_id": chat_id, "text": "Updating the application. I will send the revised draft for review."})
             try:
                 await self.regenerate(pending["draft_id"], instructions)
             except (ValueError, RuntimeError, KeyError):
@@ -344,15 +350,18 @@ class AutoApplyManager:
                 reply = f"Application was not sent: {error}"
             await _post(client, token, "sendMessage", json={"chat_id": chat_id, "text": reply[:4000]})
         elif action == "edit":
-            await answer("Open the draft in Job Radar to edit every field.")
-            await _post(client, token, "sendMessage", json={"chat_id": chat_id,
-                "text": f"Edit the application on your Mac: http://127.0.0.1:{self.settings.port}/#applications/{draft_id}\nSave it to receive an updated Telegram review."})
+            await answer("Reply with the exact corrections you want.")
+            result = await _post(client, token, "sendMessage", json={"chat_id": chat_id,
+                "text": f"Reply with what to change in {draft['job_title']}, for example: correct my phone number to ... or replace the email body with ... . I will send the revised application and PDF for review. For direct field-by-field editing, open Applications in Job Radar on your Mac.",
+                "reply_markup": {"force_reply": True, "selective": True}})
+            self.db.execute("INSERT OR REPLACE INTO telegram_review_prompts(message_id,draft_id,review_hash,action,created_at) VALUES(?,?,?,'edit',?)",
+                            (result["message_id"], draft_id, draft["package_hash"], now()))
         else:
             await answer("Reply with your custom instructions for a new draft.")
             result = await _post(client, token, "sendMessage", json={"chat_id": chat_id,
                 "text": f"Reply to this message with instructions to regenerate {draft['job_title']}. Include only changes you want; Job Radar will preserve your verified facts.",
                 "reply_markup": {"force_reply": True, "selective": True}})
-            self.db.execute("INSERT OR REPLACE INTO telegram_review_prompts(message_id,draft_id,review_hash,created_at) VALUES(?,?,?,?)",
+            self.db.execute("INSERT OR REPLACE INTO telegram_review_prompts(message_id,draft_id,review_hash,action,created_at) VALUES(?,?,?,'retry',?)",
                             (result["message_id"], draft_id, draft["package_hash"], now()))
 
     async def _telegram_loop(self) -> None:
@@ -400,10 +409,11 @@ class AutoApplyManager:
         while True:
             config = self.config()
             queued = self.db.one(
-                "SELECT vacancy_id AS id FROM auto_application_attempts WHERE status='queued' "
-                "ORDER BY created_at ASC LIMIT 1") if config["enabled"] else None
+                "SELECT a.vacancy_id AS id FROM auto_application_attempts a "
+                "JOIN vacancies v ON v.id=a.vacancy_id WHERE a.status='queued' AND v.analysis_status='done' "
+                "ORDER BY a.created_at ASC LIMIT 1") if config["enabled"] else None
             job = queued or (self.db.one(
-                "SELECT v.id FROM vacancies v WHERE v.analysis_status='done' AND v.score>? AND v.state='new' "
+                "SELECT v.id FROM vacancies v WHERE v.analysis_status='done' AND v.score>=? AND v.state='new' "
                 "AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm') "
                 "AND NOT EXISTS(SELECT 1 FROM auto_application_attempts a WHERE a.vacancy_id=v.id) "
                 "ORDER BY v.score DESC,v.first_seen_at DESC LIMIT 1", (config["threshold"],)) if config["enabled"] else None)

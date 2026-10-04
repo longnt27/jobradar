@@ -11,7 +11,6 @@ import subprocess
 from .db import Database, now
 from .auto_apply import AutoApplyManager
 from .local_analysis import LocalModelUnavailable, RECOMMENDED_MODEL, analyze_job, validate_local_model
-from .notifications import notify_new_jobs
 from .settings import Settings
 
 
@@ -19,10 +18,9 @@ log = logging.getLogger(__name__)
 
 
 class MatchManager:
-    def __init__(self, db: Database, settings: Settings, notification_lock: asyncio.Lock, auto_apply: AutoApplyManager | None = None):
+    def __init__(self, db: Database, settings: Settings, auto_apply: AutoApplyManager | None = None):
         self.db = db
         self.settings = settings
-        self.notification_lock = notification_lock
         self.auto_apply = auto_apply
         self.task: asyncio.Task | None = None
         self.pull_task: asyncio.Task | None = None
@@ -169,13 +167,6 @@ class MatchManager:
                     self.db.execute("UPDATE vacancies SET analysis_status='pending' WHERE id=? AND analysis_status='running'", (job["id"],))
                 elif self.auto_apply:
                     self.auto_apply.wake()
-                if (changed and not job["analyzed_at"] and job["state"] == "new"
-                        and job["first_seen_at"] >= self.db.get_setting("matching_model_activated_at", "")):
-                    try:
-                        async with self.notification_lock:
-                            await notify_new_jobs(self.db, self.settings, [job["id"]])
-                    except Exception:
-                        log.exception("Could not send alert for analyzed job %s", job["id"])
             except asyncio.CancelledError:
                 self.db.execute("UPDATE vacancies SET analysis_status='pending' WHERE id=? AND analysis_status='running'", (job["id"],))
                 raise

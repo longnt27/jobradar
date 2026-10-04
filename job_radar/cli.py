@@ -22,7 +22,7 @@ def main() -> None:
     sub.add_parser("install-service", help="Start Job Radar in the background at macOS login")
     sub.add_parser("uninstall-service", help="Stop and remove the macOS background service")
     sub.add_parser("configure-smtp", help="Save SMTP credentials in a restricted local file")
-    sub.add_parser("configure-telegram", help="Save Telegram bot settings for job alerts")
+    sub.add_parser("configure-telegram", help="Save Telegram bot settings for application reviews")
     args = parser.parse_args()
     settings = Settings.from_env()
     if args.command in (None, "serve"):

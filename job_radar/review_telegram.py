@@ -17,6 +17,7 @@ def format_review_details(draft: dict, blockers: list[str]) -> str:
     form = draft["form_data"]
     destination = draft["destination"]
     lines = [f"Application review · {draft['job_title']} at {draft['company']}",
+             f"Match score: {draft['job_score']}/100" if draft.get("job_score") is not None else "Match score: unavailable",
              f"Destination: {destination.get('email') or destination.get('url') or 'Missing'}",
              f"Version: {draft['package_hash'][:12]}", "", "JOB DESCRIPTION",
              str(draft.get("job_description", "")), "", "RESUME",
@@ -105,7 +106,7 @@ async def send_review_packet(settings: Settings, draft: dict, blockers: list[str
                     files={"document": ("resume.pdf", file, "application/pdf")})
     short = draft["package_hash"][:12]
     buttons = [[{"text": "Approve & send", "callback_data": f"review:approve:{draft['id']}:{short}"}],
-               [{"text": "Edit", "url": f"http://127.0.0.1:{settings.port}/#applications/{draft['id']}"},
+               [{"text": "Edit", "callback_data": f"review:edit:{draft['id']}:{short}"},
                 {"text": "Regenerate", "callback_data": f"review:retry:{draft['id']}:{short}"}]]
     result = await _post(client, token, "sendMessage", json={"chat_id": chat_id,
         "text": f"Review the details and PDF above. Approve only if this version is correct ({short}).",

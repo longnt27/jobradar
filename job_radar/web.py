@@ -102,7 +102,7 @@ class MatchingModelInput(BaseModel):
 
 class AutoApplyInput(BaseModel):
     enabled: bool = False
-    threshold: int = Field(default=85, ge=0, le=100)
+    threshold: int = Field(default=80, ge=0, le=100)
 
 
 class ProjectGenerationInput(BaseModel):
@@ -137,7 +137,6 @@ class SmtpInput(BaseModel):
 class TelegramInput(BaseModel):
     token: str = ""
     chat_id: str = Field(min_length=1)
-    min_score: int = Field(default=60, ge=0, le=100)
 
 
 class TelegramLookupInput(BaseModel):
@@ -152,7 +151,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     clean_saved_analysis(db)
     scan_manager = ScanManager(db, settings)
     auto_apply_manager = AutoApplyManager(db, settings, scan_manager.browser_lock)
-    match_manager = MatchManager(db, settings, scan_manager.notification_lock, auto_apply_manager)
+    match_manager = MatchManager(db, settings, auto_apply_manager)
     login_manager = BrowserLoginManager(db, settings, scan_manager.browser_lock, scan_manager.queue_due)
 
     @asynccontextmanager
@@ -261,7 +260,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "smtp_test": {key: smtp_test[key] for key in ("status", "recipient", "checked_at", "detail") if key in smtp_test},
             "telegram_configured": bool(telegram.get("token") and telegram.get("chat_id")),
             "telegram_chat_id": telegram.get("chat_id", ""),
-            "telegram_min_score": profile.get("alert_min_score", 60),
             "matching": match_manager.status(),
             "auto_apply": auto_apply_manager.status(),
             "service_installed": service_path().exists(),
@@ -328,7 +326,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         previous = telegram_config(settings)
         token = payload.token.strip() or previous.get("token", "")
         if not token:
-            raise HTTPException(422, "Enter a bot token to configure Telegram alerts")
+            raise HTTPException(422, "Enter a bot token to configure Telegram reviews")
         save_telegram(settings, {"token": token, "chat_id": payload.chat_id})
         if token != previous.get("token") or str(payload.chat_id) != str(previous.get("chat_id", "")):
             db.set_setting("telegram_review_offset", 0)
@@ -336,9 +334,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "UPDATE auto_application_attempts SET telegram_status='pending',telegram_error=NULL,"
                 "telegram_message_id=NULL WHERE status IN ('awaiting_review','needs_review') AND draft_id IS NOT NULL"
             )
-        profile = db.get_setting("profile", {})
-        profile["alert_min_score"] = payload.min_score
-        db.set_setting("profile", profile)
         return {"configured": True}
 
     @app.post("/api/setup/telegram/chats")
