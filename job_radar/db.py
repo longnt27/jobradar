@@ -2,11 +2,19 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from threading import RLock
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
+
+
+# SQLite connections are short-lived, and several background workers use this
+# database from different threads. Keep open/use/close together to avoid a
+# macOS SQLite mutex deadlock while one thread closes a WAL connection and
+# another opens one.
+_connection_lock = RLock()
 
 
 def now() -> str:
@@ -229,17 +237,18 @@ class Database:
 
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.path, timeout=30)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys=ON")
-        try:
-            yield conn
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
+        with _connection_lock:
+            conn = sqlite3.connect(self.path, timeout=30)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys=ON")
+            try:
+                yield conn
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
 
     def one(self, sql: str, params: tuple = ()) -> dict[str, Any] | None:
         with self.connection() as conn:
