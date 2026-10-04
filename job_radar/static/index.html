@@ -62,12 +62,13 @@
         <div class="section-head"><p>Review each application before sending. Edit or regenerate a draft whenever needed.</p></div>
         <details class="panel" id="auto-apply-panel">
           <summary>Automatic draft preparation <span id="auto-apply-status" class="pill muted">Off</span></summary>
-          <p class="hint">When enabled, Job Radar prepares drafts for newly found jobs after local analysis scores them above your threshold. It sends the complete draft and resume PDF to your configured private Telegram chat. Each application waits for your approval before sending. Existing jobs are excluded.</p>
+          <p class="hint">When enabled, Job Radar prepares drafts for newly found jobs after local analysis scores them above your threshold. It sends the complete draft and resume PDF to your configured private Telegram chat. Each application waits for your approval before sending. Use the action below to include jobs already found.</p>
           <form id="auto-apply-form" class="form-grid">
             <label class="checkbox-label full"><input name="enabled" type="checkbox"><span>Prepare drafts automatically for new matches</span></label>
             <label>Minimum score to exceed<input name="threshold" type="number" min="0" max="100" value="85" required></label>
             <button class="primary" type="submit">Save draft automation</button>
           </form>
+          <div class="existing-drafts-action"><button id="queue-existing-drafts" class="secondary" type="button">Prepare drafts for existing matches</button><span id="existing-draft-count" class="hint" role="status"></span></div>
           <div id="auto-apply-activity" class="stack"></div>
         </details>
         <div class="two-col jobs-layout"><div id="application-list" class="stack"></div><div id="application-detail" class="panel detail"><div class="empty">No application selected.</div></div></div>

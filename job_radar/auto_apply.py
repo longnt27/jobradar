@@ -1,4 +1,4 @@
-"""Opt-in automatic drafting for newly discovered, locally scored jobs."""
+"""Opt-in automatic drafting for locally scored jobs."""
 
 from __future__ import annotations
 
@@ -18,6 +18,15 @@ from .settings import Settings
 
 
 log = logging.getLogger(__name__)
+
+EXISTING_MATCHES_SQL = (
+    "FROM vacancies v LEFT JOIN auto_application_attempts a ON a.vacancy_id=v.id "
+    "WHERE v.analysis_status='done' AND v.state IN ('new','interesting') "
+    "AND (a.vacancy_id IS NULL OR a.status='skipped') "
+    "AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm') "
+    "AND NOT EXISTS(SELECT 1 FROM submissions s WHERE s.vacancy_id=v.id) "
+    "AND NOT EXISTS(SELECT 1 FROM application_drafts d WHERE d.vacancy_id=v.id)"
+)
 
 
 def _safe_attachments(fields: list[dict]) -> dict[str, dict]:
@@ -50,11 +59,15 @@ class AutoApplyManager:
     def status(self) -> dict:
         counts = {row["status"]: row["count"] for row in self.db.all(
             "SELECT status,COUNT(*) AS count FROM auto_application_attempts GROUP BY status")}
+        threshold = self.config()["threshold"]
+        eligible_existing = self.db.one("SELECT COUNT(*) AS count " + EXISTING_MATCHES_SQL + " AND v.score>?", (threshold,))["count"]
+        highest_existing_score = self.db.one("SELECT MAX(v.score) AS score " + EXISTING_MATCHES_SQL)["score"]
         recent = self.db.all(
             "SELECT a.vacancy_id,a.status,a.draft_id,a.detail,a.updated_at,v.title,v.company,v.score "
             "FROM auto_application_attempts a JOIN vacancies v ON v.id=a.vacancy_id "
             "WHERE a.status!='skipped' ORDER BY a.updated_at DESC LIMIT 20")
-        return {**self.config(), "counts": counts, "recent": recent}
+        return {**self.config(), "counts": counts, "eligible_existing": eligible_existing,
+                "highest_existing_score": highest_existing_score, "recent": recent}
 
     def configure(self, enabled: bool, threshold: int) -> dict:
         if not 0 <= threshold <= 100:
@@ -71,6 +84,26 @@ class AutoApplyManager:
         self.db.set_setting("auto_apply", {"enabled": enabled, "threshold": threshold})
         self.wake()
         return self.status()
+
+    def queue_existing(self) -> dict:
+        config = self.config()
+        if not config["enabled"]:
+            raise ValueError("Enable automatic draft preparation first")
+        with self.db.connection() as conn:
+            ids = [row["id"] for row in conn.execute(
+                "SELECT v.id " + EXISTING_MATCHES_SQL + " AND v.score>? ORDER BY v.score DESC,v.first_seen_at DESC",
+                (config["threshold"],)).fetchall()]
+            timestamp = now()
+            for job_id in ids:
+                conn.execute(
+                    "INSERT INTO auto_application_attempts(vacancy_id,status,detail,created_at,updated_at) "
+                    "VALUES(?,'queued','Existing match queued for draft preparation',?,?) "
+                    "ON CONFLICT(vacancy_id) DO UPDATE SET status='queued',detail=excluded.detail,updated_at=excluded.updated_at "
+                    "WHERE auto_application_attempts.status='skipped'",
+                    (job_id, timestamp, timestamp),
+                )
+        self.wake()
+        return {"queued": len(ids)}
 
     def wake(self) -> None:
         if self.loop and self.loop.is_running():
@@ -116,7 +149,7 @@ class AutoApplyManager:
         job = self.db.one("SELECT score,analysis_status,state FROM vacancies WHERE id=?", (job_id,))
         return bool(config["enabled"] and job and job["analysis_status"] == "done"
                     and job["score"] is not None and job["score"] > config["threshold"]
-                    and job["state"] in ("new", "prepare"))
+                    and job["state"] in ("new", "interesting", "prepare"))
 
     async def _process(self, job_id: str) -> None:
         job = self.db.one("SELECT apply_url FROM vacancies WHERE id=?", (job_id,))
@@ -366,11 +399,14 @@ class AutoApplyManager:
     async def _loop(self) -> None:
         while True:
             config = self.config()
-            job = self.db.one(
+            queued = self.db.one(
+                "SELECT vacancy_id AS id FROM auto_application_attempts WHERE status='queued' "
+                "ORDER BY created_at ASC LIMIT 1") if config["enabled"] else None
+            job = queued or (self.db.one(
                 "SELECT v.id FROM vacancies v WHERE v.analysis_status='done' AND v.score>? AND v.state='new' "
                 "AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm') "
                 "AND NOT EXISTS(SELECT 1 FROM auto_application_attempts a WHERE a.vacancy_id=v.id) "
-                "ORDER BY v.score DESC,v.first_seen_at DESC LIMIT 1", (config["threshold"],)) if config["enabled"] else None
+                "ORDER BY v.score DESC,v.first_seen_at DESC LIMIT 1", (config["threshold"],)) if config["enabled"] else None)
             if not job:
                 self.wake_event.clear()
                 try:
@@ -379,9 +415,15 @@ class AutoApplyManager:
                     pass
                 continue
             job_id = job["id"]
-            self.db.execute(
-                "INSERT OR IGNORE INTO auto_application_attempts(vacancy_id,status,created_at,updated_at) VALUES(?,'preparing',?,?)",
-                (job_id, now(), now()))
+            if queued and not self._still_eligible(job_id):
+                self._set_status(job_id, "skipped", "Job no longer meets the saved automatic draft rules")
+                continue
+            if queued:
+                self._set_status(job_id, "preparing", "Preparing an existing match for review")
+            else:
+                self.db.execute(
+                    "INSERT OR IGNORE INTO auto_application_attempts(vacancy_id,status,created_at,updated_at) VALUES(?,'preparing',?,?)",
+                    (job_id, now(), now()))
             try:
                 await self._process(job_id)
             except asyncio.CancelledError:

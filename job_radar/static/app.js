@@ -493,8 +493,14 @@ async function loadAutoApply() {
   }
   $('#auto-apply-status').textContent = data.enabled ? `On · above ${data.threshold}` : 'Off';
   $('#auto-apply-status').className = `pill ${data.enabled ? '' : 'muted'}`;
+  const existingButton = $('#queue-existing-drafts');
+  existingButton.disabled = !data.enabled || !data.eligible_existing;
+  $('#existing-draft-count').textContent = !data.enabled ? 'Enable and save automatic drafts first.'
+    : data.eligible_existing ? `${data.eligible_existing} existing match${data.eligible_existing === 1 ? '' : 'es'} above ${data.threshold}; ${(data.counts.queued || 0)} queued.`
+    : data.highest_existing_score != null ? `No undrafted jobs score above ${data.threshold}; the highest is ${data.highest_existing_score}. Lower the threshold and save to include them.`
+    : `${data.counts.queued || 0} queued · No undrafted, scored jobs are ready.`;
   const activity = $('#auto-apply-activity');
-  activity.innerHTML = data.recent.length ? `<h4>Recent prepared drafts</h4>${data.recent.map((item) =>
+  activity.innerHTML = data.recent.length ? `<h4>Draft activity</h4>${data.recent.map((item) =>
     `<div class="item"><div class="item-title">${escapeHtml(item.title)} · ${escapeHtml(item.company)} <span class="pill ${item.status === 'sent' ? '' : 'warning'}">${escapeHtml(item.status.replace('_', ' '))}</span></div><div class="item-meta">${item.score == null ? '' : `${escapeHtml(item.score)}/100 · `}${escapeHtml(item.detail || '')}</div><div class="actions">${item.draft_id ? `<button type="button" data-auto-draft="${item.draft_id}">Open application</button>` : `<button type="button" data-auto-job="${item.vacancy_id}">Open job</button>`}</div></div>`
   ).join('')}` : '<p class="hint">No prepared drafts yet.</p>';
   activity.querySelectorAll('[data-auto-draft]').forEach((button) => button.addEventListener('click', () => showApplication(button.dataset.autoDraft).catch((error) => notice(error.message, true))));
@@ -511,6 +517,16 @@ $('#auto-apply-form').addEventListener('submit', async (event) => {
     await loadAutoApply();
     notice(result.enabled ? `Automatic drafts enabled for new jobs scoring above ${result.threshold}. Every application waits for your approval.` : 'Automatic draft preparation paused.');
   } catch (error) { notice(error.message, true); }
+});
+
+$('#queue-existing-drafts').addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    const result = await api('/api/auto-apply/queue-existing', {method:'POST'});
+    await loadAutoApply();
+    notice(result.queued ? `${result.queued} existing match${result.queued === 1 ? '' : 'es'} queued for draft preparation. Review each application before sending.` : 'No existing matches are ready to queue.');
+  } catch (error) { notice(error.message, true); button.disabled = false; }
 });
 
 async function showApplication(id) {

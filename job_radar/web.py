@@ -683,6 +683,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 raise HTTPException(409, "Add work history or approve a GitHub project first")
         return auto_apply_manager.configure(payload.enabled, payload.threshold)
 
+    @app.post("/api/auto-apply/queue-existing")
+    def queue_existing_auto_apply():
+        try:
+            return auto_apply_manager.queue_existing()
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
+
     @app.post("/api/jobs/{job_id}/state")
     def update_state(job_id: str, payload: StateInput):
         if not db.one("SELECT id FROM vacancies WHERE id=?", (job_id,)):

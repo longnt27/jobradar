@@ -62,6 +62,33 @@ def test_auto_apply_prepares_new_jobs_but_waits_for_approval(tmp_path: Path, mon
         assert sent == [new_id]
 
 
+def test_existing_scored_jobs_can_be_queued_for_draft_review(tmp_path: Path) -> None:
+    app = create_app(Settings(tmp_path))
+    app.state.db.execute("UPDATE sources SET enabled=0")
+    app.state.db.set_setting("profile", {"name": "Alex Example", "email": "alex@example.org",
+        "experience": [{"company": "Example Labs", "role": "Engineer", "dates": "2024–2026", "bullets": ["Built Python systems."]}],
+        "drafting_provider": "template"})
+    save_smtp(app.state.settings, {"host": "smtp.example.org", "port": 587, "user": "", "password": "", "from": "alex@example.org"})
+    old_id = _scored_job(app, "Existing Engineer", 92)
+    _scored_job(app, "Below Threshold Engineer", 85)
+    with TestClient(app) as client:
+        assert client.post("/api/auto-apply/queue-existing").status_code == 409
+        app.state.auto_apply_manager.configure(True, 85)
+        assert _wait_for_status(app, old_id, "skipped")
+        assert client.get("/api/auto-apply").json()["eligible_existing"] == 1
+        assert client.get("/api/auto-apply").json()["highest_existing_score"] == 92
+        queued = client.post("/api/auto-apply/queue-existing")
+        assert queued.status_code == 200, queued.text
+        assert queued.json() == {"queued": 1}
+        assert client.post("/api/auto-apply/queue-existing").json() == {"queued": 0}
+        attempt = _wait_for_status(app, old_id, "awaiting_review")
+        assert attempt["draft_id"]
+        status = client.get("/api/auto-apply").json()
+        assert status["eligible_existing"] == 0
+        assert status["highest_existing_score"] == 85
+        assert not app.state.db.one("SELECT id FROM submissions WHERE vacancy_id=?", (old_id,))
+
+
 def test_auto_apply_missing_destination_needs_review(tmp_path: Path) -> None:
     app = create_app(Settings(tmp_path))
     app.state.db.execute("UPDATE sources SET enabled=0")
