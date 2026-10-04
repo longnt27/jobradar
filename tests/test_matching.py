@@ -6,6 +6,7 @@ from pathlib import Path
 import httpx
 from fastapi.testclient import TestClient
 
+from job_radar.db import now
 from job_radar.ingest import ObservedJob, ingest
 from job_radar.local_analysis import Criterion, JobFacts, LocalModelUnavailable, MatchJudgment, _generate, _ground_facts, analyze_job, clean_saved_analysis, extract_salary_range, freshness_criterion, validate_local_model
 from job_radar.settings import Settings
@@ -132,6 +133,38 @@ def test_model_setting_backfills_jobs_without_changing_drafting_provider(tmp_pat
         assert json.loads(job["score_detail"])["facts"]["responsibilities"] == ["Build models"]
         assert client.get("/api/profile").json()["drafting_provider"] == ""
         assert client.get("/api/setup").json()["matching"]["completed"] == 1
+
+
+def test_reanalysis_does_not_send_old_job_alert_again(tmp_path: Path, monkeypatch) -> None:
+    app = create_app(Settings(tmp_path))
+    db = app.state.db
+    db.execute("UPDATE sources SET enabled=0")
+    db.set_setting("matching_model", "test:small")
+    db.set_setting("matching_model_activated_at", "2020-01-01T00:00:00+00:00")
+    monkeypatch.setattr("job_radar.matching.analyze_job", lambda *_args: (88, {"method": "local_llm"}))
+    alerted = []
+
+    async def fake_notify(_db, _settings, ids):
+        alerted.extend(ids)
+
+    monkeypatch.setattr("job_radar.matching.notify_new_jobs", fake_notify)
+    client = TestClient(app)
+    old_id = client.post("/api/jobs/import", json={"company": "Example", "title": "Old Engineer",
+        "description": "Build Python systems."}).json()["id"]
+    db.execute("UPDATE vacancies SET analyzed_at=?,analysis_status='pending' WHERE id=?", (now(), old_id))
+    with TestClient(app) as running:
+        for _ in range(100):
+            if running.get(f"/api/jobs/{old_id}").json()["analysis_status"] == "done":
+                break
+            time.sleep(.02)
+        assert alerted == []
+        new_id = running.post("/api/jobs/import", json={"company": "Example", "title": "New Engineer",
+            "description": "Build Python systems."}).json()["id"]
+        for _ in range(100):
+            if running.get(f"/api/jobs/{new_id}").json()["analysis_status"] == "done":
+                break
+            time.sleep(.02)
+        assert alerted == [new_id]
 
 
 def test_ollama_outage_keeps_jobs_queued(tmp_path: Path, monkeypatch) -> None:

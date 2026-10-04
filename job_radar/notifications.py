@@ -92,8 +92,12 @@ async def notify_new_jobs(db: Database, settings: Settings, vacancy_ids: list[st
         pending = db.all("SELECT vacancy_id FROM notification_attempts WHERE channel='telegram' AND status='pending' ORDER BY last_attempt_at LIMIT 50")
         for row in pending:
             identifier = row["vacancy_id"]
-            job = db.one("SELECT title,company,location,score,apply_url FROM vacancies WHERE id=?", (identifier,))
+            job = db.one("SELECT title,company,location,score,apply_url,state FROM vacancies WHERE id=?", (identifier,))
             if not job:
+                continue
+            if (job["score"] or 0) < minimum or job["state"] != "new":
+                db.execute("UPDATE notification_attempts SET status='skipped',last_error='Job no longer meets alert rules' "
+                           "WHERE vacancy_id=? AND channel='telegram'", (identifier,))
                 continue
             source = db.one("SELECT o.url FROM vacancy_observations vo JOIN observations o ON o.id=vo.observation_id WHERE vo.vacancy_id=? ORDER BY o.first_seen_at LIMIT 1", (identifier,))
             url = job["apply_url"] or (source["url"] if source else "")

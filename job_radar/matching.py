@@ -169,7 +169,8 @@ class MatchManager:
                     self.db.execute("UPDATE vacancies SET analysis_status='pending' WHERE id=? AND analysis_status='running'", (job["id"],))
                 elif self.auto_apply:
                     self.auto_apply.wake()
-                if changed and job["state"] == "new" and job["first_seen_at"] >= self.db.get_setting("matching_model_activated_at", ""):
+                if (changed and not job["analyzed_at"] and job["state"] == "new"
+                        and job["first_seen_at"] >= self.db.get_setting("matching_model_activated_at", "")):
                     try:
                         async with self.notification_lock:
                             await notify_new_jobs(self.db, self.settings, [job["id"]])
