@@ -5,6 +5,8 @@ import hashlib
 import json
 import re
 import shutil
+import smtplib
+import ssl
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
@@ -22,7 +24,7 @@ from .browser_login import BrowserLoginManager
 from .drafting import PROVIDERS, get_draft, prepare_draft, update_draft
 from .evidence import generate_project_content, inspect_repository
 from .github import list_public_repositories
-from .mail_config import save_smtp, smtp_config
+from .mail_config import save_smtp, send_test_email, smtp_config, smtp_config_fingerprint
 from .local_analysis import list_local_models, validate_local_model
 from .matching import MatchManager
 from .notifications import discover_telegram_chats, save_telegram, telegram_config
@@ -235,6 +237,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def setup_status():
         profile = db.get_setting("profile", {})
         mail = smtp_config(settings)
+        smtp_test = db.get_setting("smtp_test", {})
+        if smtp_test.get("fingerprint") != smtp_config_fingerprint(mail):
+            smtp_test = {}
         telegram = telegram_config(settings)
         return {
             "profile_complete": bool(profile.get("name") and profile.get("email")),
@@ -250,6 +255,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "smtp_port": mail.get("port", 587),
             "smtp_user": mail.get("user", ""),
             "smtp_from": mail.get("from", ""),
+            "smtp_test": {key: smtp_test[key] for key in ("status", "recipient", "checked_at", "detail") if key in smtp_test},
             "telegram_configured": bool(telegram.get("token") and telegram.get("chat_id")),
             "telegram_chat_id": telegram.get("chat_id", ""),
             "telegram_min_score": profile.get("alert_min_score", 60),
@@ -275,11 +281,43 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(422, "Gmail needs your full email address and a Google app password")
         save_smtp(settings, {"host": host, "port": payload.port, "user": payload.user.strip(),
                              "password": password, "from": payload.from_address.strip()})
+        db.set_setting("smtp_test", {})
         return {"configured": True}
+
+    @app.post("/api/setup/smtp/test")
+    async def test_mail():
+        config = smtp_config(settings)
+        if not config.get("host") or not config.get("from"):
+            raise HTTPException(409, "Save your email settings before sending a test")
+        fingerprint = smtp_config_fingerprint(config)
+        checked_at = now()
+        try:
+            recipient = await asyncio.to_thread(send_test_email, settings)
+        except Exception as error:
+            if isinstance(error, smtplib.SMTPAuthenticationError):
+                detail = "SMTP rejected the sign-in. For Gmail, check your full address and Google app password."
+            elif isinstance(error, (smtplib.SMTPRecipientsRefused, smtplib.SMTPSenderRefused)):
+                detail = "SMTP rejected the From address. Check the address saved in Email applications."
+            elif isinstance(error, (ssl.SSLError, smtplib.SMTPNotSupportedError)):
+                detail = "Secure SMTP connection failed. Check the server and port."
+            elif isinstance(error, (TimeoutError, OSError)):
+                detail = "Could not reach the SMTP server. Check the server, port, and network."
+            elif isinstance(error, ValueError):
+                detail = str(error)
+            else:
+                detail = "The SMTP server did not accept the test email. Check your email settings."
+            db.set_setting("smtp_test", {"status": "failed", "recipient": config.get("from", ""),
+                                         "checked_at": checked_at, "detail": detail, "fingerprint": fingerprint})
+            raise HTTPException(502, detail) from error
+        result = {"status": "accepted", "recipient": recipient, "checked_at": checked_at,
+                  "detail": "SMTP accepted the test email. Check your inbox or spam folder."}
+        db.set_setting("smtp_test", {**result, "fingerprint": fingerprint})
+        return result
 
     @app.delete("/api/setup/smtp")
     def remove_mail():
         (settings.data_dir / "smtp.json").unlink(missing_ok=True)
+        db.set_setting("smtp_test", {})
         return {"configured": False}
 
     @app.post("/api/setup/telegram")

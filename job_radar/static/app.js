@@ -128,7 +128,9 @@ async function openSetupPanel(id) {
 async function loadSetup() {
   clearTimeout(window.setupPoll);
   const data = await api('/api/setup');
-  setStepStatus('#setup-smtp-status', data.smtp_configured ? 'Configured' : 'Optional', data.smtp_configured ? '' : 'muted');
+  const smtpTest = data.smtp_test || {};
+  setStepStatus('#setup-smtp-status', !data.smtp_configured ? 'Optional' : smtpTest.status === 'accepted' ? 'SMTP accepted' : smtpTest.status === 'failed' ? 'Test failed' : 'Configured',
+    !data.smtp_configured ? 'muted' : smtpTest.status === 'failed' ? 'warning' : '');
   setStepStatus('#setup-telegram-status', data.telegram_configured ? 'Configured' : 'Optional', data.telegram_configured ? '' : 'muted');
   setStepStatus('#matching-status', data.matching.model ? `Configured · ${data.matching.model}` : 'Choose a model', data.matching.model ? '' : 'warning');
   renderSocialAuth(data.browser);
@@ -141,6 +143,10 @@ async function loadSetup() {
     mailForm.elements.from_address.value = data.smtp_from || '';
     mailForm.dataset.initialized = 'true';
   }
+  $('#smtp-send-test').disabled = !data.smtp_configured || mailForm.dataset.dirty === 'true';
+  $('#smtp-test-result').textContent = mailForm.dataset.dirty === 'true' ? 'Save your changes before sending a test.'
+    : smtpTest.status ? `${smtpTest.detail} ${smtpTest.status === 'accepted' ? 'Sent to' : 'Attempted for'} ${smtpTest.recipient} · ${when(smtpTest.checked_at)}`
+    : data.smtp_configured ? `No test sent yet. The test will go to ${data.smtp_from}.` : 'Save settings to send a test email.';
   const alertForm = $('#setup-telegram-form');
   if (!alertForm.dataset.initialized) {
     alertForm.elements.chat_id.value = data.telegram_chat_id || '';
@@ -173,7 +179,7 @@ async function loadHome() {
     {label:'Choose a local matching model', detail:'Extract job requirements and score fit on this Mac', done:!!setup.matching.model, tab:'profile', panel:'matching-panel'},
     {label:setup.browser.sites.length ? 'Sign in to social sites again' : 'Connect LinkedIn and Facebook', detail:setup.browser.sites.length ? `${socialSiteNames(setup.browser)} session expired` : 'Separate one-time sign-in for each site', done:setup.browser.connected_sites.length === 2 && !setup.browser.sites.length, tab:'profile', socialAuth:true},
     {label:'Telegram reviews and job alerts', detail:'Connect a private bot chat to review application drafts', done:setup.telegram_configured, tab:'profile', panel:'telegram-panel', optional:true},
-    {label:'Email applications', detail:'Connect Gmail or another SMTP account for approved email applications', done:setup.smtp_configured, tab:'profile', panel:'smtp-panel', optional:true},
+    {label:'Email applications', detail:setup.smtp_test?.status === 'accepted' ? 'Mail server accepted your latest test email' : setup.smtp_test?.status === 'failed' ? 'Test failed; check your saved settings' : setup.smtp_configured ? 'Settings saved; send a test email to check them' : 'Connect Gmail or another SMTP account', done:setup.smtp_test?.status === 'accepted', tab:'profile', panel:'smtp-panel', optional:true},
     {label:'Select your projects', detail:'Choose GitHub repositories for tailored applications', done:setup.approved_evidence > 0, tab:'projects'},
     {label:'Review live jobs', detail:`${c.vacancies} job${c.vacancies === 1 ? '' : 's'} found; check original postings`, done:false, tab:'jobs'},
   ];
@@ -765,6 +771,7 @@ $('#setup-smtp-form').addEventListener('submit', async (event) => {
     data.port = Number(data.port);
     await api('/api/setup/smtp', {method:'POST', body:JSON.stringify(data)});
     event.target.elements.password.value = '';
+    delete event.target.dataset.dirty;
     await loadSetup(); notice('Email settings saved');
   } catch(error) { notice(error.message, true); }
 });
@@ -778,13 +785,38 @@ $('#smtp-gmail-preset').addEventListener('click', async () => {
     form.elements.user.value = profile.email || '';
     form.elements.from_address.value = profile.email || '';
     form.elements.password.value = '';
+    form.dataset.dirty = 'true';
+    $('#smtp-send-test').disabled = true;
+    $('#smtp-test-result').textContent = 'Save your changes before sending a test.';
     form.elements.user.focus();
   } catch (error) { notice(error.message, true); }
 });
 
 $('#setup-smtp-remove').addEventListener('click', async () => {
-  try { await api('/api/setup/smtp', {method:'DELETE'}); $('#setup-smtp-form').reset(); delete $('#setup-smtp-form').dataset.initialized; await loadSetup(); notice('Email settings removed'); }
+  try { await api('/api/setup/smtp', {method:'DELETE'}); $('#setup-smtp-form').reset(); delete $('#setup-smtp-form').dataset.initialized; delete $('#setup-smtp-form').dataset.dirty; await loadSetup(); notice('Email settings removed'); }
   catch(error) { notice(error.message, true); }
+});
+
+for (const eventName of ['input', 'change']) $('#setup-smtp-form').addEventListener(eventName, () => {
+  $('#setup-smtp-form').dataset.dirty = 'true';
+  $('#smtp-send-test').disabled = true;
+  $('#smtp-test-result').textContent = 'Save your changes before sending a test.';
+});
+
+$('#smtp-send-test').addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  button.textContent = 'Sending test…';
+  $('#smtp-test-result').textContent = 'Connecting to your email server…';
+  try {
+    await api('/api/setup/smtp/test', {method:'POST'});
+    await loadSetup();
+  } catch (error) {
+    await loadSetup();
+    notice(error.message, true);
+  } finally {
+    button.textContent = 'Send test email';
+  }
 });
 
 $('#setup-telegram-form').addEventListener('submit', async (event) => {

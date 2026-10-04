@@ -5,8 +5,6 @@ import hashlib
 import json
 import os
 import re
-import smtplib
-import ssl
 from email.message import EmailMessage
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -15,7 +13,7 @@ from playwright.async_api import BrowserContext, Page, async_playwright
 
 from .db import Database, new_id, now
 from .drafting import draft_custom_answers, get_draft, package_hash
-from .mail_config import smtp_config
+from .mail_config import send_smtp_message, validated_smtp_config
 from .settings import Settings
 from .social_browser import chrome_context_options
 
@@ -137,16 +135,7 @@ def _validate_destination(destination: dict) -> None:
 
 
 def _validated_smtp_config(settings: Settings) -> dict:
-    config = smtp_config(settings)
-    host = config.get("host", "")
-    user = config.get("user", "")
-    sender = config.get("from", user)
-    port = int(config.get("port", 587))
-    if not host or not sender:
-        raise ValueError("Run job-radar configure-smtp before sending email applications")
-    if port not in (465, 587):
-        raise ValueError("SMTP port must be 465 or 587")
-    return config
+    return validated_smtp_config(settings)
 
 
 def _reviewed_attachment(settings: Settings, draft: dict, field: dict) -> str | None:
@@ -224,29 +213,14 @@ def send_readiness(db: Database, settings: Settings, draft: dict) -> list[str]:
 
 def _send_email(draft: dict, settings: Settings) -> str:
     config = _validated_smtp_config(settings)
-    host = config["host"]
-    user = config.get("user", "")
-    password = config.get("password", "")
-    sender = config.get("from", user)
-    port = int(config.get("port", 587))
     message = EmailMessage()
-    message["From"] = sender
+    message["From"] = config.get("from", config.get("user", ""))
     message["To"] = draft["destination"]["email"]
     message["Subject"] = draft["message_data"]["subject"]
     message.set_content(draft["message_data"]["body"])
     resume_path = Path(draft["resume_path"])
     message.add_attachment(resume_path.read_bytes(), maintype="application", subtype="pdf", filename="resume.pdf")
-    if port == 465:
-        with smtplib.SMTP_SSL(host, port, context=ssl.create_default_context(), timeout=30) as connection:
-            if user:
-                connection.login(user, password)
-            connection.send_message(message)
-    else:
-        with smtplib.SMTP(host, port, timeout=30) as connection:
-            connection.starttls(context=ssl.create_default_context())
-            if user:
-                connection.login(user, password)
-            connection.send_message(message)
+    send_smtp_message(config, message)
     return str(message["Message-ID"] or "SMTP accepted message")
 
 

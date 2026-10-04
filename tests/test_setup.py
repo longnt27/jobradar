@@ -1,5 +1,6 @@
 import asyncio
 import json
+import smtplib
 import stat
 import time
 from pathlib import Path
@@ -51,6 +52,58 @@ def test_gmail_smtp_requires_its_own_app_password(tmp_path: Path) -> None:
     gmail["password"] = ""
     assert client.post("/api/setup/smtp", json=gmail).status_code == 200
     assert client.get("/api/setup").json()["smtp_configured"] is True
+
+
+def test_email_connection_test_sends_to_saved_address_and_tracks_result(tmp_path: Path, monkeypatch) -> None:
+    client = TestClient(create_app(Settings(tmp_path)))
+    assert client.post("/api/setup/smtp/test").status_code == 409
+    gmail = {"host": "smtp.gmail.com", "port": 465, "user": "alex@gmail.com",
+             "password": "gmail-app-password", "from_address": "alex@gmail.com"}
+    assert client.post("/api/setup/smtp", json=gmail).status_code == 200
+    sent = []
+
+    class FakeSMTP:
+        def __init__(self, host, port, **kwargs):
+            assert (host, port) == ("smtp.gmail.com", 465)
+            assert kwargs["timeout"] == 30
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def login(self, user, password):
+            assert (user, password) == ("alex@gmail.com", "gmail-app-password")
+
+        def send_message(self, message):
+            sent.append(message)
+
+    monkeypatch.setattr("job_radar.mail_config.smtplib.SMTP_SSL", FakeSMTP)
+    response = client.post("/api/setup/smtp/test")
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "accepted"
+    assert response.json()["recipient"] == "alex@gmail.com"
+    assert len(sent) == 1
+    assert sent[0]["From"] == sent[0]["To"] == "alex@gmail.com"
+    assert sent[0]["Subject"] == "Job Radar email test"
+    assert not sent[0].is_multipart()
+    setup = client.get("/api/setup").json()
+    assert setup["smtp_test"]["status"] == "accepted"
+    assert "gmail-app-password" not in response.text + json.dumps(setup)
+
+    class RejectedSMTP(FakeSMTP):
+        def login(self, *_args):
+            raise smtplib.SMTPAuthenticationError(535, b"Bad credentials")
+
+    monkeypatch.setattr("job_radar.mail_config.smtplib.SMTP_SSL", RejectedSMTP)
+    rejected = client.post("/api/setup/smtp/test")
+    assert rejected.status_code == 502
+    assert "app password" in rejected.json()["detail"].lower()
+    assert client.get("/api/setup").json()["smtp_test"]["status"] == "failed"
+    gmail["password"] = ""
+    assert client.post("/api/setup/smtp", json=gmail).status_code == 200
+    assert client.get("/api/setup").json()["smtp_test"] == {}
 
 
 def test_telegram_first_time_blank_token_returns_validation_error(tmp_path: Path) -> None:

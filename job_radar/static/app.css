@@ -37,6 +37,11 @@
 .smtp-guide p{margin:5px 0 0;max-width:680px}
 .smtp-guide button{flex:none}
 @media(max-width:700px){.smtp-guide{align-items:flex-start;flex-direction:column}}
+.smtp-test{display:flex;align-items:center;justify-content:space-between;gap:18px;margin:20px 23px 23px;padding:16px 18px;border:1px solid #dce7df;border-radius:10px}
+.smtp-test strong{font-size:13px;color:#214c38}
+.smtp-test p{margin:5px 0 0}
+.smtp-test button{flex:none}
+@media(max-width:700px){.smtp-test{align-items:flex-start;flex-direction:column}}
 .preferences-grid{padding-top:14px}
 .back-link{background:transparent;border:0;color:#287451;padding:0 0 16px;font-size:13px;font-weight:700}
 .subpage .section-head{margin-bottom:20px}
