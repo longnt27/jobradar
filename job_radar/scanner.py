@@ -68,7 +68,8 @@ class ScanManager:
             await asyncio.sleep(60)
 
     def queue_due(self) -> int:
-        sources = self.db.all("SELECT id,last_attempt_at,interval_minutes,kind FROM sources WHERE enabled=1")
+        sources = self.db.all("SELECT id,last_attempt_at,interval_minutes,kind FROM sources WHERE enabled=1 "
+                              "AND COALESCE(json_extract(config,'$.retired'),0)=0")
         current = datetime.now(timezone.utc)
         due = []
         for source in sources:
@@ -85,7 +86,8 @@ class ScanManager:
         return self.queue_sources(due)
 
     def queue_unscanned(self) -> dict[str, int]:
-        sources = self.db.all("SELECT id,kind FROM sources WHERE enabled=1 AND last_success_at IS NULL")
+        sources = self.db.all("SELECT id,kind FROM sources WHERE enabled=1 AND last_success_at IS NULL "
+                              "AND COALESCE(json_extract(config,'$.retired'),0)=0")
         ids = [source["id"] for source in sources]
         old_positions = {source_id: index for index, (source_id, _) in enumerate(self.pending)}
         added = self.queue_sources(ids)
@@ -103,7 +105,8 @@ class ScanManager:
         for source_id in source_ids:
             if source_id in waiting or source_id in self.active:
                 continue
-            source = self.db.one("SELECT kind FROM sources WHERE id=?", (source_id,))
+            source = self.db.one("SELECT kind FROM sources WHERE id=? "
+                                 "AND COALESCE(json_extract(config,'$.retired'),0)=0", (source_id,))
             if not source:
                 continue
             kind = source["kind"]
@@ -126,7 +129,9 @@ class ScanManager:
         while due:
             source_id, manual = due.pop(0)
             try:
-                if not manual and not self.db.one("SELECT id FROM sources WHERE id=? AND enabled=1", (source_id,)):
+                if not self.db.one("SELECT id FROM sources WHERE id=? "
+                                   "AND COALESCE(json_extract(config,'$.retired'),0)=0 "
+                                   + ("" if manual else "AND enabled=1"), (source_id,)):
                     continue
                 await self.run_source(source_id)
             except Exception:
@@ -139,6 +144,8 @@ class ScanManager:
         )
         if not source:
             raise KeyError("Source not found")
+        if source["config"] and json.loads(source["config"]).get("retired"):
+            raise ValueError("Retired source cannot be scanned")
         if source["employer_id"] and self.db.one("SELECT id FROM employers WHERE id=? AND coverage_status='excluded_hcm'", (source["employer_id"],)):
             raise ValueError("HCMC-based employer is outside the crawl scope")
         if source["kind"] in ("linkedin", "facebook") and self.db.get_setting(f"social_reauth_required_{source['kind']}"):

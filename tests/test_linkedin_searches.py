@@ -20,7 +20,7 @@ def test_linkedin_search_link_provides_name_and_stable_url() -> None:
 def test_linkedin_search_url_preserves_distinct_filters_and_reuses_existing_feed(tmp_path: Path) -> None:
     client = TestClient(create_app(Settings(tmp_path)))
     old = next(source for source in client.get("/api/sources?kind=linkedin").json()
-               if source["name"] == "AI Engineer · Hanoi, Vietnam")
+               if source["name"] == "AI Engineer")
     client.patch(f"/api/sources/{old['id']}", json={"enabled": False})
     added = client.post("/api/sources", json={
         "kind": "linkedin",

@@ -149,43 +149,44 @@ def seed(db: Database) -> None:
                     "INSERT INTO sources(id,kind,name,url,employer_id,interval_minutes,config,created_at) VALUES(?,?,?,?,?,?,?,?)",
                     (new_id(), "career", f"{feed.employer} careers", feed.url, employer[0], 240, config, timestamp),
                 )
-        existing = conn.execute("SELECT COUNT(*) FROM sources WHERE kind='linkedin'").fetchone()[0]
         for role in ROLE_TERMS:
-            for location in ("Hanoi, Vietnam", "Vietnam", "Remote"):
-                name = f"{role} · {location}"
-                # LinkedIn's AI search currently drops the separate location
-                # parameter. Put the location in the query it actually uses.
-                keywords = f"{role} remote" if location == "Remote" else f"{role} in {location}"
-                url = f"https://www.linkedin.com/jobs/search/?{urlencode({'keywords': keywords})}"
-                previous_query = {"keywords": role, "location": location}
-                if location == "Remote":
-                    previous_query["f_WT"] = "2"
-                previous_url = f"https://www.linkedin.com/jobs/search/?{urlencode(previous_query)}"
-                # The original URLs put f_TPR before f_WT for remote searches.
-                old_query = {"keywords": role, "location": location, "f_TPR": "r86400"}
-                if location == "Remote":
-                    old_query["f_WT"] = "2"
-                old_url = f"https://www.linkedin.com/jobs/search/?{urlencode(old_query)}"
-                if not existing:
-                    conn.execute(
-                        "INSERT INTO sources(id,kind,name,url,config,created_at) VALUES(?,?,?,?,?,?)",
-                        (new_id(), "linkedin", name, url,
-                         json.dumps({"max_results": 150}), timestamp),
-                    )
+            url = f"https://www.linkedin.com/jobs/search/?{urlencode({'keywords': role})}"
+            saved = conn.execute(
+                "SELECT id,name,url,config,enabled FROM sources WHERE kind='linkedin' AND name=? AND url=?",
+                (role, url),
+            ).fetchone()
+            legacy = conn.execute(
+                "SELECT id,name,url,config,enabled FROM sources WHERE kind='linkedin' "
+                "AND name IN (?,?,?) ORDER BY CASE name WHEN ? THEN 0 WHEN ? THEN 1 ELSE 2 END",
+                (f"{role} · Hanoi, Vietnam", f"{role} · Vietnam", f"{role} · Remote",
+                 f"{role} · Hanoi, Vietnam", f"{role} · Vietnam"),
+            ).fetchall()
+            if saved:
+                survivor_id = saved[0]
+            elif legacy:
+                survivor_id = legacy[0][0]
+                config = json.loads(legacy[0][3])
+                config.pop("retired", None)
+                config.pop("merged_into", None)
+                config["max_results"] = max(150, config.get("max_results", 0))
+                conn.execute(
+                    "UPDATE sources SET name=?,url=?,config=?,enabled=?,last_attempt_at=NULL,"
+                    "last_success_at=NULL,last_status=NULL WHERE id=?",
+                    (role, url, json.dumps(config), int(any(row[4] for row in legacy)), survivor_id),
+                )
+            else:
+                survivor_id = new_id()
+                conn.execute(
+                    "INSERT INTO sources(id,kind,name,url,config,created_at) VALUES(?,'linkedin',?,?,?,?)",
+                    (survivor_id, role, url, json.dumps({"max_results": 150}), timestamp),
+                )
+            for old in legacy:
+                if old[0] == survivor_id:
                     continue
-                saved = conn.execute(
-                    "SELECT id,config FROM sources WHERE kind='linkedin' AND name=? AND url IN (?,?)",
-                    (name, old_url, previous_url),
-                ).fetchone()
-                if saved:
-                    config = json.loads(saved[1])
-                    if config.get("max_results", 40) == 40:
-                        config["max_results"] = 150
-                    conn.execute(
-                        "UPDATE sources SET url=?,config=?,last_attempt_at=NULL,last_success_at=NULL,"
-                        "last_status=NULL WHERE id=?",
-                        (url, json.dumps(config), saved[0]),
-                    )
+                config = json.loads(old[3])
+                config.update({"retired": True, "merged_into": survivor_id})
+                conn.execute("UPDATE sources SET enabled=0,config=? WHERE id=?",
+                             (json.dumps(config), old[0]))
     if db.get_setting("profile") is None:
         db.set_setting("profile", {
             "name": "", "email": "", "phone": "", "location": "", "drafting_provider": "",

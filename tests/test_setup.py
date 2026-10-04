@@ -20,7 +20,7 @@ def test_setup_saves_secrets_without_returning_them(tmp_path: Path) -> None:
     client = TestClient(create_app(Settings(tmp_path)))
     initial = client.get("/api/setup").json()
     assert initial["profile_complete"] is False
-    assert initial["linkedin_searches"] == 27
+    assert initial["linkedin_searches"] == 9
     smtp = client.post("/api/setup/smtp", json={"host": "mail.example.org", "port": 587,
         "user": "alex", "password": "private-password", "from_address": "alex@example.org"})
     assert smtp.status_code == 200
@@ -146,7 +146,7 @@ def test_social_scans_wait_for_browser_setup(tmp_path: Path) -> None:
         assert manager.queue_due() == len(CAREER_FEEDS)
         await manager.stop()
         db.set_setting("social_login_completed_at_linkedin", now())
-        assert manager.queue_due() == len(CAREER_FEEDS) + 27
+        assert manager.queue_due() == len(CAREER_FEEDS) + 9
         await manager.stop()
 
     asyncio.run(run())

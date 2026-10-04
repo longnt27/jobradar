@@ -486,9 +486,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     FROM scan_runs WHERE status IN ('success', 'empty')
                 ) WHERE rank=1
             ), first_source AS (
-                SELECT vo.vacancy_id, o.source_id,
+                SELECT vo.vacancy_id,
+                       COALESCE(json_extract(original.config,'$.merged_into'),o.source_id) AS source_id,
                        ROW_NUMBER() OVER (PARTITION BY vo.vacancy_id ORDER BY o.first_seen_at, o.id) AS rank
                 FROM observations o
+                JOIN sources original ON original.id=o.source_id
                 JOIN vacancy_observations vo ON vo.observation_id=o.id
             ), job_counts AS (
                 SELECT source_id, COUNT(*) AS job_count FROM first_source WHERE rank=1 GROUP BY source_id
@@ -498,7 +500,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                    CASE WHEN s.last_success_at IS NOT NULL THEN l.observed_count END AS latest_observed_count
             FROM sources s LEFT JOIN job_counts c ON c.source_id=s.id
             LEFT JOIN latest_scan l ON l.source_id=s.id
-            WHERE (? IS NULL OR s.kind=?) AND NOT EXISTS(
+            WHERE (? IS NULL OR s.kind=?) AND COALESCE(json_extract(s.config,'$.retired'),0)=0 AND NOT EXISTS(
                 SELECT 1 FROM employers e WHERE e.id=s.employer_id AND e.coverage_status='excluded_hcm')
             ORDER BY s.kind,s.name
         """, (kind, kind))
@@ -551,7 +553,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             except ValueError as error:
                 raise HTTPException(422, str(error)) from error
             existing = None
-            for saved in db.all("SELECT id,name,enabled,url FROM sources WHERE kind='linkedin'"):
+            for saved in db.all("SELECT id,name,enabled,url FROM sources WHERE kind='linkedin' "
+                                "AND COALESCE(json_extract(config,'$.retired'),0)=0"):
                 try:
                     saved_url, _ = search_from_url(saved["url"])
                 except ValueError:
@@ -577,6 +580,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         row = db.one("SELECT * FROM sources WHERE id=?", (source_id,))
         if not row:
             raise HTTPException(404, "Source not found")
+        if json.loads(row["config"]).get("retired"):
+            raise HTTPException(404, "Source not found")
         allowed = {"name", "url", "enabled", "interval_minutes", "config"}
         if not updates or set(updates) - allowed:
             raise HTTPException(422, "Unsupported source fields")
@@ -593,7 +598,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/sources/{source_id}/scan")
     async def scan_one(source_id: str):
-        if not db.one("SELECT id FROM sources WHERE id=?", (source_id,)):
+        if not db.one("SELECT id FROM sources WHERE id=? AND COALESCE(json_extract(config,'$.retired'),0)=0", (source_id,)):
             raise HTTPException(404, "Source not found")
         queued = scan_manager.queue_sources([source_id], manual=True)
         if not queued and source_id not in scan_manager.active and scan_manager.queue_position(source_id) is None:
