@@ -31,9 +31,10 @@ def test_one_queue_reports_real_worker_order_and_analysis_stage(tmp_path: Path) 
     queued_draft = job("Explicit draft", "done", 90, "2026-10-04T10:00:00+00:00")
     automatic_draft = job("Automatic draft", "done", 85, "2026-10-04T09:00:00+00:00")
     waiting_score = job("Draft after scoring", "pending", None, "2026-10-04T08:00:00+00:00")
+    failed = job("Failed analysis", "failed", None, "2026-10-04T07:30:00+00:00")
     reviewed = job("Ready for review", "done", 88, "2026-10-04T07:00:00+00:00")
     for identifier, status in ((queued_draft, "queued"), (waiting_score, "queued"),
-                               (reviewed, "awaiting_review")):
+                               (failed, "queued"), (reviewed, "awaiting_review")):
         db.execute(
             "INSERT INTO auto_application_attempts(vacancy_id,status,created_at,updated_at) VALUES(?,?,?,?)",
             (identifier, status, now(), now()),
@@ -51,4 +52,6 @@ def test_one_queue_reports_real_worker_order_and_analysis_stage(tmp_path: Path) 
     assert [row["id"] for row in data["analysis"]["waiting"]] == [pending, waiting_score]
     assert [row["id"] for row in data["drafts"]["waiting"]] == [queued_draft, automatic_draft, waiting_score]
     assert data["drafts"]["waiting"][-1]["waiting_for_score"] is True
+    assert [row["id"] for row in data["analysis"]["failed"]] == [failed]
+    assert [row["id"] for row in data["drafts"]["blocked"]] == [failed]
     assert data["drafts"]["review_ready"] == 1
