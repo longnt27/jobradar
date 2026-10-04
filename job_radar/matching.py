@@ -90,6 +90,22 @@ class MatchManager:
         self.db.execute("UPDATE vacancies SET analysis_status='pending',analysis_error=NULL WHERE id=?", (vacancy_id,))
         self._wake()
 
+    def failures(self) -> list[dict]:
+        return self.db.all(
+            "SELECT id,title,company,analysis_error AS error FROM vacancies "
+            "WHERE analysis_status='failed' ORDER BY updated_at DESC"
+        )
+
+    def retry_failed(self) -> int:
+        if not self.db.get_setting("matching_model", ""):
+            raise ValueError("Choose a local job matching model in My profile first")
+        with self.db.connection() as conn:
+            count = conn.execute(
+                "UPDATE vacancies SET analysis_status='pending',analysis_error=NULL WHERE analysis_status='failed'"
+            ).rowcount
+        self._wake()
+        return count
+
     def download_recommended(self) -> dict:
         if self.pull_task and not self.pull_task.done():
             return self.status()

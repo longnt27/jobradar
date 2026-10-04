@@ -124,7 +124,7 @@ async function loadSetup() {
   badge('#setup-smtp-status', data.smtp_configured ? 'Configured' : 'Optional', data.smtp_configured);
   badge('#setup-telegram-status', data.telegram_configured ? 'Configured' : 'Optional', data.telegram_configured);
   $('#matching-status').textContent = data.matching.model
-    ? `${data.matching.model} · ${data.matching.pending} queued${data.matching.failed ? ` · ${data.matching.failed} failed` : ''}`
+    ? `${data.matching.model}${data.matching.failed ? ` · ${data.matching.failed} need attention` : data.matching.pending ? ` · ${data.matching.pending} in queue` : ' · Ready'}`
     : 'Choose a model';
   renderSocialAuth(data.browser);
   $('#setup-browser-detail').textContent = data.browser.error || (data.browser.state === 'opening' ? 'Opening Chrome…' : data.browser.state === 'open' ? `Waiting for ${data.browser.active_site === 'linkedin' ? 'LinkedIn' : 'Facebook'} sign-in in Chrome. The window closes automatically when the account page loads.` : data.browser.state === 'reauth_required' ? `${socialSiteNames(data.browser)} needs a new sign-in. Other sources keep scanning.` : data.browser.last_saved_at ? `Saved session last updated ${when(data.browser.last_saved_at)}. Upcoming scans will verify site access.` : 'Choose a site to begin. Google sign-in opens in regular Chrome.');
@@ -314,7 +314,7 @@ async function loadProfile() {
   $('#resume-panel-label').textContent = hasResume ? 'Your resume details' : 'Import your resume';
   $('#resume-status').textContent = hasResume ? 'Replace or update' : 'PDF or manual entry';
   $('#resume-panel').open = Boolean(profile.drafting_provider && !hasResume);
-  $('#matching-panel').open = Boolean(hasResume && !setup.matching.model);
+  $('#matching-panel').open = Boolean(hasResume && (!setup.matching.model || setup.matching.failed));
   $('#social-sign-in-panel').open = Boolean(profile.drafting_provider && hasResume && (setup.browser.sites.length || setup.browser.connected_sites.length < 2));
   $('#telegram-panel').open = Boolean(hasResume && setup.matching.model && !setup.telegram_configured);
   $('#pdf-resume-form button[type="submit"]').disabled = !profile.drafting_provider || !availability[profile.drafting_provider];
@@ -337,24 +337,63 @@ async function loadProfile() {
 
 async function loadMatchingModels() {
   clearTimeout(window.matchingPoll);
-  const data = await api('/api/matching/models');
+  const [data, failures] = await Promise.all([api('/api/matching/models'), api('/api/matching/failures')]);
   const select = $('#matching-model-form').elements.model;
   const saved = data.matching.model;
+  $('#matching-model-form').dataset.saved = saved || '';
   select.replaceChildren(new Option('Choose an installed model', ''));
   for (const model of data.models) select.add(new Option(`${model.name} · ${(model.size / 1e9).toFixed(1)} GB`, model.name));
   if (saved && !data.models.some((model) => model.name === saved)) select.add(new Option(`${saved} (unavailable)`, saved));
   select.value = saved || '';
+  const saveButton = $('#matching-model-form button[type="submit"]');
+  saveButton.disabled = !select.value || select.value === saved;
+  saveButton.textContent = select.value && select.value === saved ? 'Selected' : 'Use model';
   const state = data.matching.download_state;
   $('#matching-download').hidden = data.models.some((model) => model.name === data.matching.recommended) && state !== 'downloading';
   $('#matching-download').disabled = state === 'downloading';
   $('#matching-download').textContent = state === 'downloading' ? 'Downloading model…' : `Download ${data.matching.recommended} (about 2 GB)`;
+  $('#matching-overview').innerHTML = [
+    [data.matching.completed, 'analyzed', ''],
+    [data.matching.pending, 'in queue', ''],
+    [data.matching.failed, 'need attention', data.matching.failed ? 'needs-attention' : ''],
+  ].map(([count, label, tone]) => `<div class="matching-stat ${tone}"><strong>${count}</strong><span>${label}</span></div>`).join('');
   $('#matching-model-detail').textContent = data.matching.download_error || data.matching.service_error || data.error ||
     (state === 'downloading' ? 'Downloading in the background. Job Radar will select it when ready.' :
-     saved ? `${data.matching.completed} jobs analyzed · ${data.matching.pending} waiting${data.matching.failed ? ` · ${data.matching.failed} failed` : ''}.` :
-     'Choose an installed text model or download the recommended small model. Embedding models are not listed.');
-  if (state === 'downloading') window.matchingPoll = setTimeout(() => loadMatchingModels().then(loadSetup).catch((error) => notice(error.message, true)), 2500);
+     saved ? '' : 'Choose an installed model to analyze jobs locally.');
+  $('#matching-failures').hidden = !failures.length;
+  $('#matching-failures-title').textContent = `${failures.length} job${failures.length === 1 ? '' : 's'} need attention`;
+  $('#matching-retry-all').textContent = `Retry all ${failures.length}`;
+  $('#matching-failure-list').innerHTML = failures.map((job) => `<div class="matching-failure-row"><div class="matching-failure-copy"><strong>${escapeHtml(job.title)}</strong><small>${escapeHtml(job.company)} · ${escapeHtml(job.error || 'Local analysis failed')}</small></div><div class="matching-failure-actions"><button type="button" class="secondary" data-matching-open="${job.id}">View job</button><button type="button" class="secondary" data-matching-retry="${job.id}">Retry</button></div></div>`).join('');
+  $('#matching-failure-list').querySelectorAll('[data-matching-open]').forEach((button) => button.addEventListener('click', async () => {
+    try { await showTab('jobs'); await showJob(button.dataset.matchingOpen); }
+    catch (error) { notice(error.message, true); }
+  }));
+  $('#matching-failure-list').querySelectorAll('[data-matching-retry]').forEach((button) => button.addEventListener('click', async () => {
+    button.disabled = true;
+    try { await api(`/api/jobs/${button.dataset.matchingRetry}/analyze`, {method:'POST'}); await loadMatchingModels(); await loadSetup(); notice('Job analysis queued.'); }
+    catch (error) { button.disabled = false; notice(error.message, true); }
+  }));
+  if ((state === 'downloading' || data.matching.pending) && $('#profile').classList.contains('active')) window.matchingPoll = setTimeout(() => loadMatchingModels().then(loadSetup).catch((error) => notice(error.message, true)), 5000);
   return data;
 }
+
+$('#matching-model-form select').addEventListener('change', (event) => {
+  const button = $('#matching-model-form button[type="submit"]');
+  button.disabled = !event.target.value || event.target.value === $('#matching-model-form').dataset.saved;
+  button.textContent = button.disabled && event.target.value ? 'Selected' : 'Use model';
+});
+
+$('#matching-retry-all').addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  button.textContent = 'Queueing…';
+  try {
+    const result = await api('/api/matching/retry-failed', {method:'POST'});
+    await loadMatchingModels();
+    await loadSetup();
+    notice(`${result.queued} job${result.queued === 1 ? '' : 's'} queued for analysis.`);
+  } catch (error) { button.disabled = false; notice(error.message, true); }
+});
 
 async function loadPositions() {
   const positions = await api('/api/positions');

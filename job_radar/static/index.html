@@ -79,10 +79,20 @@
         </details>
         <details class="panel flow-panel" id="matching-panel">
           <summary><span><span class="step-number">3</span><strong>Choose a local job matching model</strong></span><span id="matching-status" class="hint">Choose a model</span></summary>
-          <p class="hint">A small Ollama model reads job postings, extracts requirements, and scores them against your resume and approved projects. This runs on your Mac. Your application drafting provider stays separate.</p>
-          <form id="matching-model-form" class="form-grid"><label class="full">Installed text model<select name="model" required><option value="">Choose an installed model</option></select></label><button class="primary" type="submit">Use this model</button></form>
-          <div class="actions"><button id="matching-download" class="secondary" type="button">Download recommended small model</button><button id="matching-refresh" class="text-button" type="button">Refresh models</button></div>
-          <p id="matching-model-detail" class="hint" role="status"></p>
+          <div class="matching-panel-body">
+            <p class="matching-intro">A local Ollama model extracts job requirements and scores each match against your experience and selected projects.</p>
+            <div class="matching-controls">
+              <form id="matching-model-form"><label>Installed text model<select name="model" required><option value="">Choose an installed model</option></select></label><button class="primary" type="submit">Use model</button></form>
+              <button id="matching-refresh" class="text-button" type="button">Refresh models</button>
+            </div>
+            <button id="matching-download" class="secondary" type="button">Download recommended small model</button>
+            <div id="matching-overview" class="matching-overview" role="status"></div>
+            <p id="matching-model-detail" class="hint" role="status"></p>
+            <section id="matching-failures" class="matching-failures" aria-label="Failed job analyses" hidden>
+              <div class="matching-failures-head"><div><strong id="matching-failures-title">Jobs needing attention</strong><p>These jobs have no completed local score yet.</p></div><button id="matching-retry-all" class="secondary" type="button">Retry all</button></div>
+              <div id="matching-failure-list" class="matching-failure-list"></div>
+            </section>
+          </div>
         </details>
         <details class="panel flow-panel" id="social-sign-in-panel">
           <summary><span><span class="step-number">4</span><strong>Connect LinkedIn and Facebook</strong></span><span id="social-sign-in-status" class="hint">Sign-in needed</span></summary>

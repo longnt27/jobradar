@@ -125,3 +125,29 @@ input,textarea,select{font-weight:400}
 .social-site-row small{font-size:12px;color:#72837e;margin-top:4px}
 .social-site-row button{flex:none}
 @media(max-width:600px){.social-site-row{align-items:stretch;flex-direction:column}.social-site-row button{align-self:flex-start}}
+.matching-panel-body{padding:22px 24px 26px}
+.matching-intro{max-width:760px;margin:0 0 20px;color:#536b64;font-size:13px;line-height:1.55}
+.matching-controls{display:flex;align-items:end;gap:16px;flex-wrap:wrap;max-width:900px}
+#matching-model-form{display:flex;align-items:end;gap:10px;flex:1 1 560px;max-width:680px}
+#matching-model-form label{flex:1;min-width:220px}
+#matching-model-form button{flex:none;white-space:nowrap}
+.matching-controls>.text-button{margin-bottom:2px;white-space:nowrap}
+#matching-download{margin-top:12px}
+#matching-download[hidden],#matching-failures[hidden]{display:none}
+.matching-overview{display:flex;gap:30px;flex-wrap:wrap;max-width:680px;margin-top:22px;padding:17px 0;border-top:1px solid #e5ece7;border-bottom:1px solid #e5ece7}
+.matching-stat{display:flex;align-items:baseline;gap:7px;color:#61786d;font-size:12px}
+.matching-stat strong{font-size:21px;line-height:1;font-weight:750;letter-spacing:-.04em;color:#173e32}
+.matching-stat.needs-attention strong{color:#a45325}
+#matching-model-detail{margin:13px 0 0;max-width:760px}
+.matching-failures{max-width:960px;margin-top:22px;border:1px solid #e9d5b9;border-radius:12px;background:#fffcf8;overflow:hidden}
+.matching-failures-head{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:16px 18px;border-bottom:1px solid #efe1ce}
+.matching-failures-head strong{font-size:14px;color:#593a21}
+.matching-failures-head p{margin:4px 0 0;color:#857361;font-size:12px}
+.matching-failure-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:13px 18px;border-top:1px solid #f0e7d9}
+.matching-failure-row:first-child{border-top:0}
+.matching-failure-copy{min-width:0}
+.matching-failure-copy strong{display:block;font-size:13px;color:#263d34}
+.matching-failure-copy small{display:block;margin-top:3px;color:#876a51;font-size:12px;line-height:1.4}
+.matching-failure-actions{display:flex;gap:7px;flex:none}
+.matching-failure-actions button{font-size:12px;padding:8px 10px}
+@media(max-width:700px){.matching-panel-body{padding:18px}#matching-model-form{flex-wrap:wrap}#matching-model-form label{flex-basis:100%}.matching-controls>.text-button{padding-left:0}.matching-failures-head,.matching-failure-row{align-items:flex-start;flex-direction:column}.matching-failure-actions{width:100%}}

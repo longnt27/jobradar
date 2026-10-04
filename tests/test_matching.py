@@ -2,10 +2,11 @@ import json
 import time
 from pathlib import Path
 
+import httpx
 from fastapi.testclient import TestClient
 
 from job_radar.ingest import ObservedJob, ingest
-from job_radar.local_analysis import Criterion, JobFacts, LocalModelUnavailable, MatchJudgment, _ground_facts, analyze_job, validate_local_model
+from job_radar.local_analysis import Criterion, JobFacts, LocalModelUnavailable, MatchJudgment, _generate, _ground_facts, analyze_job, validate_local_model
 from job_radar.settings import Settings
 from job_radar.web import create_app
 
@@ -164,3 +165,42 @@ def test_cloud_tag_is_rejected_for_local_matching() -> None:
         assert "this Mac" in str(error)
     else:
         assert False, "Cloud model should not be accepted for local matching"
+
+
+def test_truncated_local_model_json_retries_with_more_output_space(monkeypatch) -> None:
+    budgets = []
+    facts = JobFacts(role="Engineer", seniority="", required_skills=["Python"],
+        preferred_skills=[], years_required=None, location="", work_mode="",
+        responsibilities=["Build services"], education=[], languages=[], summary="")
+    def handler(request: httpx.Request) -> httpx.Response:
+        budgets.append(json.loads(request.content)["options"]["num_predict"])
+        if len(budgets) == 1:
+            return httpx.Response(200, json={"response": '{"role":"Engineer",', "done_reason": "length"})
+        return httpx.Response(200, json={"response": facts.model_dump_json(), "done_reason": "stop"})
+    client_type = httpx.Client
+    monkeypatch.setattr("job_radar.local_analysis.httpx.Client",
+                        lambda **kwargs: client_type(transport=httpx.MockTransport(handler)))
+    assert _generate("test:small", "Extract facts", JobFacts) == facts
+    assert budgets[0] == 1400
+    assert budgets[1] > budgets[0]
+
+
+def test_failed_job_analyses_are_listed_and_can_be_retried_together(tmp_path: Path) -> None:
+    app = create_app(Settings(tmp_path))
+    client = TestClient(app)
+    app.state.db.set_setting("matching_model", "test:small")
+    ids = [client.post("/api/jobs/import", json={"company": "Example", "title": f"Engineer {number}",
+        "description": "Build Python services."}).json()["id"] for number in (1, 2)]
+    for identifier in ids:
+        app.state.db.execute("UPDATE vacancies SET analysis_status='failed',analysis_error=? WHERE id=?",
+                             ("Model output was cut off", identifier))
+    failures = client.get("/api/matching/failures")
+    assert failures.status_code == 200
+    assert {item["id"] for item in failures.json()} == set(ids)
+    assert all(item["error"] == "Model output was cut off" for item in failures.json())
+    single = client.post(f"/api/jobs/{ids[0]}/analyze")
+    assert single.status_code == 202
+    retried = client.post("/api/matching/retry-failed")
+    assert retried.status_code == 202
+    assert retried.json()["queued"] == 1
+    assert client.get("/api/matching/failures").json() == []

@@ -89,12 +89,22 @@ def _generate(model: str, prompt: str, result_type: type[BaseModel]) -> BaseMode
     payload = {"model": model, "prompt": prompt, "stream": False,
                "format": result_type.model_json_schema(), "think": False,
                "options": {"temperature": 0, "num_ctx": 8192, "num_predict": 1400}}
+    stage = "job facts" if result_type is JobFacts else "match scores"
     try:
         with httpx.Client(timeout=httpx.Timeout(180, connect=5), trust_env=False) as client:
-            response = client.post(f"{OLLAMA_URL}/api/generate", json=payload)
-            response.raise_for_status()
-            raw = response.json()["response"]
-        return result_type.model_validate_json(raw)
+            for budget in (1400, 3000):
+                payload["options"]["num_predict"] = budget
+                response = client.post(f"{OLLAMA_URL}/api/generate", json=payload)
+                response.raise_for_status()
+                result = response.json()
+                try:
+                    return result_type.model_validate_json(result["response"])
+                except ValueError as error:
+                    if result.get("done_reason") == "length" and budget == 1400:
+                        continue
+                    if result.get("done_reason") == "length":
+                        raise RuntimeError(f"Local model {model} ran out of output space while extracting {stage}. Try a larger model.") from error
+                    raise RuntimeError(f"Local model {model} returned invalid {stage}. Retry or choose another model.") from error
     except (httpx.ConnectError, httpx.ConnectTimeout) as error:
         raise LocalModelUnavailable("Ollama is offline. Start it to continue local job analysis") from error
     except (httpx.HTTPError, ValueError, KeyError) as error:

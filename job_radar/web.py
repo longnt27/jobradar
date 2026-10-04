@@ -332,6 +332,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
 
+    @app.get("/api/matching/failures")
+    def matching_failures():
+        return match_manager.failures()
+
+    @app.post("/api/matching/retry-failed", status_code=202)
+    def retry_failed_matching():
+        try:
+            return {"queued": match_manager.retry_failed()}
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
+
     @app.get("/api/profile")
     def get_profile():
         return db.get_setting("profile", {})

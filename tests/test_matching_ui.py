@@ -77,3 +77,54 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
     finally:
         server.should_exit = True
         thread.join(timeout=5)
+
+
+def test_failed_matching_jobs_are_visible_and_retryable_from_profile(tmp_path: Path, monkeypatch) -> None:
+    from fastapi.testclient import TestClient
+    app = create_app(Settings(tmp_path))
+    db = app.state.db
+    db.execute("UPDATE sources SET enabled=0")
+    db.set_setting("profile", {"name": "Alex Example", "email": "alex@example.org", "skills": []})
+    db.set_setting("matching_model", "test:small")
+    monkeypatch.setattr("job_radar.web.list_local_models", lambda: [{"name": "test:small", "size": 123456789}])
+    monkeypatch.setattr("job_radar.web.validate_local_model", lambda model: model)
+    monkeypatch.setattr("job_radar.matching.analyze_job", lambda *_args: (75, {"method": "local_llm"}))
+    client = TestClient(app)
+    for number in (1, 2):
+        identifier = client.post("/api/jobs/import", json={"company": "Example", "title": f"Engineer {number}",
+            "description": "Build Python services."}).json()["id"]
+        db.execute("UPDATE vacancies SET analysis_status='failed',analysis_error=? WHERE id=?",
+                   ("Model output was cut off", identifier))
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
+    thread = Thread(target=server.run, daemon=True)
+    thread.start()
+    try:
+        for _ in range(100):
+            if server.started:
+                break
+            time.sleep(.05)
+        assert server.started
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            try:
+                page = browser.new_page()
+                page.goto(f"http://127.0.0.1:{port}/#profile")
+                page.locator("#matching-failures").wait_for(state="visible")
+                assert "2 jobs need attention" in page.locator("#matching-failures-title").inner_text()
+                assert "Engineer 1" in page.locator("#matching-failure-list").inner_text()
+                assert "Model output was cut off" in page.locator("#matching-failure-list").inner_text()
+                page.get_by_role("button", name="View job").first.click()
+                page.get_by_role("heading", name="Engineer 1").wait_for()
+                page.get_by_role("button", name="My profile", exact=True).first.click()
+                page.locator("#matching-failures").wait_for(state="visible")
+                page.locator("#matching-retry-all").click()
+                page.locator("#matching-failures").wait_for(state="hidden")
+                assert db.one("SELECT COUNT(*) AS n FROM vacancies WHERE analysis_status='failed'")["n"] == 0
+            finally:
+                browser.close()
+    finally:
+        server.should_exit = True
+        thread.join(timeout=5)
