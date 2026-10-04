@@ -205,12 +205,17 @@ class AutoApplyManager:
         await self.notify_review(draft["id"])
 
     async def notify_review(self, draft_id: str) -> None:
-        attempt = self.db.one("SELECT vacancy_id,status FROM auto_application_attempts WHERE draft_id=?", (draft_id,))
+        attempt = self.db.one("SELECT vacancy_id,status,review_hash,telegram_status,telegram_message_id "
+                              "FROM auto_application_attempts WHERE draft_id=?", (draft_id,))
         if not attempt or attempt["status"] in ("sent", "sending", "skipped", "preparing", "regenerating"):
             return
         draft = get_draft(self.db, draft_id)
         blockers = send_readiness(self.db, self.settings, draft)
         status = "needs_review" if blockers else "awaiting_review"
+        if (attempt["review_hash"] == draft["package_hash"] and attempt["status"] == status
+                and attempt["telegram_status"] == "sent" and attempt["telegram_message_id"]):
+            return
+        previous_message_id = attempt["telegram_message_id"]
         self.db.execute("UPDATE auto_application_attempts SET review_hash=?,status=?,detail=?,telegram_status='pending',telegram_error=NULL,updated_at=? WHERE draft_id=?",
                         (draft["package_hash"], status, "; ".join(blockers) if blockers else "Review the complete application before approving.", now(), draft_id))
         config = telegram_config(self.settings)
@@ -222,6 +227,13 @@ class AutoApplyManager:
             if telegram_config(self.settings) == config:
                 self.db.execute("UPDATE auto_application_attempts SET telegram_status='sent',telegram_message_id=?,telegram_error=NULL WHERE draft_id=? AND review_hash=?",
                                 (message_id, draft_id, draft["package_hash"]))
+                if previous_message_id and previous_message_id != message_id:
+                    try:
+                        async with httpx.AsyncClient(timeout=10) as client:
+                            await _post(client, config["token"], "deleteMessage",
+                                        json={"chat_id": config["chat_id"], "message_id": previous_message_id})
+                    except (httpx.HTTPError, RuntimeError):
+                        log.info("Could not remove superseded Telegram review %s", previous_message_id)
         except (httpx.HTTPError, OSError, ValueError, RuntimeError) as error:
             log.warning("Could not deliver application review %s: %s", draft_id, type(error).__name__)
             if telegram_config(self.settings) == config:
@@ -312,7 +324,6 @@ class AutoApplyManager:
             instructions = ("Make only these requested corrections to the existing application. "
                             "Preserve all other verified facts and wording: " + instructions
                             if pending["action"] == "edit" else instructions)
-            await _post(client, token, "sendMessage", json={"chat_id": chat_id, "text": "Updating the application. I will send the revised draft for review."})
             try:
                 await self.regenerate(pending["draft_id"], instructions)
             except (ValueError, RuntimeError, KeyError):

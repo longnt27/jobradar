@@ -1,11 +1,14 @@
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from pypdf import PdfReader
 
 from job_radar.settings import Settings
 from job_radar.web import create_app
-from job_radar.drafting import ModelDraft, ProjectBullets, _run_provider
+from job_radar.drafting import (ApplicationMessage, EnglishTranslations, ModelDraft, ProjectBullets,
+                                 TranslationItem, _ensure_english_resume, _job_language,
+                                 _message_in_job_language, _run_provider, _template)
 from job_radar.ingest import ObservedJob, ingest
 
 
@@ -99,3 +102,50 @@ def test_career_email_destination_prepares_email_application(tmp_path: Path) -> 
     identifier, _ = ingest(db, source, ObservedJob("https://example.org/jobs/42", "AI Engineer", "Example", "Build AI systems with Python.", apply_url="mailto:careers@example.org"))
     draft = client.post(f"/api/jobs/{identifier}/prepare", json={"provider": "template"}).json()
     assert draft["destination"] == {"kind": "email", "email": "careers@example.org"}
+
+
+def test_vietnamese_posting_gets_vietnamese_email_and_english_cv_rule(monkeypatch) -> None:
+    job = {"title": "Kỹ sư dữ liệu", "company": "Ví dụ", "description":
+           "Tuyển dụng kỹ sư dữ liệu. Yêu cầu kinh nghiệm phát triển hệ thống dữ liệu."}
+    profile = {"name": "Alex", "summary": "Python engineer", "experience":
+               [{"company": "Prior Co", "role": "Engineer", "bullets": ["Built data systems."]}]}
+    assert _job_language(job) == "Vietnamese"
+    assert _job_language({"title": "AI Engineer", "description": "Build Python systems."}) == "English"
+    template = _template(job, profile, [])
+    assert "Kính gửi" in template.email_body and "Ứng tuyển" in template.email_subject
+    english = ModelDraft(summary="Python engineer", email_subject="Application", email_body="Dear team. I built data systems.")
+    prompts = []
+
+    def fake_provider(_provider, prompt, response_type):
+        prompts.append(prompt)
+        assert response_type is ApplicationMessage
+        return ApplicationMessage(subject="Ứng tuyển vị trí Kỹ sư dữ liệu", body="Kính gửi bộ phận tuyển dụng. Tôi có kinh nghiệm phát triển hệ thống dữ liệu.")
+
+    monkeypatch.setattr("job_radar.drafting._provider_json", fake_provider)
+    revised = _message_in_job_language("codex", job, english)
+    assert revised.email_body.startswith("Kính gửi")
+    assert "Vietnamese" in prompts[0]
+
+
+def test_vietnamese_experience_is_translated_before_cv_render(monkeypatch) -> None:
+    resume = {"name": "Alex", "summary": "Kỹ sư dữ liệu có kinh nghiệm phát triển hệ thống.",
+              "experience": [{"company": "Prior Co", "role": "Kỹ sư dữ liệu",
+                              "bullets": ["Phát triển hệ thống dữ liệu bằng Python."]}],
+              "projects": [], "skills": ["Python"]}
+    with pytest.raises(ValueError, match="AI drafting provider"):
+        _ensure_english_resume("template", resume)
+
+    def fake_provider(_provider, prompt, response_type):
+        assert response_type is EnglishTranslations
+        assert "Prior Co" not in prompt
+        return EnglishTranslations(items=[
+            TranslationItem(index=0, text="Data engineer experienced in building systems."),
+            TranslationItem(index=1, text="Data engineer"),
+            TranslationItem(index=2, text="Built data systems with Python."),
+        ])
+
+    monkeypatch.setattr("job_radar.drafting._provider_json", fake_provider)
+    translated = _ensure_english_resume("codex", resume)
+    assert translated["summary"] == "Data engineer experienced in building systems."
+    assert translated["experience"][0]["company"] == "Prior Co"
+    assert translated["experience"][0]["bullets"] == ["Built data systems with Python."]

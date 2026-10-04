@@ -4,8 +4,10 @@ from pathlib import Path
 
 import httpx
 import pytest
+from pypdf import PdfReader
+from reportlab.pdfgen import canvas
 
-from job_radar.review_telegram import format_review_details, send_review_packet
+from job_radar.review_telegram import build_review_pdf, format_review_details, send_review_packet
 from job_radar.drafting import ModelDraft, get_draft, prepare_draft
 from job_radar.web import create_app
 from job_radar.settings import Settings
@@ -31,18 +33,23 @@ def _draft(pdf: Path) -> dict:
 def test_review_details_include_every_application_section(tmp_path: Path) -> None:
     draft = _draft(tmp_path / "resume.pdf")
     text = format_review_details(draft, ["Check the form"])
-    for expected in ("AI Engineer", "80/100", "jobs@example.org", "Build reliable search services.", "Alex Example", "Prior Co", "Built search",
-                     "Vision", "Trained vision models", "Example University", "Python", "Award",
+    for expected in ("AI Engineer", "80/100", "jobs@example.org", "Build reliable search services.",
                      "Application for AI Engineer", "Dear team", "Why join?", "To build useful products",
                      "Review claims", "Check the form"):
         assert expected in text
 
 
-def test_review_packet_sends_full_text_pdf_and_actions(tmp_path: Path) -> None:
+def _resume_pdf(path: Path) -> None:
+    pdf = canvas.Canvas(str(path))
+    pdf.drawString(40, 760, "Alex Example - English CV")
+    pdf.save()
+
+
+def test_review_packet_sends_one_pdf_message_with_actions(tmp_path: Path) -> None:
     settings = Settings(tmp_path)
     save_telegram(settings, {"token": "test-token", "chat_id": "123"})
     pdf = tmp_path / "resume.pdf"
-    pdf.write_bytes(b"%PDF-1.4\nexample")
+    _resume_pdf(pdf)
     seen = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -57,20 +64,25 @@ def test_review_packet_sends_full_text_pdf_and_actions(tmp_path: Path) -> None:
 
     message_id = asyncio.run(run())
     assert message_id == len(seen)
-    assert any(request.url.path.endswith("/sendDocument") and b"%PDF-1.4" in request.content for request in seen)
-    messages = [json.loads(request.content) for request in seen if request.url.path.endswith("/sendMessage")]
-    assert "Trained vision models" in "\n".join(message["text"] for message in messages)
-    buttons = messages[-1]["reply_markup"]["inline_keyboard"]
+    sent = [request for request in seen if request.url.path.endswith("/sendDocument")]
+    assert len(sent) == 1
+    assert not any(request.url.path.endswith("/sendMessage") for request in seen)
+    assert b"AI Engineer" in sent[0].content and b"80/100" in sent[0].content
+    buttons = json.loads(sent[0].content.split(b'name="reply_markup"\r\n\r\n')[1].split(b"\r\n--")[0])["inline_keyboard"]
     assert [button["text"] for row in buttons for button in row] == ["Approve & send", "Edit", "Regenerate"]
     assert buttons[1][0]["callback_data"] == f"review:edit:{'a' * 32}:{'b' * 12}"
     assert all(len(button["callback_data"].encode()) <= 64 for row in buttons for button in row if "callback_data" in button)
+    review = PdfReader(str(build_review_pdf(settings, _draft(pdf), [])))
+    full_text = "\n".join(page.extract_text() for page in review.pages)
+    for expected in ("Build reliable search services", "Dear team", "Why join?", "Alex Example - English CV"):
+        assert expected in full_text
 
 
 def test_review_packet_refuses_group_chat_before_sending_resume(tmp_path: Path) -> None:
     settings = Settings(tmp_path)
     save_telegram(settings, {"token": "test-token", "chat_id": "-100123"})
     pdf = tmp_path / "resume.pdf"
-    pdf.write_bytes(b"%PDF-1.4\nexample")
+    _resume_pdf(pdf)
     seen = []
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request.url.path)

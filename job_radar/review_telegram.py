@@ -1,78 +1,78 @@
-"""Deliver application packages and versioned review actions to Telegram."""
+"""Deliver one versioned, complete application review PDF in one Telegram message."""
 
 from __future__ import annotations
 
+import html
 import json
+from io import BytesIO
 from pathlib import Path
 
 import httpx
+from pypdf import PdfReader, PdfWriter
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
 from .notifications import telegram_config
+from .resume_pdf import _fonts
 from .settings import Settings
 
 
 def format_review_details(draft: dict, blockers: list[str]) -> str:
-    resume = draft["resume_data"]
+    """Text for the review cover. The actual tailored CV follows as PDF pages."""
     message = draft["message_data"]
     form = draft["form_data"]
     destination = draft["destination"]
     lines = [f"Application review · {draft['job_title']} at {draft['company']}",
              f"Match score: {draft['job_score']}/100" if draft.get("job_score") is not None else "Match score: unavailable",
-             f"Destination: {destination.get('email') or destination.get('url') or 'Missing'}",
-             f"Version: {draft['package_hash'][:12]}", "", "JOB DESCRIPTION",
-             str(draft.get("job_description", "")), "", "RESUME",
-             f"Name: {resume.get('name', '')}", f"Email: {resume.get('email', '')}",
-             f"Phone: {resume.get('phone', '')}", f"Location: {resume.get('location', '')}",
-             f"Links: {', '.join(resume.get('links', []))}",
-             f"Summary: {resume.get('summary', '')}", "", "EXPERIENCE"]
-    for item in resume.get("experience", []):
-        lines.append(" · ".join(str(item.get(key, "")) for key in ("role", "company", "dates")))
-        lines.extend(f"• {bullet}" for bullet in item.get("bullets", []))
-    lines.extend(["", "SELECTED PROJECTS"])
-    for item in resume.get("projects", []):
-        lines.append(str(item.get("title", "")))
-        if item.get("repository_url"):
-            lines.append(str(item["repository_url"]))
-        if item.get("tech_stack"):
-            lines.append(f"Technologies: {', '.join(item['tech_stack'])}")
-        lines.extend(f"• {bullet}" for bullet in item.get("bullets", []))
-    lines.extend(["", "EDUCATION"])
-    for item in resume.get("education", []):
-        lines.append(" · ".join(str(item.get(key, "")) for key in ("school", "degree", "dates")) if isinstance(item, dict) else str(item))
-    lines.extend(["", "ACHIEVEMENTS", *(str(item) for item in resume.get("achievements", [])),
-                  "", "SKILLS", *(str(item) for item in resume.get("skills", [])),
-                  *(f"{name}: {', '.join(values) if isinstance(values, list) else values}"
-                    for name, values in resume.get("skill_groups", {}).items()),
-                  "", "APPLICATION MESSAGE", f"Subject: {message.get('subject', '')}",
-                  str(message.get("body", "")), "", "FORM ANSWERS AND ATTACHMENTS",
-                  f"Form action: {form.get('action', '')}", f"Form method: {form.get('method', '')}"])
-    for field in form.get("fields", []):
-        index = str(field["index"])
-        value = form.get("attachments", {}).get(index) if field["type"] == "file" else form.get("answers", {}).get(index, "")
-        lines.append(f"{field.get('label') or field.get('name') or index}: {value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)}")
-    lines.extend(["", "REVIEW NOTES", *(str(item) for item in draft.get("warnings", [])),
-                  *(str(item) for item in blockers)])
+             f"Version: {draft['package_hash'][:12]}",
+             f"Destination: {destination.get('email') or destination.get('url') or 'Missing'}", "",
+             "JOB DESCRIPTION", str(draft.get("job_description", "")), "",
+             "APPLICATION ACTION", f"Channel: {destination.get('kind', 'unknown')}",
+             f"Subject: {message.get('subject', '')}", str(message.get("body", ""))]
+    if form.get("fields") or form.get("action"):
+        lines.extend(["", "FORM ANSWERS AND ATTACHMENTS",
+                      f"Form action: {form.get('action', '')}", f"Form method: {form.get('method', '')}"])
+        for field in form.get("fields", []):
+            index = str(field["index"])
+            value = form.get("attachments", {}).get(index) if field["type"] == "file" else form.get("answers", {}).get(index, "")
+            lines.append(f"{field.get('label') or field.get('name') or index}: {value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)}")
+    notes = [str(item) for item in draft.get("warnings", [])] + [str(item) for item in blockers]
+    if notes:
+        lines.extend(["", "REVIEW NOTES", *notes])
+    lines.extend(["", "TAILORED CV", "The following pages are the exact CV attached to this application draft."])
     return "\n".join(lines).strip()
 
 
-def _chunks(value: str, size: int = 3800) -> list[str]:
-    lines = value.splitlines(keepends=True)
-    chunks: list[str] = []
-    current = ""
-    for line in lines:
-        while len(line) > size:
-            if current:
-                chunks.append(current)
-                current = ""
-            chunks.append(line[:size])
-            line = line[size:]
-        if len(current) + len(line) > size:
-            chunks.append(current)
-            current = ""
-        current += line
-    if current:
-        chunks.append(current)
-    return chunks
+def build_review_pdf(settings: Settings, draft: dict, blockers: list[str]) -> Path:
+    """Build a readable review cover, then append the exact tailored CV."""
+    settings.ensure_dirs()
+    path = settings.artifact_dir / f"review-{draft['id']}-{draft['package_hash'][:16]}.pdf"
+    regular, bold, _ = _fonts()
+    body = ParagraphStyle("Review body", fontName=regular, fontSize=9, leading=13,
+                          textColor=colors.HexColor("#263831"), spaceAfter=4, splitLongWords=1)
+    heading = ParagraphStyle("Review heading", parent=body, fontName=bold, fontSize=11,
+                             leading=15, textColor=colors.HexColor("#174d39"), spaceBefore=14, spaceAfter=6)
+    title = ParagraphStyle("Review title", parent=heading, fontSize=16, leading=21, spaceBefore=0, spaceAfter=12)
+    lines = format_review_details(draft, blockers).splitlines()
+    headings = {"JOB DESCRIPTION", "APPLICATION ACTION", "FORM ANSWERS AND ATTACHMENTS", "REVIEW NOTES", "TAILORED CV"}
+    story = []
+    for index, line in enumerate(lines):
+        if not line.strip():
+            story.append(Spacer(1, 5))
+        else:
+            style = title if index == 0 else heading if line in headings else body
+            story.append(Paragraph(html.escape(line), style))
+    cover = BytesIO()
+    SimpleDocTemplate(cover, pagesize=A4, leftMargin=42, rightMargin=42,
+                      topMargin=40, bottomMargin=40, title=f"Application review - {draft['job_title']}").build(story)
+    writer = PdfWriter()
+    writer.append(PdfReader(BytesIO(cover.getvalue())))
+    writer.append(PdfReader(str(draft["resume_path"])))
+    with path.open("wb") as output:
+        writer.write(output)
+    return path
 
 
 async def _post(client: httpx.AsyncClient, token: str, method: str, **kwargs) -> dict:
@@ -96,19 +96,18 @@ async def send_review_packet(settings: Settings, draft: dict, blockers: list[str
     chat = await _post(client, token, "getChat", json={"chat_id": chat_id})
     if chat.get("type") != "private" or str(chat.get("id")) != str(chat_id):
         raise ValueError("Application reviews require your private Telegram chat")
-    for part in _chunks(format_review_details(draft, blockers)):
-        await _post(client, token, "sendMessage", json={"chat_id": chat_id, "text": part,
-                                                         "disable_web_page_preview": True})
-    path = Path(draft["resume_path"])
-    with path.open("rb") as file:
-        await _post(client, token, "sendDocument", data={"chat_id": chat_id,
-                    "caption": f"Resume for {draft['job_title']} · version {draft['package_hash'][:12]}"},
-                    files={"document": ("resume.pdf", file, "application/pdf")})
     short = draft["package_hash"][:12]
-    buttons = [[{"text": "Approve & send", "callback_data": f"review:approve:{draft['id']}:{short}"}],
-               [{"text": "Edit", "callback_data": f"review:edit:{draft['id']}:{short}"},
-                {"text": "Regenerate", "callback_data": f"review:retry:{draft['id']}:{short}"}]]
-    result = await _post(client, token, "sendMessage", json={"chat_id": chat_id,
-        "text": f"Review the details and PDF above. Approve only if this version is correct ({short}).",
-        "reply_markup": {"inline_keyboard": buttons}})
+    buttons = []
+    if not blockers:
+        buttons.append([{"text": "Approve & send", "callback_data": f"review:approve:{draft['id']}:{short}"}])
+    buttons.append([{"text": "Edit", "callback_data": f"review:edit:{draft['id']}:{short}"},
+                    {"text": "Regenerate", "callback_data": f"review:retry:{draft['id']}:{short}"}])
+    score = f"{draft['job_score']}/100" if draft.get("job_score") is not None else "Score unavailable"
+    caption = f"{draft['job_title'][:180]} · {score}" + ("\nNeeds changes before sending" if blockers else "")
+    path = build_review_pdf(settings, draft, blockers)
+    with path.open("rb") as file:
+        result = await _post(client, token, "sendDocument", data={
+            "chat_id": chat_id, "caption": caption,
+            "reply_markup": json.dumps({"inline_keyboard": buttons}),
+        }, files={"document": ("application-review.pdf", file, "application/pdf")})
     return result["message_id"]
