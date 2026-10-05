@@ -12,12 +12,12 @@ import httpx
 from pydantic import BaseModel, Field
 
 from .db import Database
-from .ranking import NEGATIVE_WORDS
+from .search_intent import normalize_search_intent, salary_floor, seniority_key
 
 
 OLLAMA_URL = "http://127.0.0.1:11434"
 RECOMMENDED_MODEL = "qwen2.5:3b"
-ANALYSIS_VERSION = 4
+ANALYSIS_VERSION = 5
 
 
 class LocalModelUnavailable(RuntimeError):
@@ -308,8 +308,10 @@ def role_fallback(job: dict, profile: dict) -> dict[str, Any]:
 
 
 def finalize_match(job: dict, facts: dict, profile: dict,
-                   criteria: dict[str, dict]) -> tuple[int, dict[str, dict], list[str]]:
-    """Apply explicit eligibility rules and weights after the model judges qualitative fit."""
+                   criteria: dict[str, dict], preferences: dict | None = None) -> tuple[int, dict[str, dict], list[str]]:
+    """Apply user-configured search intent and weights after qualitative matching."""
+    prefs = normalize_search_intent(preferences)
+    hard = prefs["hard_constraints"]
     graded = {name: dict(criteria.get(name) or {"score": 5, "reason": "Not assessed; neutral."})
               for name in CRITERION_WEIGHTS}
     posting = f"{job.get('title') or ''} {job.get('description') or ''}"
@@ -339,37 +341,86 @@ def finalize_match(job: dict, facts: dict, profile: dict,
     remote = bool((REMOTE_MODE.search(location) or REMOTE_MODE.search(str(job.get("work_mode") or ""))
                    or REMOTE_WORK.search(str(job.get("description") or "")))
                   and not REMOTE_NEGATION.search(posting))
-    hanoi = bool(HANOI_LOCATION.search(location))
-    specific_elsewhere = bool(trusted_location and location and not hanoi and not GENERIC_LOCATION.fullmatch(location))
-    if remote:
-        graded["location"] = {"score": 10, "reason": "Posting offers remote work."}
-        graded["work_mode"] = {"score": 10, "reason": "Remote work fits the Hanoi or remote preference."}
-    elif hanoi:
-        graded["location"] = {"score": 10, "reason": "Posting names Hanoi as a work location."}
-        graded["work_mode"] = {"score": 10 if mode else 5,
-                               "reason": "Work arrangement is in Hanoi." if mode else "Work mode not stated; neutral."}
+
+    preferred_locations = [item.casefold() for item in prefs["preferred_locations"]]
+    preferred_modes = [item.casefold().replace("-", "").replace(" ", "") for item in prefs["work_modes"]]
+    location_match = bool(location and any(item in location.casefold() or location.casefold() in item for item in preferred_locations))
+    if location and any(item in {"hanoi", "ha noi", "hà nội"} for item in preferred_locations) and HANOI_LOCATION.search(location):
+        location_match = True
+    normalized_mode = mode.casefold().replace("-", "").replace(" ", "")
+    mode_match = bool(normalized_mode and any(item in normalized_mode or normalized_mode in item for item in preferred_modes))
+    if remote and any(item in {"remote", "wfh", "workfromhome"} for item in preferred_modes):
+        mode_match = True
+    if not preferred_locations:
+        graded["location"] = {"score": 5, "reason": "No location preference configured; neutral."}
+    elif not location:
+        graded["location"] = {"score": 5, "reason": "Posting location is unknown."}
     else:
-        graded["location"] = {"score": 1 if specific_elsewhere else 5,
-                              "reason": f"Posting names {location}, outside Hanoi." if specific_elsewhere else "Work location not specific; neutral."}
-        graded["work_mode"] = {"score": 1 if specific_elsewhere else 5,
-                               "reason": "No remote option stated." if specific_elsewhere else "Work mode not stated; neutral."}
+        graded["location"] = {"score": 10 if location_match else 3,
+                              "reason": f"{location} matches your preferred locations." if location_match
+                              else f"{location} is outside your preferred locations."}
+    if not preferred_modes:
+        graded["work_mode"] = {"score": 5, "reason": "No work-mode preference configured; neutral."}
+    elif not mode and not remote:
+        graded["work_mode"] = {"score": 5, "reason": "Work mode is not stated."}
+    else:
+        graded["work_mode"] = {"score": 10 if mode_match else 3,
+                               "reason": "Work mode matches your preferences." if mode_match else "Work mode is outside your preferences."}
+
+    family = _role_family(str(job.get("title") or ""))
+    selected_families = [item.casefold() for item in prefs["role_families"]]
+    role_title = str(job.get("title") or "").casefold()
+    role_matches_preference = not selected_families or any(
+        item in role_title or (family and family.casefold() == item) for item in selected_families)
+    if selected_families and not role_matches_preference:
+        graded["role"]["score"] = min(int(graded["role"].get("score", 5)), 3)
+        graded["role"]["reason"] = f"{family or 'This role'} is outside your preferred role families."
+
+    level = seniority_key(f"{facts.get('seniority') or ''} {job.get('title') or ''}")
+    selected_levels = set(prefs["seniority_levels"])
+    if selected_levels and level:
+        if level in selected_levels:
+            graded["role"]["reason"] += " Seniority matches your search preference."
+        else:
+            graded["experience"]["score"] = min(int(graded["experience"].get("score", 5)), 4)
+            graded["experience"]["reason"] += " Seniority is outside your preferred levels."
 
     exclusions = []
-    if SENIOR_TITLE.search(str(job.get("title") or "")):
-        exclusions.append("Seniority: title is mid level or higher.")
-    if years is not None and years > 2:
-        exclusions.append(f"Experience: posting requires {years} years, above the 2-year limit.")
-    if specific_elsewhere and not remote:
-        exclusions.append(f"Location: {location} is outside Hanoi and no remote option is stated.")
-    title = str(job.get("title") or "").casefold()
-    excluded_role = next((term for term in NEGATIVE_WORDS if re.search(r"\b" + re.escape(term) + r"\b", title)), None)
-    if excluded_role:
-        exclusions.append(f"Role: {excluded_role} is outside the selected job fields.")
-    if degree and not _has_advanced_degree(profile, degree[0]):
-        exclusions.append(f"Education: posting requires {degree[1]}; profile does not document it.")
+    company = str(job.get("company") or "").strip()
+    if hard.get("role_family") and selected_families and not role_matches_preference:
+        exclusions.append("Role family is outside your explicit search limits.")
+    if hard.get("seniority") and selected_levels and level and level not in selected_levels:
+        exclusions.append("Seniority is outside your explicit search limits.")
+    if hard.get("location") and preferred_locations and location and not location_match:
+        exclusions.append("Location is outside your explicit search limits.")
+    if hard.get("work_mode") and preferred_modes and (mode or remote) and not mode_match:
+        exclusions.append("Work mode is outside your explicit search limits.")
+    if hard.get("employer") and prefs["excluded_employers"] and any(
+            item.casefold() in company.casefold() for item in prefs["excluded_employers"]):
+        exclusions.append("Employer is on your excluded list.")
+    negative = [item for item in prefs["negative_keywords"] if item.casefold() in posting.casefold()]
+    if negative:
+        graded["role"]["score"] = min(int(graded["role"].get("score", 5)), 3)
+        graded["role"]["reason"] += f" Posting contains a negative preference: {negative[0]}."
 
     weighted = round(sum(CRITERION_WEIGHTS[name] * graded[name]["score"] / 10
                          for name in CRITERION_WEIGHTS))
+    preferred_employers = [item.casefold() for item in prefs["preferred_employers"]]
+    excluded_employers = [item.casefold() for item in prefs["excluded_employers"]]
+    if preferred_employers and any(item in company.casefold() for item in preferred_employers):
+        weighted = min(100, weighted + 3)
+    if excluded_employers and any(item in company.casefold() for item in excluded_employers) and not hard.get("employer"):
+        weighted = max(0, weighted - 12)
+
+    salary_text = str(facts.get("salary_range") or "")
+    stated_salary_floor = salary_floor(salary_text, prefs.get("salary_currency"))
+    minimum_salary = prefs.get("minimum_salary")
+    if minimum_salary is not None and hard.get("minimum_salary"):
+        if stated_salary_floor is not None and stated_salary_floor < minimum_salary:
+            exclusions.append("Salary is below your explicit minimum.")
+        elif stated_salary_floor is None and not prefs.get("salary_unknown_ok", True):
+            exclusions.append("Salary is not stated and your search requires known salary.")
+
     return (0 if exclusions else weighted), graded, exclusions
 
 
@@ -485,7 +536,7 @@ def clean_saved_analysis(db: Database) -> int:
         names = [name for name in MatchJudgment.model_fields if name != "summary"]
         if isinstance(facts, dict) and isinstance(criteria, dict) and all(isinstance(criteria.get(name), dict)
                                                and isinstance(criteria[name].get("score"), int) for name in names):
-            score, criteria, exclusions = finalize_match(row, facts or {}, profile, criteria)
+            score, criteria, exclusions = finalize_match(row, facts or {}, profile, criteria, db.get_setting("search_intent", {}))
             detail["criteria"] = criteria
             detail["weights"] = CRITERION_WEIGHTS
             detail["hard_exclusions"] = exclusions
@@ -531,7 +582,8 @@ def _ground_facts(facts: JobFacts, posting: dict) -> JobFacts:
 
 
 def analyze_job(job: dict, profile: dict, projects: list[dict], model: str,
-                on_stage: Callable[[str], None] | None = None) -> tuple[int, dict]:
+                on_stage: Callable[[str], None] | None = None,
+                preferences: dict | None = None) -> tuple[int, dict]:
     posting = {key: job.get(key) for key in ("company", "title", "location", "work_mode")}
     posting["description"] = (job.get("description") or "")[:16_000]
     facts_prompt = (
@@ -551,10 +603,9 @@ def analyze_job(job: dict, profile: dict, projects: list[dict], model: str,
     rule_only = {name: {"score": 5, "reason": "Not graded after the eligibility check."}
                  for name in CRITERION_WEIGHTS}
     rule_only["role"] = role_fallback(job, profile)
-    _, gated_criteria, early_exclusions = finalize_match(job, facts.model_dump(), profile, rule_only)
+    _, gated_criteria, early_exclusions = finalize_match(job, facts.model_dump(), profile, rule_only, preferences)
     if early_exclusions:
-        title = (job.get("title") or "").casefold()
-        excluded = next((term for term in NEGATIVE_WORDS if re.search(r"\b" + re.escape(term) + r"\b", title)), None)
+        excluded = None
         return 0, {"method": "local_llm", "model": model, "facts": facts.model_dump(),
                    "criteria": gated_criteria, "weights": CRITERION_WEIGHTS,
                    "hard_exclusions": early_exclusions, "scoring_skipped": True,
@@ -597,9 +648,8 @@ def analyze_job(job: dict, profile: dict, projects: list[dict], model: str,
     for name, absent in unspecified.items():
         if absent:
             criteria[name] = {"score": 5, "reason": "Not stated in the posting; neutral."}
-    score, criteria, exclusions = finalize_match(job, facts.model_dump(), profile, criteria)
-    title = (job.get("title") or "").casefold()
-    excluded = next((term for term in NEGATIVE_WORDS if re.search(r"\b" + re.escape(term) + r"\b", title)), None)
+    score, criteria, exclusions = finalize_match(job, facts.model_dump(), profile, criteria, preferences)
+    excluded = None
     detail = {"method": "local_llm", "model": model, "facts": facts.model_dump(),
               "criteria": criteria, "weights": CRITERION_WEIGHTS, "hard_exclusions": exclusions,
               "explanation": "This job is outside your current application limits." if exclusions else experience_gap_summary(facts.years_required, profile) or judgment.summary,

@@ -301,7 +301,7 @@ async function loadHome() {
   renderSocialAuth(setup.browser);
   const c = data.counts;
   $('#metrics').innerHTML = [
-    ['High-fit new jobs', c.high_fit_new], ['New in 24h', c.recent_jobs],
+    [`Strong matches (${data.strong_match_threshold}+)`, c.high_fit_new], ['New in 24h', c.recent_jobs],
     ['Drafts to review', c.drafts_needing_review], ['Analysis failures', c.analysis_failures],
   ].map(([label, value]) => `<div class="metric"><strong>${value}</strong><span>${label}</span></div>`).join('');
 
@@ -350,7 +350,7 @@ async function loadHome() {
 
   const actions = [
     ...(data.attention?.drafts || []).map((item) => ({kind:'draft', id:item.id, title:item.title, company:item.company, meta:item.status === 'needs_review' ? 'Needs changes' : 'Ready for review'})),
-    ...(data.attention?.jobs || []).map((item) => ({kind:'job', id:item.id, title:item.title, company:item.company, meta:`${item.score}/100 match`})),
+    ...(data.attention?.jobs || []).map((item) => ({kind:'job', id:item.id, title:item.title, company:item.company, meta:`${fitClassLabel(item.fit_class)} · ${item.score}/100`})),
     ...(data.attention?.failures || []).map((item) => ({kind:'job', id:item.id, title:item.title, company:item.company, meta:'Match review failed'})),
   ].slice(0, 8);
   $('#home-action-count').textContent = actions.length ? `${actions.length} item${actions.length === 1 ? '' : 's'} worth opening` : 'Nothing urgent right now';
@@ -735,7 +735,8 @@ async function loadJobs() {
     sort: $('#job-sort').value,
   });
   [...query.entries()].forEach(([key,value]) => { if (value === '') query.delete(key); });
-  const [result, analysis] = await Promise.all([api(`/api/jobs/page?${query}`), loadJobAnalysis()]);
+  const [result, analysis, intent] = await Promise.all([api(`/api/jobs/page?${query}`), loadJobAnalysis(), api('/api/search-intent')]);
+  syncStrongThresholdUi(intent);
   if (jobsPage > result.pages) { jobsPage = result.pages; syncJobsHash(); return loadJobs(); }
   const jobs = result.items;
   $('#jobs-since-count').textContent = String(result.inbox?.since_last_visit || 0);
@@ -755,7 +756,7 @@ async function loadJobs() {
     : 'No jobs match these filters.';
   $('#job-list').innerHTML = jobs.length ? jobs.map((job) => {
     const signals = topMatchSignals(job);
-    const tags = [job.work_mode, job.seniority, sourceLabel(job.source)].filter(Boolean);
+    const tags = [fitClassLabel(job.fit_class), job.work_mode, job.seniority, sourceLabel(job.source)].filter(Boolean);
     const dateValue = job.published_at || job.first_seen_at;
     const decisionBadge = job.decision_state !== 'undecided'
       ? lifecycleBadge(jobDecisionLabel(job.decision_state), job.decision_state === 'ignored' ? 'danger' : job.decision_state === 'later' ? 'warning' : 'info')
@@ -772,7 +773,8 @@ async function loadJobs() {
         ${scoreBadge(job)}<div class="item-title">${escapeHtml(job.title)}</div>
         <div class="job-card-company">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div>
         ${job.salary_range ? `<div class="job-card-salary">${escapeHtml(job.salary_range)} <small>salary from posting</small></div>` : ''}
-        <div class="job-card-tags">${tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join('')}</div>
+        <div class="job-card-tags"><span class="status-badge status-badge--${fitClassTone(job.fit_class)}">${escapeHtml(tags.shift() || '')}</span>${tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join('')}</div>
+        ${job.missing_evidence?.length ? `<div class="job-card-uncertainty">Missing: ${escapeHtml(job.missing_evidence.slice(0, 2).join(', '))}</div>` : ''}
         <div class="job-card-signals">${signals.map((signal) => `<span class="${signal.tone}" title="${escapeHtml(signal.reason || '')}">${signal.tone === 'good' ? '✓' : '!' } ${escapeHtml(signal.label)}</span>`).join('')}</div>
         <div class="job-card-lifecycle">${decisionBadge}${applicationBadge}${outcomeBadge}</div>
         <div class="job-card-footer"><span${exactTimeTitle(dateValue)}>${job.published_at ? 'Posted' : 'Found'} ${relativeWhen(dateValue)}</span></div>
@@ -859,6 +861,13 @@ async function showJob(id, pin = false) {
       <section class="job-lifecycle-card"><label>Recruiting outcome<select id="job-outcome-control"><option value="none" ${job.recruiting_outcome === 'none' ? 'selected' : ''}>No outcome yet</option><option value="interview" ${job.recruiting_outcome === 'interview' ? 'selected' : ''}>Interview</option><option value="offer" ${job.recruiting_outcome === 'offer' ? 'selected' : ''}>Offer</option><option value="rejected" ${job.recruiting_outcome === 'rejected' ? 'selected' : ''}>Rejected</option></select></label><p class="hint">This is separate from whether you shortlisted or applied.</p></section>
     </div>
 
+    <div class="match-summary-card surface-status">
+      <div><span class="status-badge status-badge--${fitClassTone(job.fit_class)}">${escapeHtml(fitClassLabel(job.fit_class))}</span><strong>${job.score == null ? 'Score pending' : `${job.score}/100`}</strong></div>
+      ${job.strongest_signal ? `<p><strong>Strongest signal:</strong> ${escapeHtml(job.strongest_signal.reason)}</p>` : ''}
+      ${job.main_gap ? `<p><strong>Main gap:</strong> ${escapeHtml(job.main_gap.reason)}</p>` : ''}
+      <p><strong>Evidence confidence:</strong> ${Math.max(0, 100 - Number(job.uncertainty || 0))}%</p>
+      ${job.missing_evidence?.length ? `<p><strong>Missing evidence:</strong> ${escapeHtml(job.missing_evidence.join(', '))}</p>` : '<p class="hint">No major evidence gaps detected.</p>'}
+    </div>
     ${renderJobAnalysis(job, score)}
 
     <section class="job-application-method review-section">
@@ -1116,9 +1125,59 @@ function renderProviderAvailability(availability) {
     : '<p class="hint">All supported drafting providers are available.</p>';
 }
 
+function commaList(value) {
+  return String(value || '').split(',').map((item) => item.trim()).filter(Boolean);
+}
+
+function setMultiSelect(select, values) {
+  const selected = new Set(values || []);
+  [...select.options].forEach((option) => { option.selected = selected.has(option.value); });
+}
+
+function fitClassLabel(value) {
+  return ({strong:'Strong match', stretch:'Worth a stretch', uncertain:'Uncertain', outside:'Outside preferences'})[value] || 'Uncertain';
+}
+
+function fitClassTone(value) {
+  return value === 'strong' ? 'success' : value === 'stretch' ? 'warning' : value === 'outside' ? 'danger' : 'neutral';
+}
+
+function syncStrongThresholdUi(intent) {
+  const threshold = Number(intent?.strong_match_threshold ?? 80);
+  const score = $('#job-score');
+  if (score) {
+    score.placeholder = `Any score · strong is ${threshold}+`;
+    score.title = `Strong matches use the shared ${threshold}+ threshold`;
+  }
+  const auto = $('#auto-apply-form')?.elements.threshold;
+  if (auto) auto.value = threshold;
+}
+
+function renderSearchIntentForm(intent) {
+  const form = $('#search-intent-form');
+  if (!form) return;
+  for (const name of ['role_families','preferred_locations','preferred_employers','excluded_employers','negative_keywords']) {
+    form.elements[name].value = (intent[name] || []).join(', ');
+  }
+  setMultiSelect(form.elements.seniority_levels, intent.seniority_levels);
+  setMultiSelect(form.elements.work_modes, intent.work_modes);
+  form.elements.strong_match_threshold.value = intent.strong_match_threshold;
+  form.elements.minimum_salary.value = intent.minimum_salary ?? '';
+  form.elements.salary_currency.value = intent.salary_currency || 'VND';
+  form.elements.salary_unknown_ok.checked = intent.salary_unknown_ok !== false;
+  const hard = intent.hard_constraints || {};
+  for (const key of ['role_family','seniority','location','work_mode','employer','minimum_salary']) {
+    form.elements[`hard_${key}`].checked = Boolean(hard[key]);
+  }
+  const active = [...(intent.role_families || []), ...(intent.preferred_locations || []), ...(intent.work_modes || [])].length;
+  setStepStatus('#search-intent-status', active ? `${active} preferences · strong at ${intent.strong_match_threshold}+` : `Flexible · strong at ${intent.strong_match_threshold}+`, active ? '' : 'muted');
+  syncStrongThresholdUi(intent);
+}
+
 async function loadSettings() {
-  const [profile, setup] = await Promise.all([api('/api/profile'), loadSetup()]);
+  const [profile, setup, intent] = await Promise.all([api('/api/profile'), loadSetup(), api('/api/search-intent')]);
   await loadMatchingModels();
+  renderSearchIntentForm(intent);
   const availability = {codex:setup.providers.codex, codex_local:setup.providers.codex && setup.providers.ollama,
     agy:setup.providers.agy, claude:setup.providers.claude};
   const providerForm = $('#provider-form');
@@ -1557,7 +1616,7 @@ async function loadAutoApply() {
   existingButton.disabled = !data.enabled || !(data.eligible_existing || data.waiting_existing);
   $('#existing-draft-count').textContent = !data.enabled ? 'Enable and save automatic drafts first.'
     : (data.eligible_existing || data.waiting_existing) ? `${data.eligible_existing} scored match${data.eligible_existing === 1 ? '' : 'es'} at ${data.threshold}+ · ${data.waiting_existing} still being checked · ${(data.counts.queued || 0)} queued.`
-    : data.highest_existing_score != null ? `No undrafted jobs score at least ${data.threshold}; the highest is ${data.highest_existing_score}. Lower the minimum and save to include them.`
+    : data.highest_existing_score != null ? `No undrafted jobs score at least ${data.threshold}; the highest is ${data.highest_existing_score}. Change the strong-match threshold in Settings to include more jobs.`
     : `${data.counts.queued || 0} queued · No undrafted, scored jobs are ready.`;
   const activity = $('#auto-apply-activity');
   activity.innerHTML = data.recent.length ? `${data.recent.map((item) =>
@@ -1573,7 +1632,7 @@ $('#auto-apply-form').addEventListener('submit', async (event) => {
   const pendingButton = beginPending(event.submitter || event.target.querySelector('button[type="submit"]'), 'Saving…');
   const form = event.target;
   try {
-    const result = await api('/api/auto-apply', {method:'PUT', body:JSON.stringify({enabled:form.elements.enabled.checked, threshold:Number(form.elements.threshold.value)})});
+    const result = await api('/api/auto-apply', {method:'PUT', body:JSON.stringify({enabled:form.elements.enabled.checked})});
     delete form.dataset.initialized;
     await loadAutoApply();
     notice(result.enabled ? `Automatic drafts enabled for jobs scoring ${result.threshold} or higher. Every application waits for your approval.` : 'Automatic draft preparation paused.');
@@ -2077,10 +2136,10 @@ function applyJobControls() {
 }
 $('#job-search').addEventListener('click', applyJobControls);
 $('#job-query').addEventListener('keydown', (event) => { if (event.key === 'Enter') applyJobControls(); });
-for (const selector of ['#job-decision','#job-application','#job-outcome','#job-score','#job-freshness','#job-work-mode','#job-source','#job-sort']) {
+for (const selector of ['#job-decision','#job-application','#job-outcome','#job-score','#job-freshness','#job-work-mode','#job-source','#job-seniority','#job-sort']) {
   $(selector).addEventListener('change', applyJobControls);
 }
-for (const selector of ['#job-location','#job-seniority']) {
+for (const selector of ['#job-location','#job-score']) {
   $(selector).addEventListener('keydown', (event) => { if (event.key === 'Enter') applyJobControls(); });
 }
 document.querySelectorAll('[data-job-inbox]').forEach((button) => button.addEventListener('click', () => {
@@ -2298,6 +2357,36 @@ $('#profile-form').addEventListener('submit', async (event) => {
     await loadPersonalDetails();
     notice('Personal details saved');
   } catch(error) { notice(error.message, true); }
+  finally { endPending(pendingButton); }
+});
+
+$('#search-intent-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.target;
+  const pendingButton = beginPending(event.submitter || form.querySelector('button[type="submit"]'), 'Saving…');
+  const selected = (name) => [...form.elements[name].selectedOptions].map((option) => option.value);
+  const payload = {
+    role_families: commaList(form.elements.role_families.value),
+    seniority_levels: selected('seniority_levels'),
+    preferred_locations: commaList(form.elements.preferred_locations.value),
+    work_modes: selected('work_modes'),
+    preferred_employers: commaList(form.elements.preferred_employers.value),
+    excluded_employers: commaList(form.elements.excluded_employers.value),
+    negative_keywords: commaList(form.elements.negative_keywords.value),
+    minimum_salary: form.elements.minimum_salary.value ? Number(form.elements.minimum_salary.value) : null,
+    salary_currency: form.elements.salary_currency.value.trim() || 'VND',
+    salary_unknown_ok: form.elements.salary_unknown_ok.checked,
+    strong_match_threshold: Number(form.elements.strong_match_threshold.value),
+    hard_constraints: Object.fromEntries(['role_family','seniority','location','work_mode','employer','minimum_salary']
+      .map((key) => [key, form.elements[`hard_${key}`].checked])),
+  };
+  try {
+    const saved = await api('/api/search-intent', {method:'PUT', body:JSON.stringify(payload)});
+    renderSearchIntentForm(saved);
+    delete $('#auto-apply-form').dataset.initialized;
+    $('#search-intent-message').textContent = 'Saved. Existing jobs are being rescored against these preferences.';
+    notice('Search preferences saved');
+  } catch(error) { $('#search-intent-message').textContent = error.message; notice(error.message, true); }
   finally { endPending(pendingButton); }
 });
 
