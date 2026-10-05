@@ -126,7 +126,7 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 page.goto(f"http://127.0.0.1:{port}/#profile")
                 page.locator("#provider-panel summary").click()
                 for selector in ("#provider-status", "#resume-status", "#matching-status", "#social-sign-in-status", "#setup-telegram-status"):
-                    page.locator(f"{selector}.pill:not(.warning):not(.muted)").wait_for()
+                    page.locator(f"{selector}.status-badge:not(.status-badge--warning):not(.status-badge--neutral)").wait_for()
             finally:
                 browser.close()
     finally:
