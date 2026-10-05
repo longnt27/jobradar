@@ -8,6 +8,7 @@ import uvicorn
 from playwright.sync_api import sync_playwright
 
 from job_radar.settings import Settings
+from job_radar.local_analysis import ANALYSIS_VERSION
 from job_radar.web import create_app
 
 
@@ -140,6 +141,7 @@ def test_failed_matching_jobs_are_visible_and_retryable_from_jobs(tmp_path: Path
     db.execute("UPDATE sources SET enabled=0")
     db.set_setting("profile", {"name": "Alex Example", "email": "alex@example.org", "skills": []})
     db.set_setting("matching_model", "test:small")
+    db.set_setting("analysis_version", ANALYSIS_VERSION)
     monkeypatch.setattr("job_radar.web.list_local_models", lambda: [{"name": "test:small", "size": 123456789}])
     monkeypatch.setattr("job_radar.web.validate_local_model", lambda model: model)
     monkeypatch.setattr("job_radar.matching.analyze_job", lambda *_args: (75, {"method": "local_llm"}))

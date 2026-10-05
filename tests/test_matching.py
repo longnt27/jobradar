@@ -47,7 +47,9 @@ def test_local_analysis_extracts_facts_and_weights_nine_scores(monkeypatch) -> N
 
 
 def test_binance_advanced_degree_is_hard_rejection_and_role_stays_about_role(monkeypatch) -> None:
+    calls = []
     def generate(_model, _prompt, result_type):
+        calls.append(result_type)
         if result_type is JobFacts:
             return JobFacts(role="Senior Data Scientist", seniority="Senior", required_skills=[],
                             preferred_skills=[], years_required=None, location="", work_mode="Remote",
@@ -69,6 +71,8 @@ def test_binance_advanced_degree_is_hard_rejection_and_role_stays_about_role(mon
     assert "degree" not in detail["criteria"]["role"]["reason"].casefold()
     assert detail["criteria"]["role"]["score"] == 5
     assert detail["criteria"]["education"]["score"] == 1
+    assert detail["scoring_skipped"] is True
+    assert calls == [JobFacts]
 
 
 def test_salary_can_be_extracted_from_facebook_post_title() -> None:
@@ -93,7 +97,7 @@ def test_analysis_policy_change_queues_existing_jobs_once(tmp_path) -> None:
         assert db.one("SELECT analysis_status FROM vacancies WHERE id=?", (job_id,))["analysis_status"] == "pending"
         await manager.stop()
     asyncio.run(start_and_stop())
-    assert db.get_setting("analysis_version", 0) == 2
+    assert db.get_setting("analysis_version", 0) == 3
 
 
 def test_unstated_requirements_get_neutral_score(monkeypatch) -> None:

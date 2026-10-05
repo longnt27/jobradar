@@ -17,7 +17,7 @@ from .ranking import NEGATIVE_WORDS
 
 OLLAMA_URL = "http://127.0.0.1:11434"
 RECOMMENDED_MODEL = "qwen2.5:3b"
-ANALYSIS_VERSION = 2
+ANALYSIS_VERSION = 3
 
 
 class LocalModelUnavailable(RuntimeError):
@@ -521,6 +521,18 @@ def analyze_job(job: dict, profile: dict, projects: list[dict], model: str,
     facts = _ground_facts(_generate(model, facts_prompt, JobFacts), posting)
     if on_stage:
         on_stage("scoring")
+    rule_only = {name: {"score": 5, "reason": "Not graded after the eligibility check."}
+                 for name in CRITERION_WEIGHTS}
+    rule_only["role"] = role_fallback(job, profile)
+    _, gated_criteria, early_exclusions = finalize_match(job, facts.model_dump(), profile, rule_only)
+    if early_exclusions:
+        title = (job.get("title") or "").casefold()
+        excluded = next((term for term in NEGATIVE_WORDS if re.search(r"\b" + re.escape(term) + r"\b", title)), None)
+        return 0, {"method": "local_llm", "model": model, "facts": facts.model_dump(),
+                   "criteria": gated_criteria, "weights": CRITERION_WEIGHTS,
+                   "hard_exclusions": early_exclusions, "scoring_skipped": True,
+                   "explanation": "This job is outside your current application limits.",
+                   "excluded_role": excluded}
     candidate = {
         "skills": profile.get("skills", []), "location": profile.get("location", ""),
         "relocation": profile.get("relocation", ""),
