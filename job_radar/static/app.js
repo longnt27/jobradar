@@ -1157,6 +1157,14 @@ function submissionTarget(submission) {
   return destination.email || destination.url || 'No destination recorded';
 }
 
+function submissionEvidenceText(submission) {
+  if (submission?.receipt) return submission.receipt;
+  const key = submission?.outcome?.key;
+  if (key === 'submission_uncertain') return 'No confirmation was received. Verify the outcome on the employer site.';
+  if (key === 'send_failed') return 'The external service rejected the send before accepting it.';
+  return submission?.outcome?.guidance || 'No additional receipt recorded.';
+}
+
 function renderSubmissionProof(submission, includePackage = false) {
   if (!submission) return '';
   const outcome = submission.outcome || {};
@@ -1190,8 +1198,9 @@ function renderSubmissionProof(submission, includePackage = false) {
         <div><strong>When</strong><span>${escapeHtml(when(submission.sent_at))}</span></div>
         <div><strong>Channel</strong><span>${escapeHtml(outcome.channel || 'Application')}</span></div>
         <div><strong>Destination</strong><span>${escapeHtml(submissionTarget(submission))}</span></div>
-        <div><strong>Proof</strong><span>${escapeHtml(submission.receipt || submission.error || 'No additional receipt recorded')}</span></div>
+        <div><strong>Proof</strong><span>${escapeHtml(submissionEvidenceText(submission))}</span></div>
       </div>
+      ${submission.error ? `<details class="submission-technical"><summary>Technical detail</summary><p class="mono">${escapeHtml(submission.error)}</p></details>` : ''}
       ${proof}
     </section>`;
 }
@@ -1327,7 +1336,7 @@ async function loadSubmissionHistory() {
     <article class="item submission-history-card">
       <div class="section-head"><div><div class="item-title">${escapeHtml(submission.job_title)} · ${escapeHtml(submission.company)}</div><div class="item-meta">${escapeHtml(when(submission.sent_at))} · ${escapeHtml(submission.outcome?.channel || 'Application')}</div></div><span class="status-badge status-badge--${escapeHtml(submission.outcome?.tone || 'neutral')}">${escapeHtml(submission.outcome?.label || 'Recorded')}</span></div>
       <p class="item-meta">${escapeHtml(submissionTarget(submission))}</p>
-      <p>${escapeHtml(submission.receipt || submission.error || submission.outcome?.guidance || '')}</p>
+      <p>${escapeHtml(submissionEvidenceText(submission))}</p>
       <div class="actions"><button type="button" data-history-application="${submission.draft_id}" class="secondary">Open application</button>${submission.resume_available ? `<a class="button-link" href="/api/submissions/${submission.id}/resume" target="_blank" rel="noopener noreferrer">Exact resume ↗</a>` : ''}</div>
     </article>`).join('') : '<p class="empty">No submission history matches this search.</p>';
   list.querySelectorAll('[data-history-application]').forEach((button) => button.addEventListener('click', () => loadApplications(button.dataset.historyApplication).catch((error) => notice(error.message, true))));
@@ -1352,7 +1361,7 @@ async function loadAutoApply() {
     : `${data.counts.queued || 0} queued · No undrafted, scored jobs are ready.`;
   const activity = $('#auto-apply-activity');
   activity.innerHTML = data.recent.length ? `${data.recent.map((item) =>
-    `<div class="item"><div class="item-title">${escapeHtml(item.title)} · ${escapeHtml(item.company)} <span class="status-badge ${item.status === 'sent' ? 'status-badge--success' : 'status-badge--warning'}">${escapeHtml(item.status.replaceAll('_', ' '))}</span></div><div class="item-meta">${item.analysis_status === 'done' && item.score != null ? `${escapeHtml(item.score)}/100 · ` : 'Checking match · '}${escapeHtml(item.detail || '')}</div><div class="actions">${item.draft_id ? `<button type="button" data-auto-draft="${item.draft_id}">Open application</button>` : `<button type="button" data-auto-job="${item.vacancy_id}">Open job</button>`}</div></div>`
+    `<div class="item"><div class="item-title">${escapeHtml(item.title)} · ${escapeHtml(item.company)} <span class="status-badge status-badge--${applicationReviewTone({review_status:item.status})}">${escapeHtml(applicationReviewLabel(item.status))}</span></div><div class="item-meta">${item.analysis_status === 'done' && item.score != null ? `${escapeHtml(item.score)}/100 · ` : 'Checking match · '}${escapeHtml(item.detail || '')}</div><div class="actions">${item.draft_id ? `<button type="button" data-auto-draft="${item.draft_id}">Open application</button>` : `<button type="button" data-auto-job="${item.vacancy_id}">Open job</button>`}</div></div>`
   ).join('')}` : '<p class="hint">No prepared drafts yet.</p>';
   activity.querySelectorAll('[data-auto-draft]').forEach((button) => button.addEventListener('click', () => loadApplications(button.dataset.autoDraft).catch((error) => notice(error.message, true))));
   activity.querySelectorAll('[data-auto-job]').forEach((button) => button.addEventListener('click', async () => { await showTab('jobs'); await showJob(button.dataset.autoJob); }));
