@@ -45,7 +45,7 @@ def _resume_pdf(path: Path) -> None:
     pdf.save()
 
 
-def test_review_packet_sends_one_pdf_message_with_actions(tmp_path: Path) -> None:
+def test_review_packet_sends_summary_before_pdf_with_actions(tmp_path: Path) -> None:
     settings = Settings(tmp_path)
     save_telegram(settings, {"token": "test-token", "chat_id": "123"})
     pdf = tmp_path / "resume.pdf"
@@ -63,15 +63,24 @@ def test_review_packet_sends_one_pdf_message_with_actions(tmp_path: Path) -> Non
             return await send_review_packet(settings, _draft(pdf), [], client=client)
 
     message_id = asyncio.run(run())
-    assert message_id == len(seen)
-    sent = [request for request in seen if request.url.path.endswith("/sendDocument")]
-    assert len(sent) == 1
-    assert not any(request.url.path.endswith("/sendMessage") for request in seen)
-    assert b"AI Engineer" in sent[0].content and b"80/100" in sent[0].content
-    buttons = json.loads(sent[0].content.split(b'name="reply_markup"\r\n\r\n')[1].split(b"\r\n--")[0])["inline_keyboard"]
+    paths = [request.url.path for request in seen]
+    summary_index = next(index for index, path in enumerate(paths) if path.endswith("/sendMessage"))
+    document_index = next(index for index, path in enumerate(paths) if path.endswith("/sendDocument"))
+    assert summary_index < document_index
+    assert message_id == summary_index + 1
+    summary = seen[summary_index]
+    payload = json.loads(summary.content)
+    assert "AI Engineer at Example" in payload["text"]
+    assert "Match: 80/100" in payload["text"]
+    assert "Action: Email -> jobs@example.org" in payload["text"]
+    assert "Ready to send" in payload["text"]
+    buttons = payload["reply_markup"]["inline_keyboard"]
     assert [button["text"] for row in buttons for button in row] == ["Approve & send", "Edit", "Regenerate"]
     assert buttons[1][0]["callback_data"] == f"review:edit:{'a' * 32}:{'b' * 12}"
     assert all(len(button["callback_data"].encode()) <= 64 for row in buttons for button in row if "callback_data" in button)
+    document = seen[document_index]
+    assert b"Full review packet" in document.content
+    assert b"reply_parameters" in document.content
     review = PdfReader(str(build_review_pdf(settings, _draft(pdf), [])))
     full_text = "\n".join(page.extract_text() for page in review.pages)
     for expected in ("Build reliable search services", "Dear team", "Why join?", "Alex Example - English CV"):

@@ -101,7 +101,10 @@ def test_career_email_destination_prepares_email_application(tmp_path: Path) -> 
     source = db.one("SELECT id FROM sources WHERE kind='career' LIMIT 1")["id"]
     identifier, _ = ingest(db, source, ObservedJob("https://example.org/jobs/42", "AI Engineer", "Example", "Build AI systems with Python.", apply_url="mailto:careers@example.org"))
     draft = client.post(f"/api/jobs/{identifier}/prepare", json={"provider": "template"}).json()
-    assert draft["destination"] == {"kind": "email", "email": "careers@example.org"}
+    assert draft["destination"]["kind"] == "email"
+    assert draft["destination"]["action_type"] == "email"
+    assert draft["destination"]["email"] == "careers@example.org"
+    assert draft["destination"]["confidence"] == "high"
 
 
 def test_vietnamese_posting_gets_vietnamese_email_and_english_cv_rule(monkeypatch) -> None:

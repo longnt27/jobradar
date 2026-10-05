@@ -226,11 +226,13 @@ async def collect_linkedin(context: BrowserContext, source: dict) -> list[Observ
                   .filter(a => /apply|ứng tuyển/i.test(`${a.innerText} ${a.href}`))
                   .map(a => a.href)
                   .filter(h => /^https?:\/\//i.test(h) && !/linkedin\.com/i.test(h))""")
+                easy_apply = bool(re.search(r"\beasy\s+apply\b|ứng\s+tuyển\s+dễ\s+dàng", body, re.I))
                 jobs.append(ObservedJob(
                     url=url, external_id=job_id.group(1) if job_id else None,
                     title=title, company=company or "Unknown employer", description=description[:30000],
-                    location=location[:250], apply_url=apply_links[0] if apply_links else None,
-                    published_at=_date_from_age(body[:1800]), raw_text=body[:30000],
+                    location=location[:250], apply_url=apply_links[0] if apply_links else (url if easy_apply else None),
+                    published_at=_date_from_age(body[:1800]),
+                    raw_text=(body[:29500] + ("\nApplication control: LinkedIn Easy Apply" if easy_apply else ""))[:30000],
                 ))
             except AuthRequired:
                 raise
@@ -294,11 +296,25 @@ async def _collect_linkedin_search_results(page: Page, source: dict) -> list[Obs
                 }""")
                 if not title or len(description) < 30:
                     continue
+                job_url = f"https://www.linkedin.com/jobs/view/{job_id}/"
+                action = await page.evaluate(r"""() => {
+                  const root = document.querySelector('.jobs-search__job-details--container, .job-details-jobs-unified-top-card__container, main') || document;
+                  const controls = [...root.querySelectorAll('a[href],button')];
+                  const external = controls.find(node =>
+                    node.tagName === 'A' && /apply|ứng tuyển/i.test(`${node.innerText} ${node.getAttribute('aria-label') || ''}`) &&
+                    /^https?:\/\//i.test(node.href) && !/linkedin\.com/i.test(node.href));
+                  const easy = controls.some(node =>
+                    node.tagName === 'BUTTON' && /easy\s+apply|ứng\s+tuyển\s+dễ\s+dàng/i.test(
+                      `${node.innerText} ${node.getAttribute('aria-label') || ''}`));
+                  return {external: external?.href || '', easy};
+                }""")
+                marker = "\nApplication control: LinkedIn Easy Apply" if action["easy"] else ""
                 jobs.append(ObservedJob(
-                    url=f"https://www.linkedin.com/jobs/view/{job_id}/",
+                    url=job_url,
                     external_id=job_id, title=title[:180], company=company[:180],
                     location=location[:250], description=description[:30000],
-                    published_at=_date_from_age(card_text), raw_text=description[:30000],
+                    apply_url=action["external"] or (job_url if action["easy"] else None),
+                    published_at=_date_from_age(card_text), raw_text=(description + marker)[:30000],
                 ))
             except Exception:
                 continue
