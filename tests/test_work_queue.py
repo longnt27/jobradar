@@ -102,3 +102,67 @@ def test_home_previews_only_six_current_queue_items(tmp_path: Path) -> None:
     finally:
         server.should_exit = True
         thread.join(timeout=5)
+
+
+def test_queue_polling_preserves_focus_and_announces_only_meaningful_updates(tmp_path: Path) -> None:
+    app = create_app(Settings(tmp_path))
+    db = app.state.db
+    db.execute("UPDATE sources SET enabled=0")
+
+    def pending_job(title: str) -> str:
+        identifier = new_id()
+        timestamp = now()
+        db.execute(
+            "INSERT INTO vacancies(id,company,title,description,first_seen_at,last_seen_at,created_at,updated_at,"
+            "analysis_status) VALUES(?,?,?,?,?,?,?,?,?)",
+            (identifier, "Example", title, "Build Python services.", timestamp, timestamp, timestamp, timestamp, "pending"),
+        )
+        return identifier
+
+    focused_id = pending_job("Keep my focus")
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
+    thread = Thread(target=server.run, daemon=True)
+    thread.start()
+    try:
+        for _ in range(100):
+            if server.started:
+                break
+            time.sleep(.05)
+        assert server.started
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            try:
+                page = browser.new_page(viewport={"width": 1280, "height": 900})
+                page.set_default_timeout(10000)
+                page.goto(f"http://127.0.0.1:{port}/#queue")
+                focused = page.locator(f'[data-queue-kind="analysis"][data-queue-id="{focused_id}"]')
+                focused.wait_for()
+                assert page.locator("#queue-live").inner_text() == ""
+                page.evaluate("loadQueue({reason:'poll'})")
+                assert page.locator("#queue-live").inner_text() == ""
+
+                focused.focus()
+                assert page.evaluate("document.activeElement.dataset.queueId") == focused_id
+                pending_job("Arrived during polling")
+                page.evaluate("loadQueue({reason:'poll'})")
+                page.wait_for_function("document.querySelector('#queue-live').textContent.includes('Queue changed')")
+                assert page.evaluate("document.activeElement.dataset.queueId") == focused_id
+
+                page.get_by_role("button", name="Refresh now").click()
+                page.wait_for_function("document.querySelector('#queue-live').textContent.includes('Queue refreshed')")
+                assert "Auto-refresh every 5 seconds" in page.locator("#queue-updated-at").inner_text()
+
+                page.set_viewport_size({"width": 390, "height": 844})
+                styles = page.locator("#queue-analysis-waiting .queue-scroll").evaluate(
+                    "(node) => ({maxHeight:getComputedStyle(node).maxHeight, overflowY:getComputedStyle(node).overflowY})"
+                )
+                assert styles["maxHeight"] == "none"
+                assert styles["overflowY"] == "visible"
+            finally:
+                browser.close()
+    finally:
+        server.should_exit = True
+        thread.join(timeout=5)
