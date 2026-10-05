@@ -668,10 +668,12 @@ function filterSources(sources) {
     if (enabled === 'paused' && source.enabled) return false;
     if (success === 'has_success' && !source.last_success_at) return false;
     if (success === 'never' && source.last_success_at) return false;
-    if (status === 'attention' && !['failed', 'auth_required', 'needs_refresh', 'interrupted'].includes(source.scan_state)) return false;
-    if (status === 'healthy' && !['success', 'empty'].includes(source.scan_state)) return false;
-    if (status === 'unscanned' && source.scan_state !== 'not_scanned') return false;
-    if (status && !['attention', 'healthy', 'unscanned'].includes(status) && source.scan_state !== status) return false;
+    const coverageLevel = source.coverage?.level || 'unknown';
+    if (status === 'attention' && coverageLevel !== 'degraded') return false;
+    if (status === 'limited' && !['limited','moderate'].includes(coverageLevel)) return false;
+    if (status === 'healthy' && coverageLevel !== 'good') return false;
+    if (status === 'unknown' && coverageLevel !== 'unknown') return false;
+    if (status === 'auto_off' && coverageLevel !== 'paused') return false;
     return true;
   });
   const sort = $('#source-sort').value;
@@ -700,7 +702,9 @@ async function loadSources() {
     ['Facebook groups', coverage.counts.facebook],
     ['Company sites', coverage.counts.career],
   ].map(([label,value]) => `<div><strong>${value}</strong><span>${label}</span></div>`).join('');
-  $('#source-coverage-gaps').textContent = coverage.gaps.length ? `Obvious gaps: ${coverage.gaps.join(' · ')}.` : 'No obvious channel gap in the configured sources.';
+  const linkedinNames = (coverage.channels?.linkedin || []).slice(0, 8);
+  const channelDetail = linkedinNames.length ? ` LinkedIn searches: ${linkedinNames.join(', ')}${coverage.channels.linkedin.length > linkedinNames.length ? ` +${coverage.channels.linkedin.length - linkedinNames.length} more` : ''}.` : '';
+  $('#source-coverage-gaps').textContent = (coverage.gaps.length ? `Obvious gaps: ${coverage.gaps.join(' · ')}.` : 'No obvious channel gap in the configured sources.') + channelDetail;
   $('#source-result-summary').textContent = `Showing ${visible.length} of ${sources.length} configured sources`;
   $('#source-list').innerHTML = visible.length ? visible.map((source) => {
     const total = Number(source.job_count) || 0;
