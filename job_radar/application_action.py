@@ -164,7 +164,7 @@ def resolve_application_action(db: Database, job: dict) -> dict:
         if source_kind == "linkedin" and _EASY_APPLY.search(raw):
             candidates.append(_candidate(
                 kind="manual", action_type="linkedin_easy_apply",
-                destination=str(row.get("observation_url") or apply_url or job.get("apply_url") or ""),
+                destination=str(payload.get("url") or row.get("observation_url") or apply_url or job.get("apply_url") or ""),
                 source_kind="linkedin", provenance="linkedin_easy_apply_control", confidence="high",
                 evidence="The LinkedIn posting exposes Easy Apply; Job Radar preserves the target but requires manual submission.", strength=3,
             ))
@@ -221,4 +221,5 @@ def resolve_application_action(db: Database, job: dict) -> dict:
             "conflicting_explicit_evidence",
             "The posting exposes multiple plausible application destinations. Confirm the intended action before sending.",
         )
-    return _public(top[0])
+    preferred = max(top, key=lambda item: (bool(item.get("source_kind")), bool(item.get("provenance", "").endswith("_posting_instruction"))))
+    return _public(preferred)

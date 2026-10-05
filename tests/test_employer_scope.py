@@ -47,3 +47,32 @@ def test_changing_career_url_disables_superseded_source(tmp_path: Path) -> None:
     assert client.patch(f"/api/employers/{employer_id}", json={"career_url": "https://example.org/jobs/old"}).status_code == 200
     rows = client.app.state.db.all("SELECT url,enabled FROM sources WHERE employer_id=? ORDER BY url", (employer_id,))
     assert rows == [{"url": "https://example.org/jobs/new", "enabled": 0}, {"url": "https://example.org/jobs/old", "enabled": 1}]
+
+
+def test_employer_directory_page_paginates_and_filters(tmp_path: Path) -> None:
+    client = TestClient(create_app(Settings(tmp_path)))
+    for index in range(55):
+        response = client.post("/api/employers", json={
+            "name": f"Paging Employer {index:03d}",
+            "category": "paging-test",
+        })
+        assert response.status_code == 201
+
+    first = client.get("/api/employers/page", params={
+        "q": "Paging Employer", "page": 1, "page_size": 20,
+    }).json()
+    second = client.get("/api/employers/page", params={
+        "q": "Paging Employer", "page": 2, "page_size": 20,
+    }).json()
+    last = client.get("/api/employers/page", params={
+        "q": "Paging Employer", "page": 3, "page_size": 20,
+    }).json()
+
+    assert first["total"] == 55
+    assert first["pages"] == 3
+    assert len(first["items"]) == 20
+    assert len(second["items"]) == 20
+    assert len(last["items"]) == 15
+    assert {row["id"] for row in first["items"]}.isdisjoint(row["id"] for row in second["items"])
+    assert first["items"][0]["name"] == "Paging Employer 000"
+    assert second["items"][0]["name"] == "Paging Employer 020"
