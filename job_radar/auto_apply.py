@@ -74,7 +74,8 @@ class AutoApplyManager:
                 "waiting_existing": waiting_existing,
                 "highest_existing_score": highest_existing_score, "recent": recent}
 
-    def configure(self, enabled: bool, threshold: int) -> dict:
+    def configure(self, enabled: bool, threshold: int | None = None) -> dict:
+        threshold = self.config()["threshold"] if threshold is None else threshold
         if not 0 <= threshold <= 100:
             raise ValueError("Threshold must be between 0 and 100")
         previous = self.config()
