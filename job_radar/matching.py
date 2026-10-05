@@ -70,7 +70,7 @@ class MatchManager:
     def invalidate_all(self) -> None:
         if not self.db.get_setting("matching_model", ""):
             return
-        self.db.execute("UPDATE vacancies SET analysis_status='pending',analysis_stage=NULL,analysis_error=NULL WHERE analysis_status!='pending'")
+        self.db.execute("UPDATE vacancies SET analysis_status='pending',analysis_stage=NULL,analysis_error=NULL WHERE analysis_status NOT IN ('pending','dismissed')")
         self._wake()
 
     def _wake(self) -> None:
@@ -87,6 +87,16 @@ class MatchManager:
             raise KeyError("Job not found")
         self.db.execute("UPDATE vacancies SET analysis_status='pending',analysis_stage=NULL,analysis_error=NULL WHERE id=?", (vacancy_id,))
         self._wake()
+
+    def dismiss_failure(self, vacancy_id: str) -> None:
+        if not self.db.one("SELECT id FROM vacancies WHERE id=?", (vacancy_id,)):
+            raise KeyError("Job not found")
+        with self.db.connection() as conn:
+            changed = conn.execute(
+                "UPDATE vacancies SET analysis_status='dismissed',analysis_stage=NULL,analysis_error=NULL,score=NULL,score_detail=NULL "
+                "WHERE id=? AND analysis_status='failed'", (vacancy_id,)).rowcount
+        if not changed:
+            raise ValueError("Only a failed analysis can be dismissed")
 
     def failures(self) -> list[dict]:
         return self.db.all(

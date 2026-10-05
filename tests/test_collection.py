@@ -25,6 +25,20 @@ def test_normalization_preserves_identity_and_ingest_updates(tmp_path: Path) -> 
     assert db.one("SELECT COUNT(*) AS count FROM observations")["count"] == 1
 
 
+def test_rescan_keeps_a_dismissed_analysis_dismissed(tmp_path: Path) -> None:
+    db = Database(tmp_path / "db.sqlite3")
+    seed(db)
+    source = db.one("SELECT id FROM sources LIMIT 1")["id"]
+    db.set_setting("matching_model", "test:small")
+    job = ObservedJob("https://example.org/jobs/5", "AI Engineer", "Example", "Build AI systems with Python.")
+    identifier, _ = ingest(db, source, job)
+    db.execute("UPDATE vacancies SET analysis_status='dismissed',score=NULL,score_detail=NULL WHERE id=?", (identifier,))
+    job.description = "Build AI systems with Python and vision."
+    ingest(db, source, job)
+    row = db.one("SELECT analysis_status,score FROM vacancies WHERE id=?", (identifier,))
+    assert row == {"analysis_status": "dismissed", "score": None}
+
+
 def test_scan_records_observations(monkeypatch, tmp_path: Path) -> None:
     settings = Settings(tmp_path)
     db = Database(settings.database_path)

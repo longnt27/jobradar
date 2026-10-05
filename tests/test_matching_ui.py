@@ -176,6 +176,10 @@ def test_failed_matching_jobs_are_visible_and_retryable_from_jobs(tmp_path: Path
                 page.locator("#job-query").fill("no matching title")
                 page.evaluate("loadJobs()")
                 assert page.get_by_role("heading", name="Engineer 1").is_visible()
+                page.locator("#matching-failure-list .matching-failure-row").filter(has_text="Engineer 1").get_by_role("button", name="Dismiss").click()
+                page.wait_for_function("document.querySelectorAll('#matching-failure-list .matching-failure-row').length === 1")
+                assert db.one("SELECT analysis_status FROM vacancies WHERE title='Engineer 1'")["analysis_status"] == "dismissed"
+                page.locator("#job-detail").get_by_role("button", name="Run analysis again").wait_for()
                 page.locator("#matching-retry-all").click()
                 page.locator("#matching-failures").wait_for(state="hidden")
                 assert db.one("SELECT COUNT(*) AS n FROM vacancies WHERE analysis_status='failed'")["n"] == 0

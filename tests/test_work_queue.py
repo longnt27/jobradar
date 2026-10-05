@@ -1,6 +1,11 @@
 from pathlib import Path
+import socket
+import time
+from threading import Thread
 
+import uvicorn
 from fastapi.testclient import TestClient
+from playwright.sync_api import sync_playwright
 
 from job_radar.db import new_id, now
 from job_radar.settings import Settings
@@ -54,3 +59,46 @@ def test_one_queue_reports_real_worker_order_and_analysis_stage(tmp_path: Path) 
     assert [row["id"] for row in data["analysis"]["failed"]] == [failed]
     assert "blocked" not in data["drafts"]
     assert data["drafts"]["review_ready"] == 1
+
+
+def test_home_previews_only_six_current_queue_items(tmp_path: Path) -> None:
+    app = create_app(Settings(tmp_path))
+    db = app.state.db
+    db.execute("UPDATE sources SET enabled=0")
+    client = TestClient(app)
+    for number in range(9):
+        job_id = client.post("/api/jobs/import", json={"company": "Example", "title": f"Queued engineer {number}",
+            "description": "Build Python services."}).json()["id"]
+        db.execute("UPDATE vacancies SET analysis_status='pending' WHERE id=?", (job_id,))
+    failed_id = client.post("/api/jobs/import", json={"company": "Example", "title": "Failed engineer",
+        "description": "Build Python services."}).json()["id"]
+    db.execute("UPDATE vacancies SET analysis_status='failed',analysis_error='Invalid model output' WHERE id=?", (failed_id,))
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
+    thread = Thread(target=server.run, daemon=True)
+    thread.start()
+    try:
+        for _ in range(100):
+            if server.started:
+                break
+            time.sleep(.05)
+        assert server.started
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            try:
+                page = browser.new_page()
+                page.goto(f"http://127.0.0.1:{port}/#home")
+                page.locator("#home-queue .home-queue-row").first.wait_for()
+                assert page.get_by_role("heading", name="Job queue").is_visible()
+                assert page.locator("#home-queue .home-queue-row").count() == 6
+                assert "Queued engineer" in page.locator("#home-queue").inner_text()
+                assert "9 in queue" in page.locator("#home-queue-count").inner_text()
+                assert "1 need attention" in page.locator("#home-queue-count").inner_text()
+                assert "Failed engineer" in page.locator("#home-queue").inner_text()
+            finally:
+                browser.close()
+    finally:
+        server.should_exit = True
+        thread.join(timeout=5)

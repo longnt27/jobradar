@@ -396,6 +396,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except ValueError as error:
             raise HTTPException(409, str(error)) from error
 
+    @app.post("/api/jobs/{job_id}/dismiss-analysis")
+    def dismiss_job_analysis(job_id: str):
+        try:
+            match_manager.dismiss_failure(job_id)
+        except KeyError as error:
+            raise HTTPException(404, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
+        return {"dismissed": True}
+
     @app.get("/api/profile")
     def get_profile():
         return db.get_setting("profile", {})

@@ -7,12 +7,12 @@ import httpx
 from fastapi.testclient import TestClient
 
 from job_radar.ingest import ObservedJob, ingest
-from job_radar.local_analysis import Criterion, JobFacts, LocalModelUnavailable, MatchJudgment, _generate, _ground_facts, analyze_job, clean_saved_analysis, experience_criterion, extract_salary_range, freshness_criterion, validate_local_model
+from job_radar.local_analysis import Criterion, JobFacts, LocalModelUnavailable, MatchJudgment, _generate, _ground_facts, analyze_job, clean_saved_analysis, experience_criterion, extract_salary_range, freshness_criterion, validate_local_model, finalize_match, extract_years_required
 from job_radar.settings import Settings
 from job_radar.web import create_app
 
 
-def test_local_analysis_extracts_facts_and_sums_ten_scores(monkeypatch) -> None:
+def test_local_analysis_extracts_facts_and_weights_ten_scores(monkeypatch) -> None:
     prompts = []
     stages = []
 
@@ -36,7 +36,7 @@ def test_local_analysis_extracts_facts_and_sums_ten_scores(monkeypatch) -> None:
         "test:small",
         stages.append,
     )
-    assert score == 62
+    assert score == 71
     assert len(detail["criteria"]) == 10
     assert detail["facts"]["required_skills"] == ["Python"]
     assert detail["method"] == "local_llm"
@@ -58,7 +58,7 @@ def test_unstated_requirements_get_neutral_score(monkeypatch) -> None:
     assert detail["criteria"]["education"] == {"score": 5, "reason": "Not stated in the posting; neutral."}
     assert detail["criteria"]["preferred_skills"]["score"] == 5
     assert detail["criteria"]["research"]["score"] == 5
-    assert score == 34
+    assert score == 36
 
 
 def test_extraction_discards_unsupported_language_seniority_and_years() -> None:
@@ -109,8 +109,8 @@ def test_saved_match_replaces_role_similarity_with_years_of_experience(tmp_path:
     result = json.loads(updated["score_detail"])
     assert result["criteria"]["experience"]["score"] < 5
     assert "3 years" in result["criteria"]["experience"]["reason"]
-    assert "below" in result["explanation"]
-    assert updated["score"] < 100
+    assert "Experience:" in " ".join(result["hard_exclusions"])
+    assert updated["score"] == 0
 
 
 def test_new_match_does_not_call_short_role_history_three_years_of_experience(monkeypatch) -> None:
@@ -127,7 +127,7 @@ def test_new_match_does_not_call_short_role_history_three_years_of_experience(mo
         {"experience": [{"dates": "Dec 2025 – Jun 2026"}, {"dates": "Jul 2026 – Sep 2026"}]}, [], "test:small")
     assert detail["facts"]["years_required"] == 3
     assert detail["criteria"]["experience"]["score"] < 5
-    assert "below the 3 years requested" in detail["explanation"]
+    assert "3 years" in " ".join(detail["hard_exclusions"])
 
 
 def test_language_salary_and_freshness_are_grounded_in_the_job_posting(tmp_path: Path) -> None:
@@ -165,7 +165,7 @@ def test_language_salary_and_freshness_are_grounded_in_the_job_posting(tmp_path:
     assert corrected_detail["facts"]["salary_range"] == "Salary: VND 18–30 million per month."
     assert corrected_detail["criteria"]["freshness"]["score"] == 5
     assert corrected_detail["criteria"]["experience"]["score"] == 5
-    assert corrected["score"] == 58
+    assert corrected["score"] == 56
     assert clean_saved_analysis(app.state.db) == 0
 
 
@@ -243,7 +243,7 @@ def test_newly_discovered_posting_date_requeues_local_score(tmp_path: Path) -> N
     assert refreshed["analysis_status"] == "pending"
 
 
-def test_negative_role_cap_is_enforced_after_model_scoring(monkeypatch) -> None:
+def test_negative_role_is_excluded_after_model_scoring(monkeypatch) -> None:
     def generate(_model, _prompt, result_type):
         if result_type is JobFacts:
             return JobFacts(role="Sales Manager", seniority="", required_skills=[], preferred_skills=[],
@@ -254,7 +254,7 @@ def test_negative_role_cap_is_enforced_after_model_scoring(monkeypatch) -> None:
 
     monkeypatch.setattr("job_radar.local_analysis._generate", generate)
     score, detail = analyze_job({"title": "Sales Manager", "description": "AI and Python"}, {}, [], "test:small")
-    assert score == 20
+    assert score == 0
     assert detail["excluded_role"] == "sales"
 
 
@@ -338,3 +338,94 @@ def test_failed_job_analyses_are_listed_and_can_be_retried_together(tmp_path: Pa
     assert retried.status_code == 202
     assert retried.json()["queued"] == 1
     assert client.get("/api/matching/failures").json() == []
+
+
+def test_failed_analysis_can_be_dismissed_without_deleting_the_job(tmp_path: Path) -> None:
+    app = create_app(Settings(tmp_path))
+    client = TestClient(app)
+    app.state.db.set_setting("matching_model", "test:small")
+    job_id = client.post("/api/jobs/import", json={"company": "Example", "title": "Engineer",
+        "description": "Build Python services."}).json()["id"]
+    app.state.db.execute("UPDATE vacancies SET analysis_status='failed',analysis_error='Invalid local JSON' WHERE id=?", (job_id,))
+    response = client.post(f"/api/jobs/{job_id}/dismiss-analysis")
+    assert response.status_code == 200
+    assert client.get("/api/matching/failures").json() == []
+    assert client.get("/api/queue").json()["analysis"]["failed"] == []
+    assert client.get(f"/api/jobs/{job_id}").json()["analysis_status"] == "dismissed"
+    assert app.state.match_manager.status()["failed"] == 0
+    app.state.match_manager.invalidate_all()
+    assert client.get(f"/api/jobs/{job_id}").json()["analysis_status"] == "dismissed"
+    app.state.db.set_setting("profile", {"name": "New name", "skills": ["Python"]})
+    from job_radar.ranking import rescore_vacancies
+    rescore_vacancies(app.state.db, app.state.db.get_setting("profile"))
+    assert client.get(f"/api/jobs/{job_id}").json()["analysis_status"] == "dismissed"
+    assert client.post(f"/api/jobs/{job_id}/analyze").status_code == 202
+    assert client.get(f"/api/jobs/{job_id}").json()["analysis_status"] == "pending"
+
+
+def test_match_policy_weights_role_more_than_freshness_and_applies_hard_gates() -> None:
+    criteria = {name: {"score": 5, "reason": "Neutral"}
+                for name in MatchJudgment.model_fields if name != "summary"}
+    base = {"title": "AI Engineer", "description": "Build AI models in Hanoi", "location": "Hanoi"}
+    facts = {"years_required": 2, "location": "Hanoi", "work_mode": "Onsite"}
+    profile = {"experience": [{"dates": "Jan 2026 – Jun 2026"}]}
+    score, graded, exclusions = finalize_match(base, facts, profile, criteria)
+    assert not exclusions
+    assert graded["location"]["score"] == 10
+    assert graded["experience"]["score"] < 10
+    role_boost = {**criteria, "role": {"score": 10, "reason": "Match"}}
+    fresh_boost = {**criteria, "freshness": {"score": 10, "reason": "Recent"}}
+    assert finalize_match(base, facts, profile, role_boost)[0] - score > \
+        finalize_match(base, facts, profile, fresh_boost)[0] - score
+    for changed, why in (
+        ({"title": "Senior AI Engineer"}, "seniority"),
+        ({"title": "Middle AI Engineer"}, "seniority"),
+        ({"description": "Requires 3 years of experience in AI"}, "experience"),
+        ({"location": "Ho Chi Minh City", "description": "Onsite in Ho Chi Minh City"}, "location"),
+    ):
+        gated_job = {**base, **changed}
+        gated_facts = {**facts, "location": gated_job["location"]}
+        result, _, reasons = finalize_match(gated_job, gated_facts, profile, criteria)
+        assert result == 0
+        assert any(why in reason.casefold() for reason in reasons)
+    remote = {**base, "location": "Ho Chi Minh City", "description": "Fully remote in Vietnam"}
+    assert finalize_match(remote, {**facts, "location": "Ho Chi Minh City", "work_mode": "Remote"}, profile, criteria)[0] > 0
+    remote_location = {**base, "location": "Remote", "description": "Build AI models"}
+    assert finalize_match(remote_location, {**facts, "location": "Remote", "work_mode": ""}, profile, criteria)[0] > 0
+    location_in_post = {**base, "location": "", "description": "Địa điểm: HCM\nOnsite office"}
+    assert finalize_match(location_in_post, {**facts, "location": ""}, profile, criteria)[0] == 0
+    interview_only = {**base, "location": "Ho Chi Minh City", "description": "Onsite in HCMC. Remote interviews available."}
+    assert finalize_match(interview_only, {**facts, "location": "Ho Chi Minh City", "work_mode": ""}, profile, criteria)[0] == 0
+    no_remote = {**base, "location": "Ho Chi Minh City", "description": "Remote work unavailable. Onsite in HCMC."}
+    assert finalize_match(no_remote, {**facts, "location": "Ho Chi Minh City", "work_mode": ""}, profile, criteria)[0] == 0
+    travel_only = {**base, "location": "", "description": "Occasional travel to Ho Chi Minh City."}
+    assert finalize_match(travel_only, {**facts, "location": "Ho Chi Minh City", "work_mode": ""}, profile, criteria)[0] > 0
+    based_elsewhere = {**base, "location": "", "description": "This role is based in Ho Chi Minh City."}
+    assert finalize_match(based_elsewhere, {**facts, "location": "Ho Chi Minh City", "work_mode": ""}, profile, criteria)[0] == 0
+    placeholder = {**base, "location": "Search by Location", "description": "Build Python models."}
+    assert finalize_match(placeholder, {**facts, "location": "", "work_mode": ""}, profile, criteria)[0] > 0
+    country_only = {**base, "location": "Vietnam (On-site)", "description": "Build Python models."}
+    assert finalize_match(country_only, {**facts, "location": "", "work_mode": ""}, profile, criteria)[0] > 0
+    head_office = {**base, "location": "Địa điểm: Hội sở", "description": "Build Python models."}
+    assert finalize_match(head_office, {**facts, "location": "", "work_mode": ""}, profile, criteria)[0] > 0
+    hanoi_district = {**base, "location": "Quận Cầu Giấy", "description": "Onsite in Cầu Giấy."}
+    assert finalize_match(hanoi_district, {**facts, "location": "Quận Cầu Giấy"}, profile, criteria)[0] > 0
+    assert extract_years_required("2 years in Python; 4 years building ML systems") == 4
+    assert extract_years_required("Company has 10 years of history. Requires 2 years of ML experience.") == 2
+
+
+def test_saved_match_uses_structured_location_for_hard_exclusion(tmp_path: Path) -> None:
+    app = create_app(Settings(tmp_path))
+    client = TestClient(app)
+    job_id = client.post("/api/jobs/import", json={"company": "Example", "title": "AI Engineer",
+        "description": "Build Python models on site.", "location": "Ho Chi Minh City"}).json()["id"]
+    criteria = {name: {"score": 9, "reason": "Earlier match"}
+                for name in MatchJudgment.model_fields if name != "summary"}
+    detail = {"method": "local_llm", "facts": {"location": "", "years_required": None},
+              "criteria": criteria, "explanation": "Looks good."}
+    app.state.db.execute("UPDATE vacancies SET analysis_status='done',score=90,score_detail=? WHERE id=?",
+        (json.dumps(detail), job_id))
+    assert clean_saved_analysis(app.state.db) == 1
+    updated = client.get(f"/api/jobs/{job_id}").json()
+    assert updated["score"] == 0
+    assert "Location:" in " ".join(json.loads(updated["score_detail"])["hard_exclusions"])

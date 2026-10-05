@@ -3,7 +3,7 @@ const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({'
 const when = (value) => value ? new Date(value).toLocaleString() : 'Never';
 function scoreBadge(job) {
   if (job.analysis_status !== 'done' || !Number.isFinite(job.score)) {
-    const label = job.analysis_status === 'failed' ? 'Failed' : job.analysis_status === 'not_configured' ? 'No score' : 'Analyzing';
+    const label = job.analysis_status === 'failed' ? 'Failed' : ['not_configured', 'dismissed'].includes(job.analysis_status) ? 'No score' : 'Analyzing';
     return `<span class="score score-pending" aria-label="${label}">${label}</span>`;
   }
   const range = job.score >= 80 ? 'high' : job.score >= 60 ? 'good' : job.score >= 40 ? 'medium' : 'low';
@@ -35,9 +35,11 @@ function renderJobAnalysis(job, score) {
   const status = job.analysis_status;
   const stateMessage = status === 'done' ? `Local match · ${escapeHtml(job.analysis_model || '')} · ${when(job.analyzed_at)}`
     : status === 'failed' ? `Local analysis failed: ${escapeHtml(job.analysis_error || 'Unknown error')}`
+    : status === 'dismissed' ? 'Failed analysis dismissed. This job remains in your list without a match score.'
     : ['pending', 'running'].includes(status) ? 'Local model is extracting requirements and scoring this job.'
     : 'Basic keyword score. Choose a local matching model in My profile for a detailed assessment.';
-  const retry = status === 'failed' ? `<button type="button" data-analyze="${job.id}" class="secondary">Try analysis again</button>` : '';
+  const retry = status === 'failed' ? `<div class="actions"><button type="button" data-analyze="${job.id}" class="secondary">Try analysis again</button><button type="button" data-dismiss-analysis="${job.id}" class="secondary">Dismiss failed analysis</button></div>`
+    : status === 'dismissed' ? `<button type="button" data-analyze="${job.id}" class="secondary">Run analysis again</button>` : '';
   const completed = status === 'done';
   const facts = completed ? score?.facts : null;
   const list = (label, items) => items?.length ? `<div><strong>${label}</strong><ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul></div>` : '';
@@ -51,8 +53,8 @@ function renderJobAnalysis(job, score) {
   const labels = {role:'Role', required_skills:'Required skills', preferred_skills:'Preferred skills', experience:'Years of experience',
     responsibilities:'Responsibilities', research:'Research', location:'Location', work_mode:'Work mode', education:'Education', freshness:'Freshness'};
   const criteria = completed && score?.criteria ? `<div class="review-section"><h4>Match breakdown · ${scoreBadge(job)} ${job.score}/100</h4><p>${escapeHtml(score.explanation || '')}</p>
-    <div class="criteria-grid">${Object.entries(labels).map(([key, label]) => { const item = score.criteria[key]; return item ? `<div class="criterion"><strong>${label} <span>${escapeHtml(item.score)}/10</span></strong><small>${escapeHtml(item.reason)}</small></div>` : ''; }).join('')}<div class="criterion"><strong>Salary range <span>Info</span></strong><small>${escapeHtml(facts?.salary_range || 'Not stated in the posting.')} Salary is not included in the match score.</small></div></div>
-    ${score.excluded_role ? `<p class="hint">Score capped at 20 because the title contains “${escapeHtml(score.excluded_role)}”.</p>` : ''}</div>` :
+    ${score.hard_exclusions?.length ? `<div class="match-exclusions"><strong>Score is 0 because:</strong><ul>${score.hard_exclusions.map((reason) => `<li>${escapeHtml(reason)}</li>`).join('')}</ul></div>` : ''}
+    <div class="criteria-grid">${Object.entries(labels).map(([key, label]) => { const item = score.criteria[key]; return item ? `<div class="criterion"><strong>${label} <span>${escapeHtml(item.score)}/10${score.weights?.[key] ? ` · ${score.weights[key]}% weight` : ''}</span></strong><small>${escapeHtml(item.reason)}</small></div>` : ''; }).join('')}<div class="criterion"><strong>Salary range <span>Info</span></strong><small>${escapeHtml(facts?.salary_range || 'Not stated in the posting.')} Salary is not included in the match score.</small></div></div></div>` :
     '';
   return `<div class="review-section"><p class="hint">${stateMessage}</p>${retry}</div>${factsHtml}${criteria}`;
 }
@@ -194,9 +196,26 @@ async function loadHome() {
     `<button class="step-row" data-home-step="${step.tab}" data-social-auth="${step.socialAuth ? 'true' : 'false'}" data-setup-panel="${step.panel || ''}"><span class="step-check ${step.done ? 'done' : ''}">${step.done ? '✓' : '○'}</span><span><strong>${escapeHtml(step.label)}</strong><small>${escapeHtml(step.detail)}</small></span><span class="step-arrow">→</span></button>`
   ).join('');
   document.querySelectorAll('[data-home-step]').forEach((button) => button.addEventListener('click', () => button.dataset.socialAuth === 'true' ? openSocialSignIn() : button.dataset.setupPanel ? openSetupPanel(button.dataset.setupPanel) : showTab(button.dataset.homeStep)));
-  $('#recent-scans').innerHTML = data.recent_runs.length ? data.recent_runs.map((run) =>
-    `<div class="item"><div class="item-title">${escapeHtml(run.source_name)} <span class="pill ${run.status === 'success' ? '' : 'warning'}">${escapeHtml(run.status)}</span></div><div class="item-meta">${when(run.started_at)} · ${run.observed_count} observed · ${run.new_count} new</div>${run.detail ? `<div class="item-meta">${escapeHtml(run.detail)}</div>` : ''}</div>`
-  ).join('') : '<div class="empty">No scans yet. Your enabled sources will appear here.</div>';
+  await loadHomeQueue();
+}
+
+async function loadHomeQueue() {
+  clearTimeout(window.homeQueuePoll);
+  const queue = await api('/api/queue');
+  const lanes = [
+    ['scan', 'Scan', queue.scans], ['analysis', 'Analyze', queue.analysis], ['draft', 'Draft', queue.drafts],
+  ];
+  const running = lanes.flatMap(([kind, label, lane]) => lane.active.map((item) => ({kind, label, item, status:'Running'})));
+  const waiting = lanes.flatMap(([kind, label, lane]) => lane.waiting.map((item) => ({kind, label, item, status:'Waiting'})));
+  const attention = queue.analysis.failed.map((item) => ({kind:'analysis', label:'Analyze', item, status:'Needs attention'}));
+  const preview = [...running, ...attention, ...waiting].slice(0, 6);
+  const total = running.length + waiting.length;
+  $('#home-queue-count').textContent = `${total} in queue${queue.analysis.failed.length ? ` · ${queue.analysis.failed.length} need attention` : ''}`;
+  $('#home-queue').innerHTML = preview.length ? preview.map(({kind, label, item, status}) =>
+    `<button type="button" class="home-queue-row" data-tab="queue"><span class="home-queue-kind">${label}</span><span class="home-queue-title">${escapeHtml(kind === 'scan' ? item.name : item.title)}</span><small>${status}</small></button>`
+  ).join('') : '<p class="queue-empty">Nothing running or waiting. Open Queue for details.</p>';
+  $('#home-queue').querySelectorAll('[data-tab="queue"]').forEach((button) => button.addEventListener('click', () => showTab('queue')));
+  if ($('#home').classList.contains('active')) window.homeQueuePoll = setTimeout(() => loadHomeQueue().catch((error) => notice(error.message, true)), 5000);
 }
 
 function queueRow(item, kind, label, position = null, active = false) {
@@ -234,7 +253,11 @@ async function loadQueue() {
     ? `<div class="queue-now-head">Working now</div>${analysis.active.map((item) => queueRow(item, 'analysis', item.stage === 'scoring' ? 'Scoring match' : 'Extracting details', null, true)).join('')}`
     : '<p class="queue-empty">No job being analyzed.</p>';
   queueWaiting($('#queue-analysis-waiting'), analysis.waiting, 'analysis', () => 'Extract, then score');
-  $('#queue-analysis-failed').innerHTML = analysis.failed.length ? `<div class="queue-waiting-head queue-failed-head">Needs attention <span>${analysis.failed.length}</span></div><div class="queue-scroll">${analysis.failed.map((item) => queueRow(item, 'analysis', 'Analysis failed', '!')).join('')}</div>` : '';
+  $('#queue-analysis-failed').innerHTML = analysis.failed.length ? `<div class="queue-waiting-head queue-failed-head">Needs attention <span>${analysis.failed.length}</span></div><div class="queue-scroll">${analysis.failed.map((item) => `<div class="queue-failed-row">${queueRow(item, 'analysis', 'Analysis failed', '!')}<button type="button" class="text-button" data-queue-dismiss="${item.id}" aria-label="Dismiss failed analysis for ${escapeHtml(item.title)}">Dismiss</button></div>`).join('')}</div>` : '';
+  $('#queue-analysis-failed').querySelectorAll('[data-queue-dismiss]').forEach((button) => button.addEventListener('click', async () => {
+    try { await api(`/api/jobs/${button.dataset.queueDismiss}/dismiss-analysis`, {method:'POST'}); await loadQueue(); notice('Failed analysis dismissed.'); }
+    catch(error) { notice(error.message, true); }
+  }));
   if (analysis.service_error) $('#queue-analysis-waiting').insertAdjacentHTML('beforeend', `<p class="queue-attention">${escapeHtml(analysis.service_error)}</p>`);
   else if (!analysis.model) $('#queue-analysis-waiting').insertAdjacentHTML('beforeend', '<p class="queue-attention">Choose a local model in My profile to start analysis.</p>');
   $('#queue-draft-active').innerHTML = drafts.active.length
@@ -265,7 +288,7 @@ async function loadJobs() {
   const [jobs, analysis] = await Promise.all([api(`/api/jobs?${query}`), loadJobAnalysis()]);
   const sourceLabel = (source) => !source ? 'Manually added' : source.kind === 'career' ? 'Company career page' : source.kind === 'linkedin' ? 'LinkedIn listing' : 'Facebook group lead';
   $('#job-list').innerHTML = jobs.length ? jobs.map((job) =>
-    `<div class="item job-card"><button type="button" class="card-select" data-job="${job.id}" aria-label="Open ${escapeHtml(job.title)} at ${escapeHtml(job.company)}">${scoreBadge(job)}<div class="item-title">${escapeHtml(job.title)}</div><div class="item-meta">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div><div class="item-meta">${escapeHtml(sourceLabel(job.source))}${job.source ? ` · Checked ${when(job.source.last_seen_at)}` : ''}</div><div class="item-meta">${job.published_at ? `Posted ${when(job.published_at)}` : 'Posting date unavailable'} · First seen ${when(job.first_seen_at)} <span class="pill muted">${escapeHtml(job.state)}</span> · ${job.analysis_status === 'done' ? 'Local match' : job.analysis_status === 'failed' ? 'Analysis failed' : ['pending','running'].includes(job.analysis_status) ? 'Analyzing locally' : 'Waiting for local model'}</div></button>${job.source ? `<a href="${escapeHtml(job.source.url)}" target="_blank" rel="noopener noreferrer">Original posting ↗</a>` : ''}</div>`
+    `<div class="item job-card"><button type="button" class="card-select" data-job="${job.id}" aria-label="Open ${escapeHtml(job.title)} at ${escapeHtml(job.company)}">${scoreBadge(job)}<div class="item-title">${escapeHtml(job.title)}</div><div class="item-meta">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div><div class="item-meta">${escapeHtml(sourceLabel(job.source))}${job.source ? ` · Checked ${when(job.source.last_seen_at)}` : ''}</div><div class="item-meta">${job.published_at ? `Posted ${when(job.published_at)}` : 'Posting date unavailable'} · First seen ${when(job.first_seen_at)} <span class="pill muted">${escapeHtml(job.state)}</span> · ${job.analysis_status === 'done' ? 'Local match' : job.analysis_status === 'failed' ? 'Analysis failed' : job.analysis_status === 'dismissed' ? 'Analysis dismissed' : ['pending','running'].includes(job.analysis_status) ? 'Analyzing locally' : 'Waiting for local model'}</div></button>${job.source ? `<a href="${escapeHtml(job.source.url)}" target="_blank" rel="noopener noreferrer">Original posting ↗</a>` : ''}</div>`
   ).join('') : '<div class="empty">No jobs found. Run a scan or import a job.</div>';
   document.querySelectorAll('[data-job]').forEach((node) => node.addEventListener('click', async () => {
     try {
@@ -309,6 +332,7 @@ async function showJob(id, pin = false) {
     try { await api(`/api/jobs/${id}/analyze`, {method:'POST'}); notice('Local analysis queued'); await loadJobs(); }
     catch(error) { notice(error.message, true); }
   });
+  $('#job-detail').querySelector('[data-dismiss-analysis]')?.addEventListener('click', () => dismissFailedAnalysis(id));
   $('#job-detail').querySelectorAll('[data-state]').forEach((button) => button.addEventListener('click', async () => {
     try { await api(`/api/jobs/${id}/state`, {method:'POST', body: JSON.stringify({state:button.dataset.state})}); notice('Job updated'); await loadJobs(); }
     catch(error) { notice(error.message, true); }
@@ -469,7 +493,7 @@ async function loadJobAnalysis() {
   $('#matching-failures').hidden = !failures.length;
   $('#matching-failures-title').textContent = `${failures.length} job${failures.length === 1 ? '' : 's'} need attention`;
   $('#matching-retry-all').textContent = `Retry all ${failures.length}`;
-  $('#matching-failure-list').innerHTML = failures.map((job) => `<div class="matching-failure-row"><div class="matching-failure-copy"><strong>${escapeHtml(job.title)}</strong><small>${escapeHtml(job.company)} · ${escapeHtml(job.error || 'Local analysis failed')}</small></div><div class="matching-failure-actions"><button type="button" class="secondary" data-matching-open="${job.id}">View job</button><button type="button" class="secondary" data-matching-retry="${job.id}">Retry</button></div></div>`).join('');
+  $('#matching-failure-list').innerHTML = failures.map((job) => `<div class="matching-failure-row"><div class="matching-failure-copy"><strong>${escapeHtml(job.title)}</strong><small>${escapeHtml(job.company)} · ${escapeHtml(job.error || 'Local analysis failed')}</small></div><div class="matching-failure-actions"><button type="button" class="secondary" data-matching-open="${job.id}">View job</button><button type="button" class="secondary" data-matching-retry="${job.id}">Retry</button><button type="button" class="secondary" data-matching-dismiss="${job.id}">Dismiss</button></div></div>`).join('');
   $('#matching-failure-list').querySelectorAll('[data-matching-open]').forEach((button) => button.addEventListener('click', async () => {
     try { await showJob(button.dataset.matchingOpen, true); $('#job-detail').scrollIntoView({behavior:'smooth', block:'start'}); }
     catch (error) { notice(error.message, true); }
@@ -479,7 +503,16 @@ async function loadJobAnalysis() {
     try { await api(`/api/jobs/${button.dataset.matchingRetry}/analyze`, {method:'POST'}); await loadJobs(); notice('Job analysis queued.'); }
     catch (error) { button.disabled = false; notice(error.message, true); }
   }));
+  $('#matching-failure-list').querySelectorAll('[data-matching-dismiss]').forEach((button) => button.addEventListener('click', () => dismissFailedAnalysis(button.dataset.matchingDismiss)));
   return matching;
+}
+
+async function dismissFailedAnalysis(id) {
+  try {
+    await api(`/api/jobs/${id}/dismiss-analysis`, {method:'POST'});
+    await loadJobs();
+    notice('Failed analysis dismissed. The job is still available in Jobs.');
+  } catch(error) { notice(error.message, true); }
 }
 
 $('#matching-model-form select').addEventListener('change', (event) => {
@@ -528,6 +561,7 @@ function showTab(name, historyMode = 'push') {
   if (name !== 'jobs') clearTimeout(window.jobPoll);
   if (name !== 'applications') clearTimeout(window.autoApplyPoll);
   if (name !== 'queue') clearTimeout(window.queuePoll);
+  if (name !== 'home') clearTimeout(window.homeQueuePoll);
   if (name !== 'sources') clearTimeout(window.sourcePoll);
   document.querySelectorAll('.tab').forEach((tab) => tab.classList.toggle('active', tab.id === name));
   const nav = ['personal','experience','projects'].includes(name) ? 'profile' : name === 'employers' ? 'sources' : name;

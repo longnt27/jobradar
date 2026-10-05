@@ -64,5 +64,5 @@ def rescore_vacancies(db: Database, profile: dict[str, Any]) -> None:
         rows = conn.execute("SELECT id,title,description,location,published_at,first_seen_at FROM vacancies").fetchall()
         for row in rows:
             score, detail = score_job(dict(row), profile)
-            conn.execute("UPDATE vacancies SET score=?,score_detail=?,analysis_status=?,analysis_error=NULL,updated_at=? WHERE id=?",
+            conn.execute("UPDATE vacancies SET score=?,score_detail=?,analysis_status=?,analysis_error=NULL,updated_at=? WHERE id=? AND analysis_status!='dismissed'",
                          (score, json.dumps(detail, ensure_ascii=False), "pending" if pending else "not_configured", now(), row["id"]))

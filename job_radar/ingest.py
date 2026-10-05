@@ -121,7 +121,7 @@ def ingest(db: Database, source_id: str, job: ObservedJob) -> tuple[str, bool]:
                      normalize_url(job.apply_url) if job.apply_url else None, job.published_at,
                      timestamp, timestamp, linked["id"]),
                 )
-                if not keep_model_score:
+                if linked["analysis_status"] != "dismissed" and not keep_model_score:
                     conn.execute(
                         "UPDATE vacancies SET score=?,score_detail=?,analysis_status=?,analysis_error=NULL WHERE id=?",
                         (score, json.dumps(detail, ensure_ascii=False),
@@ -163,7 +163,7 @@ def ingest(db: Database, source_id: str, job: ObservedJob) -> tuple[str, bool]:
             if job.published_at and not linked["published_at"]:
                 conn.execute("UPDATE vacancies SET published_at=?,last_seen_at=?,analysis_status=?,"
                              "analysis_error=NULL,updated_at=? WHERE id=?",
-                             (job.published_at, timestamp, "pending" if matching_model else linked["analysis_status"],
+                             (job.published_at, timestamp, "pending" if matching_model and linked["analysis_status"] != "dismissed" else linked["analysis_status"],
                               timestamp, vacancy_id))
             else:
                 conn.execute("UPDATE vacancies SET last_seen_at=? WHERE id=?", (timestamp, vacancy_id))
