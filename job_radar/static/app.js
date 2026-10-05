@@ -638,7 +638,7 @@ async function loadMatchingModels() {
   return data;
 }
 
-async function loadJobAnalysis() {async function loadJobAnalysis() {
+async function loadJobAnalysis() {
   const failures = await api('/api/matching/failures');
   $('#matching-failures').hidden = !failures.length;
   $('#matching-failures-title').textContent = `${failures.length} job${failures.length === 1 ? '' : 's'} need attention`;
@@ -744,7 +744,7 @@ async function loadPositions() {
   }));
 }
 
-async function showTab(async function showTab(name, historyMode = 'push') {
+async function showTab(name, historyMode = 'push') {
   const requested = name.split('/');
   const selectedDraft = requested[0] === 'applications' ? requested[1] : null;
   name = requested[0];
@@ -1105,7 +1105,7 @@ async function loadEvidence(focusId = null) {
   renderRepositoryResults($('#repo-filter')?.value || '');
 }
 
-document.querySelectorAll('[data-tab]')document.querySelectorAll('[data-tab]').forEach((control) => control.addEventListener('click', (event) => {
+document.querySelectorAll('[data-tab]').forEach((control) => control.addEventListener('click', (event) => {
   if (control.matches('a[href^="#"]')) {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
