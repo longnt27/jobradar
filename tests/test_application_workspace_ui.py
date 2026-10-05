@@ -119,7 +119,7 @@ def test_application_workspace_filters_reviews_and_confirms_send(tmp_path: Path,
                 first_card = page.locator(f'[data-application="{first["id"]}"]')
                 first_card.click()
                 assert first_card.get_attribute("aria-pressed") == "true"
-                assert page.locator("#application-detail").evaluate("node => document.activeElement === node")
+                page.wait_for_function("document.activeElement === document.querySelector('#application-detail')")
                 assert "is-selected" in (first_card.get_attribute("class") or "")
                 assert "Basic template" in page.locator("#application-detail").inner_text()
                 assert "local template; no model inference" not in page.locator("#application-detail").inner_text()
