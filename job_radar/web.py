@@ -999,8 +999,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if company:
             clauses.append("v.company=?")
             params.append(company)
-        review_expr = ("COALESCE(a.status,CASE WHEN d.status='sent' THEN 'sent' "
-                       "WHEN d.status='submission_uncertain' THEN 'submission_uncertain' ELSE 'draft' END)")
+        review_expr = (
+            "CASE "
+            "WHEN EXISTS(SELECT 1 FROM submissions su WHERE su.draft_id=d.id AND su.status IN ('submitted_unconfirmed','sending')) THEN 'submission_uncertain' "
+            "WHEN EXISTS(SELECT 1 FROM submissions ss WHERE ss.draft_id=d.id AND ss.status IN ('sent_confirmed','submitted_confirmed')) THEN 'sent' "
+            "ELSE COALESCE(a.status,CASE WHEN d.status='sent' THEN 'sent' "
+            "WHEN d.status='submission_uncertain' THEN 'submission_uncertain' ELSE 'draft' END) END"
+        )
         if review:
             clauses.append(f"{review_expr}=?")
             params.append(review)
