@@ -39,9 +39,9 @@ def test_later_job_states_can_be_set_and_filtered_in_browser(tmp_path: Path) -> 
                     page.set_default_timeout(10000)
                     page.goto(f"http://127.0.0.1:{port}/#jobs")
                     page.get_by_role("button", name=f"Open {title} at Example").click()
-                    page.locator("#job-state-control").select_option(state)
                     if state == "rejected":
-                        page.get_by_role("button", name="OK").click()
+                        page.once("dialog", lambda dialog: dialog.accept())
+                    page.locator("#job-state-control").select_option(state)
                     page.locator("#job-state").select_option(state)
                     page.get_by_role("button", name="Search", exact=True).click()
                     page.wait_for_function("document.querySelectorAll('[data-job]').length === 1")
