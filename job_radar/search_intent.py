@@ -91,10 +91,27 @@ def seniority_key(value: str) -> str:
     return ""
 
 
-def salary_floor(value: str) -> float | None:
-    """Best-effort lower bound for grounded salary text; never infer currency conversion."""
+def salary_currency(value: str) -> str:
     text = str(value or "").casefold()
-    numbers = [float(item.replace(",", "")) for item in re.findall(r"\d+(?:[.,]\d+)?", text.replace(",", ""))]
+    if re.search(r"\b(?:vnd|vnđ)\b|đồng|triệu", text):
+        return "VND"
+    if re.search(r"\b(?:usd)\b|us\$|\$", text):
+        return "USD"
+    if re.search(r"\beur\b|€", text):
+        return "EUR"
+    if re.search(r"\bgbp\b|£", text):
+        return "GBP"
+    return ""
+
+
+def salary_floor(value: str, expected_currency: str | None = None) -> float | None:
+    """Lower bound for grounded salary text; currencies are never converted or guessed."""
+    text = str(value or "").casefold()
+    detected_currency = salary_currency(text)
+    expected = str(expected_currency or "").strip().upper()
+    if expected and detected_currency != expected:
+        return None
+    numbers = [float(item) for item in re.findall(r"\d+(?:\.\d+)?", text.replace(",", ""))]
     if not numbers:
         return None
     floor = min(numbers)
@@ -103,6 +120,18 @@ def salary_floor(value: str) -> float | None:
     elif re.search(r"\b\d+(?:\.\d+)?\s*k\b", text):
         floor *= 1_000
     return floor
+
+
+def posting_salary_floor(value: str, expected_currency: str | None = None) -> float | None:
+    """Read only salary-context fragments so unrelated years/headcounts cannot become pay."""
+    for line in str(value or "").splitlines():
+        for sentence in re.split(r"(?<=[.!?])\s+", line):
+            if not re.search(r"\b(?:salary|compensation|pay|offer)\b|(?:mức\s+)?lương|thu\s+nhập", sentence, re.I):
+                continue
+            amount = salary_floor(sentence, expected_currency)
+            if amount is not None:
+                return amount
+    return None
 
 
 def fit_summary(score: int | None, detail: dict[str, Any] | None, preferences: dict[str, Any]) -> dict[str, Any]:
