@@ -720,10 +720,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             conditions.append("v.analysis_status='done' AND v.score>=?")
             values.append(min_score)
         if freshness is not None:
-            conditions.append("COALESCE(v.published_at,v.first_seen_at) >= datetime('now', ?)")
+            conditions.append("datetime(COALESCE(v.published_at,v.first_seen_at)) >= datetime('now', ?)")
             values.append(f"-{freshness} days")
         if work_mode:
-            conditions.append("lower(COALESCE(NULLIF(v.work_mode,''), json_extract(v.score_detail,'$.facts.work_mode'), ''))=lower(?)")
+            conditions.append("replace(replace(lower(COALESCE(NULLIF(v.work_mode,''), json_extract(v.score_detail,'$.facts.work_mode'), '')),'-',''),' ','')=replace(replace(lower(?),'-',''),' ','')")
             values.append(work_mode)
         if location:
             conditions.append("lower(COALESCE(v.location,'')) LIKE lower(?)")
