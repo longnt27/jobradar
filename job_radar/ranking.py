@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .db import Database, now
-from .search_intent import normalize_search_intent, salary_floor, seniority_key
+from .search_intent import normalize_search_intent, posting_salary_floor, seniority_key
 import json
 
 
@@ -80,14 +80,25 @@ def score_job(job: dict[str, Any], profile: dict[str, Any], preferences: dict[st
     if hard.get("location") and prefs["preferred_locations"] and location and local < 5:
         exclusions.append("Location is outside your explicit search limits.")
     company = str(job.get("company") or "")
-    if hard.get("employer") and any(item.casefold() in company.casefold() for item in prefs["excluded_employers"]):
-        exclusions.append("Employer is on your excluded list.")
+    preferred_employers = [item.casefold() for item in prefs["preferred_employers"]]
+    excluded_employers = [item.casefold() for item in prefs["excluded_employers"]]
+    if preferred_employers and any(item in company.casefold() for item in preferred_employers):
+        score = min(100, score + 3)
+    if excluded_employers and any(item in company.casefold() for item in excluded_employers):
+        if hard.get("employer"):
+            exclusions.append("Employer is on your excluded list.")
+        else:
+            score = max(0, score - 12)
+    detected_mode = "remote" if remote else "hybrid" if "hybrid" in description else "onsite" if re.search(r"\bon[- ]?site\b|\bonsite\b", description) else ""
+    preferred_modes = {item.casefold().replace("-", "").replace(" ", "") for item in prefs["work_modes"]}
+    if hard.get("work_mode") and preferred_modes and detected_mode and detected_mode.replace("-", "") not in preferred_modes:
+        exclusions.append("Work mode is outside your explicit search limits.")
     if prefs.get("minimum_salary") is not None and hard.get("minimum_salary"):
-        pay = salary_floor(f"{job.get('title') or ''}\n{job.get('description') or ''}")
+        pay = posting_salary_floor(f"{job.get('title') or ''}\n{job.get('description') or ''}", prefs.get("salary_currency"))
         if pay is not None and pay < prefs["minimum_salary"]:
             exclusions.append("Salary is below your explicit minimum.")
         elif pay is None and not prefs.get("salary_unknown_ok", True):
-            exclusions.append("Salary is not stated and your search requires known salary.")
+            exclusions.append("Salary is not stated or uses another currency, and your search requires known salary.")
     if exclusions:
         score = 0
     return score, {"method": "rules", "components": components, "matched_skills": matched_skills,
