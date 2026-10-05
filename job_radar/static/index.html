@@ -48,20 +48,20 @@
       </section>
 
       <section id="queue" class="tab">
-        <div class="section-head queue-toolbar"><div><p>See what's running and what will run next. Scans, local job analysis, and draft preparation update automatically.</p><p id="queue-updated-at" class="hint queue-updated-at">Auto-refresh every 5 seconds</p></div><button id="queue-refresh" class="secondary" type="button">Refresh now</button></div>
+        <div class="section-head queue-toolbar"><div><p>See what's running and what will run next. Job checks, match reviews, and draft preparation update automatically.</p><p id="queue-updated-at" class="hint queue-updated-at">Auto-refresh every 5 seconds</p></div><button id="queue-refresh" class="secondary" type="button">Refresh now</button></div>
         <div id="queue-live" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
         <div id="queue-summary" class="queue-summary"></div>
         <div class="queue-grid">
           <section class="panel queue-panel" aria-labelledby="queue-scan-title"><div class="queue-panel-head"><div><h3 id="queue-scan-title">Job scans</h3><p>Company pages, LinkedIn searches, and Facebook groups</p></div><span id="queue-scan-count" class="pill muted"></span></div><div id="queue-scan-active"></div><div id="queue-scan-waiting"></div></section>
-          <section class="panel queue-panel" aria-labelledby="queue-analysis-title"><div class="queue-panel-head"><div><h3 id="queue-analysis-title">Extract & score</h3><p>Local model reads each posting, then scores the match</p></div><span id="queue-analysis-count" class="pill muted"></span></div><div id="queue-analysis-active"></div><div id="queue-analysis-waiting"></div><div id="queue-analysis-failed"></div></section>
+          <section class="panel queue-panel" aria-labelledby="queue-analysis-title"><div class="queue-panel-head"><div><h3 id="queue-analysis-title">Review matches</h3><p>Job Radar reads each posting and checks how well it fits</p></div><span id="queue-analysis-count" class="pill muted"></span></div><div id="queue-analysis-active"></div><div id="queue-analysis-waiting"></div><div id="queue-analysis-failed"></div></section>
           <section class="panel queue-panel" aria-labelledby="queue-draft-title"><div class="queue-panel-head"><div><h3 id="queue-draft-title">Prepare drafts</h3><p>Application details and English CVs, ready for your review</p></div><span id="queue-draft-count" class="pill muted"></span></div><div id="queue-draft-active"></div><div id="queue-draft-waiting"></div><p id="queue-draft-review" class="hint"></p></section>
         </div>
       </section>
 
       <section id="jobs" class="tab">
         <div class="section-head"><p>Open a posting, check its source, then prepare an application.</p></div>
-        <div class="panel job-analysis-panel" aria-label="Local job analysis">
-          <div class="job-analysis-heading"><div><strong>Local job analysis</strong><p id="job-analysis-model" class="hint">Checking model…</p></div><button id="job-analysis-settings" class="text-button" type="button">Change model</button></div>
+        <div class="panel job-analysis-panel" aria-label="Job match status">
+          <div class="job-analysis-heading"><div><strong>Job match status</strong><p id="job-analysis-model" class="hint">Checking model…</p></div><button id="job-analysis-settings" class="text-button" type="button">Change model</button></div>
           <div id="matching-overview" class="matching-overview" role="status" aria-live="polite"></div>
           <section id="matching-failures" class="matching-failures" aria-label="Failed job analyses" hidden>
             <div class="matching-failures-head"><div><strong id="matching-failures-title">Jobs needing attention</strong><p>These jobs have no completed local score yet.</p></div><button id="matching-retry-all" class="secondary" type="button">Retry all</button></div>
@@ -81,7 +81,7 @@
             <label>Sort<select id="job-sort"><option value="best">Best match</option><option value="posted">Newest posted</option><option value="found">Recently found</option><option value="company">Company</option></select></label>
           </div>
         </div>
-        <div class="two-col jobs-layout"><div class="job-list-pane"><div id="job-list" class="stack"></div><div class="job-pagination"><button id="jobs-prev" type="button" class="secondary">Previous</button><span id="jobs-page-summary" aria-live="polite"></span><button id="jobs-next" type="button" class="secondary">Next</button></div></div><div id="job-detail" class="panel detail"><div class="empty">Select a job to see details.</div></div>
+        <div class="two-col jobs-layout"><div class="job-list-pane"><div id="job-list" class="stack"></div><div class="job-pagination"><button id="jobs-prev" type="button" class="secondary">Previous</button><span id="jobs-page-summary" aria-live="polite"></span><button id="jobs-next" type="button" class="secondary">Next</button></div></div><div id="job-detail" class="panel detail" role="region" aria-label="Job details" tabindex="-1"><div class="empty">Select a job to see details.</div></div>
         <details class="panel"><summary>Add a job from a description</summary><form id="job-import" class="form-grid"><label>Company<input name="company" required></label><label>Title<input name="title" required></label><label>Location<input name="location"></label><label>Application URL<input name="apply_url" type="url"></label><label class="full">Description<textarea name="description" required rows="6"></textarea></label><button class="primary" type="submit">Add job</button></form></details>
       </section>
 
@@ -105,7 +105,7 @@
           <p id="application-list-summary" class="hint" role="status" aria-live="polite"></p>
           <div class="applications-workspace">
             <div class="application-list-pane"><div id="application-list" class="stack"></div></div>
-            <div id="application-detail" class="panel detail surface-readonly"><div class="empty">Select an application to review it.</div></div>
+            <div id="application-detail" class="panel detail surface-readonly" role="region" aria-label="Application details" tabindex="-1"><div class="empty">Select an application to review it.</div></div>
           </div>
         </section>
 
@@ -185,7 +185,7 @@
           <summary><span><span class="step-number">4</span><strong>Email applications</strong></span><span id="setup-smtp-status" class="pill muted">Optional</span></summary>
           <p class="hint">Connect an email account to send applications after you approve them. Removing saved credentials requires entering them again.</p>
           <div class="smtp-guide"><div><strong>Use Gmail</strong><p class="hint">Use a Google app password rather than your normal account password.</p></div><button id="smtp-gmail-preset" class="secondary" type="button">Use Gmail settings</button></div>
-          <form id="setup-smtp-form" class="form-grid"><label>SMTP host<input name="host" placeholder="smtp.gmail.com" required></label><label>Port<select name="port"><option value="587">587 (STARTTLS)</option><option value="465">465 (TLS)</option></select></label><label>SMTP username<input name="user" autocomplete="username"></label><label>Password or app password<input name="password" type="password" autocomplete="new-password"></label><label class="full">From address<input name="from_address" type="email" required></label><button class="primary" type="submit">Save email settings</button><button id="setup-smtp-remove" class="secondary danger" type="button">Remove settings</button></form>
+          <form id="setup-smtp-form" class="form-grid"><label>Mail server<input name="host" placeholder="smtp.gmail.com" required></label><label>Port<select name="port"><option value="587">587 (STARTTLS)</option><option value="465">465 (TLS)</option></select></label><label>Email account<input name="user" autocomplete="username"></label><label>Password or app password<input name="password" type="password" autocomplete="new-password"></label><label class="full">From address<input name="from_address" type="email" required></label><button class="primary" type="submit">Save email settings</button><button id="setup-smtp-remove" class="secondary danger" type="button">Remove settings</button></form>
           <div class="smtp-test"><div><strong>Test your connection</strong><p id="smtp-test-result" class="hint" role="status" aria-live="polite">Save settings to send a test email.</p></div><button id="smtp-send-test" class="secondary" type="button" disabled>Send test email</button></div>
         </details>
       </section>
@@ -258,7 +258,7 @@
         </div>
         <div class="panel">
           <div class="section-head"><div><h3>Your projects</h3><p class="hint">Save edits independently, then choose whether each project belongs in resumes.</p></div><span id="selected-project-count" class="pill muted"></span></div>
-          <div class="project-workspace"><div id="evidence-list" class="stack"></div><div id="project-editor" tabindex="-1"></div></div>
+          <div class="project-workspace"><div id="evidence-list" class="stack"></div><div id="project-editor" role="region" aria-label="Project details" tabindex="-1"></div></div>
         </div>
       </section>
 

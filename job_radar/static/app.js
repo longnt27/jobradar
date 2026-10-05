@@ -51,11 +51,11 @@ function formatDescription(value) {
 
 function renderJobAnalysis(job, score) {
   const status = job.analysis_status;
-  const stateMessage = status === 'done' ? `Local match · ${escapeHtml(job.analysis_model || '')} · ${relativeWhen(job.analyzed_at)}`
-    : status === 'failed' ? `Local analysis failed: ${escapeHtml(job.analysis_error || 'Unknown error')}`
+  const stateMessage = status === 'done' ? `Match reviewed · ${relativeWhen(job.analyzed_at)}`
+    : status === 'failed' ? `Match review failed: ${escapeHtml(job.analysis_error || 'Unknown error')}`
     : status === 'dismissed' ? 'Failed analysis dismissed. This job remains in your list without a match score.'
-    : ['pending', 'running'].includes(status) ? 'Local model is extracting requirements and scoring this job.'
-    : 'Basic keyword score. Choose a local matching model in Settings for a detailed assessment.';
+    : ['pending', 'running'].includes(status) ? 'Job Radar is reading the posting and checking the match.'
+    : 'Basic match only. Choose a matching model in Settings for a detailed review.';
   const retry = status === 'failed' ? `<div class="actions"><button type="button" data-analyze="${job.id}" class="secondary">Try analysis again</button><button type="button" data-dismiss-analysis="${job.id}" class="secondary">Dismiss failed analysis</button></div>`
     : status === 'dismissed' ? `<button type="button" data-analyze="${job.id}" class="secondary">Run analysis again</button>` : '';
   const completed = status === 'done';
@@ -222,7 +222,7 @@ async function loadSetup() {
   clearTimeout(window.setupPoll);
   const data = await api('/api/setup');
   const smtpTest = data.smtp_test || {};
-  setStepStatus('#setup-smtp-status', !data.smtp_configured ? 'Optional' : smtpTest.status === 'accepted' ? 'SMTP accepted' : smtpTest.status === 'failed' ? 'Test failed' : 'Configured',
+  setStepStatus('#setup-smtp-status', !data.smtp_configured ? 'Optional' : smtpTest.status === 'accepted' ? 'Test email accepted' : smtpTest.status === 'failed' ? 'Test failed' : 'Configured',
     !data.smtp_configured ? 'muted' : smtpTest.status === 'failed' ? 'warning' : '');
   setStepStatus('#setup-telegram-status', data.telegram_configured ? 'Configured' : 'Optional', data.telegram_configured ? '' : 'muted');
   setStepStatus('#matching-status', data.matching.model ? `Configured · ${data.matching.model}` : 'Choose a model', data.matching.model ? '' : 'warning');
@@ -304,7 +304,7 @@ async function loadHome() {
   const actions = [
     ...(data.attention?.drafts || []).map((item) => ({kind:'draft', id:item.id, title:item.title, company:item.company, meta:item.status === 'needs_review' ? 'Needs changes' : 'Ready for review'})),
     ...(data.attention?.jobs || []).map((item) => ({kind:'job', id:item.id, title:item.title, company:item.company, meta:`${item.score}/100 match`})),
-    ...(data.attention?.failures || []).map((item) => ({kind:'job', id:item.id, title:item.title, company:item.company, meta:'Analysis failed'})),
+    ...(data.attention?.failures || []).map((item) => ({kind:'job', id:item.id, title:item.title, company:item.company, meta:'Match review failed'})),
   ].slice(0, 8);
   $('#home-action-count').textContent = actions.length ? `${actions.length} item${actions.length === 1 ? '' : 's'} worth opening` : 'Nothing urgent right now';
   $('#home-actions').innerHTML = actions.length ? actions.map((item) =>
@@ -321,11 +321,11 @@ async function loadHomeQueue() {
   clearTimeout(window.homeQueuePoll);
   const queue = await api('/api/queue');
   const lanes = [
-    ['scan', 'Scan', queue.scans], ['analysis', 'Analyze', queue.analysis], ['draft', 'Draft', queue.drafts],
+    ['scan', 'Scan', queue.scans], ['analysis', 'Match', queue.analysis], ['draft', 'Draft', queue.drafts],
   ];
   const running = lanes.flatMap(([kind, label, lane]) => lane.active.map((item) => ({kind, label, item, status:'Running'})));
   const waiting = lanes.flatMap(([kind, label, lane]) => lane.waiting.map((item) => ({kind, label, item, status:'Waiting'})));
-  const attention = queue.analysis.failed.map((item) => ({kind:'analysis', label:'Analyze', item, status:'Needs attention'}));
+  const attention = queue.analysis.failed.map((item) => ({kind:'analysis', label:'Match', item, status:'Needs attention'}));
   const preview = [...running, ...attention, ...waiting].slice(0, 6);
   const total = running.length + waiting.length;
   $('#home-queue-count').textContent = `${total} in queue${queue.analysis.failed.length ? ` · ${queue.analysis.failed.length} need attention` : ''}`;
@@ -425,7 +425,7 @@ async function loadQueue(options = {}) {
   queueSignature = signature;
   const scans = data.scans, analysis = data.analysis, drafts = data.drafts;
   const total = [scans, analysis, drafts].reduce((sum, lane) => sum + lane.active.length + lane.waiting.length, 0);
-  $('#queue-summary').innerHTML = `<div><strong>${total}</strong><span>work items in progress or waiting</span></div><div><strong>${scans.active.length + scans.waiting.length}</strong><span>scans</span></div><div><strong>${analysis.active.length + analysis.waiting.length}</strong><span>job analyses</span></div><div><strong>${drafts.active.length + drafts.waiting.length}</strong><span>drafts</span></div>`;
+  $('#queue-summary').innerHTML = `<div><strong>${total}</strong><span>work items in progress or waiting</span></div><div><strong>${scans.active.length + scans.waiting.length}</strong><span>scans</span></div><div><strong>${analysis.active.length + analysis.waiting.length}</strong><span>match reviews</span></div><div><strong>${drafts.active.length + drafts.waiting.length}</strong><span>drafts</span></div>`;
   for (const [id, lane] of [['scan', scans], ['analysis', analysis], ['draft', drafts]]) {
     const blocked = id === 'analysis' ? analysis.failed.length : 0;
     $(`#queue-${id}-count`).textContent = `${lane.active.length} running · ${lane.waiting.length} waiting${blocked ? ` · ${blocked} needs attention` : ''}`;
@@ -435,16 +435,16 @@ async function loadQueue(options = {}) {
     : '<p class="queue-empty">No scan running.</p>';
   queueWaiting($('#queue-scan-waiting'), scans.waiting, 'scan', (item) => item.requested_by === 'you' ? 'Requested by you' : 'Scheduled');
   $('#queue-analysis-active').innerHTML = analysis.active.length
-    ? `<div class="queue-now-head">Working now</div>${analysis.active.map((item) => queueRow(item, 'analysis', item.stage === 'scoring' ? 'Scoring match' : 'Extracting details', null, true)).join('')}`
+    ? `<div class="queue-now-head">Working now</div>${analysis.active.map((item) => queueRow(item, 'analysis', item.stage === 'scoring' ? 'Checking match' : 'Reading job details', null, true)).join('')}`
     : '<p class="queue-empty">No job being analyzed.</p>';
-  queueWaiting($('#queue-analysis-waiting'), analysis.waiting, 'analysis', () => 'Extract, then score');
-  $('#queue-analysis-failed').innerHTML = analysis.failed.length ? `<div class="queue-waiting-head queue-failed-head">Needs attention <span>${analysis.failed.length}</span></div><div class="queue-scroll">${analysis.failed.map((item) => `<div class="queue-failed-row">${queueRow(item, 'analysis', 'Analysis failed', '!')}<button type="button" class="text-button" data-queue-dismiss="${item.id}" aria-label="Dismiss failed analysis for ${escapeHtml(item.title)}">Dismiss</button></div>`).join('')}</div>` : '';
+  queueWaiting($('#queue-analysis-waiting'), analysis.waiting, 'analysis', () => 'Read job, then check match');
+  $('#queue-analysis-failed').innerHTML = analysis.failed.length ? `<div class="queue-waiting-head queue-failed-head">Needs attention <span>${analysis.failed.length}</span></div><div class="queue-scroll">${analysis.failed.map((item) => `<div class="queue-failed-row">${queueRow(item, 'analysis', 'Match review failed', '!')}<button type="button" class="text-button" data-queue-dismiss="${item.id}" aria-label="Dismiss failed analysis for ${escapeHtml(item.title)}">Dismiss</button></div>`).join('')}</div>` : '';
   $('#queue-analysis-failed').querySelectorAll('[data-queue-dismiss]').forEach((button) => button.addEventListener('click', async () => {
     try { await api(`/api/jobs/${button.dataset.queueDismiss}/dismiss-analysis`, {method:'POST'}); await loadQueue({reason:'action'}); notice('Failed analysis dismissed.'); }
     catch(error) { notice(error.message, true); }
   }));
   if (analysis.service_error) $('#queue-analysis-waiting').insertAdjacentHTML('beforeend', `<p class="queue-attention">${escapeHtml(analysis.service_error)}</p>`);
-  else if (!analysis.model) $('#queue-analysis-waiting').insertAdjacentHTML('beforeend', '<p class="queue-attention">Choose a local model in Settings to start analysis.</p>');
+  else if (!analysis.model) $('#queue-analysis-waiting').insertAdjacentHTML('beforeend', '<p class="queue-attention">Choose a matching model in Settings to review job fit.</p>');
   $('#queue-draft-active').innerHTML = drafts.active.length
     ? `<div class="queue-now-head">Preparing now</div>${drafts.active.map((item) => queueRow(item, 'draft', item.stage === 'regenerating' ? 'Regenerating' : 'Preparing draft', null, true)).join('')}`
     : '<p class="queue-empty">No draft being prepared.</p>';
@@ -536,19 +536,20 @@ async function loadJobs() {
     const signals = topMatchSignals(job);
     const tags = [job.work_mode, job.seniority, sourceLabel(job.source)].filter(Boolean);
     const dateValue = job.published_at || job.first_seen_at;
-    return `<div class="item job-card surface-action"><button type="button" class="card-select" data-job="${job.id}" aria-label="Open ${escapeHtml(job.title)} at ${escapeHtml(job.company)}">
+    return `<div class="item job-card surface-action"><button type="button" class="card-select" data-job="${job.id}" aria-pressed="${job.id === activeJob ? 'true' : 'false'}" aria-label="Open ${escapeHtml(job.title)} at ${escapeHtml(job.company)}">
       ${scoreBadge(job)}<div class="item-title">${escapeHtml(job.title)}</div>
       <div class="job-card-company">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div>
       <div class="job-card-tags">${tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join('')}</div>
       <div class="job-card-signals">${signals.map((signal) => `<span class="${signal.tone}" title="${escapeHtml(signal.reason || '')}">${signal.tone === 'good' ? '✓' : '!' } ${escapeHtml(signal.label)}</span>`).join('')}</div>
       <div class="job-card-footer"><span${exactTimeTitle(dateValue)}>${job.published_at ? 'Posted' : 'Found'} ${relativeWhen(dateValue)}</span><span class="status-badge status-badge--neutral">${escapeHtml(job.state)}</span></div>
-    </button>${job.source ? `<a href="${escapeHtml(job.source.url)}" target="_blank" rel="noopener noreferrer">Original posting ↗</a>` : ''}</div>`;
+    </button>${job.source ? `<a href="${escapeHtml(job.source.url)}" target="_blank" rel="noopener noreferrer" aria-label="Open original posting for ${escapeHtml(job.title)} at ${escapeHtml(job.company)}">Original posting ↗</a>` : ''}</div>`;
   }).join('') : '<div class="empty">No jobs match these filters.</div>';
   document.querySelectorAll('[data-job]').forEach((node) => node.addEventListener('click', async () => {
     try {
       activeJob = node.dataset.job; activeJobPinned = true; syncJobsHash('push');
       await showJob(node.dataset.job, true);
       if (window.matchMedia('(max-width: 900px)').matches) scrollNodeIntoView($('#job-detail'), {block:'start'});
+      $('#job-detail').focus({preventScroll:true});
     } catch(error) { notice(error.message, true); }
   }));
   if (activeJob && (activeJobPinned || jobs.some((job) => job.id === activeJob))) await showJob(activeJob, activeJobPinned);
@@ -564,7 +565,11 @@ async function loadJobs() {
 async function showJob(id, pin = false) {
   activeJob = id;
   activeJobPinned = pin;
-  document.querySelectorAll('[data-job]').forEach((node) => node.closest('.item').classList.toggle('is-selected', node.dataset.job === id));
+  document.querySelectorAll('[data-job]').forEach((node) => {
+    const selected = node.dataset.job === id;
+    node.closest('.item').classList.toggle('is-selected', selected);
+    node.setAttribute('aria-pressed', selected ? 'true' : 'false');
+  });
   const job = await api(`/api/jobs/${id}`);
   const profile = await api('/api/profile');
   const provider = profile.drafting_provider || '';
@@ -585,7 +590,7 @@ async function showJob(id, pin = false) {
     <details class="detail-disclosure"><summary>Original description</summary><div class="description">${formatDescription(job.description)}</div></details>`;
   $('#job-detail').querySelector('[data-tab="settings"]').addEventListener('click', () => showTab('settings'));
   $('#job-detail').querySelector('[data-analyze]')?.addEventListener('click', async () => {
-    try { await api(`/api/jobs/${id}/analyze`, {method:'POST'}); notice('Local analysis queued'); await loadJobs(); }
+    try { await api(`/api/jobs/${id}/analyze`, {method:'POST'}); notice('Match review queued'); await loadJobs(); }
     catch(error) { notice(error.message, true); }
   });
   $('#job-detail').querySelector('[data-dismiss-analysis]')?.addEventListener('click', () => dismissFailedAnalysis(id));
@@ -682,7 +687,7 @@ async function loadSources() {
     return `<div class="item source-card" data-source-id="${source.id}">
       <div class="source-card-head"><div><div class="item-title">${escapeHtml(source.name)} <span class="pill muted">${escapeHtml(source.kind)}</span></div><div class="item-meta">Last successful scan: ${when(source.last_success_at)}</div></div><span class="status-badge ${sourceStatusTone(state)}">${escapeHtml(status)}</span></div>
       <div class="source-health"><span><strong>${recent}</strong> new in latest scan</span></div>
-      <div class="actions"><button data-scan="${source.id}" ${['scanning','queued'].includes(state) ? 'disabled' : ''}>${state === 'scanning' ? 'Scanning…' : state === 'queued' ? 'Queued' : 'Scan now'}</button><a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer">Open source ↗</a><label class="source-auto"><input type="checkbox" data-toggle="${source.id}" ${source.enabled ? 'checked' : ''}><span>Automatic every ${source.interval_minutes / 60} hours</span><span class="source-auto-status" aria-live="polite"></span></label></div>
+      <div class="actions"><button data-scan="${source.id}" ${['scanning','queued'].includes(state) ? 'disabled' : ''}>${state === 'scanning' ? 'Scanning…' : state === 'queued' ? 'Queued' : 'Scan now'}</button><a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer" aria-label="Open source ${escapeHtml(source.name)}">Open source ↗</a><label class="source-auto"><input type="checkbox" data-toggle="${source.id}" ${source.enabled ? 'checked' : ''}><span>Automatic every ${source.interval_minutes / 60} hours</span><span class="source-auto-status" aria-live="polite"></span></label></div>
       <details class="source-diagnostics"><summary>Diagnostics</summary><div class="item-meta">${total} jobs attributed · ${escapeHtml(latestText)} · Interval ${source.interval_minutes} minutes</div><div class="item-meta mono">${escapeHtml(source.url)}</div></details>
     </div>`;
   }).join('') : '<div class="empty">No sources match these filters.</div>';
@@ -731,7 +736,7 @@ async function loadEmployers() {
   $('#employers-prev').disabled = employerPage <= 1;
   $('#employers-next').disabled = employerPage >= result.pages;
   $('#employer-list').innerHTML = employers.length ? employers.map((employer) =>
-    `<div class="employer surface-readonly" data-employer-id="${employer.id}"><strong>${escapeHtml(employer.name)}</strong><small>${escapeHtml(employer.category)} · ${escapeHtml(employer.live_coverage)}</small>${employer.career_url ? `<small><a href="${escapeHtml(employer.career_url)}" target="_blank" rel="noopener noreferrer">Career page ↗</a></small>` : '<small>No career page configured</small>'}<button type="button" data-employer-source="${employer.id}">${employer.career_url ? 'Edit career page' : 'Add career page'}</button><form class="employer-career-form" data-employer-form="${employer.id}" hidden><label>Career page URL<input name="career_url" type="url" required placeholder="https://company.example/careers" value="${escapeHtml(employer.career_url || '')}"></label><p class="field-message employer-career-error" role="alert"></p><div class="actions"><button class="primary" type="submit">Save career page</button><button class="secondary" type="button" data-employer-cancel="${employer.id}">Cancel</button></div></form></div>`
+    `<div class="employer surface-readonly" data-employer-id="${employer.id}"><strong>${escapeHtml(employer.name)}</strong><small>${escapeHtml(employer.category)} · ${escapeHtml(employer.live_coverage)}</small>${employer.career_url ? `<small><a href="${escapeHtml(employer.career_url)}" target="_blank" rel="noopener noreferrer">Career page ↗</a></small>` : '<small>No career page configured</small>'}<button type="button" data-employer-source="${employer.id}" aria-label="${employer.career_url ? 'Edit' : 'Add'} career page for ${escapeHtml(employer.name)}">${employer.career_url ? 'Edit career page' : 'Add career page'}</button><form class="employer-career-form" data-employer-form="${employer.id}" hidden><label>Career page URL<input name="career_url" type="url" required placeholder="https://company.example/careers" value="${escapeHtml(employer.career_url || '')}"></label><p class="field-message employer-career-error" role="alert"></p><div class="actions"><button class="primary" type="submit">Save career page</button><button class="secondary" type="button" data-employer-cancel="${employer.id}">Cancel</button></div></form></div>`
   ).join('') : '<div class="empty">No employers match this search.</div>';
   document.querySelectorAll('[data-employer-source]').forEach((button) => button.addEventListener('click', () => {
     const card = button.closest('.employer');
@@ -967,7 +972,7 @@ $('#matching-retry-all').addEventListener('click', async (event) => {
   try {
     const result = await api('/api/matching/retry-failed', {method:'POST'});
     await loadJobs();
-    notice(`${result.queued} job${result.queued === 1 ? '' : 's'} queued for analysis.`);
+    notice(`${result.queued} job${result.queued === 1 ? '' : 's'} queued for match review.`);
   } catch (error) { button.disabled = false; notice(error.message, true); }
 });
 
@@ -1195,7 +1200,7 @@ function renderApplicationList() {
   list.innerHTML = visible.map((draft) => {
     const selected = draft.id === activeApplicationId;
     const tone = applicationReviewTone(draft);
-    return `<button type="button" class="item clickable application-card surface-action ${selected ? 'is-selected' : ''}" data-application="${draft.id}" ${selected ? 'aria-current="true"' : ''}>
+    return `<button type="button" class="item clickable application-card surface-action ${selected ? 'is-selected' : ''}" data-application="${draft.id}" aria-pressed="${selected ? 'true' : 'false'}">
       <div class="item-title">${escapeHtml(draft.job_title)} <span class="status-badge status-badge--${tone}">${escapeHtml(applicationReviewLabel(draft))}</span></div>
       <div class="item-meta">${escapeHtml(draft.company)} · ${escapeHtml(providerLabel(draft.provider_mode))}</div>
       <div class="item-meta">Updated ${when(draft.updated_at)}${applicationIsSent(draft) ? ' · Sent' : ''}</div>
@@ -1204,6 +1209,7 @@ function renderApplicationList() {
   list.querySelectorAll('[data-application]').forEach((node) => node.addEventListener('click', async () => {
     await showApplication(node.dataset.application);
     if (window.matchMedia('(max-width: 900px)').matches) scrollNodeIntoView($('#application-detail'), {block:'start'});
+    $('#application-detail').focus({preventScroll:true});
   }));
 }
 
@@ -1236,12 +1242,12 @@ async function loadAutoApply() {
   const existingButton = $('#queue-existing-drafts');
   existingButton.disabled = !data.enabled || !(data.eligible_existing || data.waiting_existing);
   $('#existing-draft-count').textContent = !data.enabled ? 'Enable and save automatic drafts first.'
-    : (data.eligible_existing || data.waiting_existing) ? `${data.eligible_existing} scored match${data.eligible_existing === 1 ? '' : 'es'} at ${data.threshold}+ · ${data.waiting_existing} still analyzing · ${(data.counts.queued || 0)} queued.`
+    : (data.eligible_existing || data.waiting_existing) ? `${data.eligible_existing} scored match${data.eligible_existing === 1 ? '' : 'es'} at ${data.threshold}+ · ${data.waiting_existing} still being checked · ${(data.counts.queued || 0)} queued.`
     : data.highest_existing_score != null ? `No undrafted jobs score at least ${data.threshold}; the highest is ${data.highest_existing_score}. Lower the minimum and save to include them.`
     : `${data.counts.queued || 0} queued · No undrafted, scored jobs are ready.`;
   const activity = $('#auto-apply-activity');
   activity.innerHTML = data.recent.length ? `${data.recent.map((item) =>
-    `<div class="item"><div class="item-title">${escapeHtml(item.title)} · ${escapeHtml(item.company)} <span class="status-badge ${item.status === 'sent' ? 'status-badge--success' : 'status-badge--warning'}">${escapeHtml(item.status.replaceAll('_', ' '))}</span></div><div class="item-meta">${item.analysis_status === 'done' && item.score != null ? `${escapeHtml(item.score)}/100 · ` : 'Analyzing · '}${escapeHtml(item.detail || '')}</div><div class="actions">${item.draft_id ? `<button type="button" data-auto-draft="${item.draft_id}">Open application</button>` : `<button type="button" data-auto-job="${item.vacancy_id}">Open job</button>`}</div></div>`
+    `<div class="item"><div class="item-title">${escapeHtml(item.title)} · ${escapeHtml(item.company)} <span class="status-badge ${item.status === 'sent' ? 'status-badge--success' : 'status-badge--warning'}">${escapeHtml(item.status.replaceAll('_', ' '))}</span></div><div class="item-meta">${item.analysis_status === 'done' && item.score != null ? `${escapeHtml(item.score)}/100 · ` : 'Checking match · '}${escapeHtml(item.detail || '')}</div><div class="actions">${item.draft_id ? `<button type="button" data-auto-draft="${item.draft_id}">Open application</button>` : `<button type="button" data-auto-job="${item.vacancy_id}">Open job</button>`}</div></div>`
   ).join('')}` : '<p class="hint">No prepared drafts yet.</p>';
   activity.querySelectorAll('[data-auto-draft]').forEach((button) => button.addEventListener('click', () => loadApplications(button.dataset.autoDraft).catch((error) => notice(error.message, true))));
   activity.querySelectorAll('[data-auto-job]').forEach((button) => button.addEventListener('click', async () => { await showTab('jobs'); await showJob(button.dataset.autoJob); }));
@@ -1640,7 +1646,7 @@ function renderRepositoryResults(filter = null) {
     const saved = projectCards.find((card) => card.repository_url && normalizeRepoUrl(card.repository_url) === normalizeRepoUrl(repo.url));
     return `<div class="project-repo-row"><div><strong>${escapeHtml(repo.name)}</strong>${repo.fork ? ' <span class="pill muted">Fork</span>' : ''}
       <p class="hint">${escapeHtml(repo.description || 'No description')}${repo.language ? ` · ${escapeHtml(repo.language)}` : ''}</p></div>
-      <div class="actions"><button data-add-repo="${escapeHtml(repo.url)}" ${saved ? '' : !projectProviderReady ? 'disabled' : ''}>${saved ? 'Review project' : 'Add project'}</button><a href="${escapeHtml(repo.url)}" target="_blank" rel="noopener noreferrer">Open ↗</a></div></div>`;
+      <div class="actions"><button data-add-repo="${escapeHtml(repo.url)}" ${saved ? '' : !projectProviderReady ? 'disabled' : ''}>${saved ? 'Review project' : 'Add project'}</button><a href="${escapeHtml(repo.url)}" target="_blank" rel="noopener noreferrer" aria-label="Open repository ${escapeHtml(repo.name)}">Open ↗</a></div></div>`;
   }).join('') : '<div class="empty">No repositories match that filter.</div>';
   bindRepositoryButtons(list);
 }
@@ -1663,7 +1669,7 @@ async function loadEvidence(focusId = null) {
   $('#project-provider-action').hidden = projectProviderReady;
   const readyCount = projectCards.filter((card) => card.approved).length;
   $('#selected-project-count').textContent = `${readyCount} ready for resumes`;
-  $('#evidence-list').innerHTML = projectCards.length ? projectCards.map((card) => `<button class="project-list-row ${card.id === selectedProjectId ? 'is-selected' : ''}" data-open-project="${card.id}" type="button">
+  $('#evidence-list').innerHTML = projectCards.length ? projectCards.map((card) => `<button class="project-list-row ${card.id === selectedProjectId ? 'is-selected' : ''}" data-open-project="${card.id}" type="button" aria-pressed="${card.id === selectedProjectId ? 'true' : 'false'}">
     <strong>${escapeHtml(card.title)}</strong><span class="status-badge ${card.approved ? 'status-badge--success' : 'status-badge--neutral'}">${card.approved ? 'Included in resumes' : 'Saved only'}</span>
     <small>${escapeHtml(card.repository_url || 'Manual project')}</small></button>`).join('') : '<div class="empty">No projects yet. Enter your GitHub username or a repository URL above.</div>';
   document.querySelectorAll('[data-open-project]').forEach((button) => button.addEventListener('click', async () => {
@@ -1684,7 +1690,7 @@ async function loadEvidence(focusId = null) {
     <p class="hint">Save content changes first. Including a project in resumes is a separate choice.</p>
     ${details.generation_status === 'failed' ? `<p class="hint error-text">Project draft generation failed: ${escapeHtml(details.generation_error || 'Try generating again or write your own project bullet.')}</p>` : ''}
     ${needsOriginalClaim ? '<p class="hint">Write and save a specific bullet about your contribution before including this project in resumes.</p>' : ''}
-    ${card.repository_url ? `<p class="item-meta"><a href="${escapeHtml(card.repository_url)}" target="_blank" rel="noopener noreferrer">Open repository ↗</a> · Commit ${escapeHtml(card.commit_sha?.slice(0, 8))}</p>` : ''}
+    ${card.repository_url ? `<p class="item-meta"><a href="${escapeHtml(card.repository_url)}" target="_blank" rel="noopener noreferrer" aria-label="Open repository for ${escapeHtml(card.title)}">Open repository ↗</a> · Commit ${escapeHtml(card.commit_sha?.slice(0, 8))}</p>` : ''}
     <div class="project-fields"><label>Project title<input id="project-edit-title" value="${escapeHtml(card.title)}"></label>
       <label>Project summary<textarea id="project-edit-summary" rows="3" placeholder="What the project does">${escapeHtml(details.summary || '')}</textarea></label>
       <label>Technologies<input id="project-edit-stack" value="${escapeHtml((details.tech_stack || []).join(', '))}" placeholder="Python, React, ..."></label>
@@ -1922,7 +1928,7 @@ $('#matching-model-form').addEventListener('submit', async (event) => {
   try {
     await api('/api/matching/model', {method:'PUT', body:JSON.stringify({model:event.target.elements.model.value})});
     await loadSettings();
-    notice('Local matching model saved. Existing jobs are being analyzed.');
+    notice('Matching model saved. Existing jobs are being reviewed.');
   } catch(error) { notice(error.message, true); }
   finally { endPending(pendingButton); const model = event.target.elements.model.value; pendingButton.disabled = !model || model === event.target.dataset.saved; }
 });
