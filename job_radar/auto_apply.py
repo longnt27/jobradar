@@ -21,7 +21,7 @@ log = logging.getLogger(__name__)
 
 EXISTING_MATCHES_SQL = (
     "FROM vacancies v LEFT JOIN auto_application_attempts a ON a.vacancy_id=v.id "
-    "WHERE v.state IN ('new','interesting') "
+    "WHERE v.decision_state IN ('undecided','shortlisted') "
     "AND (a.vacancy_id IS NULL OR a.status='skipped') "
     "AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm') "
     "AND NOT EXISTS(SELECT 1 FROM submissions s WHERE s.vacancy_id=v.id) "
@@ -151,10 +151,11 @@ class AutoApplyManager:
 
     def _still_eligible(self, job_id: str) -> bool:
         config = self.config()
-        job = self.db.one("SELECT score,analysis_status,state FROM vacancies WHERE id=?", (job_id,))
+        job = self.db.one("SELECT score,analysis_status,decision_state,snoozed_until FROM vacancies WHERE id=?", (job_id,))
         return bool(config["enabled"] and job and job["analysis_status"] == "done"
                     and job["score"] is not None and job["score"] >= config["threshold"]
-                    and job["state"] in ("new", "interesting", "prepare"))
+                    and job["decision_state"] in ("undecided", "shortlisted")
+                    and not job["snoozed_until"])
 
     async def _process(self, job_id: str) -> None:
         job = self.db.one("SELECT apply_url FROM vacancies WHERE id=?", (job_id,))
@@ -430,7 +431,7 @@ class AutoApplyManager:
                 "JOIN vacancies v ON v.id=a.vacancy_id WHERE a.status='queued' AND v.analysis_status='done' "
                 "ORDER BY a.created_at ASC LIMIT 1") if config["enabled"] else None
             job = queued or (self.db.one(
-                "SELECT v.id FROM vacancies v WHERE v.analysis_status='done' AND v.score>=? AND v.state='new' "
+                "SELECT v.id FROM vacancies v WHERE v.analysis_status='done' AND v.score>=? AND v.decision_state IN ('undecided','shortlisted') AND v.snoozed_until IS NULL "
                 "AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm') "
                 "AND NOT EXISTS(SELECT 1 FROM auto_application_attempts a WHERE a.vacancy_id=v.id) "
                 "ORDER BY v.score DESC,v.first_seen_at DESC LIMIT 1", (config["threshold"],)) if config["enabled"] else None)
