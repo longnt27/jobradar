@@ -62,7 +62,7 @@ def test_sources_and_employers_management_ui(tmp_path: Path) -> None:
                 career_button = employer.locator("[data-employer-source]")
                 assert "GSM / Xanh SM" in career_button.get_attribute("aria-label")
 
-                page.evaluate("window.prompt = () => { throw new Error('native prompt should not be used'); }")
+                page.evaluate("() => { window.prompt = () => { throw new Error('native prompt should not be used'); }; }")
                 career_button.click()
                 assert employer.locator(".employer-career-form").is_visible()
                 employer.locator("[data-employer-cancel]").click()
