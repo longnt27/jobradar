@@ -196,8 +196,8 @@ def test_application_workspace_static_contract() -> None:
     assert "application-review-nav" in js
     assert "application-sticky-actions" in js
     assert "application-dirty-state" in js
-    assert "application-alert--danger" in js
-    assert "application-alert--warning" in js
+    assert "applicationAlert('danger', 'Sending is blocked'" in js
+    assert "applicationAlert('warning', 'Review before sending'" in js
     assert "application-debug" in js
     assert "providerLabel(draft.provider_mode" in js
     assert "renderApplicationFormField" in js
