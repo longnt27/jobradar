@@ -103,9 +103,19 @@ def summarize_discovery(sources: list[dict[str, Any]]) -> dict[str, Any]:
         gaps.append("No Facebook groups")
     if not by_kind["career"]:
         gaps.append("No company career pages")
-    return {"level": level, "label": label, "counts": by_kind, "gaps": gaps,
-            "degraded_source_ids": [source["id"] for source in degraded],
-            "limited_source_ids": [source["id"] for source in limited]}
+    return {
+        "level": level,
+        "label": label,
+        "counts": by_kind,
+        "gaps": gaps,
+        "channels": {
+            "linkedin": [source["name"] for source in enabled if source.get("kind") == "linkedin"],
+            "facebook": [source["name"] for source in enabled if source.get("kind") == "facebook"],
+            "career": [source["name"] for source in enabled if source.get("kind") == "career"],
+        },
+        "degraded_source_ids": [source["id"] for source in degraded],
+        "limited_source_ids": [source["id"] for source in limited],
+    }
 
 
 def split_observation(db: Database, vacancy_id: str, observation_id: str) -> str:
@@ -177,6 +187,17 @@ def split_observation(db: Database, vacancy_id: str, observation_id: str) -> str
                  canonical.get("description") or remaining["raw_text"] or description,
                  canonical.get("apply_url"), canonical.get("published_at") or remaining["published_at"],
                  remaining["last_seen_at"], timestamp, vacancy_id),
+            )
+            old_row = conn.execute(
+                "SELECT title,company,description,location,work_mode,first_seen_at,analysis_status FROM vacancies WHERE id=?",
+                (vacancy_id,),
+            ).fetchone()
+            old_score, old_detail = score_job(dict(old_row), profile)
+            conn.execute(
+                "UPDATE vacancies SET score=?,score_detail=?,analysis_status=?,analysis_error=NULL WHERE id=?",
+                (old_score, json.dumps(old_detail, ensure_ascii=False),
+                 "pending" if matching_model and old_row["analysis_status"] != "dismissed" else old_row["analysis_status"],
+                 vacancy_id),
             )
             conn.execute(
                 "UPDATE vacancy_fts SET title=(SELECT title FROM vacancies WHERE id=?),"
