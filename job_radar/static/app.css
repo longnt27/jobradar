@@ -228,3 +228,159 @@ input,textarea,select{font-weight:400}
 #queue-draft-review{margin:12px 18px 18px}
 @media(max-width:1100px){.queue-grid{grid-template-columns:1fr}.queue-scroll{max-height:260px}}
 @media(max-width:650px){.queue-summary{grid-template-columns:repeat(2,1fr)}.queue-panel-head{flex-wrap:wrap}}
+
+
+/* Stack 02 UI foundation */
+:root{
+  --ui-text:#14262a;
+  --ui-muted:#526a62;
+  --ui-muted-strong:#435b53;
+  --ui-border:#d7e2db;
+  --ui-surface-readonly:#f7faf8;
+  --ui-surface-editable:#ffffff;
+  --ui-surface-action:#f3faf6;
+  --ui-surface-status:#eef6f1;
+  --ui-success-bg:#e1f2e7;
+  --ui-success-fg:#1e6547;
+  --ui-success-border:#b9dcc8;
+  --ui-info-bg:#e8f1f5;
+  --ui-info-fg:#28596d;
+  --ui-info-border:#c4d8e0;
+  --ui-warning-bg:#fff0cf;
+  --ui-warning-fg:#744700;
+  --ui-warning-border:#e5c77d;
+  --ui-danger-bg:#fde8e4;
+  --ui-danger-fg:#862f24;
+  --ui-danger-border:#e9b9b0;
+}
+
+/* Important helper, metadata, empty-state, employer, and queue text must remain AA-readable. */
+.item-meta,.hint,.empty,.project-editor-empty,.project-list-row small,.social-site-row small,
+.queue-summary span,.queue-panel-head p,.queue-empty,.queue-row-copy small,.queue-row-state,
+.queue-attention,.home-queue-row small,.step-row small,.action-card span,.employer small,
+.matching-failures-head p,.matching-failure-copy small{color:var(--ui-muted);font-size:13px}
+.queue-row-copy strong{font-size:13px}
+.home-queue-title{font-size:13px}
+.home-queue-kind,.queue-now-head,.queue-waiting-head{font-size:11px}
+.score-pending,.matching-failure-actions button,.job-pagination,.job-pagination button,
+:root .employer button{font-size:12px}
+.metric span,.source-auto{color:var(--ui-muted);font-size:13px}
+.pill{font-size:12px;color:#335f4e;background:#e7f1eb}
+.pill.muted{color:#4d625b;background:#edf1ef}
+.pill.warning{color:var(--ui-warning-fg);background:var(--ui-warning-bg)}
+
+/* Surfaces communicate whether content is for reading, editing, acting, or monitoring. */
+.surface-readonly{background:var(--ui-surface-readonly);border-color:var(--ui-border);box-shadow:none}
+.surface-editable{background:var(--ui-surface-editable);border-color:#c9d8cf;box-shadow:0 2px 10px rgba(26,57,44,.05)}
+.surface-action{background:var(--ui-surface-action);border-color:#c7ddcf}
+.surface-status{background:var(--ui-surface-status);border-color:#cbded2}
+.item.surface-action:hover,.item.surface-action:focus-within{border-color:#6da987;background:#f8fcf9}
+
+/* Status is a semantic component; pills remain available for neutral taxonomy/count chips. */
+.status-badge{display:inline-flex;align-items:center;gap:5px;min-height:24px;padding:4px 9px;border:1px solid transparent;border-radius:999px;font-size:13px;font-weight:700;line-height:1.2;vertical-align:middle;margin-left:5px}
+.status-badge--success{background:var(--ui-success-bg);color:var(--ui-success-fg);border-color:var(--ui-success-border)}
+.status-badge--info{background:var(--ui-info-bg);color:var(--ui-info-fg);border-color:var(--ui-info-border)}
+.status-badge--warning{background:var(--ui-warning-bg);color:var(--ui-warning-fg);border-color:var(--ui-warning-border)}
+.status-badge--danger{background:var(--ui-danger-bg);color:var(--ui-danger-fg);border-color:var(--ui-danger-border)}
+.status-badge--neutral{background:#edf1ef;color:#4d625b;border-color:#d9e1dc}
+.flow-panel>summary>.status-badge,.ai-model-section .status-badge{margin:0;flex:none}
+
+/* Destructive actions are visually distinct from ordinary secondary actions. */
+button.danger,.actions button.danger{
+  border:1px solid var(--ui-danger-border);
+  background:#fff7f5;
+  color:var(--ui-danger-fg);
+  border-radius:9px;
+  padding:10px 13px;
+  font-weight:700;
+  font-size:13px
+}
+button.danger:hover,.actions button.danger:hover{background:var(--ui-danger-bg);filter:none}
+button.danger:focus-visible{outline-color:#b74434}
+
+/* Pending and disabled behavior is shared across all action types. */
+button[aria-busy="true"]{cursor:wait;position:relative;padding-right:34px}
+button[aria-busy="true"]::after{
+  content:"";
+  position:absolute;
+  right:12px;
+  top:50%;
+  width:12px;
+  height:12px;
+  margin-top:-7px;
+  border:2px solid currentColor;
+  border-right-color:transparent;
+  border-radius:50%;
+  animation:ui-spin .7s linear infinite
+}
+button:disabled{opacity:.58;cursor:not-allowed;filter:saturate(.7)}
+form[aria-busy="true"]{cursor:wait}
+
+/* Contextual feedback stays visible without forcing the user back to the top of the page. */
+#notice.toast{
+  position:fixed;
+  right:24px;
+  bottom:24px;
+  z-index:1000;
+  display:flex;
+  align-items:flex-start;
+  gap:12px;
+  width:min(420px,calc(100vw - 32px));
+  padding:14px 15px;
+  border:1px solid var(--ui-success-border);
+  border-radius:12px;
+  background:var(--ui-success-bg);
+  color:var(--ui-success-fg);
+  box-shadow:0 14px 36px rgba(16,37,42,.18);
+  font-size:14px;
+  line-height:1.45
+}
+#notice.toast[hidden]{display:none}
+#notice.toast.error{background:var(--ui-danger-bg);color:var(--ui-danger-fg);border-color:var(--ui-danger-border)}
+#notice .toast-message{flex:1;min-width:0;overflow-wrap:anywhere}
+#notice .toast-dismiss{flex:none;border:0;background:transparent;color:inherit;padding:1px 4px;font-size:18px;line-height:1;cursor:pointer;border-radius:5px}
+#notice .toast-dismiss:hover{background:rgba(0,0,0,.06);filter:none}
+
+/* Tab transitions expose an explicit busy state instead of stale/blank content. */
+.tab.is-loading{position:relative;min-height:220px}
+.tab.is-loading>*{opacity:.34;pointer-events:none}
+.tab.is-loading::after{
+  content:"";
+  position:absolute;
+  inset:0;
+  min-height:180px;
+  border-radius:14px;
+  background:
+    linear-gradient(90deg,transparent,rgba(255,255,255,.7),transparent) 0 0/220px 100% no-repeat,
+    linear-gradient(#e8efeb 18px,transparent 18px) 20px 22px/54% 42px no-repeat,
+    linear-gradient(#eef3f0 76px,transparent 76px) 20px 70px/calc(100% - 40px) 96px no-repeat;
+  animation:ui-skeleton 1.1s ease-in-out infinite;
+  pointer-events:none
+}
+#tab-loading{
+  position:fixed;
+  top:16px;
+  left:50%;
+  z-index:999;
+  transform:translateX(-50%);
+  padding:8px 12px;
+  border:1px solid var(--ui-info-border);
+  border-radius:999px;
+  background:var(--ui-info-bg);
+  color:var(--ui-info-fg);
+  box-shadow:0 6px 20px rgba(16,37,42,.12);
+  font-size:13px;
+  font-weight:700
+}
+#tab-loading[hidden]{display:none}
+
+@keyframes ui-spin{to{transform:rotate(360deg)}}
+@keyframes ui-skeleton{0%{background-position:-240px 0,20px 22px,20px 70px}100%{background-position:calc(100% + 240px) 0,20px 22px,20px 70px}}
+
+@media(max-width:600px){
+  #notice.toast{right:16px;bottom:16px}
+  #tab-loading{top:10px}
+}
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
+}
