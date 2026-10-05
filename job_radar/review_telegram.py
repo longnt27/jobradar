@@ -1,4 +1,4 @@
-"""Deliver one versioned, complete application review PDF in one Telegram message."""
+"""Deliver a human-readable application review before its versioned PDF packet."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
+from .application_action import describe_application_action
 from .notifications import telegram_config
 from .resume_pdf import _fonts
 from .settings import Settings
@@ -103,11 +104,33 @@ async def send_review_packet(settings: Settings, draft: dict, blockers: list[str
     buttons.append([{"text": "Edit", "callback_data": f"review:edit:{draft['id']}:{short}"},
                     {"text": "Regenerate", "callback_data": f"review:retry:{draft['id']}:{short}"}])
     score = f"{draft['job_score']}/100" if draft.get("job_score") is not None else "Score unavailable"
-    caption = f"{draft['job_title'][:180]} · {score}" + ("\nNeeds changes before sending" if blockers else "")
+    action = describe_application_action(draft["destination"])
+    state = ("Needs changes before sending: " + "; ".join(blockers)) if blockers else "Ready to send after your approval."
+    summary = (
+        f"{draft['job_title'][:180]} at {draft['company'][:180]}\n"
+        f"Match: {score}\n"
+        f"Action: {action}\n"
+        f"{state}\n"
+        f"Version: {short}"
+    )
+    summary_result = await _post(client, token, "sendMessage", json={
+        "chat_id": chat_id, "text": summary[:4000],
+        "reply_markup": {"inline_keyboard": buttons},
+    })
     path = build_review_pdf(settings, draft, blockers)
-    with path.open("rb") as file:
-        result = await _post(client, token, "sendDocument", data={
-            "chat_id": chat_id, "caption": caption,
-            "reply_markup": json.dumps({"inline_keyboard": buttons}),
-        }, files={"document": ("application-review.pdf", file, "application/pdf")})
-    return result["message_id"]
+    try:
+        with path.open("rb") as file:
+            await _post(client, token, "sendDocument", data={
+                "chat_id": chat_id,
+                "caption": f"Full review packet · version {short}",
+                "reply_parameters": json.dumps({"message_id": summary_result["message_id"]}),
+            }, files={"document": ("application-review.pdf", file, "application/pdf")})
+    except Exception:
+        try:
+            await _post(client, token, "deleteMessage", json={
+                "chat_id": chat_id, "message_id": summary_result["message_id"],
+            })
+        except Exception:
+            pass
+        raise
+    return summary_result["message_id"]
