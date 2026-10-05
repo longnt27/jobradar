@@ -1076,6 +1076,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         review = db.one("SELECT status FROM auto_application_attempts WHERE draft_id=?", (draft_id,))
         if review and review["status"] in ("sending", "regenerating"):
             raise HTTPException(409, "This application is being processed. Try again when it finishes.")
+        prior = db.one(
+            "SELECT status FROM submissions WHERE draft_id=? AND status IN "
+            "('sent_confirmed','submitted_confirmed','submitted_unconfirmed','sending') LIMIT 1", (draft_id,))
+        if prior:
+            raise HTTPException(409, "This application already has a send attempt. Review its submission outcome before changing the reviewed package.")
 
     @app.patch("/api/applications/{draft_id}")
     async def edit_application(draft_id: str, updates: dict[str, Any] = Body(...)):
