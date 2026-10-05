@@ -41,6 +41,11 @@ from .social_browser import social_login_at
 from .work_queue import work_queue
 
 
+JOBS_ORDER = ("CASE WHEN v.analysis_status='done' THEN 0 ELSE 1 END, "
+              "CASE WHEN v.analysis_status='done' THEN v.score END DESC, "
+              "v.first_seen_at DESC,v.id")
+
+
 class SourceInput(BaseModel):
     kind: Literal["linkedin", "facebook", "career"]
     name: str = ""
@@ -688,11 +693,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             predicates = " AND ".join("(v.title LIKE ? ESCAPE '\\' OR v.company LIKE ? ESCAPE '\\' OR v.description LIKE ? ESCAPE '\\')" for _ in terms)
             values = tuple(value for term in terms for value in (["%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"] * 3))
             return with_sources(db.all(
-                f"SELECT v.* FROM vacancies v WHERE {predicates} AND (?='' OR v.state=?) AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm') ORDER BY v.score DESC,v.first_seen_at DESC LIMIT ?",
+                f"SELECT v.* FROM vacancies v WHERE {predicates} AND (?='' OR v.state=?) AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm') ORDER BY {JOBS_ORDER} LIMIT ?",
                 (*values, state, state, limit),
             ))
         return with_sources(db.all(
-            "SELECT v.* FROM vacancies v WHERE (?='' OR v.state=?) AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm') ORDER BY v.score DESC,v.first_seen_at DESC LIMIT ?",
+            f"SELECT v.* FROM vacancies v WHERE (?='' OR v.state=?) AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm') ORDER BY {JOBS_ORDER} LIMIT ?",
             (state, state, limit),
         ))
 
@@ -710,7 +715,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         total = db.one(f"SELECT COUNT(*) AS count FROM vacancies v WHERE {where}", tuple(values))["count"]
         rows = db.all(
             "SELECT v.id,v.company,v.title,v.location,v.published_at,v.first_seen_at,v.state,v.score,v.analysis_status "
-            f"FROM vacancies v WHERE {where} ORDER BY v.score DESC,v.first_seen_at DESC,v.id LIMIT ? OFFSET ?",
+            f"FROM vacancies v WHERE {where} ORDER BY {JOBS_ORDER} LIMIT ? OFFSET ?",
             (*values, page_size, (page - 1) * page_size),
         )
         if rows:

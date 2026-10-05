@@ -21,6 +21,20 @@ def test_jobs_page_returns_lightweight_nonoverlapping_pages(tmp_path) -> None:
     assert "description" not in first["items"][0]
 
 
+def test_jobs_pages_put_completed_matches_before_analyzing_jobs(tmp_path) -> None:
+    app = create_app(Settings(tmp_path))
+    client = TestClient(app)
+    ids = [client.post("/api/jobs/import", json={"company": "Example", "title": f"AI Engineer {number}",
+           "description": "Build Python systems in Hanoi."}).json()["id"] for number in range(3)]
+    app.state.db.execute("UPDATE vacancies SET analysis_status='done',score=40 WHERE id=?", (ids[0],))
+    app.state.db.execute("UPDATE vacancies SET analysis_status='pending',score=99 WHERE id=?", (ids[1],))
+    app.state.db.execute("UPDATE vacancies SET analysis_status='done',score=90 WHERE id=?", (ids[2],))
+    pages = [client.get("/api/jobs/page", params={"page": page, "page_size": 1}).json()["items"][0]["id"]
+             for page in (1, 2, 3)]
+    assert pages == [ids[2], ids[0], ids[1]]
+    assert [job["id"] for job in client.get("/api/jobs").json()] == pages
+
+
 def test_first_run_seeds_employers_and_four_hour_linkedin_searches(tmp_path: Path) -> None:
     client = TestClient(create_app(Settings(tmp_path)))
     status = client.get("/api/status").json()
