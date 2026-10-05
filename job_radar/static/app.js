@@ -58,34 +58,61 @@ function renderJobAnalysis(job, score) {
   const status = job.analysis_status;
   const stateMessage = status === 'done' ? `Match reviewed · ${relativeWhen(job.analyzed_at)}`
     : status === 'failed' ? `Match review failed: ${escapeHtml(job.analysis_error || 'Unknown error')}`
-    : status === 'dismissed' ? 'Failed analysis dismissed. This job remains in your list without a match score.'
+    : status === 'dismissed' ? 'Failed review dismissed. You can still decide from the posting itself.'
     : ['pending', 'running'].includes(status) ? 'Job Radar is reading the posting and checking the match.'
-    : 'Basic match only. Choose a matching model in Settings for a detailed review.';
-  const retry = status === 'failed' ? `<div class="actions"><button type="button" data-analyze="${job.id}" class="secondary">Try analysis again</button><button type="button" data-dismiss-analysis="${job.id}" class="secondary">Dismiss failed analysis</button></div>`
-    : status === 'dismissed' ? `<button type="button" data-analyze="${job.id}" class="secondary">Run analysis again</button>` : '';
+    : 'No detailed match review yet. You can still inspect and triage this job.';
+  const retry = status === 'failed' ? `<div class="actions"><button type="button" data-analyze="${job.id}" class="secondary">Try review again</button><button type="button" data-dismiss-analysis="${job.id}" class="secondary">Dismiss failed review</button></div>`
+    : status === 'dismissed' ? `<button type="button" data-analyze="${job.id}" class="secondary">Run match review</button>` : '';
   const completed = status === 'done';
-  const facts = completed ? score?.facts : null;
+  const facts = completed ? (score?.facts || {}) : {};
+  const criteriaEntries = completed && score?.criteria ? Object.entries(score.criteria)
+    .filter(([,item]) => item && typeof item === 'object' && Number.isFinite(item.score)) : [];
+  const best = [...criteriaEntries].sort((a,b) => b[1].score - a[1].score).filter(([,item]) => item.score >= 7).slice(0, 2);
+  const gaps = [...criteriaEntries].sort((a,b) => a[1].score - b[1].score).filter(([,item]) => item.score <= 5).slice(0, 2);
+  const labelFor = (key) => ({
+    role:'Role', required_skills:'Required skills', preferred_skills:'Preferred skills',
+    experience:'Experience', responsibilities:'Responsibilities', location:'Location',
+    work_mode:'Work mode', education:'Education', freshness:'Freshness',
+  })[key] || key.replaceAll('_', ' ').replace(/^./, (letter) => letter.toUpperCase());
+  const whyItems = best.length
+    ? best.map(([key,item]) => `<li><strong>${escapeHtml(labelFor(key))}:</strong> ${escapeHtml(item.reason || 'Good fit')}</li>`).join('')
+    : score?.explanation ? `<li>${escapeHtml(score.explanation)}</li>` : '<li>No strong fit signal has been identified yet.</li>';
+  const riskItems = [
+    ...(score?.hard_exclusions || []).map((reason) => `<li>${escapeHtml(reason)}</li>`),
+    ...gaps.map(([key,item]) => `<li><strong>${escapeHtml(labelFor(key))}:</strong> ${escapeHtml(item.reason || 'Needs a closer look')}</li>`),
+  ];
+  const watchOut = riskItems.length ? riskItems.join('') : '<li>No major gap identified by the current match review. Check the posting for anything the model missed.</li>';
+  const salary = facts.salary_range || 'Not stated';
+  const basics = `<div class="decision-basics-grid">
+      <div><span>Salary</span><strong>${escapeHtml(salary)}</strong><small>Not included in the match score</small></div>
+      <div><span>Location</span><strong>${escapeHtml([facts.location || job.location, facts.work_mode || job.work_mode].filter(Boolean).join(' · ') || 'Not stated')}</strong></div>
+      <div><span>Experience</span><strong>${facts.years_required == null ? 'Not stated' : `${escapeHtml(facts.years_required)} years`}</strong></div>
+      <div><span>Role</span><strong>${escapeHtml([facts.role || job.title, facts.seniority].filter(Boolean).join(' · '))}</strong></div>
+    </div>`;
+
   const list = (label, items) => items?.length ? `<div><strong>${label}</strong><ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul></div>` : '';
-  const factsHtml = facts ? `<div class="job-facts"><p class="hint">Extracted by the local model. Check the original posting before applying.</p>
+  const extracted = completed ? `<details class="detail-disclosure"><summary>Full extracted requirements</summary>
     ${facts.summary ? `<p>${escapeHtml(facts.summary)}</p>` : ''}
-    <div class="fact-grid"><div><strong>Role</strong><p>${escapeHtml([facts.role, facts.seniority].filter(Boolean).join(' · ') || 'Not stated')}</p></div>
-    <div><strong>Experience</strong><p>${facts.years_required == null ? 'Not stated' : `${escapeHtml(facts.years_required)} years required`}</p></div>
-    <div><strong>Location and mode</strong><p>${escapeHtml([facts.location, facts.work_mode].filter(Boolean).join(' · ') || 'Not stated')}</p></div>
-    <div><strong>Salary range</strong><p>${escapeHtml(facts.salary_range || 'Not stated')}</p></div></div>
-    <div class="fact-grid">${list('Required skills', facts.required_skills)}${list('Preferred skills', facts.preferred_skills)}${list('Responsibilities', facts.responsibilities)}${list('Education', facts.education)}${list('Spoken languages', facts.languages)}</div></div>` : '';
-  const labels = {role:'Role', required_skills:'Required skills', preferred_skills:'Preferred skills', experience:'Years of experience',
-    responsibilities:'Responsibilities', location:'Location', work_mode:'Work mode', education:'Education', freshness:'Freshness'};
-  const weighted = completed && score?.criteria ? Object.entries(labels).map(([key,label]) => {
-    const item = score.criteria[key];
-    if (!item) return '';
-    const weight = Number(score.weights?.[key] || 0);
-    return `<div class="criterion-row"><div class="criterion-copy"><strong>${label}</strong><small>${escapeHtml(item.reason)}</small></div><div class="criterion-score"><span>${escapeHtml(item.score)}/10</span><small>${weight}% weight</small></div><div class="criterion-weight"><span style="width:${Math.max(4, Math.min(100, weight))}%"></span></div></div>`;
-  }).join('') : '';
-  const criteria = weighted ? `<details class="detail-disclosure"><summary>Match breakdown <span>${job.score}/100</span></summary><p>${escapeHtml(score.explanation || '')}</p>
-    ${score.hard_exclusions?.length ? `<div class="match-exclusions"><strong>Score is 0 because:</strong><ul>${score.hard_exclusions.map((reason) => `<li>${escapeHtml(reason)}</li>`).join('')}</ul></div>` : ''}
-    <div class="criteria-list">${weighted}<div class="criterion-row criterion-info"><div class="criterion-copy"><strong>Salary range</strong><small>${escapeHtml(facts?.salary_range || 'Not stated in the posting.')} Salary is not included in the match score.</small></div><div class="criterion-score"><span>Info</span></div></div></div></details>` : '';
-  return `<div class="review-section"><p class="hint">${stateMessage}</p>${retry}</div>${factsHtml ? `<details class="detail-disclosure" open><summary>Job at a glance</summary>${factsHtml}</details>` : ''}${criteria}`;
+    <div class="fact-grid">${list('Required skills', facts.required_skills)}${list('Preferred skills', facts.preferred_skills)}${list('Responsibilities', facts.responsibilities)}${list('Education', facts.education)}${list('Spoken languages', facts.languages)}</div>
+  </details>` : '';
+
+  const weighted = criteriaEntries.map(([key,item]) => {
+    const weight = Number(score?.weights?.[key] || 0);
+    return `<div class="criterion-row"><div class="criterion-copy"><strong>${escapeHtml(labelFor(key))}</strong><small>${escapeHtml(item.reason || '')}</small></div><div class="criterion-score"><span>${escapeHtml(item.score)}/10</span><small>${weight}% weight</small></div><div class="criterion-weight"><span style="width:${Math.max(4, Math.min(100, weight))}%"></span></div></div>`;
+  }).join('');
+  const breakdown = weighted ? `<details class="detail-disclosure"><summary>Detailed match breakdown <span>${job.score}/100</span></summary>
+    <p>${escapeHtml(score?.explanation || '')}</p><div class="criteria-list">${weighted}</div>
+  </details>` : '';
+
+  return `<div class="review-section job-review-status"><p class="hint">${stateMessage}</p>${retry}</div>
+    <div class="job-decision-summary">
+      <section class="decision-card decision-card--fit"><h3>Why it fits</h3><ul>${whyItems}</ul></section>
+      <section class="decision-card decision-card--risk"><h3>Watch out</h3><ul>${watchOut}</ul></section>
+      <section class="decision-card decision-card--basics"><h3>Basics</h3>${basics}</section>
+    </div>
+    ${extracted}${breakdown}`;
 }
+
 async function api(path, options = {}) {
   const response = await fetch(path, {
     headers: options.body instanceof FormData ? (options.headers || {}) : {'Content-Type': 'application/json', ...(options.headers || {})},
