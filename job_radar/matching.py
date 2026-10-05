@@ -1,4 +1,4 @@
-"""Sequential local analysis of discovered jobs, independent of the drafting provider."""
+"""Bounded background analysis of discovered jobs, independent of drafting."""
 
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ class MatchManager:
         self.settings = settings
         self.auto_apply = auto_apply
         self.task: asyncio.Task | None = None
+        self.tasks: list[asyncio.Task] = []
         self.pull_task: asyncio.Task | None = None
         self.pull_state = "idle"
         self.pull_error: str | None = None
@@ -48,10 +49,11 @@ class MatchManager:
                 "OR analysis_status='not_configured' OR (analysis_status='done' AND analysis_model<>?)",
                 (model,),
             )
-        self.task = asyncio.create_task(self._loop())
+        self.tasks = [asyncio.create_task(self._loop()) for _ in range(2)]
+        self.task = self.tasks[0]
 
     async def stop(self) -> None:
-        for task in (self.task, self.pull_task):
+        for task in (*self.tasks, self.pull_task):
             if task:
                 task.cancel()
                 try:
