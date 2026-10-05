@@ -33,7 +33,7 @@ def test_social_sign_in_is_a_setup_step_and_expiry_is_visible_from_jobs(tmp_path
                 page.goto(f"http://127.0.0.1:{port}/#home")
                 page.get_by_role("button", name="Connect LinkedIn and Facebook").click()
                 assert page.locator("#social-sign-in-panel").evaluate("node => node.open")
-                assert page.locator("#settings").get_attribute("class").find("active") >= 0
+                assert page.locator("#profile").get_attribute("class").find("active") >= 0
                 assert page.get_by_role("button", name="Sign in to LinkedIn").is_visible()
                 assert page.get_by_role("button", name="Sign in to Facebook").is_visible()
                 assert page.locator("#setup-browser-finish").count() == 0
@@ -42,7 +42,7 @@ def test_social_sign_in_is_a_setup_step_and_expiry_is_visible_from_jobs(tmp_path
                 page.evaluate("window.dispatchEvent(new Event('focus'))")
                 page.locator("#linkedin-sign-in-status").get_by_text("Connected").wait_for()
                 app.state.db.set_setting("social_reauth_required_linkedin", "1")
-                page.get_by_role("link", name="Jobs", exact=True).click()
+                page.get_by_role("button", name="Jobs", exact=True).first.click()
                 banner = page.locator("#social-auth-banner")
                 banner.wait_for(state="visible")
                 assert "LinkedIn" in banner.inner_text()
@@ -50,7 +50,7 @@ def test_social_sign_in_is_a_setup_step_and_expiry_is_visible_from_jobs(tmp_path
                 assert page.locator("#social-sign-in-panel").evaluate("node => node.open")
                 assert page.locator("#social-sign-in-panel [data-tab='sources']").count() == 0
                 assert page.locator("#setup-facebook-form").count() == 0
-                page.get_by_role("link", name="Job sources", exact=True).click()
+                page.get_by_role("button", name="Job sources", exact=True).click()
                 page.locator("#sources.active").wait_for()
                 assert page.locator(".sidebar nav [data-tab='sources']").get_attribute("class") == "active"
                 assert page.locator("#jobs [data-tab='sources']").count() == 0

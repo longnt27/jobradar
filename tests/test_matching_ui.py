@@ -106,7 +106,7 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 assert page.url.endswith("#personal")
                 assert app.state.db.get_setting("profile", {})["name"] == "Alex Example"
                 page.locator("#personal [data-tab='profile']").click()
-                page.locator("#resume-status.pill:not(.warning)").wait_for()
+                page.locator("#resume-status.status-badge--success").wait_for()
                 page.get_by_role("link", name="Settings", exact=True).click()
                 page.locator("#settings.active").wait_for()
                 page.locator("#smtp-panel summary").click()
@@ -118,7 +118,7 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 assert page.locator("#setup-smtp-form input[name='user']").input_value() == "alex@example.org"
                 page.locator("#setup-smtp-form input[name='password']").fill("test-app-password")
                 page.locator("#setup-smtp-form button[type='submit']").click()
-                page.locator("#setup-smtp-status.pill:not(.muted)").wait_for()
+                page.locator("#setup-smtp-status.status-badge--success").wait_for()
                 assert json.loads((tmp_path / "smtp.json").read_text())["host"] == "smtp.gmail.com"
                 app.state.db.set_setting("profile", {"name": "Alex Example", "email": "alex@example.org", "drafting_provider": "codex", "experience": []})
                 app.state.db.set_setting("matching_model", "test:small")
@@ -128,7 +128,7 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 page.goto(f"http://127.0.0.1:{port}/#settings")
                 page.locator("#provider-panel summary").click()
                 for selector in ("#provider-status", "#resume-status", "#matching-status", "#social-sign-in-status", "#setup-telegram-status"):
-                    page.locator(f"{selector}.pill:not(.warning):not(.muted)").wait_for()
+                    page.locator(f"{selector}.status-badge:not(.status-badge--warning):not(.status-badge--neutral)").wait_for()
             finally:
                 browser.close()
     finally:
