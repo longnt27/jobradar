@@ -798,43 +798,126 @@ async function showJob(id, pin = false) {
     node.setAttribute('aria-pressed', selected ? 'true' : 'false');
   });
   const job = await api(`/api/jobs/${id}`);
+  if (job.read_state === 'unseen') {
+    const seen = await api(`/api/jobs/${id}/seen`, {method:'POST', body:'{}'});
+    job.seen_at = seen.seen_at;
+    job.read_state = 'seen';
+    document.querySelector(`[data-job-card="${id}"]`)?.classList.remove('is-unseen');
+    document.querySelector(`[data-job="${id}"] .job-unread-dot`)?.remove();
+  }
   const profile = await api('/api/profile');
   const provider = profile.drafting_provider || '';
   const links = job.observations.length ? job.observations.map((source) =>
     `<a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(source.kind)}: ${escapeHtml(source.name)}</a>`
   ).join('<br>') : '';
   const score = job.score_detail ? JSON.parse(job.score_detail) : null;
-  const states = ['new','interesting','prepare','ready','applied','interview','offer','rejected','ignored'];
+  const facts = score?.facts || {};
+  const salary = facts.salary_range || '';
+  const applicationMethod = job.apply_url
+    ? job.apply_url.startsWith('mailto:') ? 'Email the employer' : 'Use the application page'
+    : 'Check the original source for application instructions';
+  const decisionNote = job.decision_state === 'shortlisted'
+    ? 'Shortlisted means you want to keep pursuing this job. It does not send or prepare anything by itself; Automation settings remain separate.'
+    : job.decision_state === 'later'
+      ? `Hidden from the inbox until ${when(job.snoozed_until)}.`
+      : job.decision_state === 'ignored'
+        ? `Ignored${job.decision_reason ? `: ${escapeHtml(job.decision_reason)}` : '.'}`
+        : 'No decision yet. Opening the job marks it seen without changing this decision.';
+  const applicationNote = job.application_progress === 'applied'
+    ? 'Applied through a confirmed Job Radar submission.'
+    : job.application_progress === 'applied_external'
+      ? `Applied elsewhere · ${job.manual_applied_source === 'legacy_state' ? 'migrated from your previous status' : 'marked by you'}.`
+      : job.application_progress === 'attention'
+        ? 'A submission may have happened, but confirmation is uncertain. Review submission history before retrying.'
+        : job.application_progress === 'draft_ready'
+          ? 'A prepared application exists and is waiting for review.'
+          : 'No application has been prepared or recorded yet.';
+  const detailDecisionActions = job.decision_state === 'undecided'
+    ? `<button type="button" class="secondary" data-detail-decision="shortlisted">Shortlist</button><button type="button" class="secondary" data-detail-decision="later">Later · 3d</button><button type="button" class="danger" data-detail-decision="ignored">Ignore</button>`
+    : `<button type="button" class="secondary" data-detail-decision="undecided">Back to inbox</button>`;
+  const manualAppliedAction = job.application_progress === 'applied_external'
+    ? '<button type="button" class="text-button" id="job-manual-applied" data-applied="false">Undo external applied mark</button>'
+    : !['applied','attention'].includes(job.application_progress)
+      ? '<button type="button" class="text-button" id="job-manual-applied" data-applied="true">I applied elsewhere</button>'
+      : '';
+  const prepareAction = job.application_progress === 'draft_ready' && job.latest_draft_id
+    ? `<button type="button" class="primary" data-open-draft="${job.latest_draft_id}">Open prepared application</button>`
+    : ['applied','applied_external','attention'].includes(job.application_progress)
+      ? ''
+      : `<button data-prepare="${id}" class="primary" ${provider ? '' : 'disabled'}>Prepare application</button>`;
+
   $('#job-detail').setAttribute('tabindex', '-1');
   $('#job-detail').innerHTML = `<div class="job-detail-head"><div><h2>${escapeHtml(job.title)}</h2><div class="item-meta">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div>
     <div class="item-meta">${escapeHtml(job.work_mode || '')}${job.published_at ? ` · Posted <span${exactTimeTitle(job.published_at)}>${relativeWhen(job.published_at)}</span>` : ''} · Found <span${exactTimeTitle(job.first_seen_at)}>${relativeWhen(job.first_seen_at)}</span></div></div>
-    <label class="job-state-control">Status<select id="job-state-control">${states.map((state) => `<option value="${state}" ${job.state === state ? 'selected' : ''}>${state.replace(/^./, (x) => x.toUpperCase())}</option>`).join('')}</select></label></div>
-    <div class="review-section"><p class="hint">Drafting provider: ${escapeHtml(provider || 'Choose one in Settings first')} · <button class="text-button" data-tab="settings">Change provider</button></p><div class="actions"><button data-prepare="${id}" class="primary" ${provider ? '' : 'disabled'}>Prepare application</button></div></div>
-    ${job.apply_url ? `<p><a href="${escapeHtml(job.apply_url)}" target="_blank" rel="noopener noreferrer">${job.apply_url.startsWith('mailto:') ? 'Application email ↗' : 'Application page ↗'}</a></p>` : ''}
-    ${!job.apply_url ? '<p class="hint">No application form has been verified for this posting. Check the original source for its application instructions before sending.</p>' : ''}
-    ${links ? `<p class="item-meta">${links}</p>` : ''}
+    ${job.read_state === 'seen' ? '<span class="status-badge status-badge--neutral">Seen</span>' : ''}</div>
+
+    <div class="job-lifecycle-grid">
+      <section class="job-lifecycle-card"><div class="section-head"><div><h3>Your decision</h3><p>${escapeHtml(jobDecisionLabel(job.decision_state))}</p></div></div><p class="hint">${decisionNote}</p><div class="actions">${detailDecisionActions}</div></section>
+      <section class="job-lifecycle-card"><div class="section-head"><div><h3>Application</h3><p>${escapeHtml(applicationProgressLabel(job.application_progress))}</p></div></div><p class="hint">${escapeHtml(applicationNote)}</p>${manualAppliedAction}</section>
+      <section class="job-lifecycle-card"><label>Recruiting outcome<select id="job-outcome-control"><option value="none" ${job.recruiting_outcome === 'none' ? 'selected' : ''}>No outcome yet</option><option value="interview" ${job.recruiting_outcome === 'interview' ? 'selected' : ''}>Interview</option><option value="offer" ${job.recruiting_outcome === 'offer' ? 'selected' : ''}>Offer</option><option value="rejected" ${job.recruiting_outcome === 'rejected' ? 'selected' : ''}>Rejected</option></select></label><p class="hint">This is separate from whether you shortlisted or applied.</p></section>
+    </div>
+
     ${renderJobAnalysis(job, score)}
+
+    <section class="job-application-method review-section">
+      <div class="section-head"><div><h3>How to apply</h3><p class="hint">Check the destination before preparing anything.</p></div></div>
+      <p><strong>${escapeHtml(applicationMethod)}</strong></p>
+      ${salary ? `<p class="job-detail-salary"><strong>Salary:</strong> ${escapeHtml(salary)} <span>· not included in the match score</span></p>` : ''}
+      ${job.apply_url ? `<p><a href="${escapeHtml(job.apply_url)}" target="_blank" rel="noopener noreferrer">${job.apply_url.startsWith('mailto:') ? 'Application email ↗' : 'Application page ↗'}</a></p>` : ''}
+      ${!job.apply_url ? '<p class="hint">No application form has been verified for this posting. Check the original source before sending.</p>' : ''}
+      ${links ? `<p class="item-meta">${links}</p>` : ''}
+    </section>
+
+    <section class="job-prepare-section review-section">
+      <div class="section-head"><div><h3>Application preparation</h3><p class="hint">${job.application_progress === 'not_started' ? 'Prepare only after the fit and risks above make sense to you.' : escapeHtml(applicationNote)}</p></div></div>
+      <p class="hint">Drafting provider: ${escapeHtml(provider || 'Choose one in Settings first')} · <button class="text-button" data-tab="settings">Change provider</button></p>
+      <div class="actions">${prepareAction}</div>
+    </section>
+
     <details class="detail-disclosure"><summary>Original description</summary><div class="description">${formatDescription(job.description)}</div></details>`;
+
   $('#job-detail').querySelector('[data-tab="settings"]').addEventListener('click', () => showTab('settings'));
   $('#job-detail').querySelector('[data-analyze]')?.addEventListener('click', async () => {
     try { await api(`/api/jobs/${id}/analyze`, {method:'POST'}); notice('Match review queued'); await loadJobs(); }
     catch(error) { notice(error.message, true); }
   });
   $('#job-detail').querySelector('[data-dismiss-analysis]')?.addEventListener('click', () => dismissFailedAnalysis(id));
-  $('#job-state-control').addEventListener('change', async (event) => {
-    const next = event.target.value;
-    const previous = job.state;
-    if (['ignored','rejected'].includes(next) && !window.confirm(`Move this job to ${next}? You can restore it to New at any time.`)) {
-      event.target.value = previous;
-      return;
-    }
+
+  $('#job-detail').querySelectorAll('[data-detail-decision]').forEach((button) => button.addEventListener('click', async () => {
+    const decision = button.dataset.detailDecision;
+    const snoozedUntil = decision === 'later' ? new Date(Date.now() + 3 * 86400 * 1000).toISOString() : null;
     try {
-      await api(`/api/jobs/${id}/state`, {method:'POST', body:JSON.stringify({state:next})});
-      notice(`Job status changed to ${next}.`);
+      await setJobDecisionWithUndo(job, decision, {snoozedUntil, askReason:decision === 'ignored'});
+    } catch(error) { notice(error.message, true); }
+  }));
+
+  $('#job-outcome-control').addEventListener('change', async (event) => {
+    const previous = job.recruiting_outcome;
+    try {
+      await api(`/api/jobs/${id}/outcome`, {method:'POST', body:JSON.stringify({outcome:event.target.value})});
+      notice(`Recruiting outcome updated to ${recruitingOutcomeLabel(event.target.value)}.`);
       await loadJobs();
-    } catch(error) { event.target.value = previous; notice(error.message, true); }
+    } catch(error) {
+      event.target.value = previous;
+      notice(error.message, true);
+    }
   });
-  $('#job-detail').querySelector('[data-prepare]').addEventListener('click', async () => {
+
+  $('#job-manual-applied')?.addEventListener('click', async (event) => {
+    const applied = event.currentTarget.dataset.applied === 'true';
+    try {
+      await api(`/api/jobs/${id}/manual-applied`, {method:'POST', body:JSON.stringify({applied})});
+      notice(applied ? 'Recorded as applied outside Job Radar.' : 'External applied mark removed.');
+      await loadJobs();
+    } catch(error) { notice(error.message, true); }
+  });
+
+  $('#job-detail').querySelector('[data-open-draft]')?.addEventListener('click', async (event) => {
+    await showTab('applications');
+    await loadApplications(event.currentTarget.dataset.openDraft);
+  });
+
+  $('#job-detail').querySelector('[data-prepare]')?.addEventListener('click', async () => {
     const button = $('#job-detail').querySelector('[data-prepare]');
     beginPending(button, 'Preparing…');
     try {
@@ -843,9 +926,9 @@ async function showJob(id, pin = false) {
         try { await api(`/api/applications/${draft.id}/inspect`, {method:'POST'}); }
         catch(error) { notice(`Draft ready; form inspection needs attention: ${error.message}`, true); }
       }
-      showTab('applications'); await loadApplications(draft.id);
+      await showTab('applications'); await loadApplications(draft.id);
     } catch(error) { notice(error.message, true); }
-    finally { endPending(button); }
+    finally { if (button.isConnected) endPending(button); }
   });
 }
 
