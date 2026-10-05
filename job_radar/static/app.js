@@ -592,6 +592,7 @@ async function showJob(id, pin = false) {
       <div><span class="status-badge status-badge--${fitClassTone(job.fit_class)}">${escapeHtml(fitClassLabel(job.fit_class))}</span><strong>${job.score == null ? 'Score pending' : `${job.score}/100`}</strong></div>
       ${job.strongest_signal ? `<p><strong>Strongest signal:</strong> ${escapeHtml(job.strongest_signal.reason)}</p>` : ''}
       ${job.main_gap ? `<p><strong>Main gap:</strong> ${escapeHtml(job.main_gap.reason)}</p>` : ''}
+      <p><strong>Evidence confidence:</strong> ${Math.max(0, 100 - Number(job.uncertainty || 0))}%</p>
       ${job.missing_evidence?.length ? `<p><strong>Missing evidence:</strong> ${escapeHtml(job.missing_evidence.join(', '))}</p>` : '<p class="hint">No major evidence gaps detected.</p>'}
     </div>
     ${renderJobAnalysis(job, score)}
