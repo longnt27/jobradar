@@ -65,25 +65,81 @@
             <div id="matching-failure-list" class="matching-failure-list"></div>
           </section>
         </div>
-        <div class="toolbar"><input id="job-query" type="search" placeholder="Search jobs, skills, or companies" aria-label="Search jobs"><select id="job-state" aria-label="Job state"><option value="">All jobs</option><option value="new">New</option><option value="interesting">Interesting</option><option value="prepare">Prepare</option><option value="ready">Ready</option><option value="applied">Applied</option><option value="interview">Interview</option><option value="rejected">Rejected</option><option value="offer">Offer</option><option value="ignored">Ignored</option></select><button id="job-search">Search</button></div>
+        <div class="jobs-controls panel">
+          <div class="jobs-search-row"><input id="job-query" type="search" placeholder="Search jobs, skills, or companies" aria-label="Search jobs"><button id="job-search" type="button">Search</button><button id="jobs-clear-filters" class="text-button" type="button">Clear filters</button></div>
+          <div class="job-filter-grid">
+            <label>State<select id="job-state"><option value="">All states</option><option value="new">New</option><option value="interesting">Interesting</option><option value="prepare">Prepare</option><option value="ready">Ready</option><option value="applied">Applied</option><option value="interview">Interview</option><option value="rejected">Rejected</option><option value="offer">Offer</option><option value="ignored">Ignored</option></select></label>
+            <label>Minimum score<select id="job-score"><option value="">Any score</option><option value="80">80+</option><option value="60">60+</option><option value="40">40+</option></select></label>
+            <label>Freshness<select id="job-freshness"><option value="">Any time</option><option value="1">Past 24 hours</option><option value="3">Past 3 days</option><option value="7">Past week</option><option value="30">Past month</option></select></label>
+            <label>Work mode<select id="job-work-mode"><option value="">Any mode</option><option value="remote">Remote</option><option value="hybrid">Hybrid</option><option value="onsite">On-site</option></select></label>
+            <label>Location<input id="job-location" placeholder="e.g. Hanoi"></label>
+            <label>Source<select id="job-source"><option value="">Any source</option><option value="career">Career page</option><option value="linkedin">LinkedIn</option><option value="facebook">Facebook</option></select></label>
+            <label>Seniority<input id="job-seniority" placeholder="e.g. senior"></label>
+            <label>Sort<select id="job-sort"><option value="best">Best match</option><option value="posted">Newest posted</option><option value="found">Recently found</option><option value="company">Company</option></select></label>
+          </div>
+        </div>
         <div class="two-col jobs-layout"><div class="job-list-pane"><div id="job-list" class="stack"></div><div class="job-pagination"><button id="jobs-prev" type="button" class="secondary">Previous</button><span id="jobs-page-summary" aria-live="polite"></span><button id="jobs-next" type="button" class="secondary">Next</button></div></div><div id="job-detail" class="panel detail"><div class="empty">Select a job to see details.</div></div>
         <details class="panel"><summary>Add a job from a description</summary><form id="job-import" class="form-grid"><label>Company<input name="company" required></label><label>Title<input name="title" required></label><label>Location<input name="location"></label><label>Application URL<input name="apply_url" type="url"></label><label class="full">Description<textarea name="description" required rows="6"></textarea></label><button class="primary" type="submit">Add job</button></form></details>
       </section>
 
       <section id="applications" class="tab">
-        <div class="section-head"><p>Review each application before sending. Edit or regenerate a draft whenever needed.</p></div>
-        <details class="panel" id="auto-apply-panel">
-          <summary>Automatic draft preparation <span id="auto-apply-status" class="pill muted">Off</span></summary>
-          <p class="hint">Job Radar prepares application drafts for jobs that score at least your minimum. It sends the complete draft, resume PDF, and review buttons to your private Telegram chat only after preparation finishes. Every application waits for your approval before sending. Use the action below to include jobs already found, even if they are still being analyzed.</p>
-          <form id="auto-apply-form" class="form-grid">
-            <label class="checkbox-label full"><input name="enabled" type="checkbox"><span>Prepare drafts automatically for new matches</span></label>
-            <label>Minimum score to include<input name="threshold" type="number" min="0" max="100" value="80" required></label>
-            <button class="primary" type="submit">Save draft automation</button>
+        <div class="applications-header">
+          <div><p class="section-intro">Review prepared applications, make any final edits, then approve the exact saved version you want to send.</p></div>
+          <div class="applications-view-tabs" role="tablist" aria-label="Applications workspace">
+            <button type="button" role="tab" data-app-view="drafts" aria-selected="true" class="active">Drafts</button>
+            <button type="button" role="tab" data-app-view="automation" aria-selected="false">Automation</button>
+            <button type="button" role="tab" data-app-view="activity" aria-selected="false">Activity</button>
+          </div>
+        </div>
+
+        <section id="applications-drafts-view" data-app-panel="drafts" role="tabpanel">
+          <div class="application-toolbar" aria-label="Filter applications">
+            <label class="application-search">Search applications<input id="application-query" type="search" placeholder="Job title, company, or provider"></label>
+            <label>Review status<select id="application-review-filter"><option value="">All review states</option><option value="awaiting_review">Ready for review</option><option value="needs_review">Needs changes</option><option value="sent">Sent</option><option value="sending">Sending</option><option value="regenerating">Regenerating</option><option value="draft">Draft</option></select></label>
+            <label>Company<select id="application-company-filter"><option value="">All companies</option></select></label>
+            <label>Delivery<select id="application-sent-filter"><option value="">All delivery states</option><option value="unsent">Not sent</option><option value="sent">Sent</option></select></label>
+          </div>
+          <p id="application-list-summary" class="hint" role="status" aria-live="polite"></p>
+          <div class="applications-workspace">
+            <div class="application-list-pane"><div id="application-list" class="stack"></div></div>
+            <div id="application-detail" class="panel detail surface-readonly"><div class="empty">Select an application to review it.</div></div>
+          </div>
+        </section>
+
+        <section id="applications-automation-view" data-app-panel="automation" role="tabpanel" hidden>
+          <div class="panel surface-editable" id="auto-apply-panel">
+            <div class="section-head"><div><h3>Automatic draft preparation</h3><p class="hint">Prepare drafts for strong matches. Nothing is sent without review.</p></div><span id="auto-apply-status" class="status-badge status-badge--neutral">Off</span></div>
+            <p class="hint">Job Radar prepares application drafts for jobs that score at least your minimum. The complete draft and resume PDF can be sent to your private Telegram review chat only after preparation finishes. Every application still waits for your approval.</p>
+            <form id="auto-apply-form" class="form-grid">
+              <label class="checkbox-label full"><input name="enabled" type="checkbox"><span>Prepare drafts automatically for new matches</span></label>
+              <label>Minimum score to include<input name="threshold" type="number" min="0" max="100" value="80" required></label>
+              <button class="primary" type="submit">Save draft automation</button>
+            </form>
+            <div class="existing-drafts-action"><button id="queue-existing-drafts" class="secondary" type="button" disabled>Include existing jobs</button><span id="existing-draft-count" class="hint" role="status"></span></div>
+          </div>
+        </section>
+
+        <section id="applications-activity-view" data-app-panel="activity" role="tabpanel" hidden>
+          <div class="panel surface-status">
+            <div class="section-head"><div><h3>Draft activity</h3><p class="hint">Recent automatic preparation and delivery state.</p></div></div>
+            <div id="auto-apply-activity" class="stack"></div>
+          </div>
+        </section>
+
+        <dialog id="application-send-confirm" class="confirm-dialog" aria-labelledby="application-send-confirm-title">
+          <form method="dialog">
+            <h3 id="application-send-confirm-title">Approve and send this application?</h3>
+            <p>This triggers the external application action for the saved draft. Check the destination and summary before continuing.</p>
+            <div class="confirm-summary">
+              <strong id="application-send-confirm-target"></strong>
+              <span id="application-send-confirm-summary"></span>
+            </div>
+            <div class="actions">
+              <button type="submit" value="cancel" class="secondary">Cancel</button>
+              <button type="submit" value="confirm" class="primary">Approve &amp; send</button>
+            </div>
           </form>
-          <div class="existing-drafts-action"><button id="queue-existing-drafts" class="secondary" type="button" disabled>Include existing jobs</button><span id="existing-draft-count" class="hint" role="status"></span></div>
-          <div id="auto-apply-activity" class="stack"></div>
-        </details>
-        <div class="two-col jobs-layout"><div id="application-list" class="stack"></div><div id="application-detail" class="panel detail"><div class="empty">No application selected.</div></div></div>
+        </dialog>
       </section>
 
       <section id="settings" class="tab">

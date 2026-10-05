@@ -1,6 +1,18 @@
 const $ = (selector) => document.querySelector(selector);
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const when = (value) => value ? new Date(value).toLocaleString() : 'Never';
+function relativeWhen(value) {
+  if (!value) return 'Unknown';
+  const date = new Date(value);
+  const seconds = Math.max(0, (Date.now() - date.getTime()) / 1000);
+  if (seconds < 60) return 'Just now';
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  if (seconds < 172800) return 'Yesterday';
+  if (seconds < 604800) return `${Math.floor(seconds / 86400)}d ago`;
+  return date.toLocaleDateString(undefined, {month:'short', day:'numeric', year:date.getFullYear() === new Date().getFullYear() ? undefined : 'numeric'});
+}
+const exactTimeTitle = (value) => value ? ` title="${escapeHtml(new Date(value).toLocaleString())}"` : '';
 function scoreBadge(job) {
   if (job.analysis_status !== 'done' || !Number.isFinite(job.score)) {
     const label = job.analysis_status === 'failed' ? 'Failed' : ['not_configured', 'dismissed'].includes(job.analysis_status) ? 'No score' : 'Analyzing';
@@ -16,6 +28,9 @@ let projectCards = [];
 let discoveredRepos = [];
 let selectedProjectId = null;
 let projectProviderReady = false;
+let applicationDrafts = [];
+let activeApplicationId = null;
+let applicationWorkspaceView = 'drafts';
 let editingPositionId = null;
 
 function formatDescription(value) {
@@ -35,7 +50,7 @@ function formatDescription(value) {
 
 function renderJobAnalysis(job, score) {
   const status = job.analysis_status;
-  const stateMessage = status === 'done' ? `Local match · ${escapeHtml(job.analysis_model || '')} · ${when(job.analyzed_at)}`
+  const stateMessage = status === 'done' ? `Local match · ${escapeHtml(job.analysis_model || '')} · ${relativeWhen(job.analyzed_at)}`
     : status === 'failed' ? `Local analysis failed: ${escapeHtml(job.analysis_error || 'Unknown error')}`
     : status === 'dismissed' ? 'Failed analysis dismissed. This job remains in your list without a match score.'
     : ['pending', 'running'].includes(status) ? 'Local model is extracting requirements and scoring this job.'
@@ -45,7 +60,7 @@ function renderJobAnalysis(job, score) {
   const completed = status === 'done';
   const facts = completed ? score?.facts : null;
   const list = (label, items) => items?.length ? `<div><strong>${label}</strong><ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul></div>` : '';
-  const factsHtml = facts ? `<div class="review-section job-facts"><h4>Job at a glance</h4><p class="hint">Extracted by the local model. Check the original posting before applying.</p>
+  const factsHtml = facts ? `<div class="job-facts"><p class="hint">Extracted by the local model. Check the original posting before applying.</p>
     ${facts.summary ? `<p>${escapeHtml(facts.summary)}</p>` : ''}
     <div class="fact-grid"><div><strong>Role</strong><p>${escapeHtml([facts.role, facts.seniority].filter(Boolean).join(' · ') || 'Not stated')}</p></div>
     <div><strong>Experience</strong><p>${facts.years_required == null ? 'Not stated' : `${escapeHtml(facts.years_required)} years required`}</p></div>
@@ -54,13 +69,17 @@ function renderJobAnalysis(job, score) {
     <div class="fact-grid">${list('Required skills', facts.required_skills)}${list('Preferred skills', facts.preferred_skills)}${list('Responsibilities', facts.responsibilities)}${list('Education', facts.education)}${list('Spoken languages', facts.languages)}</div></div>` : '';
   const labels = {role:'Role', required_skills:'Required skills', preferred_skills:'Preferred skills', experience:'Years of experience',
     responsibilities:'Responsibilities', location:'Location', work_mode:'Work mode', education:'Education', freshness:'Freshness'};
-  const criteria = completed && score?.criteria ? `<div class="review-section"><h4>Match breakdown · ${scoreBadge(job)} ${job.score}/100</h4><p>${escapeHtml(score.explanation || '')}</p>
+  const weighted = completed && score?.criteria ? Object.entries(labels).map(([key,label]) => {
+    const item = score.criteria[key];
+    if (!item) return '';
+    const weight = Number(score.weights?.[key] || 0);
+    return `<div class="criterion-row"><div class="criterion-copy"><strong>${label}</strong><small>${escapeHtml(item.reason)}</small></div><div class="criterion-score"><span>${escapeHtml(item.score)}/10</span><small>${weight}% weight</small></div><div class="criterion-weight"><span style="width:${Math.max(4, Math.min(100, weight))}%"></span></div></div>`;
+  }).join('') : '';
+  const criteria = weighted ? `<details class="detail-disclosure"><summary>Match breakdown <span>${job.score}/100</span></summary><p>${escapeHtml(score.explanation || '')}</p>
     ${score.hard_exclusions?.length ? `<div class="match-exclusions"><strong>Score is 0 because:</strong><ul>${score.hard_exclusions.map((reason) => `<li>${escapeHtml(reason)}</li>`).join('')}</ul></div>` : ''}
-    <div class="criteria-grid">${Object.entries(labels).map(([key, label]) => { const item = score.criteria[key]; return item ? `<div class="criterion"><strong>${label} <span>${escapeHtml(item.score)}/10${score.weights?.[key] ? ` · ${score.weights[key]}% weight` : ''}</span></strong><small>${escapeHtml(item.reason)}</small></div>` : ''; }).join('')}<div class="criterion"><strong>Salary range <span>Info</span></strong><small>${escapeHtml(facts?.salary_range || 'Not stated in the posting.')} Salary is not included in the match score.</small></div></div></div>` :
-    '';
-  return `<div class="review-section"><p class="hint">${stateMessage}</p>${retry}</div>${factsHtml}${criteria}`;
+    <div class="criteria-list">${weighted}<div class="criterion-row criterion-info"><div class="criterion-copy"><strong>Salary range</strong><small>${escapeHtml(facts?.salary_range || 'Not stated in the posting.')} Salary is not included in the match score.</small></div><div class="criterion-score"><span>Info</span></div></div></div></details>` : '';
+  return `<div class="review-section"><p class="hint">${stateMessage}</p>${retry}</div>${factsHtml ? `<details class="detail-disclosure" open><summary>Job at a glance</summary>${factsHtml}</details>` : ''}${criteria}`;
 }
-
 async function api(path, options = {}) {
   const response = await fetch(path, {
     headers: options.body instanceof FormData ? (options.headers || {}) : {'Content-Type': 'application/json', ...(options.headers || {})},
@@ -345,35 +364,96 @@ async function loadQueue() {
     } else if (kind === 'draft' && button.dataset.queueDraft) {
       await showTab('applications'); await showApplication(button.dataset.queueDraft);
     } else {
-      await showTab('jobs'); await showJob(id);
+      await showTab('jobs'); activeJob = id; activeJobPinned = true; syncJobsHash(); await showJob(id, true);
+      scrollNodeIntoView($('#job-detail'), {block:'start'}); $('#job-detail').focus({preventScroll:true});
     }
   }));
   if ($('#queue').classList.contains('active')) window.queuePoll = setTimeout(() => loadQueue().catch((error) => notice(error.message, true)), 5000);
 }
 
+const JOB_FILTERS = {
+  q:'#job-query', state:'#job-state', score:'#job-score', freshness:'#job-freshness',
+  mode:'#job-work-mode', location:'#job-location', source:'#job-source', seniority:'#job-seniority', sort:'#job-sort',
+};
+
+function readJobsHashState() {
+  const raw = location.hash.slice(1);
+  const [route, search = ''] = raw.split('?');
+  if (route !== 'jobs') return;
+  const params = new URLSearchParams(search);
+  for (const [key, selector] of Object.entries(JOB_FILTERS)) {
+    const node = $(selector);
+    if (node) node.value = params.get(key) || (key === 'sort' ? 'best' : '');
+  }
+  jobsPage = Math.max(1, Number(params.get('page') || 1));
+  activeJob = params.get('job') || null;
+  activeJobPinned = Boolean(activeJob);
+}
+
+function jobsHash() {
+  const params = new URLSearchParams();
+  for (const [key, selector] of Object.entries(JOB_FILTERS)) {
+    const value = $(selector)?.value?.trim();
+    if (value && !(key === 'sort' && value === 'best')) params.set(key, value);
+  }
+  if (jobsPage > 1) params.set('page', String(jobsPage));
+  if (activeJob) params.set('job', activeJob);
+  const search = params.toString();
+  return `#jobs${search ? `?${search}` : ''}`;
+}
+
+function syncJobsHash(mode = 'replace') {
+  if (!$('#jobs').classList.contains('active')) return;
+  const hash = jobsHash();
+  if (location.hash === hash) return;
+  history[mode === 'push' ? 'pushState' : 'replaceState']({tab:'jobs'}, '', hash);
+}
+
+function topMatchSignals(job) {
+  const signals = (job.match_signals || []).filter((item) => Number.isFinite(item.score));
+  const positive = signals.filter((item) => item.score >= 8).sort((a,b) => b.score - a.score).slice(0, 1);
+  const negative = signals.filter((item) => item.score <= 4).sort((a,b) => a.score - b.score).slice(0, 1);
+  return [...positive.map((item) => ({...item, tone:'good'})), ...negative.map((item) => ({...item, tone:'warn'}))];
+}
+
 async function loadJobs() {
   clearTimeout(window.jobPoll);
-  const query = new URLSearchParams({q: $('#job-query').value, state: $('#job-state').value, page: jobsPage, page_size: 25});
+  const query = new URLSearchParams({
+    q: $('#job-query').value, state: $('#job-state').value, page: jobsPage, page_size: 25,
+    min_score: $('#job-score').value, freshness: $('#job-freshness').value, work_mode: $('#job-work-mode').value,
+    location: $('#job-location').value, source: $('#job-source').value, seniority: $('#job-seniority').value,
+    sort: $('#job-sort').value,
+  });
+  [...query.entries()].forEach(([key,value]) => { if (value === '') query.delete(key); });
   const [result, analysis] = await Promise.all([api(`/api/jobs/page?${query}`), loadJobAnalysis()]);
-  if (jobsPage > result.pages) { jobsPage = result.pages; return loadJobs(); }
+  if (jobsPage > result.pages) { jobsPage = result.pages; syncJobsHash(); return loadJobs(); }
   const jobs = result.items;
   $('#jobs-page-summary').textContent = result.total ? `Page ${result.page} of ${result.pages} · ${result.total} jobs` : 'No jobs';
   $('#jobs-prev').disabled = jobsPage <= 1;
   $('#jobs-next').disabled = jobsPage >= result.pages;
-  const sourceLabel = (source) => !source ? 'Manually added' : source.kind === 'career' ? 'Company career page' : source.kind === 'linkedin' ? 'LinkedIn listing' : 'Facebook group lead';
-  $('#job-list').innerHTML = jobs.length ? jobs.map((job) =>
-    `<div class="item job-card surface-action"><button type="button" class="card-select" data-job="${job.id}" aria-label="Open ${escapeHtml(job.title)} at ${escapeHtml(job.company)}">${scoreBadge(job)}<div class="item-title">${escapeHtml(job.title)}</div><div class="item-meta">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div><div class="item-meta">${escapeHtml(sourceLabel(job.source))}${job.source ? ` · Checked ${when(job.source.last_seen_at)}` : ''}</div><div class="item-meta">${job.published_at ? `Posted ${when(job.published_at)}` : 'Posting date unavailable'} · First seen ${when(job.first_seen_at)} <span class="status-badge status-badge--neutral">${escapeHtml(job.state)}</span> · ${job.analysis_status === 'done' ? 'Local match' : job.analysis_status === 'failed' ? 'Analysis failed' : job.analysis_status === 'dismissed' ? 'Analysis dismissed' : ['pending','running'].includes(job.analysis_status) ? 'Analyzing locally' : 'Waiting for local model'}</div></button>${job.source ? `<a href="${escapeHtml(job.source.url)}" target="_blank" rel="noopener noreferrer">Original posting ↗</a>` : ''}</div>`
-  ).join('') : '<div class="empty">No jobs found. Run a scan or import a job.</div>';
+  const sourceLabel = (source) => !source ? 'Manual' : source.kind === 'career' ? 'Career page' : source.kind === 'linkedin' ? 'LinkedIn' : 'Facebook';
+  $('#job-list').innerHTML = jobs.length ? jobs.map((job) => {
+    const signals = topMatchSignals(job);
+    const tags = [job.work_mode, job.seniority, sourceLabel(job.source)].filter(Boolean);
+    const dateValue = job.published_at || job.first_seen_at;
+    return `<div class="item job-card surface-action"><button type="button" class="card-select" data-job="${job.id}" aria-label="Open ${escapeHtml(job.title)} at ${escapeHtml(job.company)}">
+      ${scoreBadge(job)}<div class="item-title">${escapeHtml(job.title)}</div>
+      <div class="job-card-company">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div>
+      <div class="job-card-tags">${tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join('')}</div>
+      <div class="job-card-signals">${signals.map((signal) => `<span class="${signal.tone}" title="${escapeHtml(signal.reason || '')}">${signal.tone === 'good' ? '✓' : '!' } ${escapeHtml(signal.label)}</span>`).join('')}</div>
+      <div class="job-card-footer"><span${exactTimeTitle(dateValue)}>${job.published_at ? 'Posted' : 'Found'} ${relativeWhen(dateValue)}</span><span class="status-badge status-badge--neutral">${escapeHtml(job.state)}</span></div>
+    </button>${job.source ? `<a href="${escapeHtml(job.source.url)}" target="_blank" rel="noopener noreferrer">Original posting ↗</a>` : ''}</div>`;
+  }).join('') : '<div class="empty">No jobs match these filters.</div>';
   document.querySelectorAll('[data-job]').forEach((node) => node.addEventListener('click', async () => {
     try {
-      await showJob(node.dataset.job);
+      activeJob = node.dataset.job; activeJobPinned = true; syncJobsHash('push');
+      await showJob(node.dataset.job, true);
       if (window.matchMedia('(max-width: 900px)').matches) scrollNodeIntoView($('#job-detail'), {block:'start'});
     } catch(error) { notice(error.message, true); }
   }));
   if (activeJob && (activeJobPinned || jobs.some((job) => job.id === activeJob))) await showJob(activeJob, activeJobPinned);
   else {
-    activeJob = null;
-    activeJobPinned = false;
+    activeJob = null; activeJobPinned = false; syncJobsHash();
     $('#job-detail').innerHTML = `<div class="empty">${jobs.length ? 'Select a job to see details.' : 'No job matches this search.'}</div>`;
   }
   if ((analysis.pending || jobs.some((job) => ['pending','running'].includes(job.analysis_status))) && $('#jobs').classList.contains('active')) {
@@ -392,25 +472,36 @@ async function showJob(id, pin = false) {
     `<a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(source.kind)}: ${escapeHtml(source.name)}</a>`
   ).join('<br>') : '';
   const score = job.score_detail ? JSON.parse(job.score_detail) : null;
-  $('#job-detail').innerHTML = `<h2>${escapeHtml(job.title)}</h2><div class="item-meta">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div>
-    <div class="item-meta">${escapeHtml(job.work_mode || '')} · ${job.published_at ? `Posted ${when(job.published_at)}` : 'Posting date unavailable'} · First seen ${when(job.first_seen_at)}</div>
-    <div class="actions"><button data-state="interesting">Interesting</button><button data-state="interview">Interview</button><button data-state="rejected" class="danger">Rejected</button><button data-state="offer">Offer</button><button data-state="ignored" class="danger">Ignore</button></div>
+  const states = ['new','interesting','prepare','ready','applied','interview','offer','rejected','ignored'];
+  $('#job-detail').setAttribute('tabindex', '-1');
+  $('#job-detail').innerHTML = `<div class="job-detail-head"><div><h2>${escapeHtml(job.title)}</h2><div class="item-meta">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div>
+    <div class="item-meta">${escapeHtml(job.work_mode || '')}${job.published_at ? ` · Posted <span${exactTimeTitle(job.published_at)}>${relativeWhen(job.published_at)}</span>` : ''} · Found <span${exactTimeTitle(job.first_seen_at)}>${relativeWhen(job.first_seen_at)}</span></div></div>
+    <label class="job-state-control">Status<select id="job-state-control">${states.map((state) => `<option value="${state}" ${job.state === state ? 'selected' : ''}>${state.replace(/^./, (x) => x.toUpperCase())}</option>`).join('')}</select></label></div>
     <div class="review-section"><p class="hint">Drafting provider: ${escapeHtml(provider || 'Choose one in Settings first')} · <button class="text-button" data-tab="settings">Change provider</button></p><div class="actions"><button data-prepare="${id}" class="primary" ${provider ? '' : 'disabled'}>Prepare application</button></div></div>
     ${job.apply_url ? `<p><a href="${escapeHtml(job.apply_url)}" target="_blank" rel="noopener noreferrer">${job.apply_url.startsWith('mailto:') ? 'Application email ↗' : 'Application page ↗'}</a></p>` : ''}
     ${!job.apply_url ? '<p class="hint">No application form has been verified for this posting. Check the original source for its application instructions before sending.</p>' : ''}
     ${links ? `<p class="item-meta">${links}</p>` : ''}
     ${renderJobAnalysis(job, score)}
-    <div class="description"><h3>Original description</h3>${formatDescription(job.description)}</div>`;
+    <details class="detail-disclosure"><summary>Original description</summary><div class="description">${formatDescription(job.description)}</div></details>`;
   $('#job-detail').querySelector('[data-tab="settings"]').addEventListener('click', () => showTab('settings'));
   $('#job-detail').querySelector('[data-analyze]')?.addEventListener('click', async () => {
     try { await api(`/api/jobs/${id}/analyze`, {method:'POST'}); notice('Local analysis queued'); await loadJobs(); }
     catch(error) { notice(error.message, true); }
   });
   $('#job-detail').querySelector('[data-dismiss-analysis]')?.addEventListener('click', () => dismissFailedAnalysis(id));
-  $('#job-detail').querySelectorAll('[data-state]').forEach((button) => button.addEventListener('click', async () => {
-    try { await api(`/api/jobs/${id}/state`, {method:'POST', body: JSON.stringify({state:button.dataset.state})}); notice('Job updated'); await loadJobs(); }
-    catch(error) { notice(error.message, true); }
-  }));
+  $('#job-state-control').addEventListener('change', async (event) => {
+    const next = event.target.value;
+    const previous = job.state;
+    if (['ignored','rejected'].includes(next) && !window.confirm(`Move this job to ${next}? You can restore it to New at any time.`)) {
+      event.target.value = previous;
+      return;
+    }
+    try {
+      await api(`/api/jobs/${id}/state`, {method:'POST', body:JSON.stringify({state:next})});
+      notice(`Job status changed to ${next}.`);
+      await loadJobs();
+    } catch(error) { event.target.value = previous; notice(error.message, true); }
+  });
   $('#job-detail').querySelector('[data-prepare]').addEventListener('click', async () => {
     const button = $('#job-detail').querySelector('[data-prepare]');
     beginPending(button, 'Preparing…');
@@ -421,8 +512,7 @@ async function showJob(id, pin = false) {
         catch(error) { notice(`Draft ready; form inspection needs attention: ${error.message}`, true); }
       }
       showTab('applications'); await loadApplications(draft.id);
-    }
-    catch(error) { notice(error.message, true); }
+    } catch(error) { notice(error.message, true); }
     finally { endPending(button); }
   });
 }
@@ -745,7 +835,9 @@ async function loadPositions() {
 }
 
 async function showTab(name, historyMode = 'push') {
-  const requested = name.split('/');
+  const routeInput = name;
+  const [route] = name.split('?');
+  const requested = route.split('/');
   const selectedDraft = requested[0] === 'applications' ? requested[1] : null;
   name = requested[0];
   if (name === 'setup') name = 'settings';
@@ -767,11 +859,12 @@ async function showTab(name, historyMode = 'push') {
     if (active) control.setAttribute('aria-current', 'page');
     else control.removeAttribute('aria-current');
   });
+  if (name === 'jobs' && routeInput.includes('?')) readJobsHashState();
   const title = ({home:'Home',queue:'Activity',jobs:'Jobs',applications:'Applications',profile:'My profile',settings:'Settings',
     personal:'Personal details',experience:'Work history',projects:'GitHub projects',sources:'Job sources',employers:'Employers'})[name];
   $('#page-title').textContent = title;
   document.title = `${title} · Job Radar`;
-  const desiredHash = selectedDraft ? `#applications/${selectedDraft}` : `#${name}`;
+  const desiredHash = selectedDraft ? `#applications/${selectedDraft}` : name === 'jobs' ? jobsHash() : `#${name}`;
   if (historyMode === 'replace') history.replaceState({tab:name}, '', desiredHash);
   else if (historyMode === 'push' && location.hash !== desiredHash) history.pushState({tab:name}, '', desiredHash);
   window.scrollTo(0, 0);
@@ -789,12 +882,144 @@ async function showTab(name, historyMode = 'push') {
   }
 }
 
+function providerLabel(value) {
+  return ({
+    codex:'Codex CLI',
+    codex_local:'Codex OSS · local',
+    agy:'Antigravity CLI',
+    claude:'Claude Code',
+    template:'Basic template',
+    'local template; no model inference':'Basic template',
+    'local inference through Codex OSS':'Codex OSS · local',
+    'remote inference through local Codex CLI':'Codex CLI',
+    'remote inference through local Antigravity CLI':'Antigravity CLI',
+    'remote inference through local Claude Code CLI':'Claude Code',
+  })[value] || String(value || 'Unknown provider').replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function applicationReviewKey(draft) {
+  if (draft.review_status) return draft.review_status;
+  return draft.status === 'sent' ? 'sent' : 'draft';
+}
+
+function applicationReviewLabel(draft) {
+  const key = typeof draft === 'string' ? draft : applicationReviewKey(draft);
+  return ({
+    awaiting_review:'Ready for review',
+    needs_review:'Needs changes',
+    sent:'Sent',
+    sending:'Sending',
+    regenerating:'Regenerating',
+    queued:'Queued',
+    failed:'Needs attention',
+    draft:'Draft',
+  })[key] || String(key || 'Draft').replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function applicationReviewTone(draft) {
+  const key = applicationReviewKey(draft);
+  if (key === 'sent') return 'success';
+  if (key === 'awaiting_review') return 'info';
+  if (['needs_review','queued','regenerating'].includes(key)) return 'warning';
+  if (key === 'failed') return 'danger';
+  return 'neutral';
+}
+
+function applicationIsSent(draft) {
+  return draft.status === 'sent' || draft.review_status === 'sent';
+}
+
+function setApplicationWorkspaceView(view) {
+  applicationWorkspaceView = ['drafts','automation','activity'].includes(view) ? view : 'drafts';
+  document.querySelectorAll('[data-app-view]').forEach((button) => {
+    const active = button.dataset.appView === applicationWorkspaceView;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+  document.querySelectorAll('[data-app-panel]').forEach((panel) => {
+    panel.hidden = panel.dataset.appPanel !== applicationWorkspaceView;
+  });
+}
+
+function bindApplicationWorkspace() {
+  const root = $('#applications');
+  if (!root || root.dataset.workspaceBound === 'true') return;
+  root.dataset.workspaceBound = 'true';
+  root.querySelectorAll('[data-app-view]').forEach((button) => button.addEventListener('click', () => setApplicationWorkspaceView(button.dataset.appView)));
+  $('#application-query').addEventListener('input', renderApplicationList);
+  for (const selector of ['#application-review-filter','#application-company-filter','#application-sent-filter']) {
+    $(selector).addEventListener('change', renderApplicationList);
+  }
+}
+
+function populateApplicationCompanyFilter() {
+  const select = $('#application-company-filter');
+  const saved = select.value;
+  const companies = [...new Set(applicationDrafts.map((draft) => draft.company).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  select.innerHTML = '<option value="">All companies</option>' + companies.map((company) =>
+    `<option value="${escapeHtml(company)}">${escapeHtml(company)}</option>`).join('');
+  if (companies.includes(saved)) select.value = saved;
+}
+
+function filteredApplications() {
+  const query = $('#application-query').value.trim().toLowerCase();
+  const review = $('#application-review-filter').value;
+  const company = $('#application-company-filter').value;
+  const sent = $('#application-sent-filter').value;
+  return applicationDrafts.filter((draft) => {
+    const searchable = `${draft.job_title || ''} ${draft.company || ''} ${providerLabel(draft.provider_mode)}`.toLowerCase();
+    if (query && !searchable.includes(query)) return false;
+    if (review && applicationReviewKey(draft) !== review) return false;
+    if (company && draft.company !== company) return false;
+    if (sent === 'sent' && !applicationIsSent(draft)) return false;
+    if (sent === 'unsent' && applicationIsSent(draft)) return false;
+    return true;
+  });
+}
+
+function renderApplicationList() {
+  const visible = filteredApplications();
+  const summary = $('#application-list-summary');
+  summary.textContent = applicationDrafts.length
+    ? `${visible.length} of ${applicationDrafts.length} application${applicationDrafts.length === 1 ? '' : 's'} shown`
+    : 'No applications prepared yet.';
+  const list = $('#application-list');
+  if (!applicationDrafts.length) {
+    list.innerHTML = '<div class="panel empty"><p>No applications yet. Start with a job posting.</p><button id="applications-browse-jobs" class="primary">Browse jobs →</button></div>';
+    $('#applications-browse-jobs')?.addEventListener('click', () => showTab('jobs'));
+    return;
+  }
+  if (!visible.length) {
+    list.innerHTML = '<div class="empty">No applications match these filters.</div>';
+    return;
+  }
+  list.innerHTML = visible.map((draft) => {
+    const selected = draft.id === activeApplicationId;
+    const tone = applicationReviewTone(draft);
+    return `<button type="button" class="item clickable application-card surface-action ${selected ? 'is-selected' : ''}" data-application="${draft.id}" ${selected ? 'aria-current="true"' : ''}>
+      <div class="item-title">${escapeHtml(draft.job_title)} <span class="status-badge status-badge--${tone}">${escapeHtml(applicationReviewLabel(draft))}</span></div>
+      <div class="item-meta">${escapeHtml(draft.company)} · ${escapeHtml(providerLabel(draft.provider_mode))}</div>
+      <div class="item-meta">Updated ${when(draft.updated_at)}${applicationIsSent(draft) ? ' · Sent' : ''}</div>
+    </button>`;
+  }).join('');
+  list.querySelectorAll('[data-application]').forEach((node) => node.addEventListener('click', async () => {
+    await showApplication(node.dataset.application);
+    if (window.matchMedia('(max-width: 900px)').matches) scrollNodeIntoView($('#application-detail'), {block:'start'});
+  }));
+}
+
 async function loadApplications(selectedId = null) {
+  bindApplicationWorkspace();
   await loadAutoApply();
-  const drafts = await api('/api/applications');
-  $('#application-list').innerHTML = drafts.length ? drafts.map((draft) => `<button type="button" class="item clickable application-card surface-action" data-application="${draft.id}"><div class="item-title">${escapeHtml(draft.job_title)} <span class="status-badge ${draft.review_status === 'awaiting_review' ? 'status-badge--success' : 'status-badge--warning'}">${escapeHtml(draft.review_status === 'awaiting_review' ? 'Ready for review' : draft.review_status === 'needs_review' ? 'Needs changes' : draft.review_status || draft.status)}</span></div><div class="item-meta">${escapeHtml(draft.company)} · ${escapeHtml(draft.provider_mode)}</div><div class="item-meta">Updated ${when(draft.updated_at)}</div></button>`).join('') : '<div class="panel empty"><p>No applications yet. Start with a job posting.</p><button id="applications-browse-jobs" class="primary">Browse jobs →</button></div>';
-  $('#applications-browse-jobs')?.addEventListener('click', () => showTab('jobs'));
-  document.querySelectorAll('[data-application]').forEach((node) => node.addEventListener('click', () => showApplication(node.dataset.application)));
+  applicationDrafts = await api('/api/applications');
+  populateApplicationCompanyFilter();
+  if (selectedId) {
+    activeApplicationId = selectedId;
+    setApplicationWorkspaceView('drafts');
+  } else if (activeApplicationId && !applicationDrafts.some((draft) => draft.id === activeApplicationId)) {
+    activeApplicationId = null;
+  }
+  renderApplicationList();
   if (selectedId) await showApplication(selectedId);
 }
 
@@ -816,10 +1041,10 @@ async function loadAutoApply() {
     : data.highest_existing_score != null ? `No undrafted jobs score at least ${data.threshold}; the highest is ${data.highest_existing_score}. Lower the minimum and save to include them.`
     : `${data.counts.queued || 0} queued · No undrafted, scored jobs are ready.`;
   const activity = $('#auto-apply-activity');
-  activity.innerHTML = data.recent.length ? `<h4>Draft activity</h4>${data.recent.map((item) =>
-    `<div class="item"><div class="item-title">${escapeHtml(item.title)} · ${escapeHtml(item.company)} <span class="status-badge ${item.status === 'sent' ? 'status-badge--success' : 'status-badge--warning'}">${escapeHtml(item.status.replace('_', ' '))}</span></div><div class="item-meta">${item.analysis_status === 'done' && item.score != null ? `${escapeHtml(item.score)}/100 · ` : 'Analyzing · '}${escapeHtml(item.detail || '')}</div><div class="actions">${item.draft_id ? `<button type="button" data-auto-draft="${item.draft_id}">Open application</button>` : `<button type="button" data-auto-job="${item.vacancy_id}">Open job</button>`}</div></div>`
+  activity.innerHTML = data.recent.length ? `${data.recent.map((item) =>
+    `<div class="item"><div class="item-title">${escapeHtml(item.title)} · ${escapeHtml(item.company)} <span class="status-badge ${item.status === 'sent' ? 'status-badge--success' : 'status-badge--warning'}">${escapeHtml(item.status.replaceAll('_', ' '))}</span></div><div class="item-meta">${item.analysis_status === 'done' && item.score != null ? `${escapeHtml(item.score)}/100 · ` : 'Analyzing · '}${escapeHtml(item.detail || '')}</div><div class="actions">${item.draft_id ? `<button type="button" data-auto-draft="${item.draft_id}">Open application</button>` : `<button type="button" data-auto-job="${item.vacancy_id}">Open job</button>`}</div></div>`
   ).join('')}` : '<p class="hint">No prepared drafts yet.</p>';
-  activity.querySelectorAll('[data-auto-draft]').forEach((button) => button.addEventListener('click', () => showApplication(button.dataset.autoDraft).catch((error) => notice(error.message, true))));
+  activity.querySelectorAll('[data-auto-draft]').forEach((button) => button.addEventListener('click', () => loadApplications(button.dataset.autoDraft).catch((error) => notice(error.message, true))));
   activity.querySelectorAll('[data-auto-job]').forEach((button) => button.addEventListener('click', async () => { await showTab('jobs'); await showJob(button.dataset.autoJob); }));
   if (data.enabled && $('#applications').classList.contains('active')) window.autoApplyPoll = setTimeout(() => loadAutoApply().catch((error) => notice(error.message, true)), 5000);
 }
@@ -852,77 +1077,289 @@ function applicationActionLabel(destination) {
     || (destination.kind === 'email' ? 'Email' : destination.kind === 'web' ? 'Web form' : 'Manual review');
 }
 
+function applicationActionTarget(destination) {
+  return destination.email || destination.url || 'No verified destination';
+}
+
+function applicationFormFieldLabel(field) {
+  return field.label || field.name || `Field ${field.index}`;
+}
+
+function renderApplicationFormField(field, draft) {
+  const key = String(field.index);
+  const label = applicationFormFieldLabel(field);
+  const required = field.required ? ' <span class="required-mark" aria-hidden="true">*</span>' : '';
+  const answer = String(draft.form_data.answers?.[key] || '');
+
+  if (field.type === 'file') {
+    const assignment = draft.form_data.attachments?.[key] || {};
+    const uploaded = assignment.kind === 'uploaded';
+    return `<label class="application-form-field">${escapeHtml(label)}${required}
+      <select data-attachment="${field.index}" data-draft-field>
+        <option value="" ${!assignment.kind ? 'selected' : ''}>Choose an attachment</option>
+        <option value="resume" ${assignment.kind === 'resume' ? 'selected' : ''}>Generated resume PDF</option>
+        <option value="uploaded" ${uploaded ? 'selected' : ''}>Custom PDF</option>
+        ${!field.required ? `<option value="none" ${assignment.kind === 'none' ? 'selected' : ''}>No file</option>` : ''}
+      </select>
+      <span class="application-attachment-upload" data-attachment-upload="${field.index}" ${uploaded ? '' : 'hidden'}>
+        <input type="file" accept="application/pdf,.pdf" data-attachment-file="${field.index}" data-draft-field aria-label="Upload PDF for ${escapeHtml(label)}">
+        <span class="hint">${uploaded && assignment.name ? `Current custom file: ${escapeHtml(assignment.name)}. Choose another PDF to replace it.` : 'Choose a PDF smaller than 10 MB.'}</span>
+      </span>
+    </label>`;
+  }
+
+  if (field.type === 'radio' || field.type === 'checkbox') {
+    const checked = ['yes','true','checked','1'].includes(answer.toLowerCase());
+    const group = field.type === 'radio' ? ` name="review-radio-${escapeHtml(field.name || 'group')}"` : '';
+    return `<label class="application-form-choice"><input type="${field.type}"${group} data-answer="${field.index}" data-draft-field value="yes" ${checked ? 'checked' : ''}><span>${escapeHtml(label)}${required}</span></label>`;
+  }
+
+  const options = Array.isArray(field.options) ? field.options.map((option) => {
+    if (typeof option === 'string') return {value:option, label:option};
+    return {value:String(option.value ?? option.label ?? ''), label:String(option.label ?? option.text ?? option.value ?? '')};
+  }).filter((option) => option.value) : [];
+
+  if (options.length) {
+    const known = options.some((option) => option.value === answer);
+    return `<label class="application-form-field">${escapeHtml(label)}${required}
+      <select data-answer="${field.index}" data-draft-field ${field.required ? 'required' : ''}>
+        <option value="">Choose an option</option>
+        ${!known && answer ? `<option value="${escapeHtml(answer)}" selected>${escapeHtml(answer)}</option>` : ''}
+        ${options.map((option) => `<option value="${escapeHtml(option.value)}" ${option.value === answer ? 'selected' : ''}>${escapeHtml(option.label || option.value)}</option>`).join('')}
+      </select>
+    </label>`;
+  }
+
+  if (field.type === 'textarea' || answer.length > 120) {
+    return `<label class="application-form-field">${escapeHtml(label)}${required}<textarea data-answer="${field.index}" data-draft-field rows="3" ${field.required ? 'required' : ''}>${escapeHtml(answer)}</textarea></label>`;
+  }
+
+  const inputType = ['email','tel','url','number','date'].includes(field.type) ? field.type : 'text';
+  return `<label class="application-form-field">${escapeHtml(label)}${required}<input type="${inputType}" data-answer="${field.index}" data-draft-field value="${escapeHtml(answer)}" ${field.required ? 'required' : ''}></label>`;
+}
+
+function applicationAlert(kind, title, items) {
+  if (!items?.length) return '';
+  const role = kind === 'danger' ? 'alert' : 'status';
+  return `<div class="application-alert application-alert--${kind}" role="${role}"><strong>${escapeHtml(title)}</strong><ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul></div>`;
+}
+
+function confirmApplicationSend(draft) {
+  const dialog = $('#application-send-confirm');
+  const destination = draft.destination || {};
+  const target = `${applicationActionLabel(destination)} · ${applicationActionTarget(destination)}`;
+  const fields = draft.form_data?.fields?.length || 0;
+  const attachments = Object.keys(draft.form_data?.attachments || {}).length;
+  $('#application-send-confirm-target').textContent = target;
+  $('#application-send-confirm-summary').textContent = `${draft.job_title} at ${draft.company} · ${providerLabel(draft.provider_mode || draft.provider)} · ${fields} form field${fields === 1 ? '' : 's'} reviewed · ${attachments} attachment${attachments === 1 ? '' : 's'}`;
+  if (typeof dialog.showModal !== 'function') {
+    return Promise.resolve(window.confirm(`Approve and send to ${applicationActionTarget(destination)}?`));
+  }
+  if (dialog.open) dialog.close('cancel');
+  return new Promise((resolve) => {
+    dialog.addEventListener('close', () => resolve(dialog.returnValue === 'confirm'), {once:true});
+    dialog.showModal();
+  });
+}
+
 async function showApplication(id) {
   if ($('#applications').classList.contains('active') && location.hash !== `#applications/${id}`) history.replaceState({tab:'applications'}, '', `#applications/${id}`);
+  setApplicationWorkspaceView('drafts');
+  activeApplicationId = id;
+  renderApplicationList();
+
   const draft = await api(`/api/applications/${id}`);
-  const resume = draft.resume_data;
-  const message = draft.message_data;
-  const destination = draft.destination;
+  const resume = draft.resume_data || {};
+  const message = draft.message_data || {};
+  const destination = draft.destination || {kind:'manual', action_type:'unknown'};
+  const formData = draft.form_data || {fields:[], answers:{}, attachments:{}};
+  draft.form_data = formData;
   const projects = resume.projects || [];
-  $('#application-detail').innerHTML = `<h2>${escapeHtml(draft.job_title)}</h2><div class="item-meta">${escapeHtml(draft.company)} · ${escapeHtml(draft.provider_mode)}</div>
-    <div class="review-section"><h4>Review status</h4><p>${escapeHtml(draft.review_status === 'awaiting_review' ? 'Waiting for your approval' : draft.review_status === 'needs_review' ? 'Needs changes before sending' : draft.review_status || draft.status)}</p><p class="hint">Telegram: ${escapeHtml(draft.telegram_status || 'Not configured')}${draft.telegram_error ? ` · ${escapeHtml(draft.telegram_error)}` : ''}</p><p class="hint">The Telegram approval button applies only to this saved version of the draft.</p></div>
-    <div class="review-section"><h4>Application action</h4><p><strong>${escapeHtml(applicationActionLabel(destination))}</strong>${destination.url || destination.email ? ` · ${escapeHtml(destination.url || destination.email)}` : ''}</p>${destination.provenance ? `<p class="hint">${escapeHtml(destination.provenance.replace(/_/g, ' '))} · ${escapeHtml(destination.confidence || 'unknown confidence')}</p>` : ''}<label>Channel<select id="draft-destination-kind"><option value="web" ${destination.kind === 'web' ? 'selected' : ''}>Web form</option><option value="email" ${destination.kind === 'email' ? 'selected' : ''}>Email</option><option value="manual" ${!['web','email'].includes(destination.kind) ? 'selected' : ''}>Manual review</option></select></label><label>URL or email address<input id="draft-destination" value="${escapeHtml(destination.url || destination.email || '')}"></label></div>
-    <div class="review-section"><h4>Resume</h4><p><a href="/api/applications/${id}/resume" target="_blank">Preview or download PDF ↗</a></p>
-      <div class="form-grid"><label>Name<input id="draft-name" value="${escapeHtml(resume.name || '')}"></label><label>Email<input id="draft-email" value="${escapeHtml(resume.email || '')}"></label><label>Phone<input id="draft-phone" value="${escapeHtml(resume.phone || '')}"></label><label>Links, one per line<textarea id="draft-links" rows="2">${escapeHtml((resume.links || []).join('\n'))}</textarea></label></div>
-      <label>Professional summary<textarea id="draft-summary" rows="3">${escapeHtml(resume.summary || '')}</textarea></label>
-      <h4>Experience</h4>${(resume.experience || []).map((item, index) => `<div class="review-subsection"><div class="form-grid"><label>Company<input data-experience-company="${index}" value="${escapeHtml(item.company || '')}"></label><label>Role<input data-experience-role="${index}" value="${escapeHtml(item.role || '')}"></label><label>Dates<input data-experience-dates="${index}" value="${escapeHtml(item.dates || '')}"></label></div><label>Bullets, one per line<textarea data-experience-bullets="${index}" rows="4">${escapeHtml((item.bullets || []).join('\n'))}</textarea></label></div>`).join('') || '<p class="hint">No previous positions in this draft.</p>'}
-      <h4>Selected projects</h4>${projects.map((project, index) => `<div class="review-subsection"><div class="form-grid"><label>Title<input data-project-title="${index}" value="${escapeHtml(project.title || '')}"></label><label>Repository URL<input data-project-url="${index}" value="${escapeHtml(project.repository_url || '')}"></label><label>Technologies<input data-project-stack="${index}" value="${escapeHtml((project.tech_stack || []).join(', '))}"></label></div><label>Tailored bullets, one per line<textarea data-project-bullets="${index}" rows="4">${escapeHtml((project.bullets || []).join('\n'))}</textarea></label></div>`).join('') || '<p class="hint">No projects selected for this draft.</p>'}
-      <h4>Education</h4>${(resume.education || []).map((item, index) => { const entry = typeof item === 'string' ? {school:item} : item; return `<div class="form-grid"><label>School<input data-education-school="${index}" value="${escapeHtml(entry.school || '')}"></label><label>Degree<input data-education-degree="${index}" value="${escapeHtml(entry.degree || '')}"></label><label>Dates<input data-education-dates="${index}" value="${escapeHtml(entry.dates || '')}"></label></div>`; }).join('') || '<p class="hint">No education in this draft.</p>'}
-      <label>Achievements, one per line<textarea id="draft-achievements" rows="3">${escapeHtml((resume.achievements || []).join('\n'))}</textarea></label>
-      <label>Skills, one per line<textarea id="draft-skills" rows="3">${escapeHtml((resume.skills || []).join('\n'))}</textarea></label>
-      <label>Skill groups, one per line as “Group: skills”<textarea id="draft-skill-groups" rows="3">${escapeHtml(Object.entries(resume.skill_groups || {}).map(([group, values]) => `${group}: ${Array.isArray(values) ? values.join(', ') : values}`).join('\n'))}</textarea></label>
+  const warnings = draft.warnings || [];
+  const blockers = draft.send_blockers || [];
+  const sent = applicationIsSent(draft);
+  const reviewTone = applicationReviewTone(draft);
+  const canSend = !sent && draft.send_ready && draft.review_status === 'awaiting_review';
+  const canInspect = !sent && destination.kind === 'web';
+  const actionTarget = applicationActionTarget(destination);
+  const detail = $('#application-detail');
+
+  detail.innerHTML = `<div class="application-review-header">
+      <div><p class="eyebrow">APPLICATION REVIEW</p><h2>${escapeHtml(draft.job_title)}</h2><p class="item-meta">${escapeHtml(draft.company)} · ${escapeHtml(providerLabel(draft.provider_mode || draft.provider))}</p></div>
+      <span class="status-badge status-badge--${reviewTone}">${escapeHtml(applicationReviewLabel(draft))}</span>
     </div>
-    <div class="review-section"><h4>Application message</h4><label>Subject<input id="draft-subject" value="${escapeHtml(message.subject || '')}"></label><label>Body<textarea id="draft-body" rows="10">${escapeHtml(message.body || '')}</textarea></label></div>
-    <div id="draft-form-fields" class="review-section"><h4>Form answers and attachments</h4>${draft.form_data.action ? `<p class="hint">Form submits to: ${escapeHtml(draft.form_data.action)} (${escapeHtml(draft.form_data.method)})</p>` : ''}${(draft.form_data.fields || []).map((field) => field.type === 'file' ? (() => {
-      const assignment = draft.form_data.attachments?.[String(field.index)] || {};
-      return `<label>${escapeHtml(field.label || field.name || `File ${field.index}`)}${field.required ? ' *' : ''}<select data-attachment="${field.index}"><option value="" ${!assignment.kind ? 'selected' : ''}>Choose a file</option><option value="resume" ${assignment.kind === 'resume' ? 'selected' : ''}>Generated resume PDF</option>${!field.required ? `<option value="none" ${assignment.kind === 'none' ? 'selected' : ''}>No file</option>` : ''}${assignment.kind === 'uploaded' ? `<option value="uploaded" selected>${escapeHtml(assignment.name || 'Uploaded PDF')}</option>` : ''}</select><input type="file" accept="application/pdf,.pdf" data-attachment-file="${field.index}" aria-label="Upload PDF for ${escapeHtml(field.label || field.name || `File ${field.index}`)}"><span class="hint">Select the document to attach to this field.</span></label>`;
-    })() : `<label>${escapeHtml(field.label || field.name || `Field ${field.index}`)}${field.required ? ' *' : ''}<textarea data-answer="${field.index}" rows="2">${escapeHtml(draft.form_data.answers?.[String(field.index)] || '')}</textarea>${field.options?.length ? `<span class="hint">Options: ${field.options.map((option) => escapeHtml(option.value)).join(', ')}</span>` : ''}</label>`).join('') || '<p class="hint">No form fields inspected yet. Inspect the final application URL before sending.</p>'}</div>
-    ${draft.warnings.length ? `<div class="review-section"><h4>Review notes</h4>${draft.warnings.map((warning) => `<p class="hint">${escapeHtml(warning)}</p>`).join('')}</div>` : ''}
-    ${draft.send_blockers?.length ? `<div class="review-section"><h4>Before sending</h4>${draft.send_blockers.map((reason) => `<p class="hint">${escapeHtml(reason)}</p>`).join('')}</div>` : ''}
-    <div class="review-section"><h4>Regenerate draft</h4><label>Custom instructions for regeneration<textarea id="regenerate-prompt" rows="3" placeholder="Example: emphasize production search work and shorten the opening paragraph"></textarea></label><div class="actions"><button id="regenerate-draft" ${draft.provider === 'template' ? 'disabled' : ''}>Regenerate draft</button></div>${draft.provider === 'template' ? '<p class="hint">This draft used the basic template. Create a new draft with an AI provider to regenerate it with instructions.</p>' : ''}</div>
-    <div class="actions"><button id="edit-draft">Edit details</button><button id="save-draft" class="primary">Save changes</button><button id="inspect-draft">Inspect form</button><button id="send-draft" ${draft.send_ready && draft.review_status === 'awaiting_review' ? '' : 'disabled'}>Approve &amp; send</button></div><p class="hint">Package fingerprint: <span class="mono">${escapeHtml(draft.package_hash.slice(0, 16))}</span>. Open the PDF after saving changes.</p><div id="application-outcome" class="hint"></div>`;
-  $('#edit-draft').addEventListener('click', () => { $('#draft-destination').focus(); scrollNodeIntoView($('#draft-destination'), {block:'center'}); });
+    <nav class="application-review-nav" aria-label="Application review sections">
+      <button type="button" data-review-target="application-review-overview" aria-current="true">Overview</button>
+      <button type="button" data-review-target="application-review-resume">Resume</button>
+      <button type="button" data-review-target="application-review-message">Message</button>
+      <button type="button" data-review-target="application-review-form">Form</button>
+      <button type="button" data-review-target="application-review-regenerate">Regenerate</button>
+    </nav>
+
+    <section id="application-review-overview" class="application-review-section">
+      <h3>Overview</h3>
+      ${applicationAlert('danger', 'Sending is blocked', blockers)}
+      ${applicationAlert('warning', 'Review before sending', warnings)}
+      <div class="application-overview-grid">
+        <div class="application-status-card surface-status"><strong>Review state</strong><span>${escapeHtml(applicationReviewLabel(draft))}</span><small>Telegram: ${escapeHtml(draft.telegram_status || 'Not configured')}${draft.telegram_error ? ` · ${escapeHtml(draft.telegram_error)}` : ''}</small></div>
+        <div class="application-status-card surface-status"><strong>Application action</strong><span>${escapeHtml(applicationActionLabel(destination))}</span><small>${escapeHtml(actionTarget)}</small></div>
+      </div>
+      <div class="application-destination surface-editable">
+        <div class="section-head"><div><h4>Destination</h4><p class="hint">The detected action comes from the posting. Change it only when you have verified a different destination.</p></div></div>
+        ${destination.provenance ? `<p class="hint">Detected from ${escapeHtml(destination.provenance.replace(/_/g, ' '))} · ${escapeHtml(destination.confidence || 'unknown confidence')}</p>` : ''}
+        <div class="form-grid">
+          <label>Channel<select id="draft-destination-kind" data-draft-field><option value="web" ${destination.kind === 'web' ? 'selected' : ''}>Web form</option><option value="email" ${destination.kind === 'email' ? 'selected' : ''}>Email</option><option value="manual" ${!['web','email'].includes(destination.kind) ? 'selected' : ''}>Manual review</option></select></label>
+          <label>URL or email address<input id="draft-destination" data-draft-field value="${escapeHtml(destination.url || destination.email || '')}"></label>
+        </div>
+      </div>
+      <p class="hint">The Telegram approval button applies only to the currently saved version of this draft.</p>
+    </section>
+
+    <section id="application-review-resume" class="application-review-section">
+      <div class="section-head"><div><h3>Resume</h3><p class="hint">Review the generated PDF and the structured resume data used to build it.</p></div><a href="/api/applications/${id}/resume" target="_blank" rel="noopener noreferrer">Open PDF ↗</a></div>
+      <div class="application-resume-preview"><iframe src="/api/applications/${id}/resume#view=FitH" title="Resume PDF preview" loading="lazy"></iframe></div>
+      <div class="form-grid"><label>Name<input id="draft-name" data-draft-field value="${escapeHtml(resume.name || '')}"></label><label>Email<input id="draft-email" data-draft-field value="${escapeHtml(resume.email || '')}"></label><label>Phone<input id="draft-phone" data-draft-field value="${escapeHtml(resume.phone || '')}"></label><label>Links, one per line<textarea id="draft-links" data-draft-field rows="2">${escapeHtml((resume.links || []).join('\n'))}</textarea></label></div>
+      <label>Professional summary<textarea id="draft-summary" data-draft-field rows="3">${escapeHtml(resume.summary || '')}</textarea></label>
+      <h4>Experience</h4>${(resume.experience || []).map((item, index) => `<div class="review-subsection surface-editable"><div class="form-grid"><label>Company<input data-experience-company="${index}" data-draft-field value="${escapeHtml(item.company || '')}"></label><label>Role<input data-experience-role="${index}" data-draft-field value="${escapeHtml(item.role || '')}"></label><label>Dates<input data-experience-dates="${index}" data-draft-field value="${escapeHtml(item.dates || '')}"></label></div><label>Bullets, one per line<textarea data-experience-bullets="${index}" data-draft-field rows="4">${escapeHtml((item.bullets || []).join('\n'))}</textarea></label></div>`).join('') || '<p class="hint">No previous positions in this draft.</p>'}
+      <h4>Selected projects</h4>${projects.map((project, index) => `<div class="review-subsection surface-editable"><div class="form-grid"><label>Title<input data-project-title="${index}" data-draft-field value="${escapeHtml(project.title || '')}"></label><label>Repository URL<input data-project-url="${index}" data-draft-field value="${escapeHtml(project.repository_url || '')}"></label><label>Technologies<input data-project-stack="${index}" data-draft-field value="${escapeHtml((project.tech_stack || []).join(', '))}"></label></div><label>Tailored bullets, one per line<textarea data-project-bullets="${index}" data-draft-field rows="4">${escapeHtml((project.bullets || []).join('\n'))}</textarea></label></div>`).join('') || '<p class="hint">No projects selected for this draft.</p>'}
+      <h4>Education</h4>${(resume.education || []).map((item, index) => { const entry = typeof item === 'string' ? {school:item} : item; return `<div class="form-grid review-subsection surface-editable"><label>School<input data-education-school="${index}" data-draft-field value="${escapeHtml(entry.school || '')}"></label><label>Degree<input data-education-degree="${index}" data-draft-field value="${escapeHtml(entry.degree || '')}"></label><label>Dates<input data-education-dates="${index}" data-draft-field value="${escapeHtml(entry.dates || '')}"></label></div>`; }).join('') || '<p class="hint">No education in this draft.</p>'}
+      <label>Achievements, one per line<textarea id="draft-achievements" data-draft-field rows="3">${escapeHtml((resume.achievements || []).join('\n'))}</textarea></label>
+      <label>Skills, one per line<textarea id="draft-skills" data-draft-field rows="3">${escapeHtml((resume.skills || []).join('\n'))}</textarea></label>
+      <label>Skill groups, one per line as “Group: skills”<textarea id="draft-skill-groups" data-draft-field rows="3">${escapeHtml(Object.entries(resume.skill_groups || {}).map(([group, values]) => `${group}: ${Array.isArray(values) ? values.join(', ') : values}`).join('\n'))}</textarea></label>
+    </section>
+
+    <section id="application-review-message" class="application-review-section">
+      <h3>Application message</h3>
+      <label>Subject<input id="draft-subject" data-draft-field value="${escapeHtml(message.subject || '')}"></label>
+      <label>Body<textarea id="draft-body" data-draft-field rows="10">${escapeHtml(message.body || '')}</textarea></label>
+    </section>
+
+    <section id="application-review-form" class="application-review-section">
+      <div class="section-head"><div><h3>Form answers and attachments</h3><p class="hint">${formData.action ? `Form submits to ${escapeHtml(formData.action)} (${escapeHtml(formData.method || 'GET')})` : 'Inspect a verified web form to load its fields here.'}</p></div></div>
+      <div class="application-form-fields">${(formData.fields || []).map((field) => renderApplicationFormField(field, draft)).join('') || '<p class="empty">No form fields inspected yet.</p>'}</div>
+    </section>
+
+    <section id="application-review-regenerate" class="application-review-section">
+      <h3>Regenerate draft</h3>
+      <label>Custom instructions for regeneration<textarea id="regenerate-prompt" rows="3" placeholder="Example: emphasize production search work and shorten the opening paragraph"></textarea></label>
+      <div class="actions"><button id="regenerate-draft" class="secondary" ${draft.provider === 'template' ? 'disabled' : ''}>Regenerate draft</button></div>
+      ${draft.provider === 'template' ? '<p class="hint">This draft used the basic template. Create a new draft with an AI provider to regenerate it with instructions.</p>' : ''}
+    </section>
+
+    <details class="application-debug"><summary>Technical details</summary><p class="hint">Package fingerprint: <span class="mono">${escapeHtml(draft.package_hash.slice(0, 16))}</span></p></details>
+
+    <div class="application-sticky-actions">
+      <div><span id="application-dirty-state" class="status-badge status-badge--neutral">Saved</span><span id="application-outcome" class="hint" role="status" aria-live="polite"></span></div>
+      <div class="actions">
+        <button id="save-draft" class="secondary" disabled>Save changes</button>
+        <button id="inspect-draft" class="secondary" ${canInspect ? '' : 'disabled'}>Inspect form</button>
+        <button id="send-draft" class="primary" ${canSend ? '' : 'disabled'}>Approve &amp; send</button>
+      </div>
+    </div>`;
+
+  detail.querySelectorAll('[data-review-target]').forEach((button) => button.addEventListener('click', () => {
+    detail.querySelectorAll('[data-review-target]').forEach((item) => item.removeAttribute('aria-current'));
+    button.setAttribute('aria-current', 'true');
+    scrollNodeIntoView(detail.querySelector(`#${button.dataset.reviewTarget}`), {block:'start'});
+  }));
+
+  const dirtyState = $('#application-dirty-state');
+  const saveButton = $('#save-draft');
+  const sendButton = $('#send-draft');
+  const inspectButton = $('#inspect-draft');
+  const markDirty = (field) => {
+    if (sent) return;
+    dirtyState.textContent = 'Unsaved changes';
+    dirtyState.className = 'status-badge status-badge--warning';
+    saveButton.disabled = false;
+    sendButton.disabled = true;
+    $('#application-outcome').textContent = 'Save your changes before approving this application.';
+    field.closest('label')?.classList.add('is-dirty');
+    if (field.id === 'draft-destination-kind') inspectButton.disabled = field.value !== 'web';
+  };
+
+  detail.querySelectorAll('[data-attachment]').forEach((select) => {
+    const upload = detail.querySelector(`[data-attachment-upload="${select.dataset.attachment}"]`);
+    const syncUpload = () => { if (upload) upload.hidden = select.value !== 'uploaded'; };
+    syncUpload();
+    select.addEventListener('change', syncUpload);
+  });
+
+  detail.querySelectorAll('[data-draft-field]').forEach((field) => {
+    for (const eventName of ['input','change']) field.addEventListener(eventName, () => markDirty(field));
+  });
+
   $('#regenerate-draft').addEventListener('click', async () => {
     const prompt = $('#regenerate-prompt').value.trim();
     if (!prompt) { notice('Enter custom instructions to regenerate the draft.', true); return; }
     const button = $('#regenerate-draft');
     beginPending(button, 'Regenerating…');
-    try { await api(`/api/applications/${id}/regenerate`, {method:'POST', body:JSON.stringify({prompt})}); await showApplication(id); await loadApplications(id); notice('New draft prepared for review.'); }
-    catch(error) { endPending(button); notice(error.message, true); }
-  });
-  $('#application-detail').querySelectorAll('input,select,textarea').forEach((field) => field.addEventListener('input', () => { $('#send-draft').disabled = true; $('#application-outcome').textContent = 'Save and review your changes before sending.'; }));
-  $('#application-detail').querySelectorAll('[data-attachment-file]').forEach((input) => input.addEventListener('change', () => {
-    if (input.files.length) {
-      const select = document.querySelector(`[data-attachment="${input.dataset.attachmentFile}"]`);
-      if (!select.querySelector('[value="uploaded"]')) select.add(new Option(input.files[0].name, 'uploaded'));
-      select.value = 'uploaded';
+    try {
+      await api(`/api/applications/${id}/regenerate`, {method:'POST', body:JSON.stringify({prompt})});
+      await loadApplications(id);
+      notice('New draft prepared for review.');
+    } catch(error) {
+      notice(error.message, true);
+    } finally {
+      if (button.isConnected) endPending(button);
     }
-  }));
+  });
+
   $('#save-draft').addEventListener('click', async (event) => {
     const button = beginPending(event.currentTarget, 'Saving…');
-    try { await saveApplication(id, draft); await showApplication(id); }
-    catch(error) { notice(error.message, true); }
-    finally { endPending(button); }
+    try {
+      await saveApplication(id, draft);
+      await loadApplications(id);
+    } catch(error) {
+      notice(error.message, true);
+    } finally {
+      if (button.isConnected) endPending(button);
+    }
   });
+
   $('#inspect-draft').addEventListener('click', async (event) => {
     const button = beginPending(event.currentTarget, 'Inspecting…');
-    try { await saveApplication(id, draft); await api(`/api/applications/${id}/inspect`, {method:'POST'}); await showApplication(id); notice('Form fields inspected'); }
-    catch(error) { notice(error.message, true); }
-    finally { endPending(button); }
+    try {
+      if (!saveButton.disabled) await saveApplication(id, draft);
+      await api(`/api/applications/${id}/inspect`, {method:'POST'});
+      await loadApplications(id);
+      notice('Application form inspected.');
+    } catch(error) {
+      notice(error.message, true);
+    } finally {
+      if (button.isConnected) endPending(button);
+    }
   });
-  $('#send-draft').addEventListener('click', async () => {
-    const button = $('#send-draft');
-    beginPending(button, 'Sending…');
-    try { const result = await api(`/api/applications/${id}/approve`, {method:'POST', body:JSON.stringify({package_hash:draft.package_hash})}); $('#application-outcome').textContent = `${result.status}: ${result.receipt || result.error || ''}`; await loadApplications(id); notice(`Application outcome: ${result.status}`); }
-    catch(error) { notice(error.message, true); }
-    finally { endPending(button); }
+
+  $('#send-draft').addEventListener('click', async (event) => {
+    const approved = await confirmApplicationSend(draft);
+    if (!approved) return;
+    const button = beginPending(event.currentTarget, 'Sending…');
+    try {
+      const result = await api(`/api/applications/${id}/approve`, {method:'POST', body:JSON.stringify({package_hash:draft.package_hash})});
+      await loadApplications(id);
+      $('#application-outcome').textContent = `${result.status}: ${result.receipt || result.error || ''}`;
+      notice(`Application outcome: ${result.status}`);
+    } catch(error) {
+      notice(error.message, true);
+    } finally {
+      if (button.isConnected) endPending(button);
+    }
   });
+
+  if (sent) {
+    detail.querySelectorAll('[data-draft-field],#regenerate-draft,#save-draft,#inspect-draft,#send-draft').forEach((control) => { control.disabled = true; });
+    dirtyState.textContent = 'Sent';
+    dirtyState.className = 'status-badge status-badge--success';
+  }
 }
 
 async function saveApplication(id, draft) {
   const lines = (value) => value.split('\n').map((x) => x.trim()).filter(Boolean);
   const answers = {};
-  document.querySelectorAll('[data-answer]').forEach((field) => { answers[field.dataset.answer] = field.value; });
+  document.querySelectorAll('[data-answer]').forEach((field) => {
+    answers[field.dataset.answer] = ['radio','checkbox'].includes(field.type) && !field.checked ? '' : field.value;
+  });
   const attachments = {};
   for (const select of document.querySelectorAll('[data-attachment]')) {
     const index = select.dataset.attachment;
@@ -1115,11 +1552,20 @@ document.querySelectorAll('[data-tab]').forEach((control) => control.addEventLis
 $('#social-auth-action').addEventListener('click', openSocialSignIn);
 setInterval(() => refreshSocialAuth().catch(() => {}), 60000);
 $('#clock').textContent = new Date().toLocaleDateString(undefined, {weekday:'long', day:'numeric', month:'long'});
-$('#job-search').addEventListener('click', () => { jobsPage = 1; loadJobs().catch((error) => notice(error.message, true)); });
-$('#job-query').addEventListener('keydown', (event) => { if (event.key === 'Enter') { jobsPage = 1; loadJobs().catch((error) => notice(error.message, true)); } });
-$('#job-state').addEventListener('change', () => { jobsPage = 1; loadJobs().catch((error) => notice(error.message, true)); });
-$('#jobs-prev').addEventListener('click', () => { jobsPage = Math.max(1, jobsPage - 1); activeJob = null; loadJobs().catch((error) => notice(error.message, true)); });
-$('#jobs-next').addEventListener('click', () => { jobsPage += 1; activeJob = null; loadJobs().catch((error) => notice(error.message, true)); });
+function applyJobControls() {
+  jobsPage = 1; activeJob = null; activeJobPinned = false; syncJobsHash('push');
+  loadJobs().catch((error) => notice(error.message, true));
+}
+$('#job-search').addEventListener('click', applyJobControls);
+$('#job-query').addEventListener('keydown', (event) => { if (event.key === 'Enter') applyJobControls(); });
+for (const selector of ['#job-state','#job-score','#job-freshness','#job-work-mode','#job-source','#job-sort']) $(selector).addEventListener('change', applyJobControls);
+for (const selector of ['#job-location','#job-seniority']) $(selector).addEventListener('keydown', (event) => { if (event.key === 'Enter') applyJobControls(); });
+$('#jobs-clear-filters').addEventListener('click', () => {
+  for (const [key, selector] of Object.entries(JOB_FILTERS)) $(selector).value = key === 'sort' ? 'best' : '';
+  applyJobControls();
+});
+$('#jobs-prev').addEventListener('click', () => { jobsPage = Math.max(1, jobsPage - 1); activeJob = null; activeJobPinned = false; syncJobsHash('push'); loadJobs().catch((error) => notice(error.message, true)); });
+$('#jobs-next').addEventListener('click', () => { jobsPage += 1; activeJob = null; activeJobPinned = false; syncJobsHash('push'); loadJobs().catch((error) => notice(error.message, true)); });
 $('#source-kind').addEventListener('change', () => loadSources().catch((error) => notice(error.message, true)));
 $('#queue-refresh').addEventListener('click', () => loadQueue().catch((error) => notice(error.message, true)));
 $('#employer-search').addEventListener('click', () => loadEmployers().catch((error) => notice(error.message, true)));
