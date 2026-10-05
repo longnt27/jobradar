@@ -76,7 +76,7 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 page.locator("#projects.active #project-add-form").wait_for()
                 assert page.url.endswith("#projects")
                 page.get_by_role("button", name="Applications", exact=True).first.click()
-                page.locator("#auto-apply-panel summary").click()
+                page.get_by_role("tab", name="Automation").click()
                 assert page.locator("#auto-apply-form input[name='enabled']").is_visible()
                 assert page.locator("#auto-apply-status").inner_text() == "Off"
                 assert page.locator("#queue-existing-drafts").is_disabled()
