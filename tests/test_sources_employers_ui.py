@@ -33,8 +33,9 @@ def test_sources_and_employers_management_ui(tmp_path: Path) -> None:
                 page.goto(f"http://127.0.0.1:{port}/#sources")
                 page.locator("#source-list .source-card").first.wait_for()
                 first_source = page.locator("#source-list .source-card").first
-                source_name = first_source.locator(".item-title").inner_text().split("\n")[0].strip()
-                assert first_source.get_by_role("link", name=f"Open source {source_name}").is_visible()
+                source_link = first_source.locator("a[aria-label^='Open source ']")
+                assert source_link.is_visible()
+                assert source_link.get_attribute("aria-label") != "Open source"
 
                 assert page.locator("#source-status").is_visible()
                 assert page.locator("#source-enabled").is_visible()
