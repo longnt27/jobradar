@@ -55,7 +55,7 @@ def test_linkedin_easy_apply_is_distinct_from_external_apply(tmp_path: Path) -> 
         raw_text="AI Engineer\nEasy Apply\nBuild reliable AI systems in Python.",
     ))
     action = draft["destination"]
-    assert action["kind"] == "web"
+    assert action["kind"] == "manual"
     assert action["action_type"] == "linkedin_easy_apply"
     assert action["url"] == "https://www.linkedin.com/jobs/view/101/"
     assert action["provenance"] == "linkedin_easy_apply_control"
