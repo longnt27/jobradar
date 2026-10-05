@@ -118,7 +118,8 @@ def test_application_workspace_filters_reviews_and_confirms_send(tmp_path: Path,
 
                 first_card = page.locator(f'[data-application="{first["id"]}"]')
                 first_card.click()
-                assert first_card.get_attribute("aria-current") == "true"
+                assert first_card.get_attribute("aria-pressed") == "true"
+                assert page.locator("#application-detail").evaluate("node => document.activeElement === node")
                 assert "is-selected" in (first_card.get_attribute("class") or "")
                 assert "Basic template" in page.locator("#application-detail").inner_text()
                 assert "local template; no model inference" not in page.locator("#application-detail").inner_text()
@@ -188,7 +189,9 @@ def test_application_workspace_static_contract() -> None:
         assert f'id="{control}"' in html
 
     assert "application-card surface-action" in js
-    assert 'aria-current="true"' in js
+    assert 'aria-pressed="' in js
+    assert 'role="region" aria-label="Application details" tabindex="-1"' in html
+    assert "$('#application-detail').focus({preventScroll:true})" in js
     assert "scrollNodeIntoView($('#application-detail')" in js
     assert "application-review-nav" in js
     assert "application-sticky-actions" in js
