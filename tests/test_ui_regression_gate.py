@@ -52,8 +52,8 @@ def ui_server(tmp_path_factory):
     }).json()
     app.state.db.execute(
         "UPDATE vacancies SET analysis_status='done',score=91,state='interesting',"
-        "work_mode='Hybrid',seniority='Mid',published_at='2026-10-04T09:00:00+00:00' WHERE id=?",
-        (job["id"],),
+        "work_mode='Hybrid',published_at='2026-10-04T09:00:00+00:00',score_detail=? WHERE id=?",
+        (json.dumps({"facts": {"seniority": "Mid", "work_mode": "Hybrid"}}), job["id"]),
     )
 
     second = client.post("/api/jobs/import", json={
@@ -65,8 +65,8 @@ def ui_server(tmp_path_factory):
     }).json()
     app.state.db.execute(
         "UPDATE vacancies SET analysis_status='done',score=76,state='new',"
-        "work_mode='Remote',seniority='Mid',published_at='2026-10-03T09:00:00+00:00' WHERE id=?",
-        (second["id"],),
+        "work_mode='Remote',published_at='2026-10-03T09:00:00+00:00',score_detail=? WHERE id=?",
+        (json.dumps({"facts": {"seniority": "Mid", "work_mode": "Remote"}}), second["id"]),
     )
 
     project_id = client.post("/api/evidence", json={
