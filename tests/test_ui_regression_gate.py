@@ -9,7 +9,7 @@ from threading import Thread
 import pytest
 import uvicorn
 from fastapi.testclient import TestClient
-from playwright.sync_api import Page, sync_playwright
+from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError, sync_playwright
 
 from job_radar.settings import Settings
 from job_radar.web import create_app
@@ -150,7 +150,14 @@ def _new_page(browser, viewport: dict) -> Page:
     )
     page = context.new_page()
     page.set_default_timeout(6000)
-    issues = {"api": [], "page": []}
+    issues = {"api": [], "page": [], "pending": set()}
+    page.on("request", lambda request: issues["pending"].add(request.url)
+            if "/api/" in request.url else None)
+    page.on("requestfinished", lambda request: issues["pending"].discard(request.url))
+    page.on("requestfailed", lambda request: (
+        issues["pending"].discard(request.url),
+        issues["api"].append(f"request failed {request.method} {request.url}: {request.failure}")
+    ) if "/api/" in request.url else None)
     page.on("response", lambda response: issues["api"].append(
         f"{response.status} {response.request.method} {response.url}"
     ) if "/api/" in response.url and response.status >= 400 else None)
@@ -161,7 +168,19 @@ def _new_page(browser, viewport: dict) -> Page:
 
 def _stabilize(page: Page, active_selector: str) -> None:
     page.locator(active_selector).wait_for()
-    page.wait_for_function("!document.querySelector('.tab.active')?.hasAttribute('aria-busy')", timeout=10_000)
+    try:
+        page.wait_for_function("!document.querySelector('.tab.active')?.hasAttribute('aria-busy')", timeout=3_000)
+    except PlaywrightTimeoutError as error:
+        notice = page.locator("#notice")
+        notice_text = notice.inner_text() if notice.is_visible() else ""
+        pending = sorted(page._ui_issues["pending"])
+        raise AssertionError(
+            "Active tab stayed aria-busy. "
+            f"Pending API requests: {pending or ['none']}; "
+            f"page errors: {page._ui_issues['page'] or ['none']}; "
+            f"API failures: {page._ui_issues['api'] or ['none']}; "
+            f"notice: {notice_text or 'none'}"
+        ) from error
     assert not page._ui_issues["page"], "Browser page errors:\n- " + "\n- ".join(page._ui_issues["page"])
     assert not page._ui_issues["api"], "API request failures:\n- " + "\n- ".join(page._ui_issues["api"])
     notice = page.locator("#notice")
