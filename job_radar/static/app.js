@@ -254,37 +254,66 @@ async function loadHome() {
   renderSocialAuth(setup.browser);
   const c = data.counts;
   $('#metrics').innerHTML = [
-    ['Jobs found', c.vacancies], ['Company career feeds', c.career_sources_enabled],
-    ['Applications', c.application_drafts], ['Sent', c.submissions],
+    ['High-fit new jobs', c.high_fit_new], ['New in 24h', c.recent_jobs],
+    ['Drafts to review', c.drafts_needing_review], ['Analysis failures', c.analysis_failures],
   ].map(([label, value]) => `<div class="metric"><strong>${value}</strong><span>${label}</span></div>`).join('');
+
   const socialSources = [
     setup.linkedin_searches ? `${setup.linkedin_searches} LinkedIn searches` : '',
     setup.facebook_groups ? `${setup.facebook_groups} Facebook groups` : '',
   ].filter(Boolean);
   $('#source-summary').textContent = socialSources.length
-    ? `${socialSources.join(' and ')} ${setup.browser.sites.length ? `need ${socialSiteNames(setup.browser)} sign-in again.` : setup.browser.connected_sites.length ? `have ${setup.browser.connected_sites.map((site) => site === 'linkedin' ? 'LinkedIn' : 'Facebook').join(' and ')} saved sign-in.` : 'are waiting for browser sign-in before scans can run.'}`
-    : 'Company career feeds scan every four hours.';
+    ? `${socialSources.join(' and ')} ${setup.browser.sites.length ? `need ${socialSiteNames(setup.browser)} sign-in again.` : setup.browser.connected_sites.length ? 'are connected.' : 'are waiting for browser sign-in.'}`
+    : 'Company career feeds continue scanning without social sign-in.';
+
   const hasProfile = Boolean(profile.name && profile.email);
-  const steps = [
-    {label:'Set up AI models', detail:!profile.drafting_provider ? 'Choose an application writing provider' : !setup.matching.model ? 'Choose a local job matching model' : 'Application writing and job matching are ready', done:!!profile.drafting_provider && !!setup.matching.model, tab:'settings', panel:'provider-panel'},
-    {label:'Add your resume', detail:'Import a PDF or enter details yourself', done:hasProfile, tab:'profile', panel:'resume-panel'},
-    {label:setup.browser.sites.length ? 'Sign in to social sites again' : 'Connect LinkedIn and Facebook', detail:setup.browser.sites.length ? `${socialSiteNames(setup.browser)} session expired` : 'Separate one-time sign-in for each site', done:setup.browser.connected_sites.length === 2 && !setup.browser.sites.length, tab:'settings', socialAuth:true},
-    {label:'Telegram application reviews', detail:'Connect a private bot chat to review application drafts', done:setup.telegram_configured, tab:'settings', panel:'telegram-panel', optional:true},
-    {label:'Email applications', detail:setup.smtp_test?.status === 'accepted' ? 'Mail server accepted your latest test email' : setup.smtp_test?.status === 'failed' ? 'Test failed; check your saved settings' : setup.smtp_configured ? 'Settings saved; send a test email to check them' : 'Connect Gmail or another SMTP account', done:setup.smtp_test?.status === 'accepted', tab:'settings', panel:'smtp-panel', optional:true},
-    {label:'Select your projects', detail:'Choose GitHub repositories for tailored applications', done:setup.approved_evidence > 0, tab:'projects'},
-    {label:'Review live jobs', detail:`${c.vacancies} job${c.vacancies === 1 ? '' : 's'} found; check original postings`, done:false, tab:'jobs'},
+  const experienceCount = (profile.experience || []).length;
+  const required = [
+    {label:'Set up AI models', detail:!profile.drafting_provider ? 'Choose an application writing provider' : !setup.matching.model ? 'Choose a local job matching model' : 'Application writing and matching are ready', done:!!profile.drafting_provider && !!setup.matching.model, tab:'settings', panel:'provider-panel'},
+    {label:'Add personal details', detail:'Name and email are required for applications', done:hasProfile, tab:'personal'},
+    {label:'Add work history', detail:experienceCount ? `${experienceCount} position${experienceCount === 1 ? '' : 's'} saved` : 'Add experience for tailored applications', done:experienceCount > 0, tab:'experience'},
+    {label:'Select projects', detail:'Choose at least one project for tailored applications', done:setup.approved_evidence > 0, tab:'projects'},
+    {label:setup.browser.sites.length ? 'Sign in to social sites again' : 'Connect job-source accounts', detail:setup.browser.sites.length ? `${socialSiteNames(setup.browser)} session expired` : 'Required while LinkedIn or Facebook sources are enabled', done:(!setup.linkedin_searches && !setup.facebook_groups) || (setup.browser.connected_sites.length === 2 && !setup.browser.sites.length), tab:'settings', socialAuth:true},
   ];
-  const next = steps.find((step) => !step.done && !step.optional) || steps.at(-1);
-  $('#home-title').textContent = hasProfile ? 'Your job search is ready to move.' : 'Let’s get your search ready.';
-  $('#home-description').textContent = hasProfile ? 'Review live jobs and prepare applications from your own experience.' : 'Start with your provider and resume. Then choose projects and review jobs.';
-  $('#home-primary').textContent = `${next.label} →`;
-  $('#home-primary').dataset.tab = next.tab;
-  $('#home-primary').dataset.socialAuth = next.socialAuth ? 'true' : 'false';
-  $('#home-primary').dataset.setupPanel = next.panel || '';
-  $('#home-steps').innerHTML = steps.map((step) =>
-    `<button class="step-row" data-home-step="${step.tab}" data-social-auth="${step.socialAuth ? 'true' : 'false'}" data-setup-panel="${step.panel || ''}"><span class="step-check ${step.done ? 'done' : ''}">${step.done ? '✓' : '○'}</span><span><strong>${escapeHtml(step.label)}</strong><small>${escapeHtml(step.detail)}</small></span><span class="step-arrow">→</span></button>`
+  const optional = [
+    {label:'Telegram reviews', done:setup.telegram_configured, detail:setup.telegram_configured ? 'Connected' : 'Optional · not configured', tab:'settings', panel:'telegram-panel'},
+    {label:'Email sending', done:setup.smtp_test?.status === 'accepted', detail:setup.smtp_test?.status === 'accepted' ? 'Connected and tested' : setup.smtp_configured ? 'Optional · configured, test pending' : 'Optional · not configured', tab:'settings', panel:'smtp-panel'},
+  ];
+  const remaining = required.filter((step) => !step.done);
+  const complete = remaining.length === 0;
+  const next = remaining[0];
+
+  $('#home-setup-status').textContent = complete ? 'Complete' : `${remaining.length} left`;
+  $('#home-setup-status').className = complete ? 'status-badge status-badge--success' : 'status-badge status-badge--warning';
+  $('#home-title').textContent = complete ? 'What needs your attention?' : 'Finish the essentials, then get out of setup mode.';
+  $('#home-description').textContent = complete ? 'Prioritize strong jobs, review drafts, and fix anything blocking the pipeline.' : 'Complete the required application basics. Optional integrations can stay optional, as nature intended.';
+  $('#home-hero').classList.toggle('is-compact', complete);
+  $('#home-primary').textContent = next ? `${next.label} →` : (c.drafts_needing_review ? 'Review drafts →' : 'Review jobs →');
+  $('#home-primary').dataset.tab = next?.tab || (c.drafts_needing_review ? 'applications' : 'jobs');
+  $('#home-primary').dataset.socialAuth = next?.socialAuth ? 'true' : 'false';
+  $('#home-primary').dataset.setupPanel = next?.panel || '';
+
+  $('#home-steps').innerHTML = required.map((step) =>
+    `<button class="step-row ${step.done ? 'is-done' : ''}" data-home-step="${step.tab}" data-social-auth="${step.socialAuth ? 'true' : 'false'}" data-setup-panel="${step.panel || ''}"><span class="step-check ${step.done ? 'done' : ''}">${step.done ? '✓' : '○'}</span><span><strong>${escapeHtml(step.label)}</strong><small>${escapeHtml(step.detail)}</small></span><span class="step-arrow">→</span></button>`
   ).join('');
+  $('#home-optional').innerHTML = `<h4>Optional integrations</h4>${optional.map((step) =>
+    `<button class="home-optional-row" data-home-step="${step.tab}" data-setup-panel="${step.panel || ''}"><span><strong>${escapeHtml(step.label)}</strong><small>${escapeHtml(step.detail)}</small></span><span class="status-badge ${step.done ? 'status-badge--success' : 'status-badge--neutral'}">${step.done ? 'Ready' : 'Optional'}</span></button>`
+  ).join('')}`;
   document.querySelectorAll('[data-home-step]').forEach((button) => button.addEventListener('click', () => button.dataset.socialAuth === 'true' ? openSocialSignIn() : button.dataset.setupPanel ? openSetupPanel(button.dataset.setupPanel) : showTab(button.dataset.homeStep)));
+
+  const actions = [
+    ...(data.attention?.drafts || []).map((item) => ({kind:'draft', id:item.id, title:item.title, company:item.company, meta:item.status === 'needs_review' ? 'Needs changes' : 'Ready for review'})),
+    ...(data.attention?.jobs || []).map((item) => ({kind:'job', id:item.id, title:item.title, company:item.company, meta:`${item.score}/100 match`})),
+    ...(data.attention?.failures || []).map((item) => ({kind:'job', id:item.id, title:item.title, company:item.company, meta:'Analysis failed'})),
+  ].slice(0, 8);
+  $('#home-action-count').textContent = actions.length ? `${actions.length} item${actions.length === 1 ? '' : 's'} worth opening` : 'Nothing urgent right now';
+  $('#home-actions').innerHTML = actions.length ? actions.map((item) =>
+    `<button class="home-action-row" data-home-action="${item.kind}" data-home-id="${item.id}"><span><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.company)} · ${escapeHtml(item.meta)}</small></span><span class="step-arrow">→</span></button>`
+  ).join('') : '<p class="queue-empty">No drafts, strong new matches, or failed analyses need attention.</p>';
+  $('#home-actions').querySelectorAll('[data-home-action]').forEach((button) => button.addEventListener('click', async () => {
+    if (button.dataset.homeAction === 'draft') { await showTab('applications'); await showApplication(button.dataset.homeId); }
+    else { await showTab('jobs'); await showJob(button.dataset.homeId); }
+  }));
   await loadHomeQueue();
 }
 
@@ -301,9 +330,21 @@ async function loadHomeQueue() {
   const total = running.length + waiting.length;
   $('#home-queue-count').textContent = `${total} in queue${queue.analysis.failed.length ? ` · ${queue.analysis.failed.length} need attention` : ''}`;
   $('#home-queue').innerHTML = preview.length ? preview.map(({kind, label, item, status}) =>
-    `<button type="button" class="home-queue-row" data-tab="queue"><span class="home-queue-kind">${label}</span><span class="home-queue-title">${escapeHtml(kind === 'scan' ? item.name : item.title)}</span><small>${status}</small></button>`
-  ).join('') : '<p class="queue-empty">Nothing running or waiting. Open Queue for details.</p>';
-  $('#home-queue').querySelectorAll('[data-tab="queue"]').forEach((button) => button.addEventListener('click', () => showTab('queue')));
+    `<button type="button" class="home-queue-row" data-home-queue-kind="${kind}" data-home-queue-id="${item.id}" ${item.draft_id ? `data-home-queue-draft="${item.draft_id}"` : ''}><span class="home-queue-kind">${label}</span><span class="home-queue-title">${escapeHtml(kind === 'scan' ? item.name : item.title)}</span><small>${status}</small></button>`
+  ).join('') : '<p class="queue-empty">Nothing running or waiting.</p>';
+  $('#home-queue').querySelectorAll('[data-home-queue-kind]').forEach((button) => button.addEventListener('click', async () => {
+    const kind = button.dataset.homeQueueKind, id = button.dataset.homeQueueId;
+    if (kind === 'scan') {
+      $('#source-kind').value = '';
+      await showTab('sources');
+      const card = [...document.querySelectorAll('#source-list [data-source-id]')].find((node) => node.dataset.sourceId === id);
+      scrollNodeIntoView(card, {block:'center'});
+    } else if (kind === 'draft' && button.dataset.homeQueueDraft) {
+      await showTab('applications'); await showApplication(button.dataset.homeQueueDraft);
+    } else {
+      await showTab('jobs'); await showJob(id);
+    }
+  }));
   if ($('#home').classList.contains('active')) window.homeQueuePoll = setTimeout(() => loadHomeQueue().catch((error) => notice(error.message, true)), 5000);
 }
 
