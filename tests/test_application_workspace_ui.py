@@ -103,18 +103,21 @@ def test_application_workspace_filters_reviews_and_confirms_send(tmp_path: Path,
 
                 assert page.locator("#application-list [data-application]").count() == 2
                 page.locator("#application-query").fill("Other")
-                assert page.locator("#application-list [data-application]").count() == 1
+                page.wait_for_function("document.querySelectorAll('#application-list [data-application]').length === 1")
                 assert "Other Co" in page.locator("#application-list").inner_text()
                 page.locator("#application-query").fill("")
+                page.wait_for_function("document.querySelectorAll('#application-list [data-application]').length === 2")
 
                 page.locator("#application-company-filter").select_option(label="Example")
-                assert page.locator("#application-list [data-application]").count() == 1
+                page.wait_for_function("document.querySelectorAll('#application-list [data-application]').length === 1")
                 page.locator("#application-company-filter").select_option("")
+                page.wait_for_function("document.querySelectorAll('#application-list [data-application]').length === 2")
 
                 page.locator("#application-review-filter").select_option("needs_review")
-                assert page.locator("#application-list [data-application]").count() == 1
+                page.wait_for_function("document.querySelectorAll('#application-list [data-application]').length === 1")
                 assert "Research Engineer" in page.locator("#application-list").inner_text()
                 page.locator("#application-review-filter").select_option("")
+                page.wait_for_function("document.querySelectorAll('#application-list [data-application]').length === 2")
 
                 first_card = page.locator(f'[data-application="{first["id"]}"]')
                 first_card.click()
