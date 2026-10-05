@@ -390,6 +390,8 @@ def test_desktop_keyboard_path_reaches_navigation_jobs_and_application_review(ui
         assert page.evaluate("document.activeElement?.dataset.tab") == "jobs"
         page.keyboard.press("Enter")
         page.locator("#jobs.active").wait_for()
+        page.locator('[data-job-inbox="all"]').click()
+        page.locator("[data-job]").first.wait_for()
 
         card = page.locator("[data-job]").first
         card.focus()
