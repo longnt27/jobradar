@@ -1168,6 +1168,13 @@ function renderSubmissionProof(submission, includePackage = false) {
     if (!answer || field.type === 'file') return '';
     return `<li><strong>${escapeHtml(field.label || field.name || 'Form field')}</strong><span>${escapeHtml(answer)}</span></li>`;
   }).filter(Boolean).join('');
+  const attachments = Object.entries(formData.attachments || {}).map(([fieldIndex, assignment]) => {
+    if (!assignment || assignment.kind === 'none') return '';
+    const field = (formData.fields || []).find((item) => String(item.index) === String(fieldIndex));
+    const label = field?.label || field?.name || `Attachment ${fieldIndex}`;
+    const name = assignment.kind === 'resume' ? 'Reviewed resume' : assignment.name || 'Uploaded attachment';
+    return `<li><strong>${escapeHtml(label)}</strong><span><a href="/api/submissions/${submission.id}/attachments/${encodeURIComponent(fieldIndex)}" target="_blank" rel="noopener noreferrer">${escapeHtml(name)} ↗</a></span></li>`;
+  }).filter(Boolean).join('');
   const proof = includePackage ? `<details class="submission-package"><summary>Exact reviewed package</summary>
       <div class="submission-package-grid">
         <div><strong>Resume</strong><p>${submission.resume_available ? `<a href="/api/submissions/${submission.id}/resume" target="_blank" rel="noopener noreferrer">Open exact submitted resume ↗</a>` : 'Exact resume file is unavailable for this older record.'}</p></div>
@@ -1175,6 +1182,7 @@ function renderSubmissionProof(submission, includePackage = false) {
       </div>
       ${message.subject || message.body ? `<div class="submission-message"><strong>Application message</strong>${message.subject ? `<p><b>Subject:</b> ${escapeHtml(message.subject)}</p>` : ''}${message.body ? `<p class="submission-message-body">${escapeHtml(message.body)}</p>` : ''}</div>` : ''}
       ${formAnswers ? `<div><strong>Reviewed form answers</strong><ul class="submission-form-answers">${formAnswers}</ul></div>` : ''}
+      ${attachments ? `<div><strong>Reviewed attachments</strong><ul class="submission-form-answers">${attachments}</ul></div>` : ''}
     </details>` : '';
   return `<section class="submission-proof surface-status">
       <div class="section-head"><div><h4>${escapeHtml(outcome.label || 'Submission recorded')}</h4><p class="hint">${escapeHtml(outcome.guidance || '')}</p></div><span class="status-badge status-badge--${escapeHtml(outcome.tone || 'neutral')}">${escapeHtml(outcome.label || 'Recorded')}</span></div>
