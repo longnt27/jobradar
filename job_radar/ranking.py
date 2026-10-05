@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .db import Database, now
+from .search_intent import normalize_search_intent
 import json
 
 
@@ -12,15 +13,16 @@ ROLE_WORDS = ("ai", "machine learning", "research", "llm", "language model", "co
 NEGATIVE_WORDS = ("sales", "recruiter", "accountant", "driver", "customer service", "telesales")
 
 
-def score_job(job: dict[str, Any], profile: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+def score_job(job: dict[str, Any], profile: dict[str, Any], preferences: dict[str, Any] | None = None) -> tuple[int, dict[str, Any]]:
+    prefs = normalize_search_intent(preferences)
     title = (job.get("title") or "").casefold()
     description = (job.get("description") or "").casefold()
     location = (job.get("location") or "").casefold()
     role_matches = [word for word in ROLE_WORDS if word in title]
     role = 25 if role_matches else (10 if any(word in description for word in ROLE_WORDS) else 0)
-    negative_role = next((word for word in NEGATIVE_WORDS if re.search(r"\b" + re.escape(word) + r"\b", title)), None)
+    negative_role = next((word for word in prefs["negative_keywords"] if word.casefold() in title), None)
     if negative_role:
-        role = 0
+        role = min(role, 5)
 
     skills = [str(skill).strip() for skill in profile.get("skills", []) if str(skill).strip()]
     matched_skills = [skill for skill in skills if skill.casefold() in f"{title} {description}"]
@@ -31,10 +33,17 @@ def score_job(job: dict[str, Any], profile: dict[str, Any]) -> tuple[int, dict[s
     experience = 15 if years_required is None else max(8, 20 - max(0, years_required - 2) * 2)
 
     research = 15 if any(word in f"{title} {description}" for word in ("research", "nghiên cứu", "agent", "model development")) else 8
-    preferred = str(profile.get("location") or "Hanoi").casefold()
-    local = 10 if any(word in location for word in ("hanoi", "hà nội", "remote", "vietnam", "việt nam")) else 5 if not location else 2
-    if "hanoi" not in preferred and "hà nội" not in preferred:
-        local = 8 if location else 5
+    preferred_locations = [item.casefold() for item in prefs["preferred_locations"]]
+    preferred_modes = [item.casefold() for item in prefs["work_modes"]]
+    remote = any(word in f"{location} {description}" for word in ("remote", "wfh", "work from home", "làm việc từ xa"))
+    if not preferred_locations:
+        local = 5
+    elif not location:
+        local = 5
+    else:
+        local = 10 if any(item in location or location in item for item in preferred_locations) else 3
+    if preferred_modes and remote and any(item in {"remote", "wfh", "work from home"} for item in preferred_modes):
+        local = max(local, 8)
 
     published = job.get("published_at") or job.get("first_seen_at")
     freshness = 3
@@ -55,14 +64,14 @@ def score_job(job: dict[str, Any], profile: dict[str, Any]) -> tuple[int, dict[s
     )
     if negative_role:
         explanation = f"Excluded role term in title: {negative_role}. " + explanation
-    return min(20 if negative_role else 100, sum(components.values())), {"method": "rules", "components": components, "matched_skills": matched_skills, "years_required": years_required, "explanation": explanation, "excluded_role": negative_role}
+    return min(100, sum(components.values())), {"method": "rules", "components": components, "matched_skills": matched_skills, "years_required": years_required, "explanation": explanation, "excluded_role": negative_role}
 
 
-def rescore_vacancies(db: Database, profile: dict[str, Any]) -> None:
+def rescore_vacancies(db: Database, profile: dict[str, Any], preferences: dict[str, Any] | None = None) -> None:
     pending = bool(db.get_setting("matching_model"))
     with db.connection() as conn:
         rows = conn.execute("SELECT id,title,description,location,published_at,first_seen_at FROM vacancies").fetchall()
         for row in rows:
-            score, detail = score_job(dict(row), profile)
+            score, detail = score_job(dict(row), profile, preferences)
             conn.execute("UPDATE vacancies SET score=?,score_detail=?,analysis_status=?,analysis_error=NULL,updated_at=? WHERE id=? AND analysis_status!='dismissed'",
                          (score, json.dumps(detail, ensure_ascii=False), "pending" if pending else "not_configured", now(), row["id"]))
