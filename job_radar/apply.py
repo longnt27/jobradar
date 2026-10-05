@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import smtplib
 from email.message import EmailMessage
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -16,6 +17,34 @@ from .drafting import draft_custom_answers, get_draft, package_hash
 from .mail_config import send_smtp_message, validated_smtp_config
 from .settings import Settings
 from .social_browser import chrome_context_options
+
+
+def submission_attachment(row: dict, field_index: str) -> tuple[Path, str] | None:
+    package = row.get("package_data") or {}
+    if isinstance(package, str):
+        try:
+            package = json.loads(package)
+        except json.JSONDecodeError:
+            return None
+    assignment = package.get("form_data", {}).get("attachments", {}).get(str(field_index))
+    if not isinstance(assignment, dict):
+        return None
+    if assignment.get("kind") == "resume":
+        path = submission_resume_path(row)
+        return (path, "resume.pdf") if path else None
+    if assignment.get("kind") != "uploaded":
+        return None
+    path = Path(str(assignment.get("path") or ""))
+    if not path.is_file():
+        return None
+    expected = str(assignment.get("sha256") or "")
+    if expected:
+        try:
+            if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+                return None
+        except OSError:
+            return None
+    return path, Path(str(assignment.get("name") or path.name)).name
 
 
 def _field_signature(fields: list[dict], action: str, method: str, enctype: str) -> str:
@@ -138,6 +167,128 @@ def _validated_smtp_config(settings: Settings) -> dict:
     return validated_smtp_config(settings)
 
 
+CONFIRMED_SUBMISSION_STATUSES = ("sent_confirmed", "submitted_confirmed")
+UNCERTAIN_SUBMISSION_STATUSES = ("submitted_unconfirmed",)
+BLOCKING_SUBMISSION_STATUSES = (*CONFIRMED_SUBMISSION_STATUSES, *UNCERTAIN_SUBMISSION_STATUSES, "sending")
+
+
+def submission_outcome(status: str, destination: dict | None = None) -> dict:
+    destination = destination or {}
+    channel = "Email" if destination.get("kind") == "email" else "Web form" if destination.get("kind") == "web" else "Application"
+    outcomes = {
+        "sent_confirmed": {
+            "key": "email_sent", "label": "Email sent", "tone": "success", "confirmed": True,
+            "retry_blocked": True, "guidance": "Job Radar received confirmation from the mail server.",
+        },
+        "submitted_confirmed": {
+            "key": "application_submitted", "label": "Application submitted", "tone": "success", "confirmed": True,
+            "retry_blocked": True, "guidance": "The employer site showed a submission confirmation.",
+        },
+        "submitted_unconfirmed": {
+            "key": "submission_uncertain", "label": "Submission status uncertain", "tone": "warning", "confirmed": False,
+            "retry_blocked": True,
+            "guidance": "Job Radar may have submitted this application. Verify on the employer site before taking another send action.",
+        },
+        "sending": {
+            "key": "sending", "label": "Sending application", "tone": "info", "confirmed": False,
+            "retry_blocked": True, "guidance": "A send is already in progress.",
+        },
+        "needs_user_attention": {
+            "key": "needs_help", "label": "Needs your help", "tone": "warning", "confirmed": False,
+            "retry_blocked": False, "guidance": "The reviewed application could not be submitted safely without your input.",
+        },
+        "failed": {
+            "key": "send_failed", "label": "Send failed", "tone": "danger", "confirmed": False,
+            "retry_blocked": False,
+            "guidance": "The external service rejected the send before accepting it. Fix the problem, then retry the reviewed application.",
+        },
+    }
+    outcome = dict(outcomes.get(status, {
+        "key": "recorded", "label": "Submission recorded", "tone": "neutral", "confirmed": False,
+        "retry_blocked": False, "guidance": "Review the submission details before taking another action.",
+    }))
+    outcome["channel"] = channel
+    return outcome
+
+
+def submission_record(row: dict, *, include_package: bool = False) -> dict:
+    destination = row.get("destination") or {}
+    if isinstance(destination, str):
+        try:
+            destination = json.loads(destination)
+        except json.JSONDecodeError:
+            destination = {}
+    package = row.get("package_data") or {}
+    if isinstance(package, str):
+        try:
+            package = json.loads(package)
+        except json.JSONDecodeError:
+            package = {}
+    outcome = submission_outcome(str(row.get("status") or ""), destination)
+    result = {
+        "id": row["id"], "draft_id": row["draft_id"], "vacancy_id": row["vacancy_id"],
+        "package_hash": row.get("package_hash"), "status": row.get("status"),
+        "sent_at": row.get("sent_at"), "updated_at": row.get("updated_at"),
+        "destination": destination, "receipt": row.get("receipt"), "error": row.get("error"),
+        "outcome": outcome,
+        "resume_available": bool(package.get("resume_path") and Path(str(package.get("resume_path"))).is_file()),
+    }
+    for key in ("job_title", "company"):
+        if key in row:
+            result[key] = row.get(key)
+    if include_package:
+        result["package"] = package
+    return result
+
+
+def submission_resume_path(row: dict) -> Path | None:
+    package = row.get("package_data") or {}
+    if isinstance(package, str):
+        try:
+            package = json.loads(package)
+        except json.JSONDecodeError:
+            return None
+    path = Path(str(package.get("resume_path") or ""))
+    digest = str(package.get("resume_hash") or "")
+    if not path.is_file() or not digest:
+        return None
+    try:
+        if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+            return None
+    except OSError:
+        return None
+    return path
+
+
+def _snapshot_submission_package(settings: Settings, identifier: str, draft: dict) -> dict:
+    snapshot = json.loads(json.dumps(
+        {key: draft[key] for key in (
+            "vacancy_id", "provider", "provider_mode", "evidence_ids", "resume_data",
+            "message_data", "form_data", "destination", "resume_path", "resume_hash",
+        )}, ensure_ascii=False))
+    directory = settings.artifact_dir / "submissions" / identifier
+    directory.mkdir(parents=True, exist_ok=True)
+    resume_source = Path(draft["resume_path"])
+    resume_target = directory / "resume.pdf"
+    resume_target.write_bytes(resume_source.read_bytes())
+    snapshot["resume_path"] = str(resume_target)
+
+    attachments = snapshot.get("form_data", {}).get("attachments", {})
+    attachment_dir = directory / "attachments"
+    for key, assignment in list(attachments.items()):
+        if not isinstance(assignment, dict) or assignment.get("kind") != "uploaded":
+            continue
+        source = Path(str(assignment.get("path") or ""))
+        if not source.is_file():
+            continue
+        attachment_dir.mkdir(parents=True, exist_ok=True)
+        suffix = source.suffix if source.suffix else ".bin"
+        target = attachment_dir / f"{key}{suffix}"
+        target.write_bytes(source.read_bytes())
+        assignment["path"] = str(target)
+    return snapshot
+
+
 def _reviewed_attachment(settings: Settings, draft: dict, field: dict) -> str | None:
     assignment = draft["form_data"].get("attachments", {}).get(str(field["index"]))
     if not isinstance(assignment, dict):
@@ -205,9 +356,19 @@ def send_readiness(db: Database, settings: Settings, draft: dict) -> list[str]:
             for group in required_radios.values():
                 if not any(str(form.get("answers", {}).get(str(field["index"]), "")).casefold() in ("yes", "true", "checked") for field in group):
                     reasons.append(f"Choose an option: {group[0]['label'] or group[0]['name']}")
-    prior = db.one("SELECT status FROM submissions WHERE vacancy_id=? AND status IN ('sent_confirmed','submitted_confirmed','submitted_unconfirmed','sending') LIMIT 1", (draft["vacancy_id"],))
+    prior = db.one(
+        "SELECT status,destination FROM submissions WHERE vacancy_id=? "
+        "AND status IN ('sent_confirmed','submitted_confirmed','submitted_unconfirmed','sending') "
+        "ORDER BY sent_at DESC LIMIT 1", (draft["vacancy_id"],))
     if prior:
-        reasons.append(f"This job already has a {prior['status']} application")
+        outcome = submission_outcome(prior["status"], json.loads(prior["destination"] or "{}"))
+        reasons.append(f"{outcome['label']}. {outcome['guidance']}")
+    uncertain_attempt = db.one(
+        "SELECT status FROM auto_application_attempts WHERE draft_id=? AND status='submission_uncertain' LIMIT 1",
+        (draft["id"],),
+    )
+    if uncertain_attempt and not prior:
+        reasons.append("Submission status uncertain. Verify on the employer site before taking another send action.")
     return reasons
 
 
@@ -311,12 +472,22 @@ async def send_application(db: Database, settings: Settings, draft_id: str, expe
     resume_path = Path(draft["resume_path"])
     if not resume_path.is_file() or hashlib.sha256(resume_path.read_bytes()).hexdigest() != draft["resume_hash"]:
         raise ValueError("Reviewed resume PDF has changed or is missing")
-    prior = db.one("SELECT id,status FROM submissions WHERE vacancy_id=? AND status IN ('sent_confirmed','submitted_confirmed','submitted_unconfirmed','sending') ORDER BY sent_at DESC LIMIT 1", (draft["vacancy_id"],))
+    prior = db.one(
+        "SELECT id,status,destination FROM submissions WHERE vacancy_id=? "
+        "AND status IN ('sent_confirmed','submitted_confirmed','submitted_unconfirmed','sending') "
+        "ORDER BY sent_at DESC LIMIT 1", (draft["vacancy_id"],))
     if prior:
-        raise ValueError(f"This vacancy already has a {prior['status']} application; review the existing submission before retrying")
+        outcome = submission_outcome(prior["status"], json.loads(prior["destination"] or "{}"))
+        raise ValueError(f"{outcome['label']}. {outcome['guidance']}")
+    uncertain_attempt = db.one(
+        "SELECT status FROM auto_application_attempts WHERE draft_id=? AND status='submission_uncertain' LIMIT 1",
+        (draft_id,),
+    )
+    if uncertain_attempt:
+        raise ValueError("Submission status uncertain. Verify on the employer site before taking another send action.")
     identifier = new_id()
     digest = package_hash(draft)
-    snapshot = {key: draft[key] for key in ("vacancy_id", "provider", "provider_mode", "evidence_ids", "resume_data", "message_data", "form_data", "destination", "resume_path", "resume_hash")}
+    snapshot = _snapshot_submission_package(settings, identifier, draft)
     db.execute("INSERT INTO submissions(id,draft_id,vacancy_id,package_hash,package_data,destination,status,sent_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
                (identifier, draft_id, draft["vacancy_id"], digest, json.dumps(snapshot, ensure_ascii=False), json.dumps(draft["destination"]), "sending", now(), now()))
     try:
@@ -326,10 +497,23 @@ async def send_application(db: Database, settings: Settings, draft_id: str, expe
         else:
             status, receipt = await _send_web(settings, draft)
         db.execute("UPDATE submissions SET status=?,receipt=?,updated_at=? WHERE id=?", (status, receipt, now(), identifier))
-        if status in ("sent_confirmed", "submitted_confirmed"):
+        if status in CONFIRMED_SUBMISSION_STATUSES:
             db.execute("UPDATE application_drafts SET status='sent',updated_at=? WHERE id=?", (now(), draft_id))
-        return {"id": identifier, "status": status, "receipt": receipt}
+        elif status in UNCERTAIN_SUBMISSION_STATUSES:
+            db.execute("UPDATE application_drafts SET status='submission_uncertain',updated_at=? WHERE id=?", (now(), draft_id))
+        return {"id": identifier, "status": status, "receipt": receipt,
+                "outcome": submission_outcome(status, draft["destination"])}
+    except (smtplib.SMTPConnectError, smtplib.SMTPAuthenticationError, smtplib.SMTPRecipientsRefused,
+            smtplib.SMTPSenderRefused, smtplib.SMTPDataError, smtplib.SMTPHeloError,
+            smtplib.SMTPNotSupportedError) as error:
+        # These SMTP failures include a definite rejection before the server accepted the message.
+        db.execute("UPDATE submissions SET status='failed',error=?,updated_at=? WHERE id=?",
+                   (str(error)[:1000], now(), identifier))
+        return {"id": identifier, "status": "failed", "error": str(error),
+                "outcome": submission_outcome("failed", draft["destination"])}
     except Exception as error:
         # The transport or browser may have completed the send before failing. Block another send.
         db.execute("UPDATE submissions SET status='submitted_unconfirmed',error=?,updated_at=? WHERE id=?", (str(error)[:1000], now(), identifier))
-        return {"id": identifier, "status": "submitted_unconfirmed", "error": str(error)}
+        db.execute("UPDATE application_drafts SET status='submission_uncertain',updated_at=? WHERE id=?", (now(), draft_id))
+        return {"id": identifier, "status": "submitted_unconfirmed", "error": str(error),
+                "outcome": submission_outcome("submitted_unconfirmed", draft["destination"])}

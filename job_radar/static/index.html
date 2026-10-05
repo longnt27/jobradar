@@ -136,19 +136,20 @@
             <button type="button" role="tab" data-app-view="drafts" aria-selected="true" class="active">Drafts</button>
             <button type="button" role="tab" data-app-view="automation" aria-selected="false">Automation</button>
             <button type="button" role="tab" data-app-view="activity" aria-selected="false">Activity</button>
+            <button type="button" role="tab" data-app-view="history" aria-selected="false">Submission history</button>
           </div>
         </div>
 
         <section id="applications-drafts-view" data-app-panel="drafts" role="tabpanel">
           <div class="application-toolbar" aria-label="Filter applications">
             <label class="application-search">Search applications<input id="application-query" type="search" placeholder="Job title, company, or provider"></label>
-            <label>Review status<select id="application-review-filter"><option value="">All review states</option><option value="awaiting_review">Ready for review</option><option value="needs_review">Needs changes</option><option value="sent">Sent</option><option value="sending">Sending</option><option value="regenerating">Regenerating</option><option value="draft">Draft</option></select></label>
+            <label>Review status<select id="application-review-filter"><option value="">All review states</option><option value="awaiting_review">Ready for review</option><option value="needs_review">Needs changes</option><option value="submission_uncertain">Submission status uncertain</option><option value="sent">Sent</option><option value="sending">Sending</option><option value="regenerating">Regenerating</option><option value="draft">Draft</option></select></label>
             <label>Company<select id="application-company-filter"><option value="">All companies</option></select></label>
-            <label>Delivery<select id="application-sent-filter"><option value="">All delivery states</option><option value="unsent">Not sent</option><option value="sent">Sent</option></select></label>
+            <label>Delivery<select id="application-sent-filter"><option value="">All delivery states</option><option value="unsent">Not sent</option><option value="sent">Confirmed sent</option><option value="uncertain">Uncertain</option></select></label>
           </div>
           <p id="application-list-summary" class="hint" role="status" aria-live="polite"></p>
           <div class="applications-workspace">
-            <div class="application-list-pane"><div id="application-list" class="stack"></div></div>
+            <div class="application-list-pane"><div id="application-list" class="stack"></div><div class="job-pagination application-pagination"><button id="applications-prev" type="button" class="secondary">Previous</button><span id="applications-page-summary" aria-live="polite"></span><button id="applications-next" type="button" class="secondary">Next</button></div></div>
             <div id="application-detail" class="panel detail surface-readonly" role="region" aria-label="Application details" tabindex="-1"><div class="empty">Select an application to review it.</div></div>
           </div>
         </section>
@@ -170,6 +171,16 @@
           <div class="panel surface-status">
             <div class="section-head"><div><h3>Draft activity</h3><p class="hint">Recent automatic preparation and delivery state.</p></div></div>
             <div id="auto-apply-activity" class="stack"></div>
+          </div>
+        </section>
+
+
+        <section id="applications-history-view" data-app-panel="history" role="tabpanel" hidden>
+          <div class="panel surface-status">
+            <div class="section-head"><div><h3>Submission history</h3><p class="hint">Durable proof of what Job Radar attempted or sent, including the exact reviewed resume.</p></div></div>
+            <label class="application-search">Search history<input id="submission-history-query" type="search" placeholder="Job title or company"></label>
+            <div id="submission-history-list" class="stack submission-history-list"></div>
+            <div class="job-pagination application-pagination"><button id="submission-history-prev" type="button" class="secondary">Previous</button><span id="submission-history-page-summary" aria-live="polite"></span><button id="submission-history-next" type="button" class="secondary">Next</button></div>
           </div>
         </section>
 
