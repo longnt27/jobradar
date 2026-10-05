@@ -100,6 +100,12 @@ CREATE TABLE IF NOT EXISTS vacancies (
   analysis_error TEXT,
   analyzed_at TEXT,
   state TEXT NOT NULL DEFAULT 'new',
+  decision_state TEXT NOT NULL DEFAULT 'undecided',
+  seen_at TEXT,
+  snoozed_until TEXT,
+  recruiting_outcome TEXT NOT NULL DEFAULT 'none',
+  manual_applied_at TEXT,
+  manual_applied_source TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -220,9 +226,43 @@ class Database:
                 ("analysis_model", "TEXT"),
                 ("analysis_error", "TEXT"),
                 ("analyzed_at", "TEXT"),
+                ("decision_state", "TEXT NOT NULL DEFAULT 'undecided'"),
+                ("seen_at", "TEXT"),
+                ("snoozed_until", "TEXT"),
+                ("recruiting_outcome", "TEXT NOT NULL DEFAULT 'none'"),
+                ("manual_applied_at", "TEXT"),
+                ("manual_applied_source", "TEXT"),
             ):
                 if name not in vacancy_columns:
                     conn.execute(f"ALTER TABLE vacancies ADD COLUMN {name} {definition}")
+            migrated = conn.execute("SELECT value FROM settings WHERE key='job_state_v2_migrated'").fetchone()
+            if not migrated:
+                conn.execute(
+                    "UPDATE vacancies SET decision_state=CASE "
+                    "WHEN state='interesting' THEN 'shortlisted' WHEN state='ignored' THEN 'ignored' "
+                    "WHEN state IN ('prepare','ready','applied','interview','rejected','offer') THEN 'shortlisted' "
+                    "ELSE 'undecided' END"
+                )
+                conn.execute(
+                    "UPDATE vacancies SET recruiting_outcome=CASE "
+                    "WHEN state='interview' THEN 'interview' WHEN state='rejected' THEN 'rejected' "
+                    "WHEN state='offer' THEN 'offer' ELSE 'none' END"
+                )
+                conn.execute(
+                    "UPDATE vacancies SET manual_applied_at=updated_at,manual_applied_source='legacy_state' "
+                    "WHERE state IN ('applied','interview','rejected','offer') "
+                    "AND NOT EXISTS(SELECT 1 FROM submissions s WHERE s.vacancy_id=vacancies.id)"
+                )
+                conn.execute(
+                    "UPDATE vacancies SET state=CASE decision_state "
+                    "WHEN 'shortlisted' THEN 'interesting' WHEN 'ignored' THEN 'ignored' ELSE 'new' END"
+                )
+                conn.execute(
+                    "INSERT INTO settings(key,value) VALUES('job_state_v2_migrated','true') "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
+                )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_vacancies_decision ON vacancies(decision_state,snoozed_until,first_seen_at DESC)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_vacancies_seen ON vacancies(seen_at,first_seen_at DESC)")
             review_columns = {row[1] for row in conn.execute("PRAGMA table_info(auto_application_attempts)")}
             for name, definition in (
                 ("review_hash", "TEXT"),
