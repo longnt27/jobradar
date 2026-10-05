@@ -640,6 +640,11 @@ $('#queue-existing-drafts').addEventListener('click', async (event) => {
   } catch (error) { notice(error.message, true); button.disabled = false; }
 });
 
+function applicationActionLabel(destination) {
+  return ({email:'Email', web_form:'Web form', linkedin_easy_apply:'LinkedIn Easy Apply', manual:'Manual review', unknown:'Manual review'})[destination.action_type]
+    || (destination.kind === 'email' ? 'Email' : destination.kind === 'web' ? 'Web form' : 'Manual review');
+}
+
 async function showApplication(id) {
   if ($('#applications').classList.contains('active') && location.hash !== `#applications/${id}`) history.replaceState({tab:'applications'}, '', `#applications/${id}`);
   const draft = await api(`/api/applications/${id}`);
@@ -649,7 +654,7 @@ async function showApplication(id) {
   const projects = resume.projects || [];
   $('#application-detail').innerHTML = `<h2>${escapeHtml(draft.job_title)}</h2><div class="item-meta">${escapeHtml(draft.company)} · ${escapeHtml(draft.provider_mode)}</div>
     <div class="review-section"><h4>Review status</h4><p>${escapeHtml(draft.review_status === 'awaiting_review' ? 'Waiting for your approval' : draft.review_status === 'needs_review' ? 'Needs changes before sending' : draft.review_status || draft.status)}</p><p class="hint">Telegram: ${escapeHtml(draft.telegram_status || 'Not configured')}${draft.telegram_error ? ` · ${escapeHtml(draft.telegram_error)}` : ''}</p><p class="hint">The Telegram approval button applies only to this saved version of the draft.</p></div>
-    <div class="review-section"><h4>Destination</h4><label>Channel<select id="draft-destination-kind"><option value="web" ${destination.kind === 'web' ? 'selected' : ''}>Web form</option><option value="email" ${destination.kind === 'email' ? 'selected' : ''}>Email</option></select></label><label>URL or email address<input id="draft-destination" value="${escapeHtml(destination.url || destination.email || '')}"></label></div>
+    <div class="review-section"><h4>Application action</h4><p><strong>${escapeHtml(applicationActionLabel(destination))}</strong>${destination.url || destination.email ? ` · ${escapeHtml(destination.url || destination.email)}` : ''}</p>${destination.provenance ? `<p class="hint">${escapeHtml(destination.provenance.replace(/_/g, ' '))} · ${escapeHtml(destination.confidence || 'unknown confidence')}</p>` : ''}<label>Channel<select id="draft-destination-kind"><option value="web" ${destination.kind === 'web' ? 'selected' : ''}>Web form</option><option value="email" ${destination.kind === 'email' ? 'selected' : ''}>Email</option><option value="manual" ${!['web','email'].includes(destination.kind) ? 'selected' : ''}>Manual review</option></select></label><label>URL or email address<input id="draft-destination" value="${escapeHtml(destination.url || destination.email || '')}"></label></div>
     <div class="review-section"><h4>Resume</h4><p><a href="/api/applications/${id}/resume" target="_blank">Preview or download PDF ↗</a></p>
       <div class="form-grid"><label>Name<input id="draft-name" value="${escapeHtml(resume.name || '')}"></label><label>Email<input id="draft-email" value="${escapeHtml(resume.email || '')}"></label><label>Phone<input id="draft-phone" value="${escapeHtml(resume.phone || '')}"></label><label>Links, one per line<textarea id="draft-links" rows="2">${escapeHtml((resume.links || []).join('\n'))}</textarea></label></div>
       <label>Professional summary<textarea id="draft-summary" rows="3">${escapeHtml(resume.summary || '')}</textarea></label>
@@ -724,7 +729,13 @@ async function saveApplication(id, draft) {
   }
   const kind = $('#draft-destination-kind').value;
   const value = $('#draft-destination').value.trim();
-  const destination = kind === 'email' ? {kind, email:value} : {kind, url:value};
+  const editedDestination = kind === 'email' ? {kind, email:value} : kind === 'web' ? {kind, url:value} : {kind:'manual', url:''};
+  const originalValue = draft.destination.url || draft.destination.email || '';
+  const sameDestination = kind === draft.destination.kind && value === originalValue;
+  const destination = sameDestination
+    ? {...draft.destination, ...editedDestination}
+    : {...editedDestination, action_type:kind === 'email' ? 'email' : kind === 'web' ? 'web_form' : 'manual',
+       provenance:'manual_override', confidence:'user_confirmed', evidence:'Destination edited during application review'};
   const experience = (draft.resume_data.experience || []).map((item, index) => ({...item,
     company:document.querySelector(`[data-experience-company="${index}"]`).value,
     role:document.querySelector(`[data-experience-role="${index}"]`).value,
