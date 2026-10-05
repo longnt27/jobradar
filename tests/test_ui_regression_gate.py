@@ -333,6 +333,8 @@ def test_desktop_keyboard_path_reaches_navigation_jobs_and_application_review(ui
         assert page.evaluate("document.activeElement?.hasAttribute('data-job')") is True
         page.keyboard.press("Enter")
         page.locator("#job-detail h2").wait_for()
+        assert page.locator("#job-detail").evaluate("node => document.activeElement === node")
+        assert card.get_attribute("aria-pressed") == "true"
 
         page.locator('.sidebar nav [data-tab="applications"]').focus()
         page.keyboard.press("Enter")
@@ -342,6 +344,8 @@ def test_desktop_keyboard_path_reaches_navigation_jobs_and_application_review(ui
         page.keyboard.press("Enter")
         page.locator("#application-detail h2").wait_for()
         assert page.locator("#application-detail").is_visible()
+        assert page.locator("#application-detail").evaluate("node => document.activeElement === node")
+        assert application.get_attribute("aria-pressed") == "true"
     finally:
         page.context.close()
 
