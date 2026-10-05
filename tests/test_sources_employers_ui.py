@@ -6,12 +6,19 @@ from threading import Thread
 import uvicorn
 from playwright.sync_api import sync_playwright
 
+from job_radar.db import new_id, now
 from job_radar.settings import Settings
 from job_radar.web import create_app
 
 
 def test_sources_and_employers_management_ui(tmp_path: Path) -> None:
     app = create_app(Settings(tmp_path))
+    timestamp = now()
+    for number in range(60):
+        app.state.db.execute(
+            "INSERT INTO employers(id,name,category,aliases,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+            (new_id(), f"ZZ Pagination Employer {number:02d}", "test", "[]", timestamp, timestamp),
+        )
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
