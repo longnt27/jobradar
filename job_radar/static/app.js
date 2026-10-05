@@ -1108,6 +1108,9 @@ function providerLabel(value) {
 }
 
 function applicationReviewKey(draft) {
+  const outcome = draft.latest_submission?.outcome?.key;
+  if (outcome === 'submission_uncertain' || outcome === 'sending') return 'submission_uncertain';
+  if (['email_sent','application_submitted'].includes(outcome)) return 'sent';
   if (draft.review_status) return draft.review_status;
   if (draft.status === 'sent') return 'sent';
   if (draft.status === 'submission_uncertain') return 'submission_uncertain';
