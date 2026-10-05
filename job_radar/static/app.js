@@ -519,9 +519,35 @@ async function loadQueue(options = {}) {
 }
 
 const JOB_FILTERS = {
-  q:'#job-query', state:'#job-state', score:'#job-score', freshness:'#job-freshness',
-  mode:'#job-work-mode', location:'#job-location', source:'#job-source', seniority:'#job-seniority', sort:'#job-sort',
+  q:'#job-query', decision:'#job-decision', application:'#job-application', outcome:'#job-outcome',
+  score:'#job-score', freshness:'#job-freshness', mode:'#job-work-mode', location:'#job-location',
+  source:'#job-source', seniority:'#job-seniority', sort:'#job-sort',
 };
+
+function setJobsInboxMode(mode) {
+  jobsInboxMode = ['since_last_visit','unseen','all'].includes(mode) ? mode : 'since_last_visit';
+  document.querySelectorAll('[data-job-inbox]').forEach((button) => {
+    const selected = button.dataset.jobInbox === jobsInboxMode;
+    button.classList.toggle('active', selected);
+    button.setAttribute('aria-selected', selected ? 'true' : 'false');
+  });
+}
+
+function currentJobFilters() {
+  const filters = {inbox: jobsInboxMode};
+  for (const [key, selector] of Object.entries(JOB_FILTERS)) {
+    const value = $(selector)?.value?.trim();
+    if (value && !(key === 'sort' && value === 'best')) filters[key] = value;
+  }
+  return filters;
+}
+
+function applyJobFilterSnapshot(filters = {}) {
+  for (const [key, selector] of Object.entries(JOB_FILTERS)) {
+    $(selector).value = filters[key] || (key === 'sort' ? 'best' : '');
+  }
+  setJobsInboxMode(filters.inbox || 'all');
+}
 
 function readJobsHashState() {
   const raw = location.hash.slice(1);
@@ -532,6 +558,7 @@ function readJobsHashState() {
     const node = $(selector);
     if (node) node.value = params.get(key) || (key === 'sort' ? 'best' : '');
   }
+  setJobsInboxMode(params.get('inbox') || 'since_last_visit');
   jobsPage = Math.max(1, Number(params.get('page') || 1));
   activeJob = params.get('job') || null;
   activeJobPinned = Boolean(activeJob);
@@ -543,6 +570,7 @@ function jobsHash() {
     const value = $(selector)?.value?.trim();
     if (value && !(key === 'sort' && value === 'best')) params.set(key, value);
   }
+  if (jobsInboxMode !== 'since_last_visit') params.set('inbox', jobsInboxMode);
   if (jobsPage > 1) params.set('page', String(jobsPage));
   if (activeJob) params.set('job', activeJob);
   const search = params.toString();
@@ -554,6 +582,44 @@ function syncJobsHash(mode = 'replace') {
   const hash = jobsHash();
   if (location.hash === hash) return;
   history[mode === 'push' ? 'pushState' : 'replaceState']({tab:'jobs'}, '', hash);
+}
+
+async function ensureJobsWorkspace() {
+  if (jobsWorkspaceReady) return;
+  let savedBoundary = null;
+  try { savedBoundary = sessionStorage.getItem('jobRadarJobsVisitBoundary'); } catch {}
+  let visit = null;
+  if (savedBoundary === null) {
+    visit = await api('/api/jobs/visit', {method:'POST', body:'{}'});
+    jobsVisitBoundary = visit.previous || '';
+    try { sessionStorage.setItem('jobRadarJobsVisitBoundary', jobsVisitBoundary || '__first_visit__'); } catch {}
+  } else {
+    jobsVisitBoundary = savedBoundary === '__first_visit__' ? '' : savedBoundary;
+  }
+  savedJobViews = await api('/api/jobs/views');
+  renderSavedJobViews();
+
+  const hasExplicitHash = location.hash.startsWith('#jobs?');
+  if (!hasExplicitHash) {
+    const defaultView = savedJobViews.find((view) => view.default);
+    if (defaultView) applyJobFilterSnapshot(defaultView.filters || {});
+    else setJobsInboxMode('since_last_visit');
+  }
+  if (visit) {
+    $('#jobs-since-count').textContent = String(visit.since_last_visit || 0);
+    $('#jobs-unseen-count').textContent = String(visit.unseen || 0);
+  }
+  jobsWorkspaceReady = true;
+}
+
+function renderSavedJobViews() {
+  const select = $('#job-view-select');
+  const selected = select.value;
+  select.innerHTML = '<option value="">None</option>' + savedJobViews.map((view) =>
+    `<option value="${escapeHtml(view.id)}">${escapeHtml(view.name)}${view.default ? ' · default' : ''}</option>`
+  ).join('');
+  if (savedJobViews.some((view) => view.id === selected)) select.value = selected;
+  $('#job-delete-view').disabled = !select.value;
 }
 
 function topMatchSignals(job) {
