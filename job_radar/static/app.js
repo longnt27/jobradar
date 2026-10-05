@@ -307,6 +307,8 @@ async function loadHomeQueue() {
   if ($('#home').classList.contains('active')) window.homeQueuePoll = setTimeout(() => loadHomeQueue().catch((error) => notice(error.message, true)), 5000);
 }
 
+let queueSignature = null;
+
 function queueRow(item, kind, label, position = null, active = false) {
   const name = kind === 'scan' ? item.name : item.title;
   const detail = kind === 'scan' ? item.kind : `${item.company}${item.score == null ? '' : ` · ${item.score}/100`}`;
@@ -324,9 +326,62 @@ function queueWaiting(target, items, kind, labelFor) {
   if (target.querySelector('.queue-scroll')) target.querySelector('.queue-scroll').scrollTop = scrollTop;
 }
 
-async function loadQueue() {
+function queueFocusToken() {
+  const active = document.activeElement;
+  if (!active || !$('#queue').contains(active)) return null;
+  if (active.dataset.queueDismiss) return {type:'dismiss', id:active.dataset.queueDismiss};
+  if (active.dataset.queueKind && active.dataset.queueId) return {type:'row', kind:active.dataset.queueKind, id:active.dataset.queueId};
+  if (active.id === 'queue-open-reviews') return {type:'reviews'};
+  return null;
+}
+
+function restoreQueueFocus(token) {
+  if (!token) return;
+  let target = null;
+  if (token.type === 'row') {
+    target = [...document.querySelectorAll('#queue [data-queue-kind][data-queue-id]')]
+      .find((node) => node.dataset.queueKind === token.kind && node.dataset.queueId === token.id);
+  } else if (token.type === 'dismiss') {
+    target = [...document.querySelectorAll('#queue [data-queue-dismiss]')]
+      .find((node) => node.dataset.queueDismiss === token.id);
+  } else if (token.type === 'reviews') {
+    target = $('#queue-open-reviews');
+  }
+  target?.focus({preventScroll:true});
+}
+
+function queueFingerprint(data) {
+  const lane = (items, prefix) => items.map((item) => `${prefix}:${item.id}:${item.stage || ''}:${item.position || ''}`);
+  return JSON.stringify({
+    scans:[...lane(data.scans.active, 'active'), ...lane(data.scans.waiting, 'waiting')],
+    analysis:[...lane(data.analysis.active, 'active'), ...lane(data.analysis.waiting, 'waiting'), ...lane(data.analysis.failed, 'failed')],
+    drafts:[...lane(data.drafts.active, 'active'), ...lane(data.drafts.waiting, 'waiting')],
+    reviewReady:data.drafts.review_ready,
+  });
+}
+
+function queueUpdateTime() {
+  return new Intl.DateTimeFormat(undefined, {hour:'numeric', minute:'2-digit', second:'2-digit'}).format(new Date());
+}
+
+function announceQueueUpdate(data, reason, changed) {
+  const userTriggered = reason === 'manual' || reason === 'action';
+  if (!userTriggered && !(reason === 'poll' && changed)) return;
+  const total = [data.scans, data.analysis, data.drafts]
+    .reduce((sum, lane) => sum + lane.active.length + lane.waiting.length, 0);
+  const failed = data.analysis.failed.length;
+  const prefix = reason === 'manual' ? 'Queue refreshed' : reason === 'poll' ? 'Queue changed' : 'Queue updated';
+  $('#queue-live').textContent = `${prefix} at ${queueUpdateTime()}. ${total} work item${total === 1 ? '' : 's'} in progress or waiting${failed ? `; ${failed} need${failed === 1 ? 's' : ''} attention` : ''}.`;
+}
+
+async function loadQueue(options = {}) {
+  const reason = options?.reason || 'initial';
   clearTimeout(window.queuePoll);
+  const focusToken = queueFocusToken();
   const data = await api('/api/queue');
+  const signature = queueFingerprint(data);
+  const changed = queueSignature !== null && queueSignature !== signature;
+  queueSignature = signature;
   const scans = data.scans, analysis = data.analysis, drafts = data.drafts;
   const total = [scans, analysis, drafts].reduce((sum, lane) => sum + lane.active.length + lane.waiting.length, 0);
   $('#queue-summary').innerHTML = `<div><strong>${total}</strong><span>work items in progress or waiting</span></div><div><strong>${scans.active.length + scans.waiting.length}</strong><span>scans</span></div><div><strong>${analysis.active.length + analysis.waiting.length}</strong><span>job analyses</span></div><div><strong>${drafts.active.length + drafts.waiting.length}</strong><span>drafts</span></div>`;
@@ -344,7 +399,7 @@ async function loadQueue() {
   queueWaiting($('#queue-analysis-waiting'), analysis.waiting, 'analysis', () => 'Extract, then score');
   $('#queue-analysis-failed').innerHTML = analysis.failed.length ? `<div class="queue-waiting-head queue-failed-head">Needs attention <span>${analysis.failed.length}</span></div><div class="queue-scroll">${analysis.failed.map((item) => `<div class="queue-failed-row">${queueRow(item, 'analysis', 'Analysis failed', '!')}<button type="button" class="text-button" data-queue-dismiss="${item.id}" aria-label="Dismiss failed analysis for ${escapeHtml(item.title)}">Dismiss</button></div>`).join('')}</div>` : '';
   $('#queue-analysis-failed').querySelectorAll('[data-queue-dismiss]').forEach((button) => button.addEventListener('click', async () => {
-    try { await api(`/api/jobs/${button.dataset.queueDismiss}/dismiss-analysis`, {method:'POST'}); await loadQueue(); notice('Failed analysis dismissed.'); }
+    try { await api(`/api/jobs/${button.dataset.queueDismiss}/dismiss-analysis`, {method:'POST'}); await loadQueue({reason:'action'}); notice('Failed analysis dismissed.'); }
     catch(error) { notice(error.message, true); }
   }));
   if (analysis.service_error) $('#queue-analysis-waiting').insertAdjacentHTML('beforeend', `<p class="queue-attention">${escapeHtml(analysis.service_error)}</p>`);
@@ -369,7 +424,10 @@ async function loadQueue() {
       scrollNodeIntoView($('#job-detail'), {block:'start'}); $('#job-detail').focus({preventScroll:true});
     }
   }));
-  if ($('#queue').classList.contains('active')) window.queuePoll = setTimeout(() => loadQueue().catch((error) => notice(error.message, true)), 5000);
+  $('#queue-updated-at').textContent = `Updated ${queueUpdateTime()} · Auto-refresh every 5 seconds`;
+  announceQueueUpdate(data, reason, changed);
+  restoreQueueFocus(focusToken);
+  if ($('#queue').classList.contains('active')) window.queuePoll = setTimeout(() => loadQueue({reason:'poll'}).catch((error) => notice(error.message, true)), 5000);
 }
 
 const JOB_FILTERS = {
@@ -1673,7 +1731,12 @@ $('#source-query').addEventListener('input', () => {
   clearTimeout(window.sourceFilterTimer);
   window.sourceFilterTimer = setTimeout(() => loadSources().catch((error) => notice(error.message, true)), 150);
 });
-$('#queue-refresh').addEventListener('click', () => loadQueue().catch((error) => notice(error.message, true)));
+$('#queue-refresh').addEventListener('click', async (event) => {
+  const button = beginPending(event.currentTarget, 'Refreshing…');
+  try { await loadQueue({reason:'manual'}); }
+  catch(error) { notice(error.message, true); }
+  finally { endPending(button); }
+});
 $('#employer-search-form').addEventListener('submit', (event) => {
   event.preventDefault();
   employerPage = 1;
