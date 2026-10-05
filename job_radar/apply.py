@@ -19,6 +19,34 @@ from .settings import Settings
 from .social_browser import chrome_context_options
 
 
+def submission_attachment(row: dict, field_index: str) -> tuple[Path, str] | None:
+    package = row.get("package_data") or {}
+    if isinstance(package, str):
+        try:
+            package = json.loads(package)
+        except json.JSONDecodeError:
+            return None
+    assignment = package.get("form_data", {}).get("attachments", {}).get(str(field_index))
+    if not isinstance(assignment, dict):
+        return None
+    if assignment.get("kind") == "resume":
+        path = submission_resume_path(row)
+        return (path, "resume.pdf") if path else None
+    if assignment.get("kind") != "uploaded":
+        return None
+    path = Path(str(assignment.get("path") or ""))
+    if not path.is_file():
+        return None
+    expected = str(assignment.get("sha256") or "")
+    if expected:
+        try:
+            if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+                return None
+        except OSError:
+            return None
+    return path, Path(str(assignment.get("name") or path.name)).name
+
+
 def _field_signature(fields: list[dict], action: str, method: str, enctype: str) -> str:
     stable = [{key: field.get(key) for key in ("index", "name", "id", "type", "required", "label", "options", "accept", "max_length")}
               for field in fields]
