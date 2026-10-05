@@ -705,7 +705,7 @@ async function loadPositions() {
       <div class="position-card-head"><div><strong>${escapeHtml(item.role)}</strong><span>${escapeHtml(item.company)} · ${escapeHtml(item.dates)}</span></div>
         <div class="position-order" aria-label="Reorder ${escapeHtml(item.role)}"><button type="button" class="text-button" data-move-position="-1" ${index === 0 ? 'disabled' : ''} aria-label="Move up">↑</button><button type="button" class="text-button" data-move-position="1" ${index === positions.length - 1 ? 'disabled' : ''} aria-label="Move down">↓</button></div></div>
       ${preview.length ? `<ul class="position-preview">${preview.map((bullet) => `<li>${escapeHtml(bullet)}</li>`).join('')}</ul>` : '<p class="hint">No outcome bullets yet.</p>'}
-      ${editing ? `<div class="position-editor form-grid"><label>Company<input data-field="company" value="${escapeHtml(item.company)}"></label><label>Role<input data-field="role" value="${escapeHtml(item.role)}"></label><label class="full">Dates<input data-field="dates" value="${escapeHtml(item.dates)}"></label><label class="full">Work and outcomes<textarea data-field="bullets" rows="5">${escapeHtml((item.bullets || []).join('\\n'))}</textarea></label></div>` : ''}
+      ${editing ? `<div class="position-editor form-grid"><label>Company<input data-field="company" value="${escapeHtml(item.company)}"></label><label>Role<input data-field="role" value="${escapeHtml(item.role)}"></label><label class="full">Dates<input data-field="dates" value="${escapeHtml(item.dates)}"></label><label class="full">Work and outcomes<textarea data-field="bullets" rows="5">${escapeHtml((item.bullets || []).join('\n'))}</textarea></label></div>` : ''}
       <div class="actions">${editing ? `<button data-save-position="${item.id}" class="primary">Save changes</button><button data-cancel-position="${item.id}" class="secondary">Cancel</button>` : `<button data-edit-position="${item.id}" class="secondary">Edit</button>`}<button data-delete-position="${item.id}" class="secondary danger">Remove</button></div>
     </div>`;
   }).join('') : '<div class="empty">No positions yet. Add your previous jobs above.</div>';
@@ -723,7 +723,7 @@ async function loadPositions() {
     const row = button.closest('[data-position]');
     const field = (name) => row.querySelector(`[data-field="${name}"]`).value.trim();
     try {
-      await api(`/api/positions/${button.dataset.savePosition}`, {method:'PUT', body:JSON.stringify({company:field('company'),role:field('role'),dates:field('dates'),bullets:field('bullets').split('\\n').map((x) => x.trim()).filter(Boolean)})});
+      await api(`/api/positions/${button.dataset.savePosition}`, {method:'PUT', body:JSON.stringify({company:field('company'),role:field('role'),dates:field('dates'),bullets:field('bullets').split('\n').map((x) => x.trim()).filter(Boolean)})});
       editingPositionId = null;
       notice('Position saved');
       await loadPositions();
@@ -1052,14 +1052,14 @@ async function loadEvidence(focusId = null) {
     <div class="project-fields"><label>Project title<input id="project-edit-title" value="${escapeHtml(card.title)}"></label>
       <label>Project summary<textarea id="project-edit-summary" rows="3" placeholder="What the project does">${escapeHtml(details.summary || '')}</textarea></label>
       <label>Technologies<input id="project-edit-stack" value="${escapeHtml((details.tech_stack || []).join(', '))}" placeholder="Python, React, ..."></label>
-      <label>What this project demonstrates <span class="hint">One resume bullet per line</span><textarea id="project-edit-bullets" rows="7">${escapeHtml((details.bullets || [card.claim]).join('\\n'))}</textarea></label></div>
+      <label>What this project demonstrates <span class="hint">One resume bullet per line</span><textarea id="project-edit-bullets" rows="7">${escapeHtml((details.bullets || [card.claim]).join('\n'))}</textarea></label></div>
     <p id="project-review-status" class="hint" role="status" aria-live="polite"></p>
     <div class="actions"><button id="project-save" class="primary">Save changes</button>
       <button id="project-approval" class="secondary">${card.approved ? 'Remove from resumes' : 'Include in resumes'}</button>
       ${card.repository_url && !card.approved ? '<button id="project-regenerate" class="secondary">Generate again</button>' : ''}
       <button id="project-delete" class="secondary danger">Delete project</button></div>`;
   const content = () => {
-    const bullets = $('#project-edit-bullets').value.split('\\n').map((line) => line.trim()).filter(Boolean);
+    const bullets = $('#project-edit-bullets').value.split('\n').map((line) => line.trim()).filter(Boolean);
     const title = $('#project-edit-title').value.trim();
     if (title.length < 2 || !bullets.length || bullets[0].length < 5) throw new Error('Add a project title and at least one specific bullet before saving.');
     if (needsOriginalClaim && (bullets[0] === card.claim || bullets[0].length < 20 || /<[^>]+>|^(project:|repository summary:|describe your contribution)/i.test(bullets[0]))) throw new Error('Replace the repository placeholder with a specific project bullet before approval.');
@@ -1291,7 +1291,6 @@ $('#provider-form').addEventListener('submit', async (event) => {
     await api('/api/profile/provider', {method:'PUT', body:JSON.stringify({provider})});
     await loadSettings();
     notice('Application writing provider saved.');
-    scrollNodeIntoView($('#resume-panel'), {block:'start'});
   } catch(error) { notice(error.message, true); }
   finally { endPending(pendingButton); }
 });
