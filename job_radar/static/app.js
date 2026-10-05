@@ -729,7 +729,7 @@ async function saveApplication(id, draft) {
   }
   const kind = $('#draft-destination-kind').value;
   const value = $('#draft-destination').value.trim();
-  const editedDestination = kind === 'email' ? {kind, email:value} : kind === 'web' ? {kind, url:value} : {kind:'manual', url:''};
+  const editedDestination = kind === 'email' ? {kind, email:value} : {kind, url:value};
   const originalValue = draft.destination.url || draft.destination.email || '';
   const sameDestination = kind === draft.destination.kind && value === originalValue;
   const destination = sameDestination
