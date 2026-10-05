@@ -135,6 +135,93 @@ def freshness_criterion(job: dict) -> dict[str, Any]:
     return {"score": score, "reason": f"Job posted {age} day{'s' if age != 1 else ''} ago."}
 
 
+YEARS_REQUIRED = re.compile(r"(?<!\d)(\d{1,2})\s*(?:\+|[-–]\s*\d{1,2})?\s*(?:years?|yrs?|yoe|năm)\b", re.I)
+MONTH_NAMES = {name: number for number, names in enumerate((
+    ("jan", "january"), ("feb", "february"), ("mar", "march"), ("apr", "april"),
+    ("may",), ("jun", "june"), ("jul", "july"), ("aug", "august"),
+    ("sep", "sept", "september"), ("oct", "october"), ("nov", "november"),
+    ("dec", "december")), 1) for name in names}
+DATE_TOKEN = re.compile(
+    r"(?<!\w)(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|"
+    r"Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+\d{4}\b|"
+    r"(?<!\d)\d{4}[-/](?:0?[1-9]|1[0-2])(?!\d)|"
+    r"(?<!\d)(?:0?[1-9]|1[0-2])[-/]\d{4}(?!\d)|"
+    r"(?<!\d)\d{4}(?!\d)|\b(?:present|current|now|hiện tại|nay)\b", re.I)
+
+
+def extract_years_required(text: str) -> int | None:
+    match = YEARS_REQUIRED.search(text)
+    if match:
+        return int(match.group(1))
+    words = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+             "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
+    spelled = re.search(r"\b(" + "|".join(words) + r")\s+(?:years?|yrs?)\b", text, re.I)
+    return words[spelled.group(1).casefold()] if spelled else None
+
+
+def _month_index(token: str, *, end: bool, current: datetime) -> int | None:
+    value = token.strip().casefold().replace(".", "")
+    if value in {"present", "current", "now", "hiện tại", "nay"}:
+        return current.year * 12 + current.month - 1 if end else None
+    named = re.fullmatch(r"([a-z]+)\s+(\d{4})", value)
+    if named:
+        month, year = MONTH_NAMES.get(named.group(1)), int(named.group(2))
+    elif year_month := re.fullmatch(r"(\d{4})[-/](\d{1,2})", value):
+        year, month = int(year_month.group(1)), int(year_month.group(2))
+    elif month_year := re.fullmatch(r"(\d{1,2})[-/](\d{4})", value):
+        month, year = int(month_year.group(1)), int(month_year.group(2))
+    elif re.fullmatch(r"\d{4}", value):
+        year, month = int(value), 1 if end else 12  # Lower bound for year-only dates.
+    else:
+        return None
+    return year * 12 + month - 1 if month and 1 <= month <= 12 else None
+
+
+def documented_experience_months(profile: dict, *, as_of: datetime | None = None) -> int | None:
+    """Count distinct documented work months; overlapping positions count once."""
+    current = as_of or datetime.now().astimezone()
+    intervals = []
+    for position in profile.get("experience") or []:
+        if not isinstance(position, dict):
+            continue
+        tokens = [match.group() for match in DATE_TOKEN.finditer(str(position.get("dates") or ""))]
+        if len(tokens) < 2:
+            continue
+        start = _month_index(tokens[0], end=False, current=current)
+        end = _month_index(tokens[1], end=True, current=current)
+        if start is not None and end is not None and start <= end:
+            intervals.append((start, min(end, current.year * 12 + current.month - 1)))
+    if not intervals:
+        return None
+    months = set()
+    for start, end in intervals:
+        months.update(range(start, end + 1))
+    return len(months)
+
+
+def experience_criterion(years_required: int | None, profile: dict,
+                         *, as_of: datetime | None = None) -> dict[str, Any]:
+    """Experience means duration of dated positions, never role similarity."""
+    if not years_required:
+        return {"score": 5, "reason": "Years of experience not stated in the posting; neutral."}
+    months = documented_experience_months(profile, as_of=as_of)
+    if months is None:
+        return {"score": 5, "reason": f"Dated work history unavailable; cannot verify {years_required} years required."}
+    score = min(10, max(1, round(1 + 9 * months / (years_required * 12))))
+    return {"score": score, "reason":
+            f"Documented positions total about {months / 12:.1f} years; posting asks for {years_required} years."}
+
+
+def experience_gap_summary(years_required: int | None, profile: dict) -> str | None:
+    if not years_required:
+        return None
+    months = documented_experience_months(profile)
+    if months is None or months >= years_required * 12:
+        return None
+    return (f"Documented work history totals about {months / 12:.1f} years, below the "
+            f"{years_required} years requested. Review the other match criteria below.")
+
+
 HUMAN_LANGUAGES = (
     "english", "vietnamese", "japanese", "korean", "chinese", "mandarin", "cantonese",
     "french", "german", "spanish", "russian", "thai", "indonesian", "arabic",
@@ -197,9 +284,10 @@ def filter_spoken_languages(items: list, source: str) -> list[str]:
 
 
 def clean_saved_analysis(db: Database) -> int:
-    """Correct saved facts and date scores without rerunning the local model."""
+    """Correct grounded facts and deterministic scores without rerunning the local model."""
     changed = 0
-    for row in db.all("SELECT id,description,published_at,score_detail,score FROM vacancies WHERE analysis_status='done' AND score_detail IS NOT NULL"):
+    profile = db.get_setting("profile", {})
+    for row in db.all("SELECT id,title,description,published_at,score_detail,score FROM vacancies WHERE analysis_status='done' AND score_detail IS NOT NULL"):
         try:
             detail = json.loads(row["score_detail"])
         except (TypeError, ValueError):
@@ -212,7 +300,12 @@ def clean_saved_analysis(db: Database) -> int:
             facts["languages"] = filter_spoken_languages(before, row["description"].casefold())
         if isinstance(facts, dict):
             facts["salary_range"] = grounded_salary_range(facts.get("salary_range") or "", row["description"])
+            facts["years_required"] = extract_years_required(f"{row['title']} {row['description']}")
         criteria = detail.get("criteria")
+        if isinstance(criteria, dict) and "experience" in criteria and isinstance(facts, dict):
+            criteria["experience"] = experience_criterion(facts["years_required"], profile)
+            if gap := experience_gap_summary(facts["years_required"], profile):
+                detail["explanation"] = gap
         if isinstance(criteria, dict) and "freshness" in criteria:
             criteria["freshness"] = freshness_criterion(row)
         score = row["score"]
@@ -244,13 +337,7 @@ def _ground_facts(facts: JobFacts, posting: dict) -> JobFacts:
             values[key] = ""
     if not any(word in source for word in ("junior", "mid", "senior", "lead", "principal", "intern", "entry")):
         values["seniority"] = ""
-    year_numbers = {int(value) for value in re.findall(r"\b(\d{1,2})\s*\+?\s*(?:years?|năm)\b", source)}
-    words = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
-             "eight": 8, "nine": 9, "ten": 10}
-    year_numbers.update(number for word, number in words.items()
-                        if re.search(r"\b" + word + r"\s+years?\b", source))
-    if values["years_required"] not in year_numbers:
-        values["years_required"] = None
+    values["years_required"] = extract_years_required(source)
     values["responsibilities"] = [item for item in values["responsibilities"] if len(item.split()) >= 2][:8]
     return JobFacts.model_validate(values)
 
@@ -287,7 +374,7 @@ def analyze_job(job: dict, profile: dict, projects: list[dict], model: str,
         "Rate candidate fit on exactly ten named criteria, each integer 1-10: 1 clear mismatch, 5 unknown/neutral, "
         "10 strong evidence. Use only candidate facts; do not invent skills, years, or contributions. "
         "Role: title/field fit. Required and preferred skills: allow genuine synonyms, weigh required more. "
-        "Experience: compare stated years and seniority with dated work, conservatively. Responsibilities: compare "
+        "Experience: compare years required with dated work history only; role similarity belongs under Role. Responsibilities: compare "
         "past work and approved projects. Research: reward relevant research only when the role calls for it. "
         "Location and work mode: use candidate location/relocation; unknown is neutral. Education: judge only stated "
         "requirements. Freshness refers only to the job posting date, never the candidate's experience; use 5 if unknown. "
@@ -301,7 +388,7 @@ def analyze_job(job: dict, profile: dict, projects: list[dict], model: str,
     unspecified = {
         "required_skills": not facts.required_skills,
         "preferred_skills": not facts.preferred_skills,
-        "experience": facts.years_required is None and not facts.seniority,
+        "experience": facts.years_required is None,
         "responsibilities": not facts.responsibilities,
         "research": not any(term in (job.get("description") or "").casefold()
                             for term in ("research", "nghiên cứu", "model development")),
@@ -312,11 +399,13 @@ def analyze_job(job: dict, profile: dict, projects: list[dict], model: str,
     for name, absent in unspecified.items():
         if absent:
             criteria[name] = {"score": 5, "reason": "Not stated in the posting; neutral."}
+    criteria["experience"] = experience_criterion(facts.years_required, profile)
     criteria["freshness"] = freshness_criterion(job)
     raw_score = sum(item["score"] for item in criteria.values())
     title = (job.get("title") or "").casefold()
     excluded = next((term for term in NEGATIVE_WORDS if re.search(r"\b" + re.escape(term) + r"\b", title)), None)
     score = min(raw_score, 20) if excluded else raw_score
     detail = {"method": "local_llm", "model": model, "facts": facts.model_dump(),
-              "criteria": criteria, "explanation": judgment.summary, "excluded_role": excluded}
+              "criteria": criteria, "explanation": experience_gap_summary(facts.years_required, profile) or judgment.summary,
+              "excluded_role": excluded}
     return score, detail

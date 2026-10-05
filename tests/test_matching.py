@@ -7,7 +7,7 @@ import httpx
 from fastapi.testclient import TestClient
 
 from job_radar.ingest import ObservedJob, ingest
-from job_radar.local_analysis import Criterion, JobFacts, LocalModelUnavailable, MatchJudgment, _generate, _ground_facts, analyze_job, clean_saved_analysis, extract_salary_range, freshness_criterion, validate_local_model
+from job_radar.local_analysis import Criterion, JobFacts, LocalModelUnavailable, MatchJudgment, _generate, _ground_facts, analyze_job, clean_saved_analysis, experience_criterion, extract_salary_range, freshness_criterion, validate_local_model
 from job_radar.settings import Settings
 from job_radar.web import create_app
 
@@ -70,8 +70,64 @@ def test_extraction_discards_unsupported_language_seniority_and_years() -> None:
     assert grounded.required_skills == ["Python"]
     assert grounded.languages == []
     assert grounded.seniority == ""
-    assert grounded.years_required is None
+    assert grounded.years_required == 3
     assert grounded.education == []
+
+
+def test_experience_score_uses_documented_years_and_merges_overlaps() -> None:
+    as_of = datetime(2026, 10, 5, tzinfo=timezone.utc)
+    profile = {"experience": [
+        {"role": "AI Engineering Intern", "dates": "Dec 2025 – Jun 2026"},
+        {"role": "Applied AI Trainee", "dates": "Jul 2026 – Present"},
+        {"role": "Overlapping project role", "dates": "Jan 2026 – Mar 2026"},
+    ]}
+    result = experience_criterion(3, profile, as_of=as_of)
+    assert result["score"] == 4
+    assert "0.9 years" in result["reason"]
+    assert "3 years" in result["reason"]
+    assert experience_criterion(None, profile, as_of=as_of)["score"] == 5
+    assert experience_criterion(3, {"experience": [{"dates": "Unknown"}]}, as_of=as_of)["score"] == 5
+
+
+def test_saved_match_replaces_role_similarity_with_years_of_experience(tmp_path: Path) -> None:
+    app = create_app(Settings(tmp_path))
+    db = app.state.db
+    db.set_setting("profile", {"experience": [
+        {"role": "AI Engineering Intern", "dates": "Dec 2025 – Jun 2026"},
+        {"role": "Applied AI Trainee", "dates": "Jul 2026 – Sep 2026"},
+    ]})
+    job_id = TestClient(app).post("/api/jobs/import", json={"company": "Facebook post",
+        "title": "AI Engineer", "description": "Từ 3 năm kinh nghiệm làm việc thực tế ở vị trí AI Engineer"}).json()["id"]
+    criteria = {name: {"score": 10, "reason": "Strong role fit"}
+                for name in MatchJudgment.model_fields if name != "summary"}
+    detail = {"method": "local_llm", "facts": {"years_required": 3},
+              "criteria": criteria, "explanation": "The candidate has extensive experience."}
+    db.execute("UPDATE vacancies SET analysis_status='done',published_at=?,score=100,score_detail=? WHERE id=?",
+               (datetime.now(timezone.utc).isoformat(), json.dumps(detail), job_id))
+    assert clean_saved_analysis(db) == 1
+    updated = db.one("SELECT score,score_detail FROM vacancies WHERE id=?", (job_id,))
+    result = json.loads(updated["score_detail"])
+    assert result["criteria"]["experience"]["score"] < 5
+    assert "3 years" in result["criteria"]["experience"]["reason"]
+    assert "below" in result["explanation"]
+    assert updated["score"] < 100
+
+
+def test_new_match_does_not_call_short_role_history_three_years_of_experience(monkeypatch) -> None:
+    def generate(_model, _prompt, result_type):
+        if result_type is JobFacts:
+            return JobFacts(role="AI Engineer", seniority="", required_skills=[], preferred_skills=[],
+                            years_required=None, location="", work_mode="", responsibilities=[],
+                            education=[], languages=[], summary="")
+        return MatchJudgment(**{name: Criterion(score=10, reason="Relevant role")
+                                for name in MatchJudgment.model_fields if name != "summary"},
+                             summary="The candidate has extensive experience.")
+    monkeypatch.setattr("job_radar.local_analysis._generate", generate)
+    _, detail = analyze_job({"title": "AI Engineer", "description": "Từ 3 năm kinh nghiệm làm việc thực tế"},
+        {"experience": [{"dates": "Dec 2025 – Jun 2026"}, {"dates": "Jul 2026 – Sep 2026"}]}, [], "test:small")
+    assert detail["facts"]["years_required"] == 3
+    assert detail["criteria"]["experience"]["score"] < 5
+    assert "below the 3 years requested" in detail["explanation"]
 
 
 def test_language_salary_and_freshness_are_grounded_in_the_job_posting(tmp_path: Path) -> None:
@@ -108,7 +164,8 @@ def test_language_salary_and_freshness_are_grounded_in_the_job_posting(tmp_path:
     assert corrected_detail["facts"]["languages"] == ["English"]
     assert corrected_detail["facts"]["salary_range"] == "Salary: VND 18–30 million per month."
     assert corrected_detail["criteria"]["freshness"]["score"] == 5
-    assert corrected["score"] == 59
+    assert corrected_detail["criteria"]["experience"]["score"] == 5
+    assert corrected["score"] == 58
     assert clean_saved_analysis(app.state.db) == 0
 
 

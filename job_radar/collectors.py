@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from hashlib import sha256
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from urllib.parse import parse_qsl, urljoin, urlsplit, urlunsplit, urlencode
 
 import httpx
@@ -85,6 +86,19 @@ def _facebook_post_url(group_url: str, links: list[str]) -> str | None:
         photo_id = re.fullmatch(r"gm\.(\d+)", query.get("set", ""))
         if photo_id and query.get("idorvanity") == group_id:
             return f"https://www.facebook.com/groups/{group_id}/posts/{photo_id.group(1)}/"
+    return None
+
+
+def _facebook_posted_at(tooltip: str, timezone_id: str = "Asia/Ho_Chi_Minh") -> str | None:
+    """Parse the exact local time shown when hovering a Facebook post timestamp."""
+    value = re.sub(r"\s+", " ", tooltip).strip()
+    for pattern in ("%A %d %B %Y at %H:%M", "%A, %B %d, %Y at %I:%M %p",
+                    "%A, %B %d, %Y at %H:%M", "%d %B %Y at %H:%M"):
+        try:
+            local = datetime.strptime(value, pattern).replace(tzinfo=ZoneInfo(timezone_id))
+            return local.astimezone(timezone.utc).isoformat(timespec="seconds")
+        except ValueError:
+            pass
     return None
 
 
@@ -241,7 +255,7 @@ async def _collect_linkedin_search_results(page: Page, source: dict) -> list[Obs
     return jobs
 
 
-RECRUITING = re.compile(r"\b(hiring|recruit|vacancy|apply|tuyển dụng|tuyển|cần tìm|cần tuyển|job opening|we are looking)\b|\bcần\s+(?:\d+\s*)?(?:mid|sen|junior|senior|fresher|intern|data|ai|ml|kỹ|lập)", re.I)
+RECRUITING = re.compile(r"\b(hiring|recruit|vacancy|apply|tuyển dụng|tuyển|cần tìm|cần tuyển|cần gấp|job opening|we are looking)\b|\bcần\s+(?:\d+\s*)?(?:mid|sen|junior|senior|fresher|intern|data|ai|ml|kỹ|lập)", re.I)
 ROLE = re.compile(r"\b(ai|ml|machine learning|engineer|engineering|developer|devops|research|data scientist|data analyst|data analytics|data architect|business analyst|llm|computer vision|software|architect|fullstack|backend|frontend|technical lead|tech lead|cloud|security|cyber|database|network|kỹ sư|lập trình|trí tuệ nhân tạo|công nghệ thông tin|khoa học dữ liệu|phần mềm|phầm mềm|an ninh|bảo mật|quản trị ứng dụng|cơ sở dữ liệu|phân tích nghiệp vụ|chuyển đổi số|kiểm thử)\b", re.I)
 
 
@@ -264,6 +278,7 @@ async def collect_facebook(context: BrowserContext, source: dict) -> list[Observ
         ]""")
         if name := next((cleaned for title in titles if (cleaned := clean_group_title(title))), None):
             source["resolved_name"] = name
+        timezone_id = await page.evaluate("Intl.DateTimeFormat().resolvedOptions().timeZone")
         max_posts = max(1, int(source["config"].get("max_posts", 150)))
         messages = page.locator('[data-ad-rendering-role="story_message"]')
         try:
@@ -295,7 +310,7 @@ async def collect_facebook(context: BrowserContext, source: dict) -> list[Observ
                 direct_url = _facebook_post_url(source["url"], row["links"])
                 post_token = next((dict(parse_qsl(urlsplit(link).query)).get("__cft__[0]")
                                    for link in row["links"] if "__cft__" in link), None)
-                key = direct_url or post_token or sha256(re.sub(r"\s+", " ", text).encode()).hexdigest()
+                key = post_token or direct_url or sha256(re.sub(r"\s+", " ", text).encode()).hexdigest()
                 if key in seen:
                     continue
                 seen.add(key)
@@ -309,31 +324,44 @@ async def collect_facebook(context: BrowserContext, source: dict) -> list[Observ
                     if await see_more.count():
                         await see_more.first.click(timeout=2500)
                         text = (await message.inner_text(timeout=2500)).strip()
-                    post_url = direct_url
-                    if not post_url:
-                        timestamp = await message.evaluate_handle("""node => {
-                          let parent = node;
-                          while (parent && parent.getAttribute('role') !== 'feed') {
-                            if (parent !== node && parent.querySelectorAll('[data-ad-rendering-role="story_message"]').length > 1) break;
-                            const link = [...parent.querySelectorAll('a[href]')].find(a =>
-                              a.getClientRects().length && /\\/groups\\/[^/]+\\/\\?__cft__/.test(a.href));
-                            if (link) return link;
-                            parent = parent.parentElement;
-                          }
-                          return null;
-                        }""")
-                        if await timestamp.evaluate("link => !!link"):
-                            async with context.expect_page(timeout=7000) as opened:
-                                await timestamp.click(modifiers=["Meta"], timeout=5000)
-                            detail = await opened.value
-                            try:
-                                await detail.wait_for_url(re.compile(r"/groups/[^/]+/(?:posts|permalink)/\d+"), timeout=7000)
-                                post_url = _facebook_post_url(source["url"], [detail.url])
-                            finally:
-                                await detail.close()
+                    post_url, published_at = direct_url, None
+                    timestamp = await message.evaluate_handle("""node => {
+                      let parent = node;
+                      while (parent && parent.getAttribute('role') !== 'feed') {
+                        if (parent !== node && parent.querySelectorAll('[data-ad-rendering-role="story_message"]').length > 1) break;
+                        const link = [...parent.querySelectorAll('a[href]')].find(a =>
+                          a.getClientRects().length && /\\/groups\\/[^/]+\\/\\?__cft__/.test(a.href));
+                        if (link) return link;
+                        parent = parent.parentElement;
+                      }
+                      return null;
+                    }""")
+                    if await timestamp.evaluate("link => !!link"):
+                        try:
+                            await page.mouse.move(0, 0)
+                            await timestamp.hover(timeout=3500)
+                            tooltip = page.locator('[role="tooltip"]').last
+                            await tooltip.wait_for(state="visible", timeout=2500)
+                            published_at = _facebook_posted_at(await tooltip.inner_text(), timezone_id)
+                        except Exception:
+                            pass  # Keep the post; an unreadable date remains unknown.
+                        async with context.expect_page(timeout=7000) as opened:
+                            await timestamp.click(modifiers=["Meta"], timeout=5000)
+                        detail = await opened.value
+                        try:
+                            await detail.wait_for_url(re.compile(r"/groups/[^/]+/(?:posts|permalink)/\d+"), timeout=7000)
+                            await detail.locator('[data-ad-rendering-role="story_message"]').first.wait_for(timeout=7000)
+                            lead = re.sub(r"\s+", " ", text).casefold()[:80]
+                            detail_texts = await detail.locator('[data-ad-rendering-role="story_message"]').all_inner_texts()
+                            if not any(lead in re.sub(r"\s+", " ", item).casefold() for item in detail_texts):
+                                continue
+                            post_url = _facebook_post_url(source["url"], [detail.url])
+                        finally:
+                            await detail.close()
                     if post_url:
                         if post_url not in posts_by_url or len(text) > len(posts_by_url[post_url]["text"]):
-                            posts_by_url[post_url] = {"text": text, "url": post_url, "links": row["external"]}
+                            posts_by_url[post_url] = {"text": text, "url": post_url, "links": row["external"],
+                                                      "published_at": published_at}
                 except Exception:
                     continue
             if len(seen) >= max_posts:
@@ -360,7 +388,7 @@ async def collect_facebook(context: BrowserContext, source: dict) -> list[Observ
             external = next((link for link in post["links"] if "facebook.com" not in link), None)
             jobs.append(ObservedJob(
                 url=url, title=title[:180], company=company, description=text[:30000],
-                apply_url=external, raw_text=text[:30000],
+                apply_url=external, published_at=post["published_at"], raw_text=text[:30000],
             ))
         return jobs
     finally:
