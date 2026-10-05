@@ -32,16 +32,17 @@
       <div id="social-auth-banner" role="alert" hidden><span id="social-auth-message"></span><button id="social-auth-action" class="secondary" type="button">Sign in again</button></div>
 
       <section id="home" class="tab active">
-        <div class="hero">
+        <div class="hero" id="home-hero">
           <div><p class="eyebrow">YOUR WORKSPACE</p><h2 id="home-title">Find the next good opportunity.</h2><p id="home-description">Your jobs, resume, and applications in one place.</p></div>
           <button id="home-primary" class="primary" data-tab="jobs">Browse jobs →</button>
         </div>
         <div id="metrics" class="metrics"></div>
         <p id="source-summary" class="hint source-summary"></p>
         <div class="two-col home-grid">
-          <div class="panel"><h3>Next steps</h3><div id="home-steps" class="stack"></div></div>
-          <div class="panel"><div class="section-head"><div><h3>Job queue</h3><p id="home-queue-count" class="hint"></p></div><button class="text-button" data-tab="queue" type="button">View queue →</button></div><div id="home-queue" class="home-queue" aria-live="polite"></div></div>
+          <div class="panel"><div class="section-head"><div><h3>Setup checklist</h3><p class="hint">One-time requirements for useful applications.</p></div><span id="home-setup-status" class="status-badge status-badge--warning"></span></div><div id="home-steps" class="stack"></div><div id="home-optional" class="home-optional"></div></div>
+          <div class="panel"><div class="section-head"><div><h3>Needs your attention</h3><p id="home-action-count" class="hint"></p></div></div><div id="home-actions" class="home-actions" aria-live="polite"></div></div>
         </div>
+        <div class="panel home-activity-panel"><div class="section-head"><div><h3>Activity</h3><p id="home-queue-count" class="hint"></p></div><button class="text-button" data-tab="queue" type="button">View activity →</button></div><div id="home-queue" class="home-queue" aria-live="polite"></div></div>
       </section>
 
       <section id="queue" class="tab">
