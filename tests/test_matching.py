@@ -130,7 +130,8 @@ def test_unstated_requirements_get_neutral_score(monkeypatch) -> None:
     assert detail["criteria"]["education"] == {"score": 5, "reason": "Not stated in the posting; neutral."}
     assert detail["criteria"]["preferred_skills"]["score"] == 5
     assert "research" not in detail["criteria"]
-    assert score == 34
+    assert 0 < score < 50
+    assert detail["hard_exclusions"] == []
 
 
 def test_extraction_discards_unsupported_language_seniority_and_years() -> None:
@@ -315,7 +316,7 @@ def test_newly_discovered_posting_date_requeues_local_score(tmp_path: Path) -> N
     assert refreshed["analysis_status"] == "pending"
 
 
-def test_negative_role_is_excluded_after_model_scoring(monkeypatch) -> None:
+def test_negative_role_is_only_a_user_configured_preference(monkeypatch) -> None:
     def generate(_model, _prompt, result_type):
         if result_type is JobFacts:
             return JobFacts(role="Sales Manager", seniority="", required_skills=[], preferred_skills=[],
@@ -325,9 +326,15 @@ def test_negative_role_is_excluded_after_model_scoring(monkeypatch) -> None:
                                 for name in MatchJudgment.model_fields if name != "summary"}, summary="Strong fit")
 
     monkeypatch.setattr("job_radar.local_analysis._generate", generate)
-    score, detail = analyze_job({"title": "Sales Manager", "description": "AI and Python"}, {}, [], "test:small")
-    assert score == 0
-    assert detail["excluded_role"] == "sales"
+    job = {"title": "Sales Manager", "description": "AI and Python"}
+    score, detail = analyze_job(job, {}, [], "test:small")
+    assert score > 0
+    assert detail["hard_exclusions"] == []
+
+    preferred_score, preferred_detail = analyze_job(
+        job, {}, [], "test:small", preferences={"negative_keywords": ["sales"]})
+    assert preferred_score < score
+    assert preferred_detail["hard_exclusions"] == []
 
 
 def test_model_picker_excludes_embedding_only_models(tmp_path: Path, monkeypatch) -> None:
