@@ -696,6 +696,7 @@ async function loadAutoApply() {
 
 $('#auto-apply-form').addEventListener('submit', async (event) => {
   event.preventDefault();
+  const pendingButton = beginPending(event.submitter || event.target.querySelector('button[type="submit"]'), 'Saving…');
   const form = event.target;
   try {
     const result = await api('/api/auto-apply', {method:'PUT', body:JSON.stringify({enabled:form.elements.enabled.checked, threshold:Number(form.elements.threshold.value)})});
@@ -703,6 +704,7 @@ $('#auto-apply-form').addEventListener('submit', async (event) => {
     await loadAutoApply();
     notice(result.enabled ? `Automatic drafts enabled for jobs scoring ${result.threshold} or higher. Every application waits for your approval.` : 'Automatic draft preparation paused.');
   } catch (error) { notice(error.message, true); }
+  finally { endPending(pendingButton); }
 });
 
 $('#queue-existing-drafts').addEventListener('click', async (event) => {
@@ -965,6 +967,7 @@ for (const site of ['linkedin', 'facebook']) {
 
 $('#setup-smtp-form').addEventListener('submit', async (event) => {
   event.preventDefault();
+  const pendingButton = beginPending(event.submitter || event.target.querySelector('button[type="submit"]'), 'Saving…');
   try {
     const data = Object.fromEntries(new FormData(event.target));
     data.port = Number(data.port);
@@ -973,6 +976,7 @@ $('#setup-smtp-form').addEventListener('submit', async (event) => {
     delete event.target.dataset.dirty;
     await loadSetup(); notice('Email settings saved');
   } catch(error) { notice(error.message, true); }
+  finally { endPending(pendingButton); }
 });
 
 $('#smtp-gmail-preset').addEventListener('click', async () => {
@@ -1019,6 +1023,7 @@ $('#smtp-send-test').addEventListener('click', async (event) => {
 
 $('#setup-telegram-form').addEventListener('submit', async (event) => {
   event.preventDefault();
+  const pendingButton = beginPending(event.submitter || event.target.querySelector('button[type="submit"]'), 'Saving…');
   try {
     const data = Object.fromEntries(new FormData(event.target));
     await api('/api/setup/telegram', {method:'POST', body:JSON.stringify(data)});
@@ -1026,6 +1031,7 @@ $('#setup-telegram-form').addEventListener('submit', async (event) => {
     $('#setup-telegram-message').textContent = 'Telegram reviews configured.';
     await loadSetup(); notice('Telegram reviews configured');
   } catch(error) { $('#setup-telegram-message').textContent = error.message; notice(error.message, true); }
+  finally { endPending(pendingButton); }
 });
 
 $('#telegram-find-chat').addEventListener('click', async () => {
@@ -1050,6 +1056,7 @@ $('#setup-telegram-remove').addEventListener('click', async () => {
 
 $('#profile-form').addEventListener('submit', async (event) => {
   event.preventDefault();
+  const pendingButton = beginPending(event.submitter || event.target.querySelector('button[type="submit"]'), 'Saving…');
   try {
     const profile = await api('/api/profile');
     const form = event.target;
@@ -1063,15 +1070,18 @@ $('#profile-form').addEventListener('submit', async (event) => {
     await loadPersonalDetails();
     notice('Personal details saved');
   } catch(error) { notice(error.message, true); }
+  finally { endPending(pendingButton); }
 });
 
 $('#matching-model-form').addEventListener('submit', async (event) => {
   event.preventDefault();
+  const pendingButton = beginPending(event.submitter || event.target.querySelector('button[type="submit"]'), 'Saving…');
   try {
     await api('/api/matching/model', {method:'PUT', body:JSON.stringify({model:event.target.elements.model.value})});
     await loadProfile();
     notice('Local matching model saved. Existing jobs are being analyzed.');
   } catch(error) { notice(error.message, true); }
+  finally { endPending(pendingButton); const model = event.target.elements.model.value; pendingButton.disabled = !model || model === event.target.dataset.saved; }
 });
 
 $('#matching-download').addEventListener('click', async () => {
@@ -1086,6 +1096,7 @@ $('#matching-refresh').addEventListener('click', () => loadMatchingModels().catc
 
 $('#provider-form').addEventListener('submit', async (event) => {
   event.preventDefault();
+  const pendingButton = beginPending(event.submitter || event.target.querySelector('button[type="submit"]'), 'Saving…');
   try {
     const provider = event.target.elements.provider.value;
     await api('/api/profile/provider', {method:'PUT', body:JSON.stringify({provider})});
@@ -1093,13 +1104,12 @@ $('#provider-form').addEventListener('submit', async (event) => {
     scrollNodeIntoView($('#resume-panel'), {block:'start'});
     notice('Provider saved. Add your resume next.');
   } catch(error) { notice(error.message, true); }
+  finally { endPending(pendingButton); }
 });
 
 $('#pdf-resume-form').addEventListener('submit', async (event) => {
   event.preventDefault();
-  const button = event.target.querySelector('button[type="submit"]');
-  button.disabled = true;
-  button.textContent = 'Extracting…';
+  const button = beginPending(event.submitter || event.target.querySelector('button[type="submit"]'), 'Extracting…');
   $('#pdf-import-status').textContent = 'Reading the PDF and asking your selected provider to extract resume details.';
   try {
     const result = await api('/api/profile/resume/pdf', {method:'POST', body:new FormData(event.target)});
@@ -1108,11 +1118,12 @@ $('#pdf-resume-form').addEventListener('submit', async (event) => {
     await showTab('personal');
     notice('Resume details extracted. Review them before applying.');
   } catch(error) { $('#pdf-import-status').textContent = error.message; notice(error.message, true); }
-  finally { button.textContent = 'Extract resume details'; const selected = $('#provider-form').elements.provider.selectedOptions[0]; button.disabled = !selected?.value || selected.disabled; }
+  finally { endPending(button); const selected = $('#provider-form').elements.provider.selectedOptions[0]; button.disabled = !selected?.value || selected.disabled; }
 });
 
 $('#latex-import-form').addEventListener('submit', async (event) => {
   event.preventDefault();
+  const pendingButton = beginPending(event.submitter || event.target.querySelector('button[type="submit"]'), 'Importing…');
   try {
     const latex = event.target.elements.latex.value;
     const result = await api('/api/profile/import-latex', {method:'POST', body:JSON.stringify({latex})});
@@ -1120,15 +1131,18 @@ $('#latex-import-form').addEventListener('submit', async (event) => {
     await showTab('personal');
     notice(`Imported ${result.positions} positions, ${result.education} education entries, and ${result.achievements} achievements`);
   } catch(error) { notice(error.message, true); }
+  finally { endPending(pendingButton); }
 });
 
 $('#source-form').addEventListener('submit', async (event) => {
   event.preventDefault();
+  const pendingButton = beginPending(event.submitter || event.target.querySelector('button[type="submit"]'), 'Adding…');
   try {
     const data = Object.fromEntries(new FormData(event.target));
     const result = await api('/api/sources', {method:'POST', body:JSON.stringify(data)});
     event.target.reset(); syncSourceNameField(); await loadSources(); notice(`${result.name} added`);
   } catch(error) { notice(error.message, true); }
+  finally { endPending(pendingButton); }
 });
 
 function syncSourceNameField() {
@@ -1152,32 +1166,38 @@ syncSourceNameField();
 
 $('#employer-form').addEventListener('submit', async (event) => {
   event.preventDefault();
+  const pendingButton = beginPending(event.submitter || event.target.querySelector('button[type="submit"]'), 'Adding…');
   try {
     const data = Object.fromEntries(new FormData(event.target));
     if (!data.career_url) data.career_url = null;
     await api('/api/employers', {method:'POST', body:JSON.stringify(data)});
     event.target.reset(); await loadEmployers(); notice('Employer added');
   } catch(error) { notice(error.message, true); }
+  finally { endPending(pendingButton); }
 });
 
 $('#job-import').addEventListener('submit', async (event) => {
   event.preventDefault();
+  const pendingButton = beginPending(event.submitter || event.target.querySelector('button[type="submit"]'), 'Adding…');
   try {
     const data = Object.fromEntries(new FormData(event.target));
     if (!data.apply_url) data.apply_url = null;
     const result = await api('/api/jobs/import', {method:'POST', body:JSON.stringify(data)});
     event.target.reset(); await loadJobs(); await showJob(result.id); notice('Job added');
   } catch(error) { notice(error.message, true); }
+  finally { endPending(pendingButton); }
 });
 
 $('#position-form').addEventListener('submit', async (event) => {
   event.preventDefault();
+  const pendingButton = beginPending(event.submitter || event.target.querySelector('button[type="submit"]'), 'Adding…');
   try {
     const data = Object.fromEntries(new FormData(event.target));
     data.bullets = data.bullets.split('\n').map((x) => x.trim()).filter(Boolean);
     await api('/api/positions', {method:'POST', body:JSON.stringify(data)});
     event.target.reset(); await loadPositions(); notice('Position added');
   } catch(error) { notice(error.message, true); }
+  finally { endPending(pendingButton); }
 });
 
 async function inspectSelectedRepository(url, button = null) {
@@ -1221,6 +1241,7 @@ $('#project-provider-action').addEventListener('click', () => {
 $('#project-add-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const button = event.target.querySelector('button[type="submit"]');
+  beginPending(button, 'Working…');
   try {
     const entry = parseGitHubEntry($('#project-github-input').value);
     if (entry.repository) {
@@ -1243,7 +1264,7 @@ $('#project-add-form').addEventListener('submit', async (event) => {
     $('#github-repos').innerHTML = discoveredRepos.length ? '' : '<div class="empty">No public repositories found.</div>';
     renderRepositoryResults();
   } catch(error) { $('#project-add-status').textContent = error.message; notice(error.message, true); }
-  finally { button.disabled = false; }
+  finally { endPending(button); }
 });
 
 $('#scan-due').addEventListener('click', async () => {
