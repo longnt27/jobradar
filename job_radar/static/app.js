@@ -30,6 +30,7 @@ let discoveredRepos = [];
 let selectedProjectId = null;
 let projectProviderReady = false;
 let applicationDrafts = [];
+let applicationsTotal = 0;
 let applicationsPage = 1;
 let applicationsPages = 1;
 let submissionHistoryPage = 1;
@@ -1242,7 +1243,7 @@ function populateApplicationCompanyFilter(companies = []) {
   if (companies.includes(saved)) select.value = saved;
 }
 
-function renderApplicationList(total = applicationDrafts.length) {
+function renderApplicationList(total = applicationsTotal) {
   const summary = $('#application-list-summary');
   summary.textContent = total
     ? `${total} application${total === 1 ? '' : 's'} · page ${applicationsPage} of ${applicationsPages}`
@@ -1287,6 +1288,7 @@ async function loadApplications(selectedId = null) {
   });
   const result = await api(`/api/applications/page?${query}`);
   applicationDrafts = result.items;
+  applicationsTotal = result.total;
   applicationsPage = result.page;
   applicationsPages = result.pages;
   populateApplicationCompanyFilter(result.companies || []);
