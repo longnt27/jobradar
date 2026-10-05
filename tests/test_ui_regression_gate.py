@@ -48,7 +48,7 @@ def ui_server(tmp_path_factory):
         "title": "AI Engineer",
         "description": "Build reliable perception and search systems with Python.",
         "location": "Hanoi",
-        "apply_url": "mailto:jobs@example.org",
+        "apply_url": "https://example.org/apply",
     }).json()
     app.state.db.execute(
         "UPDATE vacancies SET analysis_status='done',score=91,state='interesting',"
