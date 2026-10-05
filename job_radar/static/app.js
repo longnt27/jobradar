@@ -1475,9 +1475,10 @@ async function showApplication(id) {
   const warnings = draft.warnings || [];
   const blockers = draft.send_blockers || [];
   const sent = applicationIsSent(draft);
+  const uncertain = applicationIsUncertain(draft);
   const reviewTone = applicationReviewTone(draft);
-  const canSend = !sent && draft.send_ready && draft.review_status === 'awaiting_review';
-  const canInspect = !sent && destination.kind === 'web';
+  const canSend = !sent && !uncertain && draft.send_ready && draft.review_status === 'awaiting_review';
+  const canInspect = !sent && !uncertain && destination.kind === 'web';
   const actionTarget = applicationActionTarget(destination);
   const detail = $('#application-detail');
 
@@ -1501,6 +1502,7 @@ async function showApplication(id) {
         <div class="application-status-card surface-status"><strong>Review state</strong><span>${escapeHtml(applicationReviewLabel(draft))}</span><small>Telegram: ${escapeHtml(draft.telegram_status || 'Not configured')}${draft.telegram_error ? ` · ${escapeHtml(draft.telegram_error)}` : ''}</small></div>
         <div class="application-status-card surface-status"><strong>Application action</strong><span>${escapeHtml(applicationActionLabel(destination))}</span><small>${escapeHtml(actionTarget)}</small></div>
       </div>
+      ${renderSubmissionProof(draft.latest_submission, true)}
       <div class="application-destination surface-editable">
         <div class="section-head"><div><h4>Destination</h4><p class="hint">The detected action comes from the posting. Change it only when you have verified a different destination.</p></div></div>
         ${destination.provenance ? `<p class="hint">Detected from ${escapeHtml(destination.provenance.replace(/_/g, ' '))} · ${escapeHtml(destination.confidence || 'unknown confidence')}</p>` : ''}
@@ -1565,7 +1567,7 @@ async function showApplication(id) {
   const sendButton = $('#send-draft');
   const inspectButton = $('#inspect-draft');
   const markDirty = (field) => {
-    if (sent) return;
+    if (sent || uncertain) return;
     dirtyState.textContent = 'Unsaved changes';
     dirtyState.className = 'status-badge status-badge--warning';
     saveButton.disabled = false;
@@ -1634,9 +1636,11 @@ async function showApplication(id) {
     const button = beginPending(event.currentTarget, 'Sending…');
     try {
       const result = await api(`/api/applications/${id}/approve`, {method:'POST', body:JSON.stringify({package_hash:draft.package_hash})});
+      const outcome = result.outcome || {};
       await loadApplications(id);
-      $('#application-outcome').textContent = `${result.status}: ${result.receipt || result.error || ''}`;
-      notice(`Application outcome: ${result.status}`);
+      const message = `${outcome.label || 'Application updated'}${result.receipt || result.error ? `: ${result.receipt || result.error}` : ''}`;
+      $('#application-outcome').textContent = message;
+      notice(message, outcome.key === 'submission_uncertain');
     } catch(error) {
       notice(error.message, true);
     } finally {
@@ -1644,10 +1648,12 @@ async function showApplication(id) {
     }
   });
 
-  if (sent) {
+  if (sent || uncertain) {
     detail.querySelectorAll('[data-draft-field],#regenerate-draft,#save-draft,#inspect-draft,#send-draft').forEach((control) => { control.disabled = true; });
-    dirtyState.textContent = 'Sent';
-    dirtyState.className = 'status-badge status-badge--success';
+    dirtyState.textContent = uncertain ? 'Submission status uncertain' : 'Sent';
+    dirtyState.className = `status-badge status-badge--${uncertain ? 'warning' : 'success'}`;
+    if (uncertain) $('#application-outcome').textContent = draft.latest_submission?.outcome?.guidance ||
+      'Verify on the employer site before taking another send action.';
   }
 }
 
