@@ -91,7 +91,7 @@ def test_home_previews_only_six_current_queue_items(tmp_path: Path) -> None:
                 page = browser.new_page()
                 page.goto(f"http://127.0.0.1:{port}/#home")
                 page.locator("#home-queue .home-queue-row").first.wait_for()
-                assert page.get_by_role("heading", name="Job queue").is_visible()
+                assert page.get_by_role("heading", name="Activity").is_visible()
                 assert page.locator("#home-queue .home-queue-row").count() == 6
                 assert "Queued engineer" in page.locator("#home-queue").inner_text()
                 assert "9 in queue" in page.locator("#home-queue-count").inner_text()
