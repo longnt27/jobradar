@@ -44,7 +44,7 @@ def test_ui_foundation_uses_readable_metadata_scale_and_semantic_surfaces() -> N
     assert ".surface-action" in css
     assert ".surface-status" in css
 
-    assert 'class="panel job-analysis-panel surface-status"' in html
+    assert 'class="panel matching-failures job-analysis-attention surface-status"' in html
     assert 'id="job-detail" class="panel detail surface-readonly"' in html
     assert 'class="panel flow-panel surface-editable"' in html
     assert 'class="item job-card surface-action"' in js
