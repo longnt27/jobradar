@@ -265,7 +265,7 @@ def test_legacy_uncertain_submission_is_shown_as_durable_proof_after_reload(tmp_
                 page = browser.new_page()
                 page.set_default_timeout(10000)
                 page.goto(f"http://127.0.0.1:{port}/#applications/{draft['id']}")
-                page.get_by_text("Submission status uncertain", exact=True).first.wait_for()
+                page.locator("#application-detail").get_by_text("Submission status uncertain", exact=True).first.wait_for()
                 assert page.get_by_role("button", name="Approve & send").is_disabled()
                 assert page.get_by_text(
                     "Verify on the employer site before taking another send action.", exact=False
@@ -274,7 +274,7 @@ def test_legacy_uncertain_submission_is_shown_as_durable_proof_after_reload(tmp_
                 assert page.get_by_role("link", name="Open exact submitted resume").is_visible()
 
                 page.reload()
-                page.get_by_text("Submission status uncertain", exact=True).first.wait_for()
+                page.locator("#application-detail").get_by_text("Submission status uncertain", exact=True).first.wait_for()
                 assert page.get_by_role("button", name="Approve & send").is_disabled()
             finally:
                 browser.close()
