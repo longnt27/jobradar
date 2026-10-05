@@ -629,34 +629,65 @@ function topMatchSignals(job) {
   return [...positive.map((item) => ({...item, tone:'good'})), ...negative.map((item) => ({...item, tone:'warn'}))];
 }
 
-async function loadJobs() {
-  clearTimeout(window.jobPoll);
-  const query = new URLSearchParams({
-    q: $('#job-query').value, state: $('#job-state').value, page: jobsPage, page_size: 25,
-    min_score: $('#job-score').value, freshness: $('#job-freshness').value, work_mode: $('#job-work-mode').value,
-    location: $('#job-location').value, source: $('#job-source').value, seniority: $('#job-seniority').value,
-    sort: $('#job-sort').value,
+function jobDecisionLabel(value) {
+  return ({undecided:'Undecided',shortlisted:'Shortlisted',ignored:'Ignored',later:'Later'})[value] || value || 'Undecided';
+}
+
+function applicationProgressLabel(value) {
+  return ({
+    not_started:'Not started',
+    draft_ready:'Draft ready',
+    applied:'Applied',
+    applied_external:'Applied elsewhere',
+    attention:'Submission needs attention',
+  })[value] || value || 'Not started';
+}
+
+function recruitingOutcomeLabel(value) {
+  return ({none:'No outcome',interview:'Interview',rejected:'Rejected',offer:'Offer'})[value] || value || 'No outcome';
+}
+
+function lifecycleBadge(label, tone = 'neutral') {
+  return `<span class="status-badge status-badge--${tone}">${escapeHtml(label)}</span>`;
+}
+
+function jobCardDecisionActions(job) {
+  if (job.decision_state === 'undecided') {
+    return `<button type="button" class="text-button" data-job-decision="shortlisted" data-job-id="${job.id}">Shortlist</button>
+      <button type="button" class="text-button" data-job-decision="later" data-job-id="${job.id}">Later · 3d</button>
+      <button type="button" class="text-button danger" data-job-decision="ignored" data-job-id="${job.id}">Ignore</button>`;
+  }
+  return `<button type="button" class="text-button" data-job-decision="undecided" data-job-id="${job.id}">Back to inbox</button>`;
+}
+
+async function setJobDecisionWithUndo(job, decision, {reason = null, snoozedUntil = null, askReason = false} = {}) {
+  const previous = job.decision_state || 'undecided';
+  const previousSnooze = job.snoozed_until || null;
+  const payload = {decision, reason, snoozed_until:snoozedUntil};
+  await api(`/api/jobs/${job.id}/decision`, {method:'POST', body:JSON.stringify(payload)});
+  const message = decision === 'shortlisted' ? 'Job shortlisted. This is a bookmark/decision only; automation follows its own settings.'
+    : decision === 'ignored' ? 'Job ignored.'
+    : decision === 'later' ? 'Job snoozed for 3 days.'
+    : 'Job returned to the inbox.';
+  notice(message, false, {
+    label:'Undo',
+    onClick: async () => {
+      await api(`/api/jobs/${job.id}/decision`, {method:'POST', body:JSON.stringify({
+        decision:previous, snoozed_until:previous === 'later' ? previousSnooze : null,
+      })});
+      await loadJobs();
+    },
   });
-  [...query.entries()].forEach(([key,value]) => { if (value === '') query.delete(key); });
-  const [result, analysis] = await Promise.all([api(`/api/jobs/page?${query}`), loadJobAnalysis()]);
-  if (jobsPage > result.pages) { jobsPage = result.pages; syncJobsHash(); return loadJobs(); }
-  const jobs = result.items;
-  $('#jobs-page-summary').textContent = result.total ? `Page ${result.page} of ${result.pages} · ${result.total} jobs` : 'No jobs';
-  $('#jobs-prev').disabled = jobsPage <= 1;
-  $('#jobs-next').disabled = jobsPage >= result.pages;
-  const sourceLabel = (source) => !source ? 'Manual' : source.kind === 'career' ? 'Career page' : source.kind === 'linkedin' ? 'LinkedIn' : 'Facebook';
-  $('#job-list').innerHTML = jobs.length ? jobs.map((job) => {
-    const signals = topMatchSignals(job);
-    const tags = [job.work_mode, job.seniority, sourceLabel(job.source)].filter(Boolean);
-    const dateValue = job.published_at || job.first_seen_at;
-    return `<div class="item job-card surface-action"><button type="button" class="card-select" data-job="${job.id}" aria-pressed="${job.id === activeJob ? 'true' : 'false'}" aria-label="Open ${escapeHtml(job.title)} at ${escapeHtml(job.company)}">
-      ${scoreBadge(job)}<div class="item-title">${escapeHtml(job.title)}</div>
-      <div class="job-card-company">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div>
-      <div class="job-card-tags">${tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join('')}</div>
-      <div class="job-card-signals">${signals.map((signal) => `<span class="${signal.tone}" title="${escapeHtml(signal.reason || '')}">${signal.tone === 'good' ? '✓' : '!' } ${escapeHtml(signal.label)}</span>`).join('')}</div>
-      <div class="job-card-footer"><span${exactTimeTitle(dateValue)}>${job.published_at ? 'Posted' : 'Found'} ${relativeWhen(dateValue)}</span><span class="status-badge status-badge--neutral">${escapeHtml(job.state)}</span></div>
-    </button>${job.source ? `<a href="${escapeHtml(job.source.url)}" target="_blank" rel="noopener noreferrer" aria-label="Open original posting for ${escapeHtml(job.title)} at ${escapeHtml(job.company)}">Original posting ↗</a>` : ''}</div>`;
-  }).join('') : '<div class="empty">No jobs match these filters.</div>';
+  if (askReason && decision === 'ignored') pendingIgnoreJobId = job.id;
+  await loadJobs();
+  if (pendingIgnoreJobId === job.id) {
+    const dialog = $('#job-ignore-reason-dialog');
+    if (typeof dialog.showModal === 'function' && !dialog.open) dialog.showModal();
+  }
+}
+
+function bindJobCards(jobs) {
+  const byId = new Map(jobs.map((job) => [job.id, job]));
   document.querySelectorAll('[data-job]').forEach((node) => node.addEventListener('click', async () => {
     try {
       activeJob = node.dataset.job; activeJobPinned = true; syncJobsHash('push');
@@ -665,10 +696,93 @@ async function loadJobs() {
       $('#job-detail').focus({preventScroll:true});
     } catch(error) { notice(error.message, true); }
   }));
+  document.querySelectorAll('[data-job-decision]').forEach((button) => button.addEventListener('click', async () => {
+    const job = byId.get(button.dataset.jobId);
+    if (!job) return;
+    const decision = button.dataset.jobDecision;
+    const snoozedUntil = decision === 'later'
+      ? new Date(Date.now() + 3 * 86400 * 1000).toISOString()
+      : null;
+    try {
+      await setJobDecisionWithUndo(job, decision, {
+        snoozedUntil,
+        askReason: decision === 'ignored',
+      });
+    } catch(error) { notice(error.message, true); }
+  }));
+}
+
+async function loadJobs() {
+  clearTimeout(window.jobPoll);
+  await ensureJobsWorkspace();
+  const query = new URLSearchParams({
+    q: $('#job-query').value,
+    decision: $('#job-decision').value,
+    application: $('#job-application').value,
+    outcome: $('#job-outcome').value,
+    inbox: jobsInboxMode,
+    since: jobsVisitBoundary || '',
+    page: jobsPage,
+    page_size: 25,
+    min_score: $('#job-score').value,
+    freshness: $('#job-freshness').value,
+    work_mode: $('#job-work-mode').value,
+    location: $('#job-location').value,
+    source: $('#job-source').value,
+    seniority: $('#job-seniority').value,
+    sort: $('#job-sort').value,
+  });
+  [...query.entries()].forEach(([key,value]) => { if (value === '') query.delete(key); });
+  const [result, analysis] = await Promise.all([api(`/api/jobs/page?${query}`), loadJobAnalysis()]);
+  if (jobsPage > result.pages) { jobsPage = result.pages; syncJobsHash(); return loadJobs(); }
+  const jobs = result.items;
+  $('#jobs-since-count').textContent = String(result.inbox?.since_last_visit || 0);
+  $('#jobs-unseen-count').textContent = String(result.inbox?.unseen || 0);
+  const inboxCopy = jobsInboxMode === 'since_last_visit'
+    ? `${result.inbox?.since_last_visit || 0} undecided job${result.inbox?.since_last_visit === 1 ? '' : 's'} discovered since your previous Jobs visit.`
+    : jobsInboxMode === 'unseen'
+      ? `${result.inbox?.unseen || 0} unseen undecided job${result.inbox?.unseen === 1 ? '' : 's'}.`
+      : 'Showing your full job history. Decisions, applications, and recruiting outcomes stay separate.';
+  $('#jobs-inbox-summary').textContent = inboxCopy;
+  $('#jobs-page-summary').textContent = result.total ? `Page ${result.page} of ${result.pages} · ${result.total} jobs` : 'No jobs';
+  $('#jobs-prev').disabled = jobsPage <= 1;
+  $('#jobs-next').disabled = jobsPage >= result.pages;
+  const sourceLabel = (source) => !source ? 'Manual' : source.kind === 'career' ? 'Career page' : source.kind === 'linkedin' ? 'LinkedIn' : 'Facebook';
+  const emptyCopy = jobsInboxMode === 'since_last_visit' ? 'Nothing new since your previous visit.'
+    : jobsInboxMode === 'unseen' ? 'No unseen jobs left. Humanity has briefly achieved inbox zero.'
+    : 'No jobs match these filters.';
+  $('#job-list').innerHTML = jobs.length ? jobs.map((job) => {
+    const signals = topMatchSignals(job);
+    const tags = [job.work_mode, job.seniority, sourceLabel(job.source)].filter(Boolean);
+    const dateValue = job.published_at || job.first_seen_at;
+    const decisionBadge = job.decision_state !== 'undecided'
+      ? lifecycleBadge(jobDecisionLabel(job.decision_state), job.decision_state === 'ignored' ? 'danger' : job.decision_state === 'later' ? 'warning' : 'info')
+      : '';
+    const applicationBadge = job.application_progress !== 'not_started'
+      ? lifecycleBadge(applicationProgressLabel(job.application_progress), job.application_progress === 'attention' ? 'danger' : job.application_progress.startsWith('applied') ? 'success' : 'warning')
+      : '';
+    const outcomeBadge = job.recruiting_outcome !== 'none'
+      ? lifecycleBadge(recruitingOutcomeLabel(job.recruiting_outcome), job.recruiting_outcome === 'rejected' ? 'danger' : job.recruiting_outcome === 'offer' ? 'success' : 'info')
+      : '';
+    return `<div class="item job-card surface-action ${job.read_state === 'unseen' ? 'is-unseen' : ''}" data-job-card="${job.id}">
+      <button type="button" class="card-select" data-job="${job.id}" aria-pressed="${job.id === activeJob ? 'true' : 'false'}" aria-label="Open ${escapeHtml(job.title)} at ${escapeHtml(job.company)}">
+        ${job.read_state === 'unseen' ? '<span class="job-unread-dot" aria-label="Unseen job"></span>' : ''}
+        ${scoreBadge(job)}<div class="item-title">${escapeHtml(job.title)}</div>
+        <div class="job-card-company">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div>
+        ${job.salary_range ? `<div class="job-card-salary">${escapeHtml(job.salary_range)} <small>salary from posting</small></div>` : ''}
+        <div class="job-card-tags">${tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join('')}</div>
+        <div class="job-card-signals">${signals.map((signal) => `<span class="${signal.tone}" title="${escapeHtml(signal.reason || '')}">${signal.tone === 'good' ? '✓' : '!' } ${escapeHtml(signal.label)}</span>`).join('')}</div>
+        <div class="job-card-lifecycle">${decisionBadge}${applicationBadge}${outcomeBadge}</div>
+        <div class="job-card-footer"><span${exactTimeTitle(dateValue)}>${job.published_at ? 'Posted' : 'Found'} ${relativeWhen(dateValue)}</span></div>
+      </button>
+      <div class="job-card-actions">${jobCardDecisionActions(job)}${job.source ? `<a href="${escapeHtml(job.source.url)}" target="_blank" rel="noopener noreferrer" aria-label="Open original posting for ${escapeHtml(job.title)} at ${escapeHtml(job.company)}">Original ↗</a>` : ''}</div>
+    </div>`;
+  }).join('') : `<div class="empty">${emptyCopy}</div>`;
+  bindJobCards(jobs);
   if (activeJob && (activeJobPinned || jobs.some((job) => job.id === activeJob))) await showJob(activeJob, activeJobPinned);
   else {
     activeJob = null; activeJobPinned = false; syncJobsHash();
-    $('#job-detail').innerHTML = `<div class="empty">${jobs.length ? 'Select a job to see details.' : 'No job matches this search.'}</div>`;
+    $('#job-detail').innerHTML = `<div class="empty">${jobs.length ? 'Select a job to see details.' : emptyCopy}</div>`;
   }
   if ((analysis.pending || jobs.some((job) => ['pending','running'].includes(job.analysis_status))) && $('#jobs').classList.contains('active')) {
     window.jobPoll = setTimeout(() => loadJobs().catch((error) => notice(error.message, true)), 5000);
