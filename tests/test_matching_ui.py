@@ -87,11 +87,15 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 assert "No score" not in pending_card.inner_text()
                 assert pending_card.locator(".score-pending").count() == 1
                 page.get_by_role("button", name="Open AI Engineer at Example").click()
-                page.get_by_role("heading", name="Job at a glance").wait_for()
+                page.locator("#job-detail summary").filter(has_text="Job at a glance").wait_for()
                 assert "Python" in page.locator(".job-facts").inner_text()
                 assert "Salary range" in page.locator(".job-facts").inner_text()
-                assert "Match breakdown" in page.locator("#job-detail").inner_text()
+                breakdown = page.locator("#job-detail summary").filter(has_text="Match breakdown")
+                assert "82/100" in breakdown.inner_text()
+                breakdown.click()
                 assert "Salary is not included in the match score" in page.locator("#job-detail").inner_text()
+                assert page.locator("#job-detail .score").count() == 0
+                assert page.locator("#job-detail .criterion-weight").count() >= 1
                 assert page.get_by_role("button", name="Open AI Engineer at Example").locator(".score-high").inner_text() == "82"
                 high_color = page.get_by_role("button", name="Open AI Engineer at Example").locator(".score-high").evaluate("node => getComputedStyle(node).backgroundColor")
                 pending_color = pending_card.locator(".score-pending").evaluate("node => getComputedStyle(node).backgroundColor")
