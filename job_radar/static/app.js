@@ -829,10 +829,10 @@ async function loadAutoApply() {
     : data.highest_existing_score != null ? `No undrafted jobs score at least ${data.threshold}; the highest is ${data.highest_existing_score}. Lower the minimum and save to include them.`
     : `${data.counts.queued || 0} queued · No undrafted, scored jobs are ready.`;
   const activity = $('#auto-apply-activity');
-  activity.innerHTML = data.recent.length ? `<h4>Draft activity</h4>${data.recent.map((item) =>
-    `<div class="item"><div class="item-title">${escapeHtml(item.title)} · ${escapeHtml(item.company)} <span class="status-badge ${item.status === 'sent' ? 'status-badge--success' : 'status-badge--warning'}">${escapeHtml(item.status.replace('_', ' '))}</span></div><div class="item-meta">${item.analysis_status === 'done' && item.score != null ? `${escapeHtml(item.score)}/100 · ` : 'Analyzing · '}${escapeHtml(item.detail || '')}</div><div class="actions">${item.draft_id ? `<button type="button" data-auto-draft="${item.draft_id}">Open application</button>` : `<button type="button" data-auto-job="${item.vacancy_id}">Open job</button>`}</div></div>`
+  activity.innerHTML = data.recent.length ? `${data.recent.map((item) =>
+    `<div class="item"><div class="item-title">${escapeHtml(item.title)} · ${escapeHtml(item.company)} <span class="status-badge ${item.status === 'sent' ? 'status-badge--success' : 'status-badge--warning'}">${escapeHtml(item.status.replaceAll('_', ' '))}</span></div><div class="item-meta">${item.analysis_status === 'done' && item.score != null ? `${escapeHtml(item.score)}/100 · ` : 'Analyzing · '}${escapeHtml(item.detail || '')}</div><div class="actions">${item.draft_id ? `<button type="button" data-auto-draft="${item.draft_id}">Open application</button>` : `<button type="button" data-auto-job="${item.vacancy_id}">Open job</button>`}</div></div>`
   ).join('')}` : '<p class="hint">No prepared drafts yet.</p>';
-  activity.querySelectorAll('[data-auto-draft]').forEach((button) => button.addEventListener('click', () => showApplication(button.dataset.autoDraft).catch((error) => notice(error.message, true))));
+  activity.querySelectorAll('[data-auto-draft]').forEach((button) => button.addEventListener('click', () => loadApplications(button.dataset.autoDraft).catch((error) => notice(error.message, true))));
   activity.querySelectorAll('[data-auto-job]').forEach((button) => button.addEventListener('click', async () => { await showTab('jobs'); await showJob(button.dataset.autoJob); }));
   if (data.enabled && $('#applications').classList.contains('active')) window.autoApplyPoll = setTimeout(() => loadAutoApply().catch((error) => notice(error.message, true)), 5000);
 }
@@ -939,7 +939,7 @@ function confirmApplicationSend(draft) {
   const fields = draft.form_data?.fields?.length || 0;
   const attachments = Object.keys(draft.form_data?.attachments || {}).length;
   $('#application-send-confirm-target').textContent = target;
-  $('#application-send-confirm-summary').textContent = `${providerLabel(draft.provider_mode || draft.provider)} · ${fields} form field${fields === 1 ? '' : 's'} reviewed · ${attachments} attachment${attachments === 1 ? '' : 's'}`;
+  $('#application-send-confirm-summary').textContent = `${draft.job_title} at ${draft.company} · ${providerLabel(draft.provider_mode || draft.provider)} · ${fields} form field${fields === 1 ? '' : 's'} reviewed · ${attachments} attachment${attachments === 1 ? '' : 's'}`;
   if (typeof dialog.showModal !== 'function') {
     return Promise.resolve(window.confirm(`Approve and send to ${applicationActionTarget(destination)}?`));
   }
