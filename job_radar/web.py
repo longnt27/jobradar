@@ -31,6 +31,7 @@ from .local_analysis import clean_saved_analysis, list_local_models, validate_lo
 from .matching import MatchManager
 from .notifications import discover_telegram_chats, save_telegram, telegram_config
 from .ranking import rescore_vacancies, score_job
+from .search_intent import fit_summary, normalize_search_intent, seniority_key
 from .resume_import import parse_resume_template
 from .resume_extract import extract_resume
 from .seeds import seed
@@ -109,7 +110,22 @@ class MatchingModelInput(BaseModel):
 
 class AutoApplyInput(BaseModel):
     enabled: bool = False
-    threshold: int = Field(default=80, ge=0, le=100)
+    threshold: int | None = Field(default=None, ge=0, le=100)
+
+
+class SearchIntentInput(BaseModel):
+    role_families: list[str] = Field(default_factory=list)
+    seniority_levels: list[str] = Field(default_factory=list)
+    preferred_locations: list[str] = Field(default_factory=list)
+    work_modes: list[str] = Field(default_factory=list)
+    preferred_employers: list[str] = Field(default_factory=list)
+    excluded_employers: list[str] = Field(default_factory=list)
+    negative_keywords: list[str] = Field(default_factory=list)
+    hard_constraints: dict[str, bool] = Field(default_factory=dict)
+    minimum_salary: int | None = Field(default=None, ge=0)
+    salary_currency: str = "VND"
+    salary_unknown_ok: bool = True
+    strong_match_threshold: int = Field(default=80, ge=0, le=100)
 
 
 class ProjectGenerationInput(BaseModel):
@@ -155,6 +171,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings.ensure_dirs()
     db = Database(settings.database_path)
     seed(db)
+    if not db.get_setting("search_intent", {}):
+        legacy_auto_apply = db.get_setting("auto_apply", {})
+        db.set_setting("search_intent", normalize_search_intent({
+            "strong_match_threshold": legacy_auto_apply.get("threshold", 80),
+        }))
     clean_saved_analysis(db)
     scan_manager = ScanManager(db, settings)
     auto_apply_manager = AutoApplyManager(db, settings, scan_manager.browser_lock)
@@ -199,7 +220,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         db.set_setting("profile", profile)
         matching_fields = ("skills", "location", "relocation", "experience", "education")
         if any(previous.get(field) != profile.get(field) for field in matching_fields):
-            rescore_vacancies(db, profile)
+            rescore_vacancies(db, profile, db.get_setting("search_intent", {}))
             match_manager.wake()
 
     def attach_career_source(employer_id: str, name: str, url: str) -> None:
@@ -239,17 +260,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             counts["vacancies"] = conn.execute("SELECT COUNT(*) FROM vacancies v WHERE NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm')").fetchone()[0]
             counts["active_sources"] = conn.execute("SELECT COUNT(*) FROM sources WHERE enabled=1").fetchone()[0]
             counts["career_sources_enabled"] = conn.execute("SELECT COUNT(*) FROM sources WHERE enabled=1 AND kind='career'").fetchone()[0]
-            counts["high_fit_new"] = conn.execute("SELECT COUNT(*) FROM vacancies WHERE state='new' AND analysis_status='done' AND score>=80").fetchone()[0]
+            threshold = normalize_search_intent(db.get_setting("search_intent", {}))["strong_match_threshold"]
             counts["recent_jobs"] = conn.execute("SELECT COUNT(*) FROM vacancies WHERE julianday(first_seen_at)>=julianday('now','-1 day')").fetchone()[0]
             counts["drafts_needing_review"] = conn.execute("SELECT COUNT(*) FROM auto_application_attempts WHERE status IN ('awaiting_review','needs_review')").fetchone()[0]
             counts["analysis_failures"] = conn.execute("SELECT COUNT(*) FROM vacancies WHERE analysis_status='failed'").fetchone()[0]
         recent = db.all("SELECT scan_runs.*, sources.name AS source_name FROM scan_runs JOIN sources ON sources.id=scan_runs.source_id ORDER BY started_at DESC LIMIT 10")
+        preferences = db.get_setting("search_intent", {})
+        strong_jobs = []
+        for item in db.all("SELECT id,title,company,score,score_detail FROM vacancies WHERE state='new' AND analysis_status='done' AND score>=? ORDER BY score DESC,first_seen_at DESC", (threshold,)):
+            try:
+                detail = json.loads(item.pop("score_detail") or "{}")
+            except (TypeError, ValueError):
+                detail = {}
+            item.update(fit_summary(item.get("score"), detail, preferences))
+            if item["fit_class"] == "strong":
+                strong_jobs.append(item)
+        counts["high_fit_new"] = len(strong_jobs)
         attention = {
-            "jobs": db.all("SELECT id,title,company,score FROM vacancies WHERE state='new' AND analysis_status='done' AND score>=80 ORDER BY score DESC,first_seen_at DESC LIMIT 4"),
+            "jobs": strong_jobs[:4],
             "drafts": db.all("SELECT a.draft_id AS id,v.title,v.company,a.status FROM auto_application_attempts a JOIN vacancies v ON v.id=a.vacancy_id WHERE a.status IN ('awaiting_review','needs_review') AND a.draft_id IS NOT NULL ORDER BY a.updated_at DESC LIMIT 4"),
             "failures": db.all("SELECT id,title,company,analysis_error AS detail FROM vacancies WHERE analysis_status='failed' ORDER BY updated_at DESC LIMIT 4"),
         }
-        return {"counts": counts, "attention": attention, "recent_runs": recent, "data_dir": str(settings.data_dir)}
+        return {"counts": counts, "attention": attention, "recent_runs": recent, "data_dir": str(settings.data_dir),
+                "strong_match_threshold": threshold}
 
     @app.get("/api/queue")
     async def queue():
@@ -427,6 +460,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/profile")
     def get_profile():
         return db.get_setting("profile", {})
+
+    @app.get("/api/search-intent")
+    def get_search_intent():
+        raw = db.get_setting("search_intent", {})
+        if not raw:
+            legacy = db.get_setting("auto_apply", {})
+            raw = {"strong_match_threshold": legacy.get("threshold", 80)}
+        return normalize_search_intent(raw)
+
+    @app.put("/api/search-intent")
+    def put_search_intent(payload: SearchIntentInput):
+        preferences = normalize_search_intent(payload.model_dump())
+        db.set_setting("search_intent", preferences)
+        profile = db.get_setting("profile", {})
+        rescore_vacancies(db, profile, preferences)
+        match_manager.wake()
+        auto_apply_manager.wake()
+        return preferences
+
 
     @app.put("/api/profile")
     def put_profile(profile: dict[str, Any] = Body(...)):
@@ -757,8 +809,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             conditions.append("lower(COALESCE(v.location,'')) LIKE lower(?)")
             values.append(f"%{location}%")
         if seniority:
-            conditions.append("lower(COALESCE(json_extract(v.score_detail,'$.facts.seniority'),'')) LIKE lower(?)")
-            values.append(f"%{seniority}%")
+            patterns = {
+                "intern": ("%intern%", "%trainee%"),
+                "entry": ("%junior%", "%entry%", "%graduate%", "%fresher%"),
+                "mid": ("%mid%", "%middle%"),
+                "senior": ("%senior%", "%sr.%"),
+                "lead_plus": ("%lead%", "%principal%", "%staff%", "%manager%", "%director%", "%head%"),
+            }.get(seniority, ())
+            if patterns:
+                seniority_text = "lower(COALESCE(NULLIF(json_extract(v.score_detail,'$.facts.seniority'),''),v.title,''))"
+                conditions.append("(" + " OR ".join(f"{seniority_text} LIKE ?" for _ in patterns) + ")")
+                values.extend(patterns)
         if source:
             conditions.append(
                 "EXISTS(SELECT 1 FROM vacancy_observations vf JOIN observations o ON o.id=vf.observation_id "
@@ -788,6 +849,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 {"label": key.replace("_", " ").title(), "score": item.get("score"), "reason": item.get("reason", "")}
                 for key, item in criteria.items() if isinstance(item, dict) and isinstance(item.get("score"), (int, float))
             ]
+            row.update(fit_summary(row.get("score"), detail, db.get_setting("search_intent", {})))
+            row["seniority_key"] = seniority_key(f"{facts.get('seniority') or ''} {row.get('title') or ''}")
             row.pop("score_detail", None)
         if rows:
             placeholders = ",".join("?" for _ in rows)
@@ -814,6 +877,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "SELECT o.url,o.first_seen_at,o.published_at,s.kind,s.name FROM vacancy_observations vo JOIN observations o ON o.id=vo.observation_id JOIN sources s ON s.id=o.source_id WHERE vo.vacancy_id=?",
             (job_id,),
         )
+        try:
+            detail = json.loads(row.get("score_detail") or "{}")
+        except (TypeError, ValueError):
+            detail = {}
+        row.update(fit_summary(row.get("score"), detail, db.get_setting("search_intent", {})))
         return row
 
     @app.post("/api/jobs/import", status_code=201)
@@ -821,8 +889,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         identifier = new_id()
         timestamp = now()
         employer = db.one("SELECT id FROM employers WHERE lower(name)=lower(?)", (payload.company,))
-        score, detail = score_job({"title": payload.title, "description": payload.description,
-                                   "location": payload.location, "first_seen_at": timestamp}, db.get_setting("profile", {}))
+        score, detail = score_job({"company": payload.company, "title": payload.title, "description": payload.description,
+                                   "location": payload.location, "first_seen_at": timestamp}, db.get_setting("profile", {}),
+                                  db.get_setting("search_intent", {}))
         matching_model = db.get_setting("matching_model", "")
         with db.connection() as conn:
             conn.execute(

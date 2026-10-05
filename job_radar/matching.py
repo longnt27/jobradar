@@ -210,11 +210,13 @@ class MatchManager:
                 except ValueError:
                     project["details"] = {}
             try:
+                preferences = self.db.get_setting("search_intent", {})
                 score, detail = await asyncio.to_thread(
                     analyze_job, job, profile, projects, model,
                     lambda stage: self.db.execute(
                         "UPDATE vacancies SET analysis_stage=? WHERE id=? AND analysis_status='running'",
                         (stage, job["id"])),
+                    preferences,
                 )
                 self.service_error = None
                 if model != self.db.get_setting("matching_model", ""):

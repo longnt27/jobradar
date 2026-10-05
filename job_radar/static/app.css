@@ -461,3 +461,14 @@ button.danger,.text-button.danger{color:#a4382d;border-color:#e7c2bd}
     transition-duration:.01ms!important
   }
 }
+
+/* Product Stack 01: explicit search intent */
+#search-intent-panel>p,#search-intent-panel>form{margin:18px 23px}
+#search-intent-form select[multiple]{min-height:118px}
+.search-hard-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.match-summary-card{margin:14px 0;padding:14px 16px;border-radius:10px}
+.match-summary-card>div:first-child{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.match-summary-card>div:first-child strong{font-size:18px;color:#173e32}
+.match-summary-card p{margin:6px 0;font-size:12px;line-height:1.5;color:#526b60}
+.job-card-uncertainty{margin-top:7px;color:#806424;font-size:10px;font-weight:650}
+@media(max-width:700px){.search-hard-grid{grid-template-columns:1fr}#search-intent-panel>p,#search-intent-panel>form{margin:16px 18px}}

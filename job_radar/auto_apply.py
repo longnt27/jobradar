@@ -15,6 +15,7 @@ from .drafting import get_draft, prepare_draft, regenerate_draft
 from .notifications import telegram_config
 from .review_telegram import _post, send_review_packet
 from .settings import Settings
+from .search_intent import normalize_search_intent
 
 
 log = logging.getLogger(__name__)
@@ -54,7 +55,9 @@ class AutoApplyManager:
 
     def config(self) -> dict:
         saved = self.db.get_setting("auto_apply", {})
-        return {"enabled": bool(saved.get("enabled", False)), "threshold": int(saved.get("threshold", 80))}
+        intent = self.db.get_setting("search_intent", {})
+        threshold = normalize_search_intent(intent or {"strong_match_threshold": saved.get("threshold", 80)})["strong_match_threshold"]
+        return {"enabled": bool(saved.get("enabled", False)), "threshold": threshold}
 
     def status(self) -> dict:
         counts = {row["status"]: row["count"] for row in self.db.all(
@@ -71,7 +74,8 @@ class AutoApplyManager:
                 "waiting_existing": waiting_existing,
                 "highest_existing_score": highest_existing_score, "recent": recent}
 
-    def configure(self, enabled: bool, threshold: int) -> dict:
+    def configure(self, enabled: bool, threshold: int | None = None) -> dict:
+        threshold = self.config()["threshold"] if threshold is None else threshold
         if not 0 <= threshold <= 100:
             raise ValueError("Threshold must be between 0 and 100")
         previous = self.config()
@@ -83,7 +87,10 @@ class AutoApplyManager:
                     "SELECT id,'skipped','Found before automatic applications were enabled',?,? FROM vacancies",
                     (now(), now()),
                 )
-        self.db.set_setting("auto_apply", {"enabled": enabled, "threshold": threshold})
+        intent = normalize_search_intent(self.db.get_setting("search_intent", {}) or {"strong_match_threshold": threshold})
+        intent["strong_match_threshold"] = threshold
+        self.db.set_setting("search_intent", intent)
+        self.db.set_setting("auto_apply", {"enabled": enabled})
         self.wake()
         return self.status()
 

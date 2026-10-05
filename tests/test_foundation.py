@@ -137,11 +137,16 @@ def test_profile_skill_edit_rescores_existing_jobs(tmp_path: Path) -> None:
     assert after["score"] > before["score"]
 
 
-def test_negative_role_is_capped_despite_matching_skills() -> None:
-    score, detail = score_job({"title": "Sales Manager", "description": "AI research with Python.", "location": "Hanoi"}, {"skills": ["Python"], "location": "Hanoi"})
-    assert score <= 20
-    assert detail["excluded_role"] == "sales"
-    assert "Excluded role" in detail["explanation"]
+def test_negative_role_requires_explicit_user_preference() -> None:
+    job = {"title": "Sales Manager", "description": "AI research with Python.", "location": "Hanoi"}
+    profile = {"skills": ["Python"], "location": "Hanoi"}
+    score, detail = score_job(job, profile)
+    assert score > 20
+    assert detail["hard_exclusions"] == []
+
+    deprioritized, detail = score_job(job, profile, {"negative_keywords": ["sales"]})
+    assert deprioritized < score
+    assert detail["hard_exclusions"] == []
 
 
 def test_literal_cpp_search_returns_matching_job(tmp_path: Path) -> None:
