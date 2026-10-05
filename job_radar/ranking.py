@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .db import Database, now
-from .search_intent import normalize_search_intent
+from .search_intent import normalize_search_intent, salary_floor, seniority_key
 import json
 
 
@@ -22,6 +22,8 @@ def score_job(job: dict[str, Any], profile: dict[str, Any], preferences: dict[st
     role = 25 if role_matches else (10 if any(word in description for word in ROLE_WORDS) else 0)
     selected_families = [item.casefold() for item in prefs["role_families"]]
     family_match = not selected_families or any(item in title or item in description for item in selected_families)
+    level = seniority_key(job.get("title") or "")
+    selected_levels = set(prefs["seniority_levels"])
     if selected_families:
         role = max(role, 25) if family_match else min(role, 5)
     negative_role = next((word for word in prefs["negative_keywords"] if word.casefold() in title), None)
@@ -73,8 +75,19 @@ def score_job(job: dict[str, Any], profile: dict[str, Any], preferences: dict[st
     exclusions = []
     if hard.get("role_family") and selected_families and not family_match:
         exclusions.append("Role family is outside your explicit search limits.")
+    if hard.get("seniority") and selected_levels and level and level not in selected_levels:
+        exclusions.append("Seniority is outside your explicit search limits.")
     if hard.get("location") and prefs["preferred_locations"] and location and local < 5:
         exclusions.append("Location is outside your explicit search limits.")
+    company = str(job.get("company") or "")
+    if hard.get("employer") and any(item.casefold() in company.casefold() for item in prefs["excluded_employers"]):
+        exclusions.append("Employer is on your excluded list.")
+    if prefs.get("minimum_salary") is not None and hard.get("minimum_salary"):
+        pay = salary_floor(f"{job.get('title') or ''}\n{job.get('description') or ''}")
+        if pay is not None and pay < prefs["minimum_salary"]:
+            exclusions.append("Salary is below your explicit minimum.")
+        elif pay is None and not prefs.get("salary_unknown_ok", True):
+            exclusions.append("Salary is not stated and your search requires known salary.")
     if exclusions:
         score = 0
     return score, {"method": "rules", "components": components, "matched_skills": matched_skills,
@@ -85,7 +98,7 @@ def score_job(job: dict[str, Any], profile: dict[str, Any], preferences: dict[st
 def rescore_vacancies(db: Database, profile: dict[str, Any], preferences: dict[str, Any] | None = None) -> None:
     pending = bool(db.get_setting("matching_model"))
     with db.connection() as conn:
-        rows = conn.execute("SELECT id,title,description,location,published_at,first_seen_at FROM vacancies").fetchall()
+        rows = conn.execute("SELECT id,company,title,description,location,published_at,first_seen_at FROM vacancies").fetchall()
         for row in rows:
             score, detail = score_job(dict(row), profile, preferences)
             conn.execute("UPDATE vacancies SET score=?,score_detail=?,analysis_status=?,analysis_error=NULL,updated_at=? WHERE id=? AND analysis_status!='dismissed'",
