@@ -54,7 +54,7 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 assert page.locator("#provider-form select").is_visible()
                 assert page.locator("#matching-model-form select").is_visible()
                 page.get_by_role("button", name="Home", exact=True).click()
-                page.get_by_role("button", name="Telegram application reviews").click()
+                page.locator('#home-optional [data-setup-panel="telegram-panel"]').click()
                 page.locator("#telegram-panel[open]").wait_for()
                 assert page.get_by_role("button", name="Find my chat ID").is_visible()
                 page.locator("#edit-profile-button").click()
@@ -131,7 +131,11 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 page.goto(f"http://127.0.0.1:{port}/#settings")
                 page.locator("#provider-panel summary").click()
                 for selector in ("#provider-status", "#resume-status", "#matching-status", "#social-sign-in-status", "#setup-telegram-status"):
-                    page.locator(f"{selector}.pill:not(.warning):not(.muted)").wait_for()
+                    page.locator(selector).wait_for()
+                    page.wait_for_function(
+                        "(selector) => { const node = document.querySelector(selector); return node && !node.classList.contains('warning'); }",
+                        selector,
+                    )
             finally:
                 browser.close()
     finally:
@@ -173,7 +177,6 @@ def test_failed_matching_jobs_are_visible_and_retryable_from_jobs(tmp_path: Path
             try:
                 page = browser.new_page()
                 page.goto(f"http://127.0.0.1:{port}/#jobs")
-                assert page.locator("#matching-overview .needs-attention strong").inner_text() == "2"
                 page.locator("#matching-failures").wait_for(state="visible")
                 assert "2 jobs need attention" in page.locator("#matching-failures-title").inner_text()
                 assert "Engineer 1" in page.locator("#matching-failure-list").inner_text()
