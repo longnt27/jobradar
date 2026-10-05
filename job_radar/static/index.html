@@ -78,7 +78,7 @@
             <label>Work mode<select id="job-work-mode"><option value="">Any mode</option><option value="remote">Remote</option><option value="hybrid">Hybrid</option><option value="onsite">On-site</option></select></label>
             <label>Location<input id="job-location" placeholder="e.g. Hanoi"></label>
             <label>Source<select id="job-source"><option value="">Any source</option><option value="career">Career page</option><option value="linkedin">LinkedIn</option><option value="facebook">Facebook</option></select></label>
-            <label>Seniority<input id="job-seniority" placeholder="e.g. senior"></label>
+            <label>Seniority<select id="job-seniority"><option value="">Any level</option><option value="intern">Intern</option><option value="entry">Entry / Junior</option><option value="mid">Mid</option><option value="senior">Senior</option><option value="lead_plus">Lead+</option></select></label>
             <label>Sort<select id="job-sort"><option value="best">Best match</option><option value="posted">Newest posted</option><option value="found">Recently found</option><option value="company">Company</option></select></label>
           </div>
         </div>
@@ -116,7 +116,7 @@
             <p class="hint">Job Radar prepares application drafts for jobs that score at least your minimum. The complete draft and resume PDF can be sent to your private Telegram review chat only after preparation finishes. Every application still waits for your approval.</p>
             <form id="auto-apply-form" class="form-grid">
               <label class="checkbox-label full"><input name="enabled" type="checkbox"><span>Prepare drafts automatically for new matches</span></label>
-              <label>Minimum score to include<input name="threshold" type="number" min="0" max="100" value="80" required></label>
+              <label>Strong-match threshold<input name="threshold" type="number" min="0" max="100" value="80" readonly aria-describedby="auto-apply-threshold-help"></label><p id="auto-apply-threshold-help" class="hint">Shared with Home and Jobs. Change it in Settings → What JobRadar is looking for.</p>
               <button class="primary" type="submit">Save draft automation</button>
             </form>
             <div class="existing-drafts-action"><button id="queue-existing-drafts" class="secondary" type="button" disabled>Include existing jobs</button><span id="existing-draft-count" class="hint" role="status"></span></div>
@@ -147,7 +147,36 @@
       </section>
 
       <section id="settings" class="tab">
-        <p class="section-intro">Configure models and integrations separately from the resume data employers see.</p>
+        <p class="section-intro">Configure what Job Radar should look for, then choose the models and integrations that support it.</p>
+        <details class="panel flow-panel" id="search-intent-panel" open>
+          <summary><span><strong>What JobRadar is looking for</strong></span><span id="search-intent-status" class="pill muted">Flexible by default</span></summary>
+          <p class="hint">These preferences guide discovery and matching. A preference only becomes a hard exclusion when you explicitly mark it as required.</p>
+          <form id="search-intent-form" class="form-grid">
+            <label class="full">Role families <span class="hint">Comma-separated, e.g. AI Engineer, Data Scientist</span><input name="role_families" placeholder="AI Engineer, Data Scientist"></label>
+            <label class="full">Seniority levels<select name="seniority_levels" multiple size="5"><option value="intern">Intern</option><option value="entry">Entry / Junior</option><option value="mid">Mid</option><option value="senior">Senior</option><option value="lead_plus">Lead+</option></select></label>
+            <label class="full">Preferred locations <span class="hint">Comma-separated</span><input name="preferred_locations" placeholder="Hanoi, Ho Chi Minh City"></label>
+            <label class="full">Work modes<select name="work_modes" multiple size="3"><option value="remote">Remote</option><option value="hybrid">Hybrid</option><option value="onsite">On-site</option></select></label>
+            <label>Strong-match threshold<input name="strong_match_threshold" type="number" min="0" max="100" value="80" required></label>
+            <label>Minimum discovery salary <span class="hint">Optional</span><input name="minimum_salary" type="number" min="0" placeholder="e.g. 30000000"></label>
+            <label>Salary currency<input name="salary_currency" value="VND"></label>
+            <label class="checkbox-label"><input name="salary_unknown_ok" type="checkbox" checked><span>Keep jobs when salary is not listed</span></label>
+            <label class="full">Preferred employers <span class="hint">Comma-separated</span><input name="preferred_employers"></label>
+            <label class="full">Excluded employers <span class="hint">Comma-separated</span><input name="excluded_employers"></label>
+            <label class="full">Negative preferences <span class="hint">Comma-separated words or phrases to deprioritize</span><input name="negative_keywords" placeholder="sales, night shift"></label>
+            <fieldset class="structured-field full"><legend>Hard constraints</legend><p class="hint">Unchecked preferences are graded signals, not automatic rejections.</p>
+              <div class="search-hard-grid">
+                <label class="checkbox-label"><input name="hard_role_family" type="checkbox"><span>Role family must match</span></label>
+                <label class="checkbox-label"><input name="hard_seniority" type="checkbox"><span>Seniority must match</span></label>
+                <label class="checkbox-label"><input name="hard_location" type="checkbox"><span>Location must match</span></label>
+                <label class="checkbox-label"><input name="hard_work_mode" type="checkbox"><span>Work mode must match</span></label>
+                <label class="checkbox-label"><input name="hard_employer" type="checkbox" checked><span>Exclude blocked employers</span></label>
+                <label class="checkbox-label"><input name="hard_minimum_salary" type="checkbox"><span>Minimum salary is required when known</span></label>
+              </div>
+            </fieldset>
+            <button class="primary" type="submit">Save search preferences</button>
+            <p id="search-intent-message" class="hint" role="status" aria-live="polite"></p>
+          </form>
+        </details>
         <details class="panel flow-panel" id="provider-panel">
           <summary><span><span class="step-number">1</span><strong>AI models</strong></span><span id="provider-status" class="pill warning">Choose models</span></summary>
           <div class="ai-model-section">
