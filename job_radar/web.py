@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, HttpUrl
 
 from .db import Database, new_id, now
-from .apply import inspect_form, send_application, send_readiness
+from .apply import inspect_form, send_application, send_readiness, submission_record, submission_resume_path
 from .auto_apply import AutoApplyManager
 from .browser_login import BrowserLoginManager
 from .drafting import PROVIDERS, get_draft, prepare_draft, update_draft
@@ -988,15 +988,68 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except (ValueError, RuntimeError) as error:
             raise HTTPException(422, str(error)) from error
 
+    def application_page_data(page: int, page_size: int, q: str = "", review: str = "",
+                              company: str = "", delivery: str = "") -> dict:
+        clauses = []
+        params: list[Any] = []
+        query = q.strip().casefold()
+        if query:
+            clauses.append("LOWER(v.title || ' ' || v.company || ' ' || d.provider || ' ' || d.provider_mode) LIKE ?")
+            params.append(f"%{query}%")
+        if company:
+            clauses.append("v.company=?")
+            params.append(company)
+        review_expr = ("COALESCE(a.status,CASE WHEN d.status='sent' THEN 'sent' "
+                       "WHEN d.status='submission_uncertain' THEN 'submission_uncertain' ELSE 'draft' END)")
+        if review:
+            clauses.append(f"{review_expr}=?")
+            params.append(review)
+        if delivery == "sent":
+            clauses.append("EXISTS(SELECT 1 FROM submissions s WHERE s.draft_id=d.id AND s.status IN ('sent_confirmed','submitted_confirmed'))")
+        elif delivery == "uncertain":
+            clauses.append("EXISTS(SELECT 1 FROM submissions s WHERE s.draft_id=d.id AND s.status IN ('submitted_unconfirmed','sending'))")
+        elif delivery == "unsent":
+            clauses.append("NOT EXISTS(SELECT 1 FROM submissions s WHERE s.draft_id=d.id AND s.status IN ('sent_confirmed','submitted_confirmed','submitted_unconfirmed','sending'))")
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        base = (" FROM application_drafts d JOIN vacancies v ON v.id=d.vacancy_id "
+                "LEFT JOIN auto_application_attempts a ON a.draft_id=d.id")
+        total = db.one("SELECT COUNT(*) AS count" + base + where, tuple(params))["count"]
+        pages = max(1, (total + page_size - 1) // page_size)
+        page = min(page, pages)
+        rows = db.all(
+            "SELECT d.id,a.status AS review_status,a.telegram_status" + base + where +
+            " ORDER BY d.created_at DESC,d.id DESC LIMIT ? OFFSET ?",
+            (*params, page_size, (page - 1) * page_size),
+        )
+        items = []
+        for row in rows:
+            draft = get_draft(db, row["id"])
+            latest = db.one("SELECT * FROM submissions WHERE draft_id=? ORDER BY sent_at DESC,id DESC LIMIT 1",
+                            (row["id"],))
+            items.append({
+                **draft,
+                "review_status": row.get("review_status"),
+                "telegram_status": row.get("telegram_status"),
+                "latest_submission": submission_record(latest) if latest else None,
+            })
+        companies = [row["company"] for row in db.all(
+            "SELECT DISTINCT v.company FROM application_drafts d JOIN vacancies v ON v.id=d.vacancy_id "
+            "ORDER BY LOWER(v.company),v.company")]
+        return {"items": items, "page": page, "page_size": page_size, "total": total,
+                "pages": pages, "companies": companies}
+
+    @app.get("/api/applications/page")
+    def applications_page(
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=25, ge=1, le=100),
+        q: str = "", review: str = "", company: str = "", delivery: str = "",
+    ):
+        return application_page_data(page, page_size, q, review, company, delivery)
+
     @app.get("/api/applications")
     def applications():
-        rows = db.all("SELECT id FROM application_drafts ORDER BY created_at DESC LIMIT 100")
-        reviews = {row["draft_id"]: row for row in db.all(
-            "SELECT draft_id,status,telegram_status FROM auto_application_attempts WHERE draft_id IS NOT NULL")}
-        return [{**get_draft(db, row["id"]),
-                 "review_status": reviews.get(row["id"], {}).get("status"),
-                 "telegram_status": reviews.get(row["id"], {}).get("telegram_status")}
-                for row in rows]
+        # Backward-compatible first page for integrations that still expect a list.
+        return application_page_data(1, 100)["items"]
 
     @app.get("/api/applications/{draft_id}")
     def application(draft_id: str):
@@ -1004,11 +1057,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             draft = get_draft(db, draft_id)
             reasons = send_readiness(db, settings, draft)
             review = db.one("SELECT status,review_hash,telegram_status,telegram_error FROM auto_application_attempts WHERE draft_id=?", (draft_id,))
+            latest = db.one("SELECT * FROM submissions WHERE draft_id=? ORDER BY sent_at DESC,id DESC LIMIT 1", (draft_id,))
             return {**draft, "send_ready": not reasons, "send_blockers": reasons,
                     "review_status": review["status"] if review else None,
                     "review_hash": review["review_hash"] if review else None,
                     "telegram_status": review["telegram_status"] if review else None,
-                    "telegram_error": review["telegram_error"] if review else None}
+                    "telegram_error": review["telegram_error"] if review else None,
+                    "latest_submission": submission_record(latest, include_package=True) if latest else None}
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
 
@@ -1079,9 +1134,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 result = await send_application(db, settings, draft_id, payload.package_hash)
             attempt = db.one("SELECT vacancy_id FROM auto_application_attempts WHERE draft_id=?", (draft_id,))
             if attempt:
-                auto_apply_manager._set_status(attempt["vacancy_id"],
-                    "sent" if result["status"] in ("sent_confirmed", "submitted_confirmed") else "needs_review",
-                    result.get("receipt") or result.get("error") or result["status"], draft_id)
+                outcome = result.get("outcome", {})
+                next_status = ("sent" if result["status"] in ("sent_confirmed", "submitted_confirmed")
+                               else "submission_uncertain" if outcome.get("key") == "submission_uncertain"
+                               else "needs_review")
+                auto_apply_manager._set_status(
+                    attempt["vacancy_id"], next_status,
+                    result.get("receipt") or result.get("error") or outcome.get("guidance") or outcome.get("label") or result["status"],
+                    draft_id,
+                )
             return result
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
@@ -1106,8 +1167,52 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except (ValueError, RuntimeError) as error:
             raise HTTPException(422, str(error)) from error
 
+    @app.get("/api/submissions/page")
+    def submissions_page(
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=25, ge=1, le=100),
+        q: str = "",
+    ):
+        query = q.strip().casefold()
+        params: list[Any] = []
+        where = ""
+        if query:
+            where = " WHERE LOWER(v.title || ' ' || v.company) LIKE ?"
+            params.append(f"%{query}%")
+        base = " FROM submissions s JOIN vacancies v ON v.id=s.vacancy_id"
+        total = db.one("SELECT COUNT(*) AS count" + base + where, tuple(params))["count"]
+        pages = max(1, (total + page_size - 1) // page_size)
+        page = min(page, pages)
+        rows = db.all(
+            "SELECT s.*,v.title AS job_title,v.company" + base + where +
+            " ORDER BY s.sent_at DESC,s.id DESC LIMIT ? OFFSET ?",
+            (*params, page_size, (page - 1) * page_size),
+        )
+        return {"items": [submission_record(row) for row in rows], "page": page,
+                "page_size": page_size, "total": total, "pages": pages}
+
+    @app.get("/api/submissions/{submission_id}")
+    def submission_detail(submission_id: str):
+        row = db.one(
+            "SELECT s.*,v.title AS job_title,v.company FROM submissions s "
+            "JOIN vacancies v ON v.id=s.vacancy_id WHERE s.id=?", (submission_id,))
+        if not row:
+            raise HTTPException(404, "Submission not found")
+        return submission_record(row, include_package=True)
+
+    @app.get("/api/submissions/{submission_id}/resume")
+    def submission_resume(submission_id: str):
+        row = db.one("SELECT * FROM submissions WHERE id=?", (submission_id,))
+        if not row:
+            raise HTTPException(404, "Submission not found")
+        path = submission_resume_path(row)
+        if not path:
+            raise HTTPException(404, "Exact submitted resume is not available")
+        return FileResponse(path, media_type="application/pdf", filename=f"submitted-resume-{submission_id[:8]}.pdf")
+
     @app.get("/api/submissions")
     def submissions():
+        # Legacy raw feed retained for compatibility; the product UI uses the paginated normalized history.
         return db.all("SELECT * FROM submissions ORDER BY sent_at DESC LIMIT 100")
 
     return app
