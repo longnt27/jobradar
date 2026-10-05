@@ -164,6 +164,9 @@ def _stabilize(page: Page, active_selector: str) -> None:
     page.wait_for_function("!document.querySelector('.tab.active')?.hasAttribute('aria-busy')", timeout=10_000)
     assert not page._ui_issues["page"], "Browser page errors:\n- " + "\n- ".join(page._ui_issues["page"])
     assert not page._ui_issues["api"], "API request failures:\n- " + "\n- ".join(page._ui_issues["api"])
+    notice = page.locator("#notice")
+    if notice.is_visible() and notice.get_attribute("role") == "alert":
+        raise AssertionError(f"UI loader error: {notice.inner_text()}")
     page.add_style_tag(content="""
       *,*::before,*::after {
         animation: none !important;
