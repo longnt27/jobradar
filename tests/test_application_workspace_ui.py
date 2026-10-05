@@ -36,7 +36,7 @@ def test_application_workspace_filters_reviews_and_confirms_send(tmp_path: Path,
     })
     client.put("/api/profile", json=profile)
 
-    first = _prepare(client, "Example", "Platform Engineer", "mailto:jobs@example.org")
+    first = _prepare(client, "Example", "Platform Engineer", "https://example.org/apply")
     second = _prepare(client, "Other Co", "Research Engineer")
 
     first_form = {
