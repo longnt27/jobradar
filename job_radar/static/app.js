@@ -860,71 +860,275 @@ function applicationActionLabel(destination) {
     || (destination.kind === 'email' ? 'Email' : destination.kind === 'web' ? 'Web form' : 'Manual review');
 }
 
+function applicationActionTarget(destination) {
+  return destination.email || destination.url || 'No verified destination';
+}
+
+function applicationFormFieldLabel(field) {
+  return field.label || field.name || \`Field \${field.index}\`;
+}
+
+function renderApplicationFormField(field, draft) {
+  const key = String(field.index);
+  const label = applicationFormFieldLabel(field);
+  const required = field.required ? ' <span class="required-mark" aria-hidden="true">*</span>' : '';
+  const answer = String(draft.form_data.answers?.[key] || '');
+
+  if (field.type === 'file') {
+    const assignment = draft.form_data.attachments?.[key] || {};
+    const uploaded = assignment.kind === 'uploaded';
+    return \`<label class="application-form-field">\${escapeHtml(label)}\${required}
+      <select data-attachment="\${field.index}" data-draft-field>
+        <option value="" \${!assignment.kind ? 'selected' : ''}>Choose an attachment</option>
+        <option value="resume" \${assignment.kind === 'resume' ? 'selected' : ''}>Generated resume PDF</option>
+        <option value="uploaded" \${uploaded ? 'selected' : ''}>Custom PDF</option>
+        \${!field.required ? \`<option value="none" \${assignment.kind === 'none' ? 'selected' : ''}>No file</option>\` : ''}
+      </select>
+      <span class="application-attachment-upload" data-attachment-upload="\${field.index}" \${uploaded ? '' : 'hidden'}>
+        <input type="file" accept="application/pdf,.pdf" data-attachment-file="\${field.index}" data-draft-field aria-label="Upload PDF for \${escapeHtml(label)}">
+        <span class="hint">\${uploaded && assignment.name ? \`Current custom file: \${escapeHtml(assignment.name)}. Choose another PDF to replace it.\` : 'Choose a PDF smaller than 10 MB.'}</span>
+      </span>
+    </label>\`;
+  }
+
+  const options = Array.isArray(field.options) ? field.options.map((option) => {
+    if (typeof option === 'string') return {value:option, label:option};
+    return {value:String(option.value ?? option.label ?? ''), label:String(option.label ?? option.text ?? option.value ?? '')};
+  }).filter((option) => option.value) : [];
+
+  if (options.length) {
+    const known = options.some((option) => option.value === answer);
+    return \`<label class="application-form-field">\${escapeHtml(label)}\${required}
+      <select data-answer="\${field.index}" data-draft-field \${field.required ? 'required' : ''}>
+        <option value="">Choose an option</option>
+        \${!known && answer ? \`<option value="\${escapeHtml(answer)}" selected>\${escapeHtml(answer)}</option>\` : ''}
+        \${options.map((option) => \`<option value="\${escapeHtml(option.value)}" \${option.value === answer ? 'selected' : ''}>\${escapeHtml(option.label || option.value)}</option>\`).join('')}
+      </select>
+    </label>\`;
+  }
+
+  if (field.type === 'textarea' || answer.length > 120) {
+    return \`<label class="application-form-field">\${escapeHtml(label)}\${required}<textarea data-answer="\${field.index}" data-draft-field rows="3" \${field.required ? 'required' : ''}>\${escapeHtml(answer)}</textarea></label>\`;
+  }
+
+  const inputType = ['email','tel','url','number','date'].includes(field.type) ? field.type : 'text';
+  return \`<label class="application-form-field">\${escapeHtml(label)}\${required}<input type="\${inputType}" data-answer="\${field.index}" data-draft-field value="\${escapeHtml(answer)}" \${field.required ? 'required' : ''}></label>\`;
+}
+
+function applicationAlert(kind, title, items) {
+  if (!items?.length) return '';
+  const role = kind === 'danger' ? 'alert' : 'status';
+  return \`<div class="application-alert application-alert--\${kind}" role="\${role}"><strong>\${escapeHtml(title)}</strong><ul>\${items.map((item) => \`<li>\${escapeHtml(item)}</li>\`).join('')}</ul></div>\`;
+}
+
+function confirmApplicationSend(draft) {
+  const dialog = $('#application-send-confirm');
+  const destination = draft.destination || {};
+  const target = \`\${applicationActionLabel(destination)} · \${applicationActionTarget(destination)}\`;
+  const fields = draft.form_data?.fields?.length || 0;
+  const attachments = Object.keys(draft.form_data?.attachments || {}).length;
+  $('#application-send-confirm-target').textContent = target;
+  $('#application-send-confirm-summary').textContent = \`\${providerLabel(draft.provider_mode || draft.provider)} · \${fields} form field\${fields === 1 ? '' : 's'} reviewed · \${attachments} attachment\${attachments === 1 ? '' : 's'}\`;
+  if (typeof dialog.showModal !== 'function') {
+    return Promise.resolve(window.confirm(\`Approve and send to \${applicationActionTarget(destination)}?\`));
+  }
+  if (dialog.open) dialog.close('cancel');
+  return new Promise((resolve) => {
+    dialog.addEventListener('close', () => resolve(dialog.returnValue === 'confirm'), {once:true});
+    dialog.showModal();
+  });
+}
+
 async function showApplication(id) {
-  if ($('#applications').classList.contains('active') && location.hash !== `#applications/${id}`) history.replaceState({tab:'applications'}, '', `#applications/${id}`);
-  const draft = await api(`/api/applications/${id}`);
-  const resume = draft.resume_data;
-  const message = draft.message_data;
-  const destination = draft.destination;
+  if ($('#applications').classList.contains('active') && location.hash !== \`#applications/\${id}\`) history.replaceState({tab:'applications'}, '', \`#applications/\${id}\`);
+  setApplicationWorkspaceView('drafts');
+  activeApplicationId = id;
+  renderApplicationList();
+
+  const draft = await api(\`/api/applications/\${id}\`);
+  const resume = draft.resume_data || {};
+  const message = draft.message_data || {};
+  const destination = draft.destination || {kind:'manual', action_type:'unknown'};
+  const formData = draft.form_data || {fields:[], answers:{}, attachments:{}};
+  draft.form_data = formData;
   const projects = resume.projects || [];
-  $('#application-detail').innerHTML = `<h2>${escapeHtml(draft.job_title)}</h2><div class="item-meta">${escapeHtml(draft.company)} · ${escapeHtml(draft.provider_mode)}</div>
-    <div class="review-section"><h4>Review status</h4><p>${escapeHtml(draft.review_status === 'awaiting_review' ? 'Waiting for your approval' : draft.review_status === 'needs_review' ? 'Needs changes before sending' : draft.review_status || draft.status)}</p><p class="hint">Telegram: ${escapeHtml(draft.telegram_status || 'Not configured')}${draft.telegram_error ? ` · ${escapeHtml(draft.telegram_error)}` : ''}</p><p class="hint">The Telegram approval button applies only to this saved version of the draft.</p></div>
-    <div class="review-section"><h4>Application action</h4><p><strong>${escapeHtml(applicationActionLabel(destination))}</strong>${destination.url || destination.email ? ` · ${escapeHtml(destination.url || destination.email)}` : ''}</p>${destination.provenance ? `<p class="hint">${escapeHtml(destination.provenance.replace(/_/g, ' '))} · ${escapeHtml(destination.confidence || 'unknown confidence')}</p>` : ''}<label>Channel<select id="draft-destination-kind"><option value="web" ${destination.kind === 'web' ? 'selected' : ''}>Web form</option><option value="email" ${destination.kind === 'email' ? 'selected' : ''}>Email</option><option value="manual" ${!['web','email'].includes(destination.kind) ? 'selected' : ''}>Manual review</option></select></label><label>URL or email address<input id="draft-destination" value="${escapeHtml(destination.url || destination.email || '')}"></label></div>
-    <div class="review-section"><h4>Resume</h4><p><a href="/api/applications/${id}/resume" target="_blank">Preview or download PDF ↗</a></p>
-      <div class="form-grid"><label>Name<input id="draft-name" value="${escapeHtml(resume.name || '')}"></label><label>Email<input id="draft-email" value="${escapeHtml(resume.email || '')}"></label><label>Phone<input id="draft-phone" value="${escapeHtml(resume.phone || '')}"></label><label>Links, one per line<textarea id="draft-links" rows="2">${escapeHtml((resume.links || []).join('\n'))}</textarea></label></div>
-      <label>Professional summary<textarea id="draft-summary" rows="3">${escapeHtml(resume.summary || '')}</textarea></label>
-      <h4>Experience</h4>${(resume.experience || []).map((item, index) => `<div class="review-subsection"><div class="form-grid"><label>Company<input data-experience-company="${index}" value="${escapeHtml(item.company || '')}"></label><label>Role<input data-experience-role="${index}" value="${escapeHtml(item.role || '')}"></label><label>Dates<input data-experience-dates="${index}" value="${escapeHtml(item.dates || '')}"></label></div><label>Bullets, one per line<textarea data-experience-bullets="${index}" rows="4">${escapeHtml((item.bullets || []).join('\n'))}</textarea></label></div>`).join('') || '<p class="hint">No previous positions in this draft.</p>'}
-      <h4>Selected projects</h4>${projects.map((project, index) => `<div class="review-subsection"><div class="form-grid"><label>Title<input data-project-title="${index}" value="${escapeHtml(project.title || '')}"></label><label>Repository URL<input data-project-url="${index}" value="${escapeHtml(project.repository_url || '')}"></label><label>Technologies<input data-project-stack="${index}" value="${escapeHtml((project.tech_stack || []).join(', '))}"></label></div><label>Tailored bullets, one per line<textarea data-project-bullets="${index}" rows="4">${escapeHtml((project.bullets || []).join('\n'))}</textarea></label></div>`).join('') || '<p class="hint">No projects selected for this draft.</p>'}
-      <h4>Education</h4>${(resume.education || []).map((item, index) => { const entry = typeof item === 'string' ? {school:item} : item; return `<div class="form-grid"><label>School<input data-education-school="${index}" value="${escapeHtml(entry.school || '')}"></label><label>Degree<input data-education-degree="${index}" value="${escapeHtml(entry.degree || '')}"></label><label>Dates<input data-education-dates="${index}" value="${escapeHtml(entry.dates || '')}"></label></div>`; }).join('') || '<p class="hint">No education in this draft.</p>'}
-      <label>Achievements, one per line<textarea id="draft-achievements" rows="3">${escapeHtml((resume.achievements || []).join('\n'))}</textarea></label>
-      <label>Skills, one per line<textarea id="draft-skills" rows="3">${escapeHtml((resume.skills || []).join('\n'))}</textarea></label>
-      <label>Skill groups, one per line as “Group: skills”<textarea id="draft-skill-groups" rows="3">${escapeHtml(Object.entries(resume.skill_groups || {}).map(([group, values]) => `${group}: ${Array.isArray(values) ? values.join(', ') : values}`).join('\n'))}</textarea></label>
+  const warnings = draft.warnings || [];
+  const blockers = draft.send_blockers || [];
+  const sent = applicationIsSent(draft);
+  const reviewTone = applicationReviewTone(draft);
+  const canSend = !sent && draft.send_ready && draft.review_status === 'awaiting_review';
+  const canInspect = !sent && destination.kind === 'web';
+  const actionTarget = applicationActionTarget(destination);
+  const detail = $('#application-detail');
+
+  detail.innerHTML = \`<div class="application-review-header">
+      <div><p class="eyebrow">APPLICATION REVIEW</p><h2>\${escapeHtml(draft.job_title)}</h2><p class="item-meta">\${escapeHtml(draft.company)} · \${escapeHtml(providerLabel(draft.provider_mode || draft.provider))}</p></div>
+      <span class="status-badge status-badge--\${reviewTone}">\${escapeHtml(applicationReviewLabel(draft))}</span>
     </div>
-    <div class="review-section"><h4>Application message</h4><label>Subject<input id="draft-subject" value="${escapeHtml(message.subject || '')}"></label><label>Body<textarea id="draft-body" rows="10">${escapeHtml(message.body || '')}</textarea></label></div>
-    <div id="draft-form-fields" class="review-section"><h4>Form answers and attachments</h4>${draft.form_data.action ? `<p class="hint">Form submits to: ${escapeHtml(draft.form_data.action)} (${escapeHtml(draft.form_data.method)})</p>` : ''}${(draft.form_data.fields || []).map((field) => field.type === 'file' ? (() => {
-      const assignment = draft.form_data.attachments?.[String(field.index)] || {};
-      return `<label>${escapeHtml(field.label || field.name || `File ${field.index}`)}${field.required ? ' *' : ''}<select data-attachment="${field.index}"><option value="" ${!assignment.kind ? 'selected' : ''}>Choose a file</option><option value="resume" ${assignment.kind === 'resume' ? 'selected' : ''}>Generated resume PDF</option>${!field.required ? `<option value="none" ${assignment.kind === 'none' ? 'selected' : ''}>No file</option>` : ''}${assignment.kind === 'uploaded' ? `<option value="uploaded" selected>${escapeHtml(assignment.name || 'Uploaded PDF')}</option>` : ''}</select><input type="file" accept="application/pdf,.pdf" data-attachment-file="${field.index}" aria-label="Upload PDF for ${escapeHtml(field.label || field.name || `File ${field.index}`)}"><span class="hint">Select the document to attach to this field.</span></label>`;
-    })() : `<label>${escapeHtml(field.label || field.name || `Field ${field.index}`)}${field.required ? ' *' : ''}<textarea data-answer="${field.index}" rows="2">${escapeHtml(draft.form_data.answers?.[String(field.index)] || '')}</textarea>${field.options?.length ? `<span class="hint">Options: ${field.options.map((option) => escapeHtml(option.value)).join(', ')}</span>` : ''}</label>`).join('') || '<p class="hint">No form fields inspected yet. Inspect the final application URL before sending.</p>'}</div>
-    ${draft.warnings.length ? `<div class="review-section"><h4>Review notes</h4>${draft.warnings.map((warning) => `<p class="hint">${escapeHtml(warning)}</p>`).join('')}</div>` : ''}
-    ${draft.send_blockers?.length ? `<div class="review-section"><h4>Before sending</h4>${draft.send_blockers.map((reason) => `<p class="hint">${escapeHtml(reason)}</p>`).join('')}</div>` : ''}
-    <div class="review-section"><h4>Regenerate draft</h4><label>Custom instructions for regeneration<textarea id="regenerate-prompt" rows="3" placeholder="Example: emphasize production search work and shorten the opening paragraph"></textarea></label><div class="actions"><button id="regenerate-draft" ${draft.provider === 'template' ? 'disabled' : ''}>Regenerate draft</button></div>${draft.provider === 'template' ? '<p class="hint">This draft used the basic template. Create a new draft with an AI provider to regenerate it with instructions.</p>' : ''}</div>
-    <div class="actions"><button id="edit-draft">Edit details</button><button id="save-draft" class="primary">Save changes</button><button id="inspect-draft">Inspect form</button><button id="send-draft" ${draft.send_ready && draft.review_status === 'awaiting_review' ? '' : 'disabled'}>Approve &amp; send</button></div><p class="hint">Package fingerprint: <span class="mono">${escapeHtml(draft.package_hash.slice(0, 16))}</span>. Open the PDF after saving changes.</p><div id="application-outcome" class="hint"></div>`;
-  $('#edit-draft').addEventListener('click', () => { $('#draft-destination').focus(); scrollNodeIntoView($('#draft-destination'), {block:'center'}); });
+    <nav class="application-review-nav" aria-label="Application review sections">
+      <button type="button" data-review-target="application-review-overview" aria-current="true">Overview</button>
+      <button type="button" data-review-target="application-review-resume">Resume</button>
+      <button type="button" data-review-target="application-review-message">Message</button>
+      <button type="button" data-review-target="application-review-form">Form</button>
+      <button type="button" data-review-target="application-review-regenerate">Regenerate</button>
+    </nav>
+
+    <section id="application-review-overview" class="application-review-section">
+      <h3>Overview</h3>
+      \${applicationAlert('danger', 'Sending is blocked', blockers)}
+      \${applicationAlert('warning', 'Review before sending', warnings)}
+      <div class="application-overview-grid">
+        <div class="application-status-card surface-status"><strong>Review state</strong><span>\${escapeHtml(applicationReviewLabel(draft))}</span><small>Telegram: \${escapeHtml(draft.telegram_status || 'Not configured')}\${draft.telegram_error ? \` · \${escapeHtml(draft.telegram_error)}\` : ''}</small></div>
+        <div class="application-status-card surface-status"><strong>Application action</strong><span>\${escapeHtml(applicationActionLabel(destination))}</span><small>\${escapeHtml(actionTarget)}</small></div>
+      </div>
+      <div class="application-destination surface-editable">
+        <div class="section-head"><div><h4>Destination</h4><p class="hint">The detected action comes from the posting. Change it only when you have verified a different destination.</p></div></div>
+        \${destination.provenance ? \`<p class="hint">Detected from \${escapeHtml(destination.provenance.replace(/_/g, ' '))} · \${escapeHtml(destination.confidence || 'unknown confidence')}</p>\` : ''}
+        <div class="form-grid">
+          <label>Channel<select id="draft-destination-kind" data-draft-field><option value="web" \${destination.kind === 'web' ? 'selected' : ''}>Web form</option><option value="email" \${destination.kind === 'email' ? 'selected' : ''}>Email</option><option value="manual" \${!['web','email'].includes(destination.kind) ? 'selected' : ''}>Manual review</option></select></label>
+          <label>URL or email address<input id="draft-destination" data-draft-field value="\${escapeHtml(destination.url || destination.email || '')}"></label>
+        </div>
+      </div>
+      <p class="hint">The Telegram approval button applies only to the currently saved version of this draft.</p>
+    </section>
+
+    <section id="application-review-resume" class="application-review-section">
+      <div class="section-head"><div><h3>Resume</h3><p class="hint">Review the generated PDF and the structured resume data used to build it.</p></div><a href="/api/applications/\${id}/resume" target="_blank" rel="noopener noreferrer">Open PDF ↗</a></div>
+      <div class="application-resume-preview"><iframe src="/api/applications/\${id}/resume#view=FitH" title="Resume PDF preview" loading="lazy"></iframe></div>
+      <div class="form-grid"><label>Name<input id="draft-name" data-draft-field value="\${escapeHtml(resume.name || '')}"></label><label>Email<input id="draft-email" data-draft-field value="\${escapeHtml(resume.email || '')}"></label><label>Phone<input id="draft-phone" data-draft-field value="\${escapeHtml(resume.phone || '')}"></label><label>Links, one per line<textarea id="draft-links" data-draft-field rows="2">\${escapeHtml((resume.links || []).join('\\n'))}</textarea></label></div>
+      <label>Professional summary<textarea id="draft-summary" data-draft-field rows="3">\${escapeHtml(resume.summary || '')}</textarea></label>
+      <h4>Experience</h4>\${(resume.experience || []).map((item, index) => \`<div class="review-subsection surface-editable"><div class="form-grid"><label>Company<input data-experience-company="\${index}" data-draft-field value="\${escapeHtml(item.company || '')}"></label><label>Role<input data-experience-role="\${index}" data-draft-field value="\${escapeHtml(item.role || '')}"></label><label>Dates<input data-experience-dates="\${index}" data-draft-field value="\${escapeHtml(item.dates || '')}"></label></div><label>Bullets, one per line<textarea data-experience-bullets="\${index}" data-draft-field rows="4">\${escapeHtml((item.bullets || []).join('\\n'))}</textarea></label></div>\`).join('') || '<p class="hint">No previous positions in this draft.</p>'}
+      <h4>Selected projects</h4>\${projects.map((project, index) => \`<div class="review-subsection surface-editable"><div class="form-grid"><label>Title<input data-project-title="\${index}" data-draft-field value="\${escapeHtml(project.title || '')}"></label><label>Repository URL<input data-project-url="\${index}" data-draft-field value="\${escapeHtml(project.repository_url || '')}"></label><label>Technologies<input data-project-stack="\${index}" data-draft-field value="\${escapeHtml((project.tech_stack || []).join(', '))}"></label></div><label>Tailored bullets, one per line<textarea data-project-bullets="\${index}" data-draft-field rows="4">\${escapeHtml((project.bullets || []).join('\\n'))}</textarea></label></div>\`).join('') || '<p class="hint">No projects selected for this draft.</p>'}
+      <h4>Education</h4>\${(resume.education || []).map((item, index) => { const entry = typeof item === 'string' ? {school:item} : item; return \`<div class="form-grid review-subsection surface-editable"><label>School<input data-education-school="\${index}" data-draft-field value="\${escapeHtml(entry.school || '')}"></label><label>Degree<input data-education-degree="\${index}" data-draft-field value="\${escapeHtml(entry.degree || '')}"></label><label>Dates<input data-education-dates="\${index}" data-draft-field value="\${escapeHtml(entry.dates || '')}"></label></div>\`; }).join('') || '<p class="hint">No education in this draft.</p>'}
+      <label>Achievements, one per line<textarea id="draft-achievements" data-draft-field rows="3">\${escapeHtml((resume.achievements || []).join('\\n'))}</textarea></label>
+      <label>Skills, one per line<textarea id="draft-skills" data-draft-field rows="3">\${escapeHtml((resume.skills || []).join('\\n'))}</textarea></label>
+      <label>Skill groups, one per line as “Group: skills”<textarea id="draft-skill-groups" data-draft-field rows="3">\${escapeHtml(Object.entries(resume.skill_groups || {}).map(([group, values]) => \`\${group}: \${Array.isArray(values) ? values.join(', ') : values}\`).join('\\n'))}</textarea></label>
+    </section>
+
+    <section id="application-review-message" class="application-review-section">
+      <h3>Application message</h3>
+      <label>Subject<input id="draft-subject" data-draft-field value="\${escapeHtml(message.subject || '')}"></label>
+      <label>Body<textarea id="draft-body" data-draft-field rows="10">\${escapeHtml(message.body || '')}</textarea></label>
+    </section>
+
+    <section id="application-review-form" class="application-review-section">
+      <div class="section-head"><div><h3>Form answers and attachments</h3><p class="hint">\${formData.action ? \`Form submits to \${escapeHtml(formData.action)} (\${escapeHtml(formData.method || 'GET')})\` : 'Inspect a verified web form to load its fields here.'}</p></div></div>
+      <div class="application-form-fields">\${(formData.fields || []).map((field) => renderApplicationFormField(field, draft)).join('') || '<p class="empty">No form fields inspected yet.</p>'}</div>
+    </section>
+
+    <section id="application-review-regenerate" class="application-review-section">
+      <h3>Regenerate draft</h3>
+      <label>Custom instructions for regeneration<textarea id="regenerate-prompt" rows="3" placeholder="Example: emphasize production search work and shorten the opening paragraph"></textarea></label>
+      <div class="actions"><button id="regenerate-draft" class="secondary" \${draft.provider === 'template' ? 'disabled' : ''}>Regenerate draft</button></div>
+      \${draft.provider === 'template' ? '<p class="hint">This draft used the basic template. Create a new draft with an AI provider to regenerate it with instructions.</p>' : ''}
+    </section>
+
+    <details class="application-debug"><summary>Technical details</summary><p class="hint">Package fingerprint: <span class="mono">\${escapeHtml(draft.package_hash.slice(0, 16))}</span></p></details>
+
+    <div class="application-sticky-actions">
+      <div><span id="application-dirty-state" class="status-badge status-badge--neutral">Saved</span><span id="application-outcome" class="hint" role="status" aria-live="polite"></span></div>
+      <div class="actions">
+        <button id="save-draft" class="secondary" disabled>Save changes</button>
+        <button id="inspect-draft" class="secondary" \${canInspect ? '' : 'disabled'}>Inspect form</button>
+        <button id="send-draft" class="primary" \${canSend ? '' : 'disabled'}>Approve &amp; send</button>
+      </div>
+    </div>\`;
+
+  detail.querySelectorAll('[data-review-target]').forEach((button) => button.addEventListener('click', () => {
+    detail.querySelectorAll('[data-review-target]').forEach((item) => item.removeAttribute('aria-current'));
+    button.setAttribute('aria-current', 'true');
+    scrollNodeIntoView(detail.querySelector(\`#\${button.dataset.reviewTarget}\`), {block:'start'});
+  }));
+
+  const dirtyState = $('#application-dirty-state');
+  const saveButton = $('#save-draft');
+  const sendButton = $('#send-draft');
+  const inspectButton = $('#inspect-draft');
+  const markDirty = (field) => {
+    if (sent) return;
+    dirtyState.textContent = 'Unsaved changes';
+    dirtyState.className = 'status-badge status-badge--warning';
+    saveButton.disabled = false;
+    sendButton.disabled = true;
+    $('#application-outcome').textContent = 'Save your changes before approving this application.';
+    field.closest('label')?.classList.add('is-dirty');
+    if (field.id === 'draft-destination-kind') inspectButton.disabled = field.value !== 'web';
+  };
+
+  detail.querySelectorAll('[data-attachment]').forEach((select) => {
+    const upload = detail.querySelector(\`[data-attachment-upload="\${select.dataset.attachment}"]\`);
+    const syncUpload = () => { if (upload) upload.hidden = select.value !== 'uploaded'; };
+    syncUpload();
+    select.addEventListener('change', syncUpload);
+  });
+
+  detail.querySelectorAll('[data-draft-field]').forEach((field) => {
+    for (const eventName of ['input','change']) field.addEventListener(eventName, () => markDirty(field));
+  });
+
   $('#regenerate-draft').addEventListener('click', async () => {
     const prompt = $('#regenerate-prompt').value.trim();
     if (!prompt) { notice('Enter custom instructions to regenerate the draft.', true); return; }
     const button = $('#regenerate-draft');
     beginPending(button, 'Regenerating…');
-    try { await api(`/api/applications/${id}/regenerate`, {method:'POST', body:JSON.stringify({prompt})}); await showApplication(id); await loadApplications(id); notice('New draft prepared for review.'); }
-    catch(error) { endPending(button); notice(error.message, true); }
-  });
-  $('#application-detail').querySelectorAll('input,select,textarea').forEach((field) => field.addEventListener('input', () => { $('#send-draft').disabled = true; $('#application-outcome').textContent = 'Save and review your changes before sending.'; }));
-  $('#application-detail').querySelectorAll('[data-attachment-file]').forEach((input) => input.addEventListener('change', () => {
-    if (input.files.length) {
-      const select = document.querySelector(`[data-attachment="${input.dataset.attachmentFile}"]`);
-      if (!select.querySelector('[value="uploaded"]')) select.add(new Option(input.files[0].name, 'uploaded'));
-      select.value = 'uploaded';
+    try {
+      await api(\`/api/applications/\${id}/regenerate\`, {method:'POST', body:JSON.stringify({prompt})});
+      await loadApplications(id);
+      notice('New draft prepared for review.');
+    } catch(error) {
+      notice(error.message, true);
+    } finally {
+      if (button.isConnected) endPending(button);
     }
-  }));
+  });
+
   $('#save-draft').addEventListener('click', async (event) => {
     const button = beginPending(event.currentTarget, 'Saving…');
-    try { await saveApplication(id, draft); await showApplication(id); }
-    catch(error) { notice(error.message, true); }
-    finally { endPending(button); }
+    try {
+      await saveApplication(id, draft);
+      await loadApplications(id);
+    } catch(error) {
+      notice(error.message, true);
+    } finally {
+      if (button.isConnected) endPending(button);
+    }
   });
+
   $('#inspect-draft').addEventListener('click', async (event) => {
     const button = beginPending(event.currentTarget, 'Inspecting…');
-    try { await saveApplication(id, draft); await api(`/api/applications/${id}/inspect`, {method:'POST'}); await showApplication(id); notice('Form fields inspected'); }
-    catch(error) { notice(error.message, true); }
-    finally { endPending(button); }
+    try {
+      if (!saveButton.disabled) await saveApplication(id, draft);
+      await api(\`/api/applications/\${id}/inspect\`, {method:'POST'});
+      await loadApplications(id);
+      notice('Application form inspected.');
+    } catch(error) {
+      notice(error.message, true);
+    } finally {
+      if (button.isConnected) endPending(button);
+    }
   });
-  $('#send-draft').addEventListener('click', async () => {
-    const button = $('#send-draft');
-    beginPending(button, 'Sending…');
-    try { const result = await api(`/api/applications/${id}/approve`, {method:'POST', body:JSON.stringify({package_hash:draft.package_hash})}); $('#application-outcome').textContent = `${result.status}: ${result.receipt || result.error || ''}`; await loadApplications(id); notice(`Application outcome: ${result.status}`); }
-    catch(error) { notice(error.message, true); }
-    finally { endPending(button); }
+
+  $('#send-draft').addEventListener('click', async (event) => {
+    const approved = await confirmApplicationSend(draft);
+    if (!approved) return;
+    const button = beginPending(event.currentTarget, 'Sending…');
+    try {
+      const result = await api(\`/api/applications/\${id}/approve\`, {method:'POST', body:JSON.stringify({package_hash:draft.package_hash})});
+      await loadApplications(id);
+      $('#application-outcome').textContent = \`\${result.status}: \${result.receipt || result.error || ''}\`;
+      notice(\`Application outcome: \${result.status}\`);
+    } catch(error) {
+      notice(error.message, true);
+    } finally {
+      if (button.isConnected) endPending(button);
+    }
   });
+
+  if (sent) {
+    detail.querySelectorAll('[data-draft-field],#regenerate-draft,#save-draft,#inspect-draft,#send-draft').forEach((control) => { control.disabled = true; });
+    dirtyState.textContent = 'Sent';
+    dirtyState.className = 'status-badge status-badge--success';
+  }
 }
 
 async function saveApplication(id, draft) {
