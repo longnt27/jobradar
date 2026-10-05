@@ -25,6 +25,10 @@ def test_profile_stack_exposes_structured_editors_and_settings_boundary(tmp_path
     assert "window.confirm" in script
     assert "compositionstart" in script and "compositionend" in script
     assert "Include in resumes" in script and "Delete project" in script
+    assert 'aria-pressed="${card.id === selectedProjectId' in script
+    assert 'role="region" aria-label="Project details" tabindex="-1"' in html
+    assert "$('#project-editor').focus({preventScroll:true})" in script
+    assert "Open repository for" in script
     assert ".project-results-list{max-height:none;overflow:visible" in css
 
 
