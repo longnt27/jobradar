@@ -171,6 +171,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings.ensure_dirs()
     db = Database(settings.database_path)
     seed(db)
+    if not db.get_setting("search_intent", {}):
+        legacy_auto_apply = db.get_setting("auto_apply", {})
+        db.set_setting("search_intent", normalize_search_intent({
+            "strong_match_threshold": legacy_auto_apply.get("threshold", 80),
+        }))
     clean_saved_analysis(db)
     scan_manager = ScanManager(db, settings)
     auto_apply_manager = AutoApplyManager(db, settings, scan_manager.browser_lock)
