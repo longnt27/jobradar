@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import shutil
 import subprocess
 
@@ -25,7 +26,10 @@ class MatchManager:
         self.task: asyncio.Task | None = None
         self.tasks: list[asyncio.Task] = []
         self.pull_task: asyncio.Task | None = None
+        self.pull_process: subprocess.Popen[str] | None = None
         self.pull_state = "idle"
+        self.pull_progress = 0
+        self.pull_detail = ""
         self.pull_error: str | None = None
         self.service_error: str | None = None
         self.wake_event = asyncio.Event()
@@ -37,7 +41,8 @@ class MatchManager:
         return {"model": self.db.get_setting("matching_model", ""), "recommended": RECOMMENDED_MODEL,
                 "pending": counts.get("pending", 0) + counts.get("running", 0),
                 "completed": counts.get("done", 0), "failed": counts.get("failed", 0),
-                "download_state": self.pull_state, "download_error": self.pull_error,
+                "download_state": self.pull_state, "download_progress": self.pull_progress,
+                "download_detail": self.pull_detail, "download_error": self.pull_error,
                 "service_error": self.service_error}
 
     async def start(self) -> None:
@@ -125,26 +130,64 @@ class MatchManager:
         if not shutil.which("ollama"):
             raise ValueError("Install Ollama before downloading a local model")
         self.pull_state = "downloading"
+        self.pull_progress = 0
+        self.pull_detail = "Starting download"
         self.pull_error = None
         self.pull_task = asyncio.create_task(self._pull())
         return self.status()
 
+    def cancel_download(self) -> dict:
+        if self.pull_state != "downloading":
+            return self.status()
+        process = self.pull_process
+        if process and process.poll() is None:
+            process.terminate()
+        if self.pull_task and not self.pull_task.done():
+            self.pull_task.cancel()
+        self.pull_state = "cancelled"
+        self.pull_detail = "Download cancelled"
+        return self.status()
+
+    def _pull_blocking(self) -> None:
+        process = subprocess.Popen(
+            ["ollama", "pull", RECOMMENDED_MODEL],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            bufsize=1,
+        )
+        self.pull_process = process
+        try:
+            assert process.stdout is not None
+            for raw_line in process.stdout:
+                line = raw_line.strip()
+                if line:
+                    self.pull_detail = line[-180:]
+                    match = re.search(r"(\\d{1,3})%", line)
+                    if match:
+                        self.pull_progress = max(0, min(100, int(match.group(1))))
+            returncode = process.wait(timeout=20)
+            if returncode:
+                raise RuntimeError("Ollama could not download the model. Check its connection and try again.")
+        finally:
+            self.pull_process = None
+
     async def _pull(self) -> None:
         try:
-            result = await asyncio.to_thread(
-                subprocess.run, ["ollama", "pull", RECOMMENDED_MODEL],
-                capture_output=True, text=True, timeout=1200, check=False,
-            )
-            if result.returncode:
-                raise RuntimeError("Ollama could not download the model. Check its connection and try again.")
+            await asyncio.to_thread(self._pull_blocking)
             await asyncio.to_thread(self.select_model, RECOMMENDED_MODEL)
+            self.pull_progress = 100
+            self.pull_detail = "Download complete"
             self.pull_state = "ready"
         except asyncio.CancelledError:
-            self.pull_state = "idle"
+            process = self.pull_process
+            if process and process.poll() is None:
+                process.terminate()
+            self.pull_state = "cancelled"
+            self.pull_detail = "Download cancelled"
             raise
         except Exception as error:
             self.pull_state = "failed"
             self.pull_error = str(error)[:240]
+            self.pull_detail = "Download failed"
 
     async def _loop(self) -> None:
         while True:

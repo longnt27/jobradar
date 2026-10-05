@@ -31,6 +31,7 @@ let projectProviderReady = false;
 let applicationDrafts = [];
 let activeApplicationId = null;
 let applicationWorkspaceView = 'drafts';
+let editingPositionId = null;
 
 function formatDescription(value) {
   const blocks = String(value ?? '').replace(/\r\n/g, '\n').split(/\n{2,}/).map((part) => part.trim()).filter(Boolean);
@@ -568,6 +569,37 @@ async function loadEmployers() {
   }));
 }
 
+const PROVIDER_LABELS = {
+  codex:'Codex CLI',
+  codex_local:'Codex OSS + Ollama',
+  agy:'Antigravity CLI',
+  claude:'Claude Code CLI',
+};
+
+function providerLabel(provider) {
+  return PROVIDER_LABELS[provider] || provider || 'Not selected';
+}
+
+function closeSetupPanels(except = null) {
+  for (const id of ['provider-panel','social-sign-in-panel','telegram-panel','smtp-panel']) {
+    const panel = document.getElementById(id);
+    if (panel) panel.open = id === except;
+  }
+}
+
+function renderProviderAvailability(availability) {
+  const reasons = {
+    codex:'Install and sign in to Codex CLI.',
+    codex_local:'Requires both Codex CLI and Ollama on this Mac.',
+    agy:'Install and sign in to Antigravity CLI.',
+    claude:'Install and sign in to Claude Code CLI.',
+  };
+  const missing = Object.entries(availability).filter(([, ready]) => !ready);
+  $('#provider-availability').innerHTML = missing.length
+    ? `<p class="hint">Unavailable options</p><ul>${missing.map(([key]) => `<li><strong>${escapeHtml(providerLabel(key))}</strong> · ${escapeHtml(reasons[key])}</li>`).join('')}</ul>`
+    : '<p class="hint">All supported drafting providers are available.</p>';
+}
+
 async function loadSettings() {
   const [profile, setup] = await Promise.all([api('/api/profile'), loadSetup()]);
   await loadMatchingModels();
@@ -576,13 +608,13 @@ async function loadSettings() {
   const providerForm = $('#provider-form');
   providerForm.querySelectorAll('option[value]').forEach((option) => { if (option.value) option.disabled = !availability[option.value]; });
   providerForm.elements.provider.value = profile.drafting_provider || '';
+  renderProviderAvailability(availability);
   const modelCount = Number(Boolean(profile.drafting_provider)) + Number(Boolean(setup.matching.model));
   setStepStatus('#provider-status', modelCount === 2 ? 'Both configured' : modelCount ? '1 of 2 configured' : 'Choose models', modelCount === 2 ? '' : 'warning');
-  setStepStatus('#drafting-status', profile.drafting_provider ? `Using ${profile.drafting_provider}` : 'Choose a provider', profile.drafting_provider ? '' : 'warning');
-  $('#provider-panel').open = modelCount < 2;
+  setStepStatus('#drafting-status', profile.drafting_provider ? `Using ${providerLabel(profile.drafting_provider)}` : 'Choose a provider', profile.drafting_provider ? '' : 'warning');
   const hasResume = Boolean(profile.name && profile.email);
-  $('#social-sign-in-panel').open = Boolean(profile.drafting_provider && hasResume && (setup.browser.sites.length || setup.browser.connected_sites.length < 2));
-  $('#telegram-panel').open = Boolean(hasResume && setup.matching.model && !setup.telegram_configured);
+  const needsSocial = Boolean(profile.drafting_provider && hasResume && (setup.browser.sites.length || setup.browser.connected_sites.length < 2));
+  closeSetupPanels(modelCount < 2 ? 'provider-panel' : needsSocial ? 'social-sign-in-panel' : null);
   return setup;
 }
 
@@ -594,6 +626,10 @@ async function loadProfile() {
   $('#resume-panel-label').textContent = hasResume ? 'Your resume details' : 'Import your resume';
   setStepStatus('#resume-status', hasResume ? 'Details ready' : 'Needs details', hasResume ? '' : 'warning');
   $('#resume-panel').open = !hasResume;
+  $('#resume-review-actions').hidden = !hasResume;
+  $('#resume-panel-help').textContent = hasResume
+    ? 'Review the structured details below, or import a newer resume to replace them.'
+    : 'Upload a text-based PDF to seed your structured profile. You can review every extracted field afterward.';
   $('#pdf-resume-form button[type="submit"]').disabled = !profile.drafting_provider || !availability[profile.drafting_provider];
   const projectCount = cards.filter((card) => card.kind === 'project' && card.approved).length;
   $('#profile-summary').textContent = hasResume
@@ -605,6 +641,37 @@ async function loadProfile() {
   $('#project-count').textContent = `${projectCount} selected project${projectCount === 1 ? '' : 's'}`;
 }
 
+function removeRepeatableRow(button) {
+  button.closest('.repeatable-row')?.remove();
+}
+
+function skillRow(value = '') {
+  return `<div class="repeatable-row repeatable-row--simple"><input data-skill value="${escapeHtml(value)}" placeholder="Python"><button type="button" class="text-button danger" data-remove-row aria-label="Remove skill">Remove</button></div>`;
+}
+
+function groupRow(label = '', value = '') {
+  return `<div class="repeatable-row repeatable-row--group"><input data-skill-group-label value="${escapeHtml(label)}" placeholder="Category, e.g. Programming"><input data-skill-group-values value="${escapeHtml(Array.isArray(value) ? value.join(', ') : value)}" placeholder="Python, C++"><button type="button" class="text-button danger" data-remove-row aria-label="Remove skill category">Remove</button></div>`;
+}
+
+function educationRow(item = {}) {
+  const value = typeof item === 'string' ? {school:item} : item;
+  return `<div class="repeatable-row repeatable-row--education"><input data-education-school value="${escapeHtml(value.school || '')}" placeholder="School"><input data-education-degree value="${escapeHtml(value.degree || '')}" placeholder="Degree"><input data-education-dates value="${escapeHtml(value.dates || '')}" placeholder="Dates"><button type="button" class="text-button danger" data-remove-row aria-label="Remove education">Remove</button></div>`;
+}
+
+function simpleRow(attribute, value = '', placeholder = '') {
+  return `<div class="repeatable-row repeatable-row--simple"><input ${attribute} value="${escapeHtml(value)}" placeholder="${escapeHtml(placeholder)}"><button type="button" class="text-button danger" data-remove-row>Remove</button></div>`;
+}
+
+function bindRepeatableEditor(target) {
+  target.querySelectorAll('[data-remove-row]').forEach((button) => button.addEventListener('click', () => removeRepeatableRow(button)));
+}
+
+function appendRepeatable(target, html) {
+  target.insertAdjacentHTML('beforeend', html);
+  bindRepeatableEditor(target);
+  target.querySelector('.repeatable-row:last-child input')?.focus();
+}
+
 async function loadPersonalDetails() {
   const form = $('#profile-form');
   const loading = $('#personal-loading');
@@ -614,11 +681,12 @@ async function loadPersonalDetails() {
   try {
     const profile = await api('/api/profile');
     for (const key of ['name','given_name','family_name','email','phone','location','summary','salary_expectation','work_authorization','notice_period','relocation']) form.elements[key].value = profile[key] || '';
-    form.elements.skills.value = (profile.skills || []).join('\n');
-    form.elements.links.value = (profile.links || []).join('\n');
-    form.elements.education.value = (profile.education || []).map((item) => typeof item === 'string' ? item : [item.school || '', item.degree || '', item.dates || ''].join(' | ')).join('\n');
-    form.elements.achievements.value = (profile.achievements || []).join('\n');
-    form.elements.skill_groups.value = Object.entries(profile.skill_groups || {}).map(([label, value]) => `${label}: ${Array.isArray(value) ? value.join(', ') : value}`).join('\n');
+    $('#skills-editor').innerHTML = (profile.skills || []).map(skillRow).join('');
+    $('#skill-groups-editor').innerHTML = Object.entries(profile.skill_groups || {}).map(([label, value]) => groupRow(label, value)).join('');
+    $('#education-editor').innerHTML = (profile.education || []).map(educationRow).join('');
+    $('#achievements-editor').innerHTML = (profile.achievements || []).map((value) => simpleRow('data-achievement', value, 'Achievement')).join('');
+    $('#links-editor').innerHTML = (profile.links || []).map((value) => simpleRow('data-profile-link type="url"', value, 'https://...')).join('');
+    for (const target of [$('#skills-editor'), $('#skill-groups-editor'), $('#education-editor'), $('#achievements-editor'), $('#links-editor')]) bindRepeatableEditor(target);
     form.hidden = false;
     loading.hidden = true;
   } catch (error) {
@@ -641,13 +709,22 @@ async function loadMatchingModels() {
   saveButton.disabled = !select.value || select.value === saved;
   saveButton.textContent = select.value && select.value === saved ? 'Selected' : 'Use model';
   const state = data.matching.download_state;
-  $('#matching-download').hidden = data.models.some((model) => model.name === data.matching.recommended) && state !== 'downloading';
-  $('#matching-download').disabled = state === 'downloading';
-  $('#matching-download').textContent = state === 'downloading' ? 'Downloading model…' : `Download ${data.matching.recommended} (about 2 GB)`;
+  const downloading = state === 'downloading';
+  const installed = data.models.some((model) => model.name === data.matching.recommended);
+  $('#matching-download').hidden = installed && !downloading;
+  $('#matching-download').disabled = downloading;
+  $('#matching-download').textContent = downloading ? 'Downloading model…' : state === 'failed' || state === 'cancelled' ? 'Retry model download' : `Download ${data.matching.recommended} (about 2 GB)`;
+  $('#matching-download-cancel').hidden = !downloading;
+  $('#matching-download-progress').hidden = !downloading;
+  $('#matching-download-meter').value = Number(data.matching.download_progress || 0);
+  $('#matching-download-label').textContent = downloading
+    ? `${Number(data.matching.download_progress || 0)}% · ${data.matching.download_detail || 'Downloading about 2 GB'}`
+    : '';
   $('#matching-model-detail').textContent = data.matching.download_error || data.matching.service_error || data.error ||
-    (state === 'downloading' ? 'Downloading in the background. Job Radar will select it when ready.' :
+    (state === 'cancelled' ? 'Download cancelled. You can retry whenever you are ready.' :
+     state === 'ready' ? 'Recommended model downloaded and selected.' :
      saved ? '' : 'Choose an installed model to analyze jobs locally.');
-  if (state === 'downloading' && $('#settings').classList.contains('active')) window.matchingPoll = setTimeout(() => loadMatchingModels().then(loadSetup).catch((error) => notice(error.message, true)), 5000);
+  if (downloading && $('#settings').classList.contains('active')) window.matchingPoll = setTimeout(() => loadMatchingModels().then(loadSetup).catch((error) => notice(error.message, true)), 1000);
   return data;
 }
 
@@ -695,20 +772,65 @@ $('#matching-retry-all').addEventListener('click', async (event) => {
   } catch (error) { button.disabled = false; notice(error.message, true); }
 });
 
+async function movePosition(positionId, delta) {
+  const profile = await api('/api/profile');
+  const positions = profile.experience || [];
+  const index = positions.findIndex((item) => item.id === positionId);
+  const next = index + delta;
+  if (index < 0 || next < 0 || next >= positions.length) return;
+  [positions[index], positions[next]] = [positions[next], positions[index]];
+  profile.experience = positions;
+  await api('/api/profile', {method:'PUT', body:JSON.stringify(profile)});
+  await loadPositions();
+  notice('Work history order updated');
+}
+
 async function loadPositions() {
   const positions = await api('/api/positions');
-  $('#position-list').innerHTML = positions.length ? positions.map((item) => `<div class="item surface-editable" data-position="${item.id}">
-    <div class="form-grid"><label>Company<input data-field="company" value="${escapeHtml(item.company)}"></label><label>Role<input data-field="role" value="${escapeHtml(item.role)}"></label><label class="full">Dates<input data-field="dates" value="${escapeHtml(item.dates)}"></label><label class="full">Work and outcomes<textarea data-field="bullets" rows="4">${escapeHtml((item.bullets || []).join('\n'))}</textarea></label></div>
-    <div class="actions"><button data-save-position="${item.id}">Save position</button><button data-delete-position="${item.id}" class="danger">Remove</button></div></div>`).join('') : '<div class="empty">No positions yet. Add your previous jobs above.</div>';
+  if (!positions.some((item) => item.id === editingPositionId)) editingPositionId = null;
+  $('#position-list').innerHTML = positions.length ? positions.map((item, index) => {
+    const editing = item.id === editingPositionId;
+    const preview = (item.bullets || []).slice(0, 2);
+    return `<div class="item position-card ${editing ? 'is-editing' : ''}" data-position="${item.id}">
+      <div class="position-card-head"><div><strong>${escapeHtml(item.role)}</strong><span>${escapeHtml(item.company)} · ${escapeHtml(item.dates)}</span></div>
+        <div class="position-order" aria-label="Reorder ${escapeHtml(item.role)}"><button type="button" class="text-button" data-move-position="-1" ${index === 0 ? 'disabled' : ''} aria-label="Move up">↑</button><button type="button" class="text-button" data-move-position="1" ${index === positions.length - 1 ? 'disabled' : ''} aria-label="Move down">↓</button></div></div>
+      ${preview.length ? `<ul class="position-preview">${preview.map((bullet) => `<li>${escapeHtml(bullet)}</li>`).join('')}</ul>` : '<p class="hint">No outcome bullets yet.</p>'}
+      ${editing ? `<div class="position-editor form-grid"><label>Company<input data-field="company" value="${escapeHtml(item.company)}"></label><label>Role<input data-field="role" value="${escapeHtml(item.role)}"></label><label class="full">Dates<input data-field="dates" value="${escapeHtml(item.dates)}"></label><label class="full">Work and outcomes<textarea data-field="bullets" rows="5">${escapeHtml((item.bullets || []).join('\n'))}</textarea></label></div>` : ''}
+      <div class="actions">${editing ? `<button data-save-position="${item.id}" class="primary">Save changes</button><button data-cancel-position="${item.id}" class="secondary">Cancel</button>` : `<button data-edit-position="${item.id}" class="secondary">Edit</button>`}<button data-delete-position="${item.id}" class="secondary danger">Remove</button></div>
+    </div>`;
+  }).join('') : '<div class="empty">No positions yet. Add your previous jobs above.</div>';
+
+  document.querySelectorAll('[data-edit-position]').forEach((button) => button.addEventListener('click', async () => {
+    editingPositionId = button.dataset.editPosition;
+    await loadPositions();
+    document.querySelector(`[data-position="${editingPositionId}"] input`)?.focus();
+  }));
+  document.querySelectorAll('[data-cancel-position]').forEach((button) => button.addEventListener('click', async () => {
+    editingPositionId = null;
+    await loadPositions();
+  }));
   document.querySelectorAll('[data-save-position]').forEach((button) => button.addEventListener('click', async () => {
     const row = button.closest('[data-position]');
     const field = (name) => row.querySelector(`[data-field="${name}"]`).value.trim();
-    try { await api(`/api/positions/${button.dataset.savePosition}`, {method:'PUT', body:JSON.stringify({company:field('company'),role:field('role'),dates:field('dates'),bullets:field('bullets').split('\n').map((x) => x.trim()).filter(Boolean)})}); notice('Position saved'); await loadPositions(); }
-    catch(error) { notice(error.message, true); }
+    try {
+      await api(`/api/positions/${button.dataset.savePosition}`, {method:'PUT', body:JSON.stringify({company:field('company'),role:field('role'),dates:field('dates'),bullets:field('bullets').split('\n').map((x) => x.trim()).filter(Boolean)})});
+      editingPositionId = null;
+      notice('Position saved');
+      await loadPositions();
+    } catch(error) { notice(error.message, true); }
+  }));
+  document.querySelectorAll('[data-move-position]').forEach((button) => button.addEventListener('click', () => {
+    movePosition(button.closest('[data-position]').dataset.position, Number(button.dataset.movePosition)).catch((error) => notice(error.message, true));
   }));
   document.querySelectorAll('[data-delete-position]').forEach((button) => button.addEventListener('click', async () => {
-    try { await api(`/api/positions/${button.dataset.deletePosition}`, {method:'DELETE'}); await loadPositions(); notice('Position removed'); }
-    catch(error) { notice(error.message, true); }
+    const row = positions.find((item) => item.id === button.dataset.deletePosition);
+    if (!window.confirm(`Remove ${row?.role || 'this position'} at ${row?.company || 'this company'}? This cannot be undone.`)) return;
+    try {
+      await api(`/api/positions/${button.dataset.deletePosition}`, {method:'DELETE'});
+      if (editingPositionId === button.dataset.deletePosition) editingPositionId = null;
+      await loadPositions();
+      notice('Position removed');
+    } catch(error) { notice(error.message, true); }
   }));
 }
 
@@ -1286,26 +1408,8 @@ async function saveApplication(id, draft) {
   await api(`/api/applications/${id}`, {method:'PATCH', body:JSON.stringify(payload)});
   notice('Application saved');
 }
-function renderRepositoryResults(filter = '') {
-  const target = $('#github-repos');
-  if (!discoveredRepos.length) return;
-  const query = filter.trim().toLowerCase();
-  const visible = discoveredRepos.filter((repo) => `${repo.name} ${repo.description || ''} ${repo.language || ''}`.toLowerCase().includes(query));
-  target.innerHTML = `<div class="project-results-head"><strong>Repositories</strong><span class="hint">${visible.length} of ${discoveredRepos.length}</span></div>
-    <input id="repo-filter" type="search" aria-label="Filter repositories" placeholder="Filter by name or language" value="${escapeHtml(filter)}">
-    <div class="project-results-list stack">${visible.length ? visible.map((repo) => {
-      const saved = projectCards.find((card) => card.repository_url && normalizeRepoUrl(card.repository_url) === normalizeRepoUrl(repo.url));
-      return `<div class="project-repo-row"><div><strong>${escapeHtml(repo.name)}</strong>${repo.fork ? ' <span class="pill muted">Fork</span>' : ''}
-        <p class="hint">${escapeHtml(repo.description || 'No description')}${repo.language ? ` · ${escapeHtml(repo.language)}` : ''}</p></div>
-        <div class="actions"><button data-add-repo="${escapeHtml(repo.url)}" ${saved ? '' : !projectProviderReady ? 'disabled' : ''}>${saved ? 'Review project' : 'Add project'}</button><a href="${escapeHtml(repo.url)}" target="_blank" rel="noopener noreferrer">Open ↗</a></div></div>`;
-    }).join('') : '<div class="empty">No repositories match that filter.</div>'}</div>`;
-  $('#repo-filter').addEventListener('input', (event) => {
-    const caret = event.target.selectionStart;
-    renderRepositoryResults(event.target.value);
-    $('#repo-filter').focus();
-    $('#repo-filter').setSelectionRange(caret, caret);
-  });
-  target.querySelectorAll('[data-add-repo]').forEach((button) => button.addEventListener('click', async () => {
+function bindRepositoryButtons(container) {
+  container.querySelectorAll('[data-add-repo]').forEach((button) => button.addEventListener('click', async () => {
     const saved = projectCards.find((card) => card.repository_url && normalizeRepoUrl(card.repository_url) === normalizeRepoUrl(button.dataset.addRepo));
     if (saved) {
       selectedProjectId = saved.id;
@@ -1315,6 +1419,31 @@ function renderRepositoryResults(filter = '') {
     }
     await inspectSelectedRepository(button.dataset.addRepo, button);
   }));
+}
+
+function renderRepositoryResults(filter = null) {
+  const target = $('#github-repos');
+  if (!discoveredRepos.length) return;
+  if (!target.querySelector('#repo-filter')) {
+    target.innerHTML = '<div class="project-results-head"><strong>Repositories</strong><span id="repo-result-count" class="hint"></span></div><input id="repo-filter" type="search" aria-label="Filter repositories" placeholder="Filter by name or language"><div class="project-results-list stack"></div>';
+    const input = $('#repo-filter');
+    input.addEventListener('compositionstart', () => { input.dataset.composing = 'true'; });
+    input.addEventListener('compositionend', () => { delete input.dataset.composing; renderRepositoryResults(input.value); });
+    input.addEventListener('input', () => { if (input.dataset.composing !== 'true') renderRepositoryResults(input.value); });
+  }
+  const input = $('#repo-filter');
+  if (filter !== null && document.activeElement !== input) input.value = filter;
+  const query = (filter === null ? input.value : filter).trim().toLowerCase();
+  const visible = discoveredRepos.filter((repo) => `${repo.name} ${repo.description || ''} ${repo.language || ''}`.toLowerCase().includes(query));
+  $('#repo-result-count').textContent = `${visible.length} of ${discoveredRepos.length}`;
+  const list = target.querySelector('.project-results-list');
+  list.innerHTML = visible.length ? visible.map((repo) => {
+    const saved = projectCards.find((card) => card.repository_url && normalizeRepoUrl(card.repository_url) === normalizeRepoUrl(repo.url));
+    return `<div class="project-repo-row"><div><strong>${escapeHtml(repo.name)}</strong>${repo.fork ? ' <span class="pill muted">Fork</span>' : ''}
+      <p class="hint">${escapeHtml(repo.description || 'No description')}${repo.language ? ` · ${escapeHtml(repo.language)}` : ''}</p></div>
+      <div class="actions"><button data-add-repo="${escapeHtml(repo.url)}" ${saved ? '' : !projectProviderReady ? 'disabled' : ''}>${saved ? 'Review project' : 'Add project'}</button><a href="${escapeHtml(repo.url)}" target="_blank" rel="noopener noreferrer">Open ↗</a></div></div>`;
+  }).join('') : '<div class="empty">No repositories match that filter.</div>';
+  bindRepositoryButtons(list);
 }
 
 function normalizeRepoUrl(value) {
@@ -1330,17 +1459,19 @@ async function loadEvidence(focusId = null) {
     agy:setup.providers.agy, claude:setup.providers.claude};
   projectProviderReady = Boolean(profile.drafting_provider && availability[profile.drafting_provider]);
   $('#project-provider-status').textContent = projectProviderReady
-    ? `Project drafts use ${profile.drafting_provider}. You can change this in Settings.`
+    ? `Project drafts use ${providerLabel(profile.drafting_provider)}. You can change this in Settings.`
     : 'Choose an available AI provider in Settings before adding a project.';
   $('#project-provider-action').hidden = projectProviderReady;
   const readyCount = projectCards.filter((card) => card.approved).length;
   $('#selected-project-count').textContent = `${readyCount} ready for resumes`;
   $('#evidence-list').innerHTML = projectCards.length ? projectCards.map((card) => `<button class="project-list-row ${card.id === selectedProjectId ? 'is-selected' : ''}" data-open-project="${card.id}" type="button">
-    <strong>${escapeHtml(card.title)}</strong><span class="status-badge ${card.approved ? 'status-badge--success' : 'status-badge--warning'}">${card.approved ? 'Ready for resume' : 'Needs review'}</span>
+    <strong>${escapeHtml(card.title)}</strong><span class="status-badge ${card.approved ? 'status-badge--success' : 'status-badge--neutral'}">${card.approved ? 'Included in resumes' : 'Saved only'}</span>
     <small>${escapeHtml(card.repository_url || 'Manual project')}</small></button>`).join('') : '<div class="empty">No projects yet. Enter your GitHub username or a repository URL above.</div>';
   document.querySelectorAll('[data-open-project]').forEach((button) => button.addEventListener('click', async () => {
     selectedProjectId = button.dataset.openProject;
     await loadEvidence(selectedProjectId);
+    scrollNodeIntoView($('#project-editor'), {block:'start'});
+    $('#project-editor').focus({preventScroll:true});
   }));
   const card = projectCards.find((item) => item.id === selectedProjectId);
   if (!card) {
@@ -1350,19 +1481,20 @@ async function loadEvidence(focusId = null) {
   }
   const details = JSON.parse(card.details || '{}');
   const needsOriginalClaim = !details.generated_by && (details.contribution === 'unverified' || ['pending','failed'].includes(details.generation_status));
-  $('#project-editor').innerHTML = `<div class="project-editor-head"><div><p class="eyebrow">REVIEW PROJECT</p><h3>${escapeHtml(card.title)}</h3></div><span class="status-badge ${card.approved ? 'status-badge--success' : 'status-badge--warning'}">${card.approved ? 'Ready for resume' : 'Needs review'}</span></div>
-    <p class="hint">Check the generated claims against your own work. Only projects marked ready can be used in an application.</p>
+  $('#project-editor').innerHTML = `<div class="project-editor-head"><div><p class="eyebrow">REVIEW PROJECT</p><h3>${escapeHtml(card.title)}</h3></div><span class="status-badge ${card.approved ? 'status-badge--success' : 'status-badge--neutral'}">${card.approved ? 'Included in resumes' : 'Saved only'}</span></div>
+    <p class="hint">Save content changes first. Including a project in resumes is a separate choice.</p>
     ${details.generation_status === 'failed' ? `<p class="hint error-text">Project draft generation failed: ${escapeHtml(details.generation_error || 'Try generating again or write your own project bullet.')}</p>` : ''}
-    ${needsOriginalClaim ? '<p class="hint">Write a specific bullet about your contribution before adding this project to resumes.</p>' : ''}
+    ${needsOriginalClaim ? '<p class="hint">Write and save a specific bullet about your contribution before including this project in resumes.</p>' : ''}
     ${card.repository_url ? `<p class="item-meta"><a href="${escapeHtml(card.repository_url)}" target="_blank" rel="noopener noreferrer">Open repository ↗</a> · Commit ${escapeHtml(card.commit_sha?.slice(0, 8))}</p>` : ''}
     <div class="project-fields"><label>Project title<input id="project-edit-title" value="${escapeHtml(card.title)}"></label>
       <label>Project summary<textarea id="project-edit-summary" rows="3" placeholder="What the project does">${escapeHtml(details.summary || '')}</textarea></label>
       <label>Technologies<input id="project-edit-stack" value="${escapeHtml((details.tech_stack || []).join(', '))}" placeholder="Python, React, ..."></label>
       <label>What this project demonstrates <span class="hint">One resume bullet per line</span><textarea id="project-edit-bullets" rows="7">${escapeHtml((details.bullets || [card.claim]).join('\n'))}</textarea></label></div>
     <p id="project-review-status" class="hint" role="status" aria-live="polite"></p>
-    <div class="actions"><button id="project-save" class="secondary">${card.approved ? 'Save changes' : 'Save draft'}</button>
-      <button id="project-approval" class="${card.approved ? 'danger' : 'primary'}" ${needsOriginalClaim ? 'disabled' : ''}>${card.approved ? 'Remove from resumes' : 'Save and use on resumes'}</button>
-      ${card.repository_url && !card.approved ? '<button id="project-regenerate" class="secondary">Generate again</button>' : ''}</div>`;
+    <div class="actions"><button id="project-save" class="primary">Save changes</button>
+      <button id="project-approval" class="secondary">${card.approved ? 'Remove from resumes' : 'Include in resumes'}</button>
+      ${card.repository_url && !card.approved ? '<button id="project-regenerate" class="secondary">Generate again</button>' : ''}
+      <button id="project-delete" class="secondary danger">Delete project</button></div>`;
   const content = () => {
     const bullets = $('#project-edit-bullets').value.split('\n').map((line) => line.trim()).filter(Boolean);
     const title = $('#project-edit-title').value.trim();
@@ -1370,23 +1502,33 @@ async function loadEvidence(focusId = null) {
     if (needsOriginalClaim && (bullets[0] === card.claim || bullets[0].length < 20 || /<[^>]+>|^(project:|repository summary:|describe your contribution)/i.test(bullets[0]))) throw new Error('Replace the repository placeholder with a specific project bullet before approval.');
     return {title, claim:bullets[0], details:{...details, summary:$('#project-edit-summary').value.trim(), tech_stack:$('#project-edit-stack').value.split(',').map((item) => item.trim()).filter(Boolean), bullets}};
   };
-  const save = async (approved) => {
+  $('#project-save').addEventListener('click', async () => {
     const status = $('#project-review-status');
     try {
       status.textContent = 'Saving project…';
-      await api(`/api/evidence/${card.id}`, {method:'PATCH', body:JSON.stringify({...content(), approved})});
+      await api(`/api/evidence/${card.id}`, {method:'PATCH', body:JSON.stringify(content())});
       await loadEvidence(card.id);
-      $('#project-review-status').textContent = approved ? 'Saved. This project can now be used in tailored resumes.' : 'Saved. This project will stay out of resumes until you approve it.';
+      $('#project-review-status').textContent = 'Project changes saved. Resume inclusion is unchanged.';
     } catch(error) { status.textContent = error.message; notice(error.message, true); }
-  };
-  $('#project-save').addEventListener('click', () => save(Boolean(card.approved)));
-  $('#project-edit-bullets').addEventListener('input', () => {
-    if (needsOriginalClaim) {
-      const first = $('#project-edit-bullets').value.split('\n')[0].trim();
-      $('#project-approval').disabled = first === card.claim || first.length < 20 || /<[^>]+>|^(project:|repository summary:|describe your contribution)/i.test(first);
-    }
   });
-  $('#project-approval').addEventListener('click', () => save(!card.approved));
+  $('#project-approval').addEventListener('click', async () => {
+    const status = $('#project-review-status');
+    try {
+      status.textContent = card.approved ? 'Removing from resumes…' : 'Including in resumes…';
+      await api(`/api/evidence/${card.id}`, {method:'PATCH', body:JSON.stringify({approved:!card.approved})});
+      await loadEvidence(card.id);
+      $('#project-review-status').textContent = card.approved ? 'Project removed from future resumes.' : 'Project included in future resumes.';
+    } catch(error) { status.textContent = error.message; notice(error.message, true); }
+  });
+  $('#project-delete').addEventListener('click', async () => {
+    if (!window.confirm(`Delete "${card.title}" from your project library? This cannot be undone.`)) return;
+    try {
+      await api(`/api/evidence/${card.id}`, {method:'DELETE'});
+      selectedProjectId = null;
+      await loadEvidence();
+      notice('Project deleted');
+    } catch(error) { notice(error.message, true); }
+  });
   $('#project-regenerate')?.addEventListener('click', async (event) => {
     const button = event.target;
     try {
@@ -1394,7 +1536,7 @@ async function loadEvidence(focusId = null) {
       $('#project-review-status').textContent = 'Generating a new draft from the repository…';
       await api(`/api/evidence/${card.id}/generate`, {method:'POST', body:'{}'});
       await loadEvidence(card.id);
-      $('#project-review-status').textContent = 'New draft ready. Review it before using it in resumes.';
+      $('#project-review-status').textContent = 'New draft ready. Review and save it before including it in resumes.';
     } catch(error) { await loadEvidence(card.id); $('#project-review-status').textContent = error.message; }
   });
   renderRepositoryResults($('#repo-filter')?.value || '');
@@ -1466,6 +1608,7 @@ $('#smtp-gmail-preset').addEventListener('click', async () => {
 });
 
 $('#setup-smtp-remove').addEventListener('click', async () => {
+  if (!window.confirm('Remove saved email settings? You will need to enter the SMTP credentials again to send email applications.')) return;
   try { await api('/api/setup/smtp', {method:'DELETE'}); $('#setup-smtp-form').reset(); delete $('#setup-smtp-form').dataset.initialized; delete $('#setup-smtp-form').dataset.dirty; await loadSetup(); notice('Email settings removed'); }
   catch(error) { notice(error.message, true); }
 });
@@ -1520,9 +1663,16 @@ $('#telegram-find-chat').addEventListener('click', async () => {
 });
 
 $('#setup-telegram-remove').addEventListener('click', async () => {
+  if (!window.confirm('Remove Telegram review settings? You will need the bot token and chat configuration to reconnect it.')) return;
   try { await api('/api/setup/telegram', {method:'DELETE'}); $('#setup-telegram-form').reset(); delete $('#setup-telegram-form').dataset.initialized; await loadSetup(); notice('Telegram reviews removed'); }
   catch(error) { notice(error.message, true); }
 });
+
+$('#add-skill').addEventListener('click', () => appendRepeatable($('#skills-editor'), skillRow()));
+$('#add-skill-group').addEventListener('click', () => appendRepeatable($('#skill-groups-editor'), groupRow()));
+$('#add-education').addEventListener('click', () => appendRepeatable($('#education-editor'), educationRow()));
+$('#add-achievement').addEventListener('click', () => appendRepeatable($('#achievements-editor'), simpleRow('data-achievement', '', 'Achievement')));
+$('#add-link').addEventListener('click', () => appendRepeatable($('#links-editor'), simpleRow('data-profile-link type="url"', '', 'https://...')));
 
 $('#profile-form').addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -1531,11 +1681,18 @@ $('#profile-form').addEventListener('submit', async (event) => {
     const profile = await api('/api/profile');
     const form = event.target;
     for (const key of ['name','given_name','family_name','email','phone','location','summary','salary_expectation','work_authorization','notice_period','relocation']) profile[key] = form.elements[key].value.trim();
-    profile.skills = form.elements.skills.value.split('\n').map((x) => x.trim()).filter(Boolean);
-    profile.links = form.elements.links.value.split('\n').map((x) => x.trim()).filter(Boolean);
-    profile.achievements = form.elements.achievements.value.split('\n').map((x) => x.trim()).filter(Boolean);
-    profile.education = form.elements.education.value.split('\n').map((x) => x.trim()).filter(Boolean).map((line) => { const [school, degree, dates] = line.split('|').map((x) => x.trim()); return {school, degree:degree || '', dates:dates || ''}; });
-    profile.skill_groups = Object.fromEntries(form.elements.skill_groups.value.split('\n').map((x) => x.trim()).filter(Boolean).map((line) => { const colon = line.indexOf(':'); return colon < 0 ? [line, ''] : [line.slice(0, colon).trim(), line.slice(colon + 1).trim()]; }));
+    profile.skills = [...form.querySelectorAll('[data-skill]')].map((input) => input.value.trim()).filter(Boolean);
+    profile.links = [...form.querySelectorAll('[data-profile-link]')].map((input) => input.value.trim()).filter(Boolean);
+    profile.achievements = [...form.querySelectorAll('[data-achievement]')].map((input) => input.value.trim()).filter(Boolean);
+    profile.education = [...form.querySelectorAll('.repeatable-row--education')].map((row) => ({
+      school:row.querySelector('[data-education-school]').value.trim(),
+      degree:row.querySelector('[data-education-degree]').value.trim(),
+      dates:row.querySelector('[data-education-dates]').value.trim(),
+    })).filter((item) => item.school || item.degree || item.dates);
+    profile.skill_groups = Object.fromEntries([...form.querySelectorAll('.repeatable-row--group')].map((row) => [
+      row.querySelector('[data-skill-group-label]').value.trim(),
+      row.querySelector('[data-skill-group-values]').value.trim(),
+    ]).filter(([label]) => label));
     await api('/api/profile', {method:'PUT', body:JSON.stringify(profile)});
     await loadPersonalDetails();
     notice('Personal details saved');
@@ -1558,7 +1715,15 @@ $('#matching-download').addEventListener('click', async () => {
   try {
     await api('/api/matching/model/download', {method:'POST'});
     await loadMatchingModels();
-    notice('Model download started. It will be selected automatically.');
+    notice('Model download started. Progress is shown in Settings.');
+  } catch(error) { notice(error.message, true); }
+});
+
+$('#matching-download-cancel').addEventListener('click', async () => {
+  try {
+    await api('/api/matching/model/download', {method:'DELETE'});
+    await loadMatchingModels();
+    notice('Model download cancelled');
   } catch(error) { notice(error.message, true); }
 });
 
@@ -1572,7 +1737,6 @@ $('#provider-form').addEventListener('submit', async (event) => {
     await api('/api/profile/provider', {method:'PUT', body:JSON.stringify({provider})});
     await loadSettings();
     notice('Application writing provider saved.');
-    scrollNodeIntoView($('#resume-panel'), {block:'start'});
   } catch(error) { notice(error.message, true); }
   finally { endPending(pendingButton); }
 });
@@ -1682,7 +1846,7 @@ async function inspectSelectedRepository(url, button = null) {
     await loadEvidence(result.evidence_id);
     $('#project-add-status').textContent = result.generation_warning
       ? `Repository added, but the draft needs attention: ${result.generation_warning}`
-      : 'Project draft ready. Review the claims below, then choose “Save and use on resumes”.';
+      : 'Project draft ready. Review the claims below, then save it and choose whether to include it in resumes.';
     scrollNodeIntoView($('#project-editor'), {block:'start'});
   } catch(error) {
     $('#project-add-status').textContent = error.message;

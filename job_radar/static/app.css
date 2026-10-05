@@ -380,3 +380,35 @@ label.is-dirty::after{content:"Unsaved";position:absolute;right:8px;top:7px;padd
 .application-form-choice{display:flex;align-items:flex-start;gap:9px;padding:11px 12px;border:1px solid #dfe7e2;border-radius:9px;background:#fbfcfb;font-size:13px;font-weight:650}
 .application-form-choice input{width:16px;height:16px;margin:2px 0 0;flex:none;accent-color:#1f7650}
 .application-form-choice span{line-height:1.4}
+
+/* Stack 08: profile, settings, and project editing */
+.flow-panel>summary::after,.inline-details>summary::after{content:"›";margin-left:auto;color:#6c8379;font-size:18px;line-height:1;transform:rotate(0deg);transition:transform .15s ease}
+.flow-panel[open]>summary::after,.inline-details[open]>summary::after{transform:rotate(90deg)}
+.flow-panel>summary>.pill{margin-left:auto}
+.provider-availability{margin:12px 0 0;padding:12px 14px;background:#f6f9f7;border:1px solid #e0e8e3;border-radius:9px}
+.provider-availability p{margin:0 0 6px}.provider-availability ul{margin:0;padding-left:20px;color:#526b60;font-size:12px;line-height:1.6}
+.download-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+.download-progress{display:flex;align-items:center;gap:12px;margin-top:12px;max-width:680px}
+.download-progress progress{width:min(360px,55vw);height:10px}
+.structured-field{border:1px solid #e0e8e3;border-radius:11px;padding:15px;margin:0;min-width:0}
+.structured-field legend{font-size:12px;font-weight:750;color:#35584a;padding:0 5px}
+.structured-field>.hint{margin:0 0 10px}
+.repeatable-list{display:grid;gap:8px;margin-bottom:10px}
+.repeatable-row{display:grid;gap:8px;align-items:center}
+.repeatable-row--simple{grid-template-columns:minmax(0,1fr) auto}
+.repeatable-row--group{grid-template-columns:minmax(130px,.45fr) minmax(180px,1fr) auto}
+.repeatable-row--education{grid-template-columns:minmax(140px,1fr) minmax(140px,1fr) minmax(110px,.55fr) auto}
+.repeatable-row .text-button{padding:8px}
+.position-card{padding:15px}
+.position-card-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+.position-card-head strong,.position-card-head span{display:block}
+.position-card-head span{margin-top:4px;color:#647a70;font-size:12px}
+.position-order{display:flex;gap:3px;flex:none}
+.position-order .text-button{padding:5px 8px}
+.position-preview{margin:11px 0 0;padding-left:20px;color:#405b50;font-size:12px;line-height:1.55}
+.position-preview li+li{margin-top:4px}
+.position-editor{margin-top:14px;padding-top:14px;border-top:1px solid #e5ece7}
+#project-editor:focus{outline:2px solid #278b5c;outline-offset:3px}
+.project-results-list{max-height:none;overflow:visible;padding-right:0}
+button.danger,.text-button.danger{color:#a4382d;border-color:#e7c2bd}
+@media(max-width:700px){.repeatable-row--group,.repeatable-row--education{grid-template-columns:1fr}.repeatable-row--group .text-button,.repeatable-row--education .text-button{justify-self:start}.position-card-head{align-items:flex-start}.download-progress{align-items:flex-start;flex-direction:column}.download-progress progress{width:100%}}

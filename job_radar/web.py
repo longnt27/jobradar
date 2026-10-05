@@ -189,9 +189,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def configured_provider() -> str:
         provider = db.get_setting("profile", {}).get("drafting_provider", "")
         if not provider:
-            raise HTTPException(409, "Choose a drafting provider in Profile first")
+            raise HTTPException(409, "Choose a drafting provider in Settings first")
         if not provider_available(provider):
-            raise HTTPException(422, f"{provider} is not available on this Mac; change it in Profile")
+            raise HTTPException(422, f"{provider} is not available on this Mac; change it in Settings")
         return provider
 
     def save_profile(profile: dict[str, Any]) -> None:
@@ -389,6 +389,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return match_manager.download_recommended()
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
+
+    @app.delete("/api/matching/model/download")
+    async def cancel_matching_model_download():
+        return match_manager.cancel_download()
 
     @app.get("/api/matching/failures")
     def matching_failures():
@@ -893,6 +897,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if (validated.approved or row["approved"]) and (validated.kind == "project" or row["kind"] == "project"):
             match_manager.invalidate_all()
         return {"id": evidence_id}
+
+    @app.delete("/api/evidence/{evidence_id}")
+    def delete_evidence(evidence_id: str):
+        row = db.one("SELECT kind,approved FROM evidence WHERE id=?", (evidence_id,))
+        if not row:
+            raise HTTPException(404, "Evidence not found")
+        db.execute("DELETE FROM evidence WHERE id=?", (evidence_id,))
+        if row["kind"] == "project" and row["approved"]:
+            match_manager.invalidate_all()
+        return {"deleted": True}
 
     @app.post("/api/repositories/inspect")
     def inspect_repo(payload: RepositoryInput):

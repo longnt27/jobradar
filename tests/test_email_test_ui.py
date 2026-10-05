@@ -36,7 +36,7 @@ def test_email_settings_can_be_tested_from_profile(tmp_path: Path, monkeypatch) 
             browser = playwright.chromium.launch(headless=True)
             try:
                 page = browser.new_page()
-                page.goto(f"http://127.0.0.1:{port}/#profile")
+                page.goto(f"http://127.0.0.1:{port}/#settings")
                 page.locator("#smtp-panel summary").click()
                 button = page.locator("#smtp-send-test")
                 page.wait_for_function("!document.querySelector('#smtp-send-test').disabled")
