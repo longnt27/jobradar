@@ -227,6 +227,22 @@ def test_unchanged_rescan_preserves_local_score(tmp_path: Path) -> None:
     assert row == {"score": 88, "analysis_status": "done"}
 
 
+def test_newly_discovered_posting_date_requeues_local_score(tmp_path: Path) -> None:
+    app = create_app(Settings(tmp_path))
+    db = app.state.db
+    db.set_setting("matching_model", "test:small")
+    source = db.one("SELECT id FROM sources LIMIT 1")["id"]
+    observed = ObservedJob("https://example.org/dates", "AI Engineer", "Example", "Build Python models.")
+    identifier, _ = ingest(db, source, observed)
+    db.execute("UPDATE vacancies SET analysis_status='done',analysis_model='test:small',score=80 WHERE id=?", (identifier,))
+    dated = ObservedJob(observed.url, observed.title, observed.company, observed.description,
+                        published_at="2026-10-01T12:00:00+00:00")
+    ingest(db, source, dated)
+    refreshed = db.one("SELECT analysis_status,published_at FROM vacancies WHERE id=?", (identifier,))
+    assert refreshed["published_at"] == dated.published_at
+    assert refreshed["analysis_status"] == "pending"
+
+
 def test_negative_role_cap_is_enforced_after_model_scoring(monkeypatch) -> None:
     def generate(_model, _prompt, result_type):
         if result_type is JobFacts:

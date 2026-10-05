@@ -148,9 +148,14 @@ def test_reposted_facebook_job_merges_by_content_and_contact(tmp_path: Path) -> 
         "Hiring AI Engineer for computer vision in Hanoi. Create entirely new 3D mapping pipelines "
         "and lead an unrelated sensor platform. Send CV to other@example.com.")
     first_id, _ = ingest(db, first_source, original)
+    db.set_setting("matching_model", "test:small")
+    db.execute("UPDATE vacancies SET analysis_status='done',analysis_model='test:small' WHERE id=?", (first_id,))
+    repost.published_at = "2026-10-01T12:00:00+00:00"
     second_id, is_new = ingest(db, second_source, repost)
     assert second_id == first_id
     assert not is_new
+    assert db.one("SELECT published_at,analysis_status FROM vacancies WHERE id=?", (first_id,)) == {
+        "published_at": repost.published_at, "analysis_status": "pending"}
     assert ingest(db, second_source, different)[0] != first_id
     assert db.one("SELECT COUNT(*) AS count FROM vacancy_observations WHERE vacancy_id=?", (first_id,))["count"] == 2
 

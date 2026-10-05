@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from .db import Database, new_id, now
@@ -71,6 +72,21 @@ def _employer_id(conn, company: str) -> str | None:
     return None
 
 
+def _posting_date_changed(previous: str | None, current: str | None) -> bool:
+    if not current or current == previous:
+        return False
+    if not previous:
+        return True
+    try:
+        old = datetime.fromisoformat(previous.replace("Z", "+00:00"))
+        new = datetime.fromisoformat(current.replace("Z", "+00:00"))
+        old = old.replace(tzinfo=old.tzinfo or timezone.utc)
+        new = new.replace(tzinfo=new.tzinfo or timezone.utc)
+        return abs(new - old) >= timedelta(hours=12)
+    except ValueError:
+        return True
+
+
 def ingest(db: Database, source_id: str, job: ObservedJob) -> tuple[str, bool]:
     url = normalize_url(job.url)
     raw = job.raw_text or job.description
@@ -87,7 +103,7 @@ def ingest(db: Database, source_id: str, job: ObservedJob) -> tuple[str, bool]:
                 (timestamp, raw, digest, json.dumps(job.__dict__, ensure_ascii=False), job.published_at, observation_id),
             )
             linked = conn.execute(
-                "SELECT v.id,v.title,v.description,v.location,v.analysis_status,v.analysis_model "
+                "SELECT v.id,v.title,v.description,v.location,v.published_at,v.analysis_status,v.analysis_model "
                 "FROM vacancy_observations vo JOIN vacancies v ON v.id=vo.vacancy_id WHERE vo.observation_id=?",
                 (observation_id,),
             ).fetchone()
@@ -95,7 +111,8 @@ def ingest(db: Database, source_id: str, job: ObservedJob) -> tuple[str, bool]:
                 score, detail = score_job({**job.__dict__, "first_seen_at": timestamp}, profile)
                 unchanged = (linked["title"] == job.title and linked["description"] == job.description
                              and (linked["location"] or "") == job.location)
-                keep_model_score = (unchanged and matching_model and linked["analysis_status"] == "done"
+                keep_model_score = (unchanged and not _posting_date_changed(linked["published_at"], job.published_at)
+                                    and matching_model and linked["analysis_status"] == "done"
                                     and linked["analysis_model"] == matching_model)
                 conn.execute(
                     "UPDATE vacancies SET company=?,title=?,description=?,location=?,work_mode=?,apply_url=?,"
@@ -142,7 +159,14 @@ def ingest(db: Database, source_id: str, job: ObservedJob) -> tuple[str, bool]:
             vacancy_id = duplicate["vacancy_id"] if "vacancy_id" in duplicate.keys() else duplicate["id"]
             conn.execute("INSERT OR IGNORE INTO vacancy_observations(vacancy_id,observation_id,merge_reason) VALUES(?,?,?)",
                          (vacancy_id, observation_id, merge_reason))
-            conn.execute("UPDATE vacancies SET last_seen_at=? WHERE id=?", (timestamp, vacancy_id))
+            linked = conn.execute("SELECT published_at,analysis_status FROM vacancies WHERE id=?", (vacancy_id,)).fetchone()
+            if job.published_at and not linked["published_at"]:
+                conn.execute("UPDATE vacancies SET published_at=?,last_seen_at=?,analysis_status=?,"
+                             "analysis_error=NULL,updated_at=? WHERE id=?",
+                             (job.published_at, timestamp, "pending" if matching_model else linked["analysis_status"],
+                              timestamp, vacancy_id))
+            else:
+                conn.execute("UPDATE vacancies SET last_seen_at=? WHERE id=?", (timestamp, vacancy_id))
             return vacancy_id, False
 
         vacancy_id = new_id()
