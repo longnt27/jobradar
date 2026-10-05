@@ -241,7 +241,8 @@ REMOTE_WORK = re.compile(r"\b(?:fully|100%)\s+remote\b|\bremote\s+(?:work|workin
                          r"\bwork(?:ing)?\s+remotely\b|\bwork from home\b|\bwfh\b|làm việc từ xa|(?m:^\s*[-•]?\s*remote\s*$)", re.I)
 REMOTE_NEGATION = re.compile(r"\b(?:no|not)\s+remote\b|\bremote\s+(?:work\s+)?(?:unavailable|not\s+(?:available|offered|allowed))\b|không\s+remote", re.I)
 GENERIC_LOCATION = re.compile(r"^(?:search by location|(?:vietnam|việt nam)(?:\s*\([^)]*\))?|anywhere|unspecified|unknown|"
-                              r"multiple locations|(?:địa điểm:?\s*)?(?:hội sở|head office))$", re.I)
+                              r"multiple locations|(?:địa điểm:?\s*)?(?:hội sở|head office)|"
+                              r"(?:hq|headquarters)(?:\s+and\s+across\s+(?:different|multiple)\s+regions)?)$", re.I)
 LOCATION_LINE = re.compile(r"(?im)^\s*[-•]?\s*(?:địa\s*điểm(?:\s+lv)?|location|work(?:ing)?\s+location|office)\s*[:：]\s*(.+)$")
 LOCATION_PHRASE = re.compile(r"\b(?:based|located|onsite|on-site)\s+(?:in|at)\s+([^\n.!?;]+)", re.I)
 

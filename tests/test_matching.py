@@ -408,6 +408,8 @@ def test_match_policy_weights_role_more_than_freshness_and_applies_hard_gates() 
     assert finalize_match(country_only, {**facts, "location": "", "work_mode": ""}, profile, criteria)[0] > 0
     head_office = {**base, "location": "Địa điểm: Hội sở", "description": "Build Python models."}
     assert finalize_match(head_office, {**facts, "location": "", "work_mode": ""}, profile, criteria)[0] > 0
+    vague_headquarters = {**base, "location": "Vietnam (On-site)", "description": "Location: HQ and across different regions"}
+    assert finalize_match(vague_headquarters, {**facts, "location": "Vietnam", "work_mode": ""}, profile, criteria)[0] > 0
     hanoi_district = {**base, "location": "Quận Cầu Giấy", "description": "Onsite in Cầu Giấy."}
     assert finalize_match(hanoi_district, {**facts, "location": "Quận Cầu Giấy"}, profile, criteria)[0] > 0
     assert extract_years_required("2 years in Python; 4 years building ML systems") == 4
