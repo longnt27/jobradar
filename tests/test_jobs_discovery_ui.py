@@ -71,7 +71,7 @@ def test_jobs_url_state_cards_and_page_scroll(tmp_path: Path) -> None:
                 assert card.get_attribute("aria-pressed") == "true"
                 assert page.locator("#job-detail").evaluate("node => document.activeElement === node")
                 assert page.locator("#job-detail").get_attribute("role") == "region"
-                assert "Senior AI Engineer" in page.get_by_role("link", name="Open original posting for Senior AI Engineer at Example Robotics").get_attribute("aria-label")
+                assert page.get_by_role("link", name="Application page ↗").is_visible()
                 assert "Remote" in card.inner_text()
                 assert "Senior" in card.inner_text()
                 assert "Role" in card.inner_text()
