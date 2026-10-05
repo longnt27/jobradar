@@ -257,7 +257,7 @@ class AutoApplyManager:
 
     async def regenerate(self, draft_id: str, prompt: str) -> dict:
         attempt = self.db.one("SELECT vacancy_id,status FROM auto_application_attempts WHERE draft_id=?", (draft_id,))
-        if not attempt or attempt["status"] in ("sent", "sending", "skipped", "preparing", "regenerating"):
+        if not attempt or attempt["status"] in ("sent", "sending", "submission_uncertain", "skipped", "preparing", "regenerating"):
             raise ValueError("This application cannot be regenerated")
         self._set_status(attempt["vacancy_id"], "regenerating", "Generating a new draft from your instructions.", draft_id)
         try:
