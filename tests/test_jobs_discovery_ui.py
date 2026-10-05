@@ -78,7 +78,9 @@ def test_jobs_url_state_cards_and_page_scroll(tmp_path: Path) -> None:
                 assert "Location" in card.inner_text()
                 assert "ago" in card.inner_text() or "Yesterday" in card.inner_text()
                 page.get_by_role("heading", name="Senior AI Engineer").wait_for()
-                assert page.locator("#job-state-control").input_value() == "new"
+                assert page.locator("#job-outcome-control").input_value() == "none"
+                assert "No decision yet" in page.locator("#job-detail").inner_text()
+                assert client.get(f"/api/jobs/{first}").json()["read_state"] == "seen"
                 assert page.locator("#job-list").evaluate("node => getComputedStyle(node).overflowY") == "visible"
                 assert page.locator("#job-list").evaluate("node => getComputedStyle(node).maxHeight") == "none"
 

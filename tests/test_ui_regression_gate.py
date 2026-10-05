@@ -54,7 +54,7 @@ def ui_server(tmp_path_factory):
         "apply_url": "https://example.org/apply",
     }).json()
     app.state.db.execute(
-        "UPDATE vacancies SET analysis_status='done',score=91,state='interesting',"
+        "UPDATE vacancies SET analysis_status='done',score=91,state='interesting',decision_state='shortlisted',"
         "work_mode='Hybrid',published_at='2026-10-04T09:00:00+00:00',score_detail=? WHERE id=?",
         (json.dumps({"facts": {"seniority": "Mid", "work_mode": "Hybrid"}}), job["id"]),
     )
@@ -390,6 +390,8 @@ def test_desktop_keyboard_path_reaches_navigation_jobs_and_application_review(ui
         assert page.evaluate("document.activeElement?.dataset.tab") == "jobs"
         page.keyboard.press("Enter")
         page.locator("#jobs.active").wait_for()
+        page.locator('[data-job-inbox="all"]').click()
+        page.locator("[data-job]").first.wait_for()
 
         card = page.locator("[data-job]").first
         card.focus()
