@@ -12,7 +12,7 @@ from job_radar.settings import Settings
 from job_radar.web import create_app
 
 
-def test_local_analysis_extracts_facts_and_weights_ten_scores(monkeypatch) -> None:
+def test_local_analysis_extracts_facts_and_weights_nine_scores(monkeypatch) -> None:
     prompts = []
     stages = []
 
@@ -36,12 +36,41 @@ def test_local_analysis_extracts_facts_and_weights_ten_scores(monkeypatch) -> No
         "test:small",
         stages.append,
     )
-    assert score == 71
-    assert len(detail["criteria"]) == 10
+    assert score == 72
+    assert len(detail["criteria"]) == 9
     assert detail["facts"]["required_skills"] == ["Python"]
     assert detail["method"] == "local_llm"
     assert "ML Engineer" in prompts[1] and "Vision" in prompts[1]
     assert stages == ["scoring"]
+
+
+def test_binance_advanced_degree_is_hard_rejection_and_role_stays_about_role(monkeypatch) -> None:
+    def generate(_model, _prompt, result_type):
+        if result_type is JobFacts:
+            return JobFacts(role="Senior Data Scientist", seniority="Senior", required_skills=[],
+                            preferred_skills=[], years_required=None, location="", work_mode="Remote",
+                            responsibilities=[], education=["related field"], languages=[], summary="")
+        return MatchJudgment(**{name: Criterion(score=10, reason=(
+            "The candidate has a Bachelor of Computer Science from Hanoi University, matching this Senior Data Scientist role."
+            if name == "role" else "Strong match"))
+            for name in MatchJudgment.model_fields if name != "summary"}, summary="Strong match")
+    monkeypatch.setattr("job_radar.local_analysis._generate", generate)
+    job = {"title": "Binance Accelerator Program - Data Scientist (User Growth)",
+           "description": "Currently pursuing a Master's or Ph.D. degree in Computer Science, Statistics, Mathematics, Artificial Intelligence, or a related field.",
+           "location": "Remote"}
+    profile = {"education": [{"degree": "Bachelor of Computer Science", "dates": "2022 – 2026"}]}
+    score, detail = analyze_job(job, profile, [], "test:small")
+    assert score == 0
+    assert any("Education:" in reason for reason in detail["hard_exclusions"])
+    assert detail["facts"]["seniority"] == ""
+    assert detail["facts"]["role"] == "Data Scientist"
+    assert "degree" not in detail["criteria"]["role"]["reason"].casefold()
+    assert detail["criteria"]["education"]["score"] == 1
+
+
+def test_salary_can_be_extracted_from_facebook_post_title() -> None:
+    title = "[VCCorp-HN] Tuyển 2 AI Engineer, làm AI Agent, LLM, từ 1-2 năm kn. Offer 14- 23M."
+    assert extract_salary_range(title) == "Offer 14- 23M."
 
 
 def test_unstated_requirements_get_neutral_score(monkeypatch) -> None:
@@ -57,8 +86,8 @@ def test_unstated_requirements_get_neutral_score(monkeypatch) -> None:
                                  "location": "Hanoi"}, {}, [], "test:small")
     assert detail["criteria"]["education"] == {"score": 5, "reason": "Not stated in the posting; neutral."}
     assert detail["criteria"]["preferred_skills"]["score"] == 5
-    assert detail["criteria"]["research"]["score"] == 5
-    assert score == 36
+    assert "research" not in detail["criteria"]
+    assert score == 34
 
 
 def test_extraction_discards_unsupported_language_seniority_and_years() -> None:
