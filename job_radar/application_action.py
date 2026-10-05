@@ -163,10 +163,10 @@ def resolve_application_action(db: Database, job: dict) -> dict:
             continue
         if source_kind == "linkedin" and _EASY_APPLY.search(raw):
             candidates.append(_candidate(
-                kind="web", action_type="linkedin_easy_apply",
+                kind="manual", action_type="linkedin_easy_apply",
                 destination=str(row.get("observation_url") or apply_url or job.get("apply_url") or ""),
                 source_kind="linkedin", provenance="linkedin_easy_apply_control", confidence="high",
-                evidence="The LinkedIn posting exposes an Easy Apply control.", strength=3,
+                evidence="The LinkedIn posting exposes Easy Apply; Job Radar preserves the target but requires manual submission.", strength=3,
             ))
         if not _http(apply_url):
             continue
