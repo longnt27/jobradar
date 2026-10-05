@@ -1,0 +1,17 @@
+{
+  "viewports": {
+    "desktop": {"width": 1440, "height": 1000},
+    "tablet": {"width": 1024, "height": 900},
+    "mobile": {"width": 390, "height": 844}
+  },
+  "surfaces": {
+    "home": {"hash": "#home", "active": "#home.active", "anchors": ["#home-hero", "#home-steps", "#home-actions"]},
+    "queue": {"hash": "#queue", "active": "#queue.active", "anchors": ["#queue-summary", ".queue-grid"]},
+    "jobs": {"hash": "#jobs", "active": "#jobs.active", "anchors": [".job-discovery-controls", "#job-list"]},
+    "applications": {"hash": "#applications/{draft_id}", "active": "#applications.active", "anchors": [".applications-view-tabs", ".applications-workspace", "#application-detail"]},
+    "profile": {"hash": "#profile", "active": "#profile.active", "anchors": ["#profile-summary-panel", "#resume-panel"]},
+    "projects": {"hash": "#projects", "active": "#projects.active", "anchors": ["#project-add-form", "#project-editor"]},
+    "sources": {"hash": "#sources", "active": "#sources.active", "anchors": [".source-operations", "#source-list"]},
+    "employers": {"hash": "#employers", "active": "#employers.active", "anchors": ["#employer-search-form", "#employer-list"]}
+  }
+}
