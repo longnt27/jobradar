@@ -84,6 +84,49 @@ def test_uncertain_submission_is_human_readable_and_cannot_be_retried(tmp_path: 
         assert hashlib.sha256(proof.content).hexdigest() == draft["resume_hash"]
 
 
+def test_interrupted_send_claim_blocks_raw_api_retry_without_submission_row(tmp_path: Path, monkeypatch) -> None:
+    app = create_app(Settings(tmp_path))
+    draft = _prepare_email_draft(app, "Interrupted Claim")
+    save_smtp(app.state.settings, {
+        "host": "smtp.example.org", "port": 587, "user": "", "password": "",
+        "from": "alex@example.org",
+    })
+    app.state.db.execute(
+        "INSERT INTO auto_application_attempts(vacancy_id,status,draft_id,detail,created_at,updated_at) "
+        "VALUES(?,'submission_uncertain',?,'Restarted during send',?,?)",
+        (draft["vacancy_id"], draft["id"], now(), now()),
+    )
+    sent = []
+    monkeypatch.setattr("job_radar.apply._send_email", lambda item, _settings: sent.append(item["id"]) or "accepted")
+
+    with TestClient(app) as client:
+        detail = client.get(f"/api/applications/{draft['id']}").json()
+        assert detail["send_ready"] is False
+        assert any("Submission status uncertain" in blocker for blocker in detail["send_blockers"])
+
+        retry = client.post(
+            f"/api/applications/{draft['id']}/send",
+            json={"package_hash": draft["package_hash"]},
+        )
+        assert retry.status_code == 422
+        assert "Submission status uncertain" in retry.json()["detail"]
+        assert sent == []
+
+        edit = client.patch(
+            f"/api/applications/{draft['id']}",
+            json={"message_data": {"body": "Changed after uncertain send"}},
+        )
+        assert edit.status_code == 409
+
+    import asyncio
+    try:
+        asyncio.run(app.state.auto_apply_manager.regenerate(draft["id"], "Try another version"))
+    except ValueError as error:
+        assert "cannot be regenerated" in str(error)
+    else:
+        raise AssertionError("Uncertain application review was allowed to regenerate")
+
+
 def test_application_page_reaches_history_beyond_first_hundred_and_filters_server_side(tmp_path: Path) -> None:
     app = create_app(Settings(tmp_path))
     db = app.state.db
