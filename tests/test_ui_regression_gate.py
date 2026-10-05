@@ -1,4 +1,5 @@
 import hashlib
+from io import BytesIO
 import json
 import os
 import socket
@@ -10,6 +11,7 @@ import pytest
 import uvicorn
 from fastapi.testclient import TestClient
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError, sync_playwright
+from PIL import Image
 
 from job_radar.settings import Settings
 from job_radar.web import create_app
@@ -17,6 +19,7 @@ from job_radar.web import create_app
 
 ROOT = Path(__file__).parents[1]
 MANIFEST = json.loads((Path(__file__).with_name("ui_regression_manifest.json")).read_text())
+VISUAL_BASELINES = json.loads((Path(__file__).with_name("ui_visual_baselines.json")).read_text())
 ARTIFACT_DIR = ROOT / os.environ.get("JOB_RADAR_UI_ARTIFACTS", "artifacts/ui-regression")
 
 
@@ -215,11 +218,17 @@ def _stabilize(page: Page, active_selector: str) -> None:
     page.wait_for_timeout(120)
 
 
-def _capture(page: Page, surface: str, viewport_name: str) -> tuple[Path, str, int]:
+def _visual_fingerprint(data: bytes) -> str:
+    with Image.open(BytesIO(data)) as image:
+        normalized = image.convert("L").resize((16, 16), Image.Resampling.LANCZOS)
+        return hashlib.sha256(normalized.tobytes()).hexdigest()
+
+
+def _capture(page: Page, surface: str, viewport_name: str) -> tuple[Path, str, int, str]:
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
     path = ARTIFACT_DIR / f"{surface}-{viewport_name}.png"
     data = page.screenshot(path=str(path), full_page=False, animations="disabled")
-    return path, hashlib.sha256(data).hexdigest(), len(data)
+    return path, hashlib.sha256(data).hexdigest(), len(data), _visual_fingerprint(data)
 
 
 def _assert_no_page_overflow(page: Page, surface: str, viewport_name: str) -> None:
@@ -345,8 +354,15 @@ def test_core_surfaces_have_stable_responsive_visual_contract(
                 f"{surface}/{viewport_name}: {selector} collapsed to {box}"
             )
         _assert_no_page_overflow(page, surface, viewport_name)
-        path, digest, size = _capture(page, surface, viewport_name)
+        path, digest, size, fingerprint = _capture(page, surface, viewport_name)
         assert size > 4_000, f"{surface}/{viewport_name} screenshot looks blank ({size} bytes): {path}"
+        baseline_key = f"{surface}-{viewport_name}"
+        assert baseline_key in VISUAL_BASELINES, f"Missing visual baseline for {baseline_key}"
+        assert fingerprint == VISUAL_BASELINES[baseline_key], (
+            f"{baseline_key} visual regression detected. "
+            f"Expected {VISUAL_BASELINES[baseline_key]}, got {fingerprint}. "
+            f"Inspect CI screenshot artifact: {path}"
+        )
         (path.with_suffix(".sha256")).write_text(f"{digest}  {path.name}\\n")
     finally:
         page.context.close()
@@ -443,6 +459,7 @@ def test_visual_gate_static_contract() -> None:
     assert "prefers-reduced-motion:reduce" in css
     assert '<nav aria-label="Main navigation">' in html
     assert set(MANIFEST["viewports"]) == {"desktop", "tablet", "mobile"}
+    assert set(VISUAL_BASELINES) == {f"{surface}-{viewport}" for surface in MANIFEST["surfaces"] for viewport in MANIFEST["viewports"]}
     assert set(MANIFEST["surfaces"]) >= {
         "home", "jobs", "applications", "profile", "projects", "sources", "employers", "queue"
     }
