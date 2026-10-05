@@ -260,13 +260,13 @@ def test_browser_job_inbox_triage_marks_seen_without_deciding(tmp_path: Path) ->
                 page.wait_for_function(
                     "(id) => { const node = document.querySelector('[data-job-card=\"' + id + '\"]'); "
                     "return node === null || node.textContent.includes('Shortlisted'); }",
-                    first,
+                    arg=first,
                 )
                 assert client.get(f"/api/jobs/{first}").json()["decision_state"] == "shortlisted"
                 page.get_by_role("button", name="Undo", exact=True).click()
                 page.wait_for_function(
                     "(id) => document.querySelector('[data-job-card=\"' + id + '\"]')?.textContent.includes('Shortlist')",
-                    first,
+                    arg=first,
                 )
                 assert client.get(f"/api/jobs/{first}").json()["decision_state"] == "undecided"
 
