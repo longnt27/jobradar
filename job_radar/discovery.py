@@ -34,7 +34,7 @@ def source_coverage(source: dict[str, Any], recent_runs: list[dict[str, Any]]) -
     """Translate collector state into a user-facing discovery confidence contract."""
     state = source.get("scan_state") or source.get("last_status") or "not_scanned"
     config = source.get("config") or {}
-    latest = recent_runs[0] if recent_runs else None
+    latest = next((run for run in recent_runs if run.get("status") in {"success", "empty"}), None)
     cap = int(config.get("max_results") or config.get("max_posts") or 0)
     observed = int((latest or {}).get("observed_count") or 0)
     completed = [run for run in recent_runs if run.get("status") in {"success", "empty", "failed", "auth_required"}]
@@ -51,6 +51,12 @@ def source_coverage(source: dict[str, Any], recent_runs: list[dict[str, Any]]) -
 
     if not source.get("enabled"):
         return {"level": "paused", "label": "Not watching", "detail": "Automatic checks are off.", "actionable": False}
+    if state == "scanning":
+        return {"level": "moderate", "label": "Checking now", "detail": "Coverage confidence will update when this check finishes.", "actionable": False}
+    if state == "queued":
+        return {"level": "moderate", "label": "Check queued", "detail": "This source is waiting to be checked.", "actionable": False}
+    if state in {"interrupted", "needs_refresh"}:
+        return {"level": "limited", "label": "Coverage uncertain", "detail": "The latest check did not complete cleanly; another check is recommended.", "actionable": True}
     if state == "auth_required":
         return {"level": "degraded", "label": "Coverage interrupted", "detail": "Sign-in is required before this source can be checked again.", "actionable": True}
     if failures >= 2 or state == "failed":
