@@ -83,3 +83,30 @@ def test_linkedin_results_continue_to_next_page() -> None:
                 await browser.close()
 
     asyncio.run(check())
+
+
+
+def test_linkedin_results_preserve_easy_apply_action() -> None:
+    async def check() -> None:
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(headless=True)
+            try:
+                page = await browser.new_page()
+                await page.set_content("""
+                  <main>
+                    <div role="button" tabindex="0" componentkey="job-card-component-ref-303">
+                      AI Engineer<br>AI Engineer<br>Acme<br>Hanoi<br>Posted 1 hour ago
+                    </div>
+                    <a href="https://www.linkedin.com/jobs/view/303/">AI Engineer</a>
+                    <button class="jobs-apply-button" aria-label="Easy Apply">Easy Apply</button>
+                    <section><div><h2>About the job</h2></div><p>Build production AI systems using Python and machine learning.</p></section>
+                  </main>
+                """)
+                jobs = await _collect_linkedin_search_results(page, {"config": {"max_results": 1}})
+                assert len(jobs) == 1
+                assert jobs[0].apply_url == "https://www.linkedin.com/jobs/view/303/"
+                assert "LinkedIn Easy Apply" in jobs[0].raw_text
+            finally:
+                await browser.close()
+
+    asyncio.run(check())
