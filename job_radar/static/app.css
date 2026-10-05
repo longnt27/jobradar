@@ -331,3 +331,7 @@ label.is-dirty::after{content:"Unsaved";position:absolute;right:8px;top:7px;padd
   .application-sticky-actions .actions #send-draft{grid-column:1/-1}
   .application-resume-preview iframe{height:62vh}
 }
+
+.application-form-choice{display:flex;align-items:flex-start;gap:9px;padding:11px 12px;border:1px solid #dfe7e2;border-radius:9px;background:#fbfcfb;font-size:13px;font-weight:650}
+.application-form-choice input{width:16px;height:16px;margin:2px 0 0;flex:none;accent-color:#1f7650}
+.application-form-choice span{line-height:1.4}
