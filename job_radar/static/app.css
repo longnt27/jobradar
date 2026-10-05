@@ -228,3 +228,33 @@ input,textarea,select{font-weight:400}
 #queue-draft-review{margin:12px 18px 18px}
 @media(max-width:1100px){.queue-grid{grid-template-columns:1fr}.queue-scroll{max-height:260px}}
 @media(max-width:650px){.queue-summary{grid-template-columns:repeat(2,1fr)}.queue-panel-head{flex-wrap:wrap}}
+
+.source-operations .section-head{align-items:flex-start}
+.source-operations .actions{margin:0}
+.source-scan-help{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:13px}
+.source-scan-help span{padding:10px 12px;border-radius:9px;background:#f4f8f5;color:#60776e;font-size:12px;line-height:1.45}
+.source-scan-help strong{display:block;color:#294b3e;margin-bottom:2px}
+.source-controls{display:grid;grid-template-columns:minmax(220px,1.35fr) repeat(4,minmax(130px,.8fr));gap:8px;margin:0 0 9px}
+.source-controls input,.source-controls select{min-width:0;width:100%}
+.source-controls #source-kind{width:100%}
+#source-result-summary{margin:0 0 13px}
+.source-card{padding:16px}
+.source-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.source-card-head>.status-badge{flex:none}
+.source-health{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;color:#526f64;font-size:12px}
+.source-health span{padding:6px 9px;border-radius:8px;background:#f3f7f4}
+.source-health strong{color:#214f3d}
+.source-auto{margin-left:auto}
+.source-auto-status{display:inline-block;min-width:42px;color:#2c7656;font-size:11px;font-weight:700}
+.source-auto[aria-busy="true"] .source-auto-status{color:#806424}
+.source-diagnostics{margin-top:10px;padding-top:10px;border-top:1px solid #edf1ee}
+.source-diagnostics summary{font-size:11px;color:#648075;font-weight:700}
+.source-diagnostics[open] summary{margin-bottom:7px}
+.employer{display:flex;flex-direction:column;align-items:flex-start;min-width:0;padding:13px}
+.employer>button{margin-top:auto}
+.employer-career-form{width:100%;margin-top:10px;padding-top:10px;border-top:1px solid #e7ede9}
+.employer-career-form .actions{margin:9px 0 0}
+.employer-career-error{min-height:16px;margin:6px 0 0;color:#a13a23;font-size:11px}
+.employer-pagination{margin:16px 0 0}
+@media(max-width:1100px){.source-controls{grid-template-columns:repeat(3,minmax(0,1fr))}.source-controls #source-query{grid-column:span 2}}
+@media(max-width:700px){.source-operations .section-head{display:block}.source-operations .actions{margin-top:13px}.source-scan-help{grid-template-columns:1fr}.source-controls{grid-template-columns:1fr}.source-controls #source-query{grid-column:auto}.source-card-head{display:block}.source-card-head>.status-badge{display:inline-block;margin-top:8px}.source-auto{margin-left:0;flex-basis:100%;white-space:normal}.employer-pagination{gap:6px}}
