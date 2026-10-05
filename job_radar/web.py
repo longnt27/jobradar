@@ -1107,7 +1107,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404, str(error)) from error
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
-        return {"state": payload.state, **result}
+        return {"state": payload.state}
 
     @app.get("/api/evidence")
     def evidence_list():
