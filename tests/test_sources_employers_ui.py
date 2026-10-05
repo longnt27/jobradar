@@ -77,6 +77,7 @@ def test_sources_and_employers_management_ui(tmp_path: Path) -> None:
 
                 page.locator("#employer-query").fill("")
                 page.locator("#employer-query").press("Enter")
+                page.wait_for_function("!document.querySelector('#employers-next').disabled")
                 page.locator("#employer-list .employer").first.wait_for()
                 assert not page.locator("#employers-next").is_disabled()
                 page.locator("#employers-next").click()
