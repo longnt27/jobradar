@@ -310,6 +310,9 @@ class AutoApplyManager:
         elif result.get("outcome", {}).get("key") == "submission_uncertain":
             self._set_status(attempt["vacancy_id"], "submission_uncertain",
                              result["outcome"]["guidance"], draft_id)
+        elif result.get("outcome", {}).get("key") == "send_failed":
+            self._set_status(attempt["vacancy_id"], "awaiting_review",
+                             result["outcome"]["guidance"], draft_id)
         else:
             self._set_status(attempt["vacancy_id"], "needs_review",
                              result.get("error") or result.get("receipt") or result.get("outcome", {}).get("label") or result["status"], draft_id)
