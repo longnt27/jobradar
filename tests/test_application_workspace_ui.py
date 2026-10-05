@@ -142,7 +142,7 @@ def test_application_workspace_filters_reviews_and_confirms_send(tmp_path: Path,
 
                 send = page.get_by_role("button", name="Approve & send", exact=True)
                 page.get_by_role("button", name="Save changes", exact=True).click()
-                page.locator("#application-dirty-state").get_by_text("Saved", exact=True).wait_for()
+                page.wait_for_function("document.querySelector('#application-dirty-state')?.textContent === 'Saved'")
                 assert send.is_enabled()
 
                 send.click()
@@ -160,7 +160,7 @@ def test_application_workspace_filters_reviews_and_confirms_send(tmp_path: Path,
                 assert page.get_by_role("button", name="Save changes", exact=True).is_enabled()
                 assert page.get_by_role("button", name="Approve & send", exact=True).is_disabled()
                 page.get_by_role("button", name="Save changes", exact=True).click()
-                page.locator("#application-dirty-state").get_by_text("Saved", exact=True).wait_for()
+                page.wait_for_function("document.querySelector('#application-dirty-state')?.textContent === 'Saved'")
 
                 page.set_viewport_size({"width": 390, "height": 844})
                 page.evaluate("window.__applicationDetailScrolled = false; document.querySelector('#application-detail').scrollIntoView = () => { window.__applicationDetailScrolled = true; }")
