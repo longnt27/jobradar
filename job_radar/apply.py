@@ -329,6 +329,12 @@ def send_readiness(db: Database, settings: Settings, draft: dict) -> list[str]:
     if prior:
         outcome = submission_outcome(prior["status"], json.loads(prior["destination"] or "{}"))
         reasons.append(f"{outcome['label']}. {outcome['guidance']}")
+    uncertain_attempt = db.one(
+        "SELECT status FROM auto_application_attempts WHERE draft_id=? AND status='submission_uncertain' LIMIT 1",
+        (draft["id"],),
+    )
+    if uncertain_attempt and not prior:
+        reasons.append("Submission status uncertain. Verify on the employer site before taking another send action.")
     return reasons
 
 
@@ -439,6 +445,12 @@ async def send_application(db: Database, settings: Settings, draft_id: str, expe
     if prior:
         outcome = submission_outcome(prior["status"], json.loads(prior["destination"] or "{}"))
         raise ValueError(f"{outcome['label']}. {outcome['guidance']}")
+    uncertain_attempt = db.one(
+        "SELECT status FROM auto_application_attempts WHERE draft_id=? AND status='submission_uncertain' LIMIT 1",
+        (draft_id,),
+    )
+    if uncertain_attempt:
+        raise ValueError("Submission status uncertain. Verify on the employer site before taking another send action.")
     identifier = new_id()
     digest = package_hash(draft)
     snapshot = _snapshot_submission_package(settings, identifier, draft)
