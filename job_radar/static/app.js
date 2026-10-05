@@ -16,6 +16,9 @@ let projectCards = [];
 let discoveredRepos = [];
 let selectedProjectId = null;
 let projectProviderReady = false;
+let applicationDrafts = [];
+let activeApplicationId = null;
+let applicationWorkspaceView = 'drafts';
 
 function formatDescription(value) {
   const blocks = String(value ?? '').replace(/\r\n/g, '\n').split(/\n{2,}/).map((part) => part.trim()).filter(Boolean);
@@ -667,12 +670,139 @@ async function showTab(name, historyMode = 'push') {
   }
 }
 
+function providerLabel(value) {
+  return ({
+    codex:'Codex CLI',
+    codex_local:'Codex OSS · local',
+    agy:'Antigravity CLI',
+    claude:'Claude Code',
+    template:'Basic template',
+  })[value] || String(value || 'Unknown provider').replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function applicationReviewKey(draft) {
+  if (draft.review_status) return draft.review_status;
+  return draft.status === 'sent' ? 'sent' : 'draft';
+}
+
+function applicationReviewLabel(draft) {
+  const key = typeof draft === 'string' ? draft : applicationReviewKey(draft);
+  return ({
+    awaiting_review:'Ready for review',
+    needs_review:'Needs changes',
+    sent:'Sent',
+    sending:'Sending',
+    regenerating:'Regenerating',
+    queued:'Queued',
+    failed:'Needs attention',
+    draft:'Draft',
+  })[key] || String(key || 'Draft').replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function applicationReviewTone(draft) {
+  const key = applicationReviewKey(draft);
+  if (key === 'sent') return 'success';
+  if (key === 'awaiting_review') return 'info';
+  if (['needs_review','queued','regenerating'].includes(key)) return 'warning';
+  if (key === 'failed') return 'danger';
+  return 'neutral';
+}
+
+function applicationIsSent(draft) {
+  return draft.status === 'sent' || draft.review_status === 'sent';
+}
+
+function setApplicationWorkspaceView(view) {
+  applicationWorkspaceView = ['drafts','automation','activity'].includes(view) ? view : 'drafts';
+  document.querySelectorAll('[data-app-view]').forEach((button) => {
+    const active = button.dataset.appView === applicationWorkspaceView;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+  document.querySelectorAll('[data-app-panel]').forEach((panel) => {
+    panel.hidden = panel.dataset.appPanel !== applicationWorkspaceView;
+  });
+}
+
+function bindApplicationWorkspace() {
+  const root = $('#applications');
+  if (!root || root.dataset.workspaceBound === 'true') return;
+  root.dataset.workspaceBound = 'true';
+  root.querySelectorAll('[data-app-view]').forEach((button) => button.addEventListener('click', () => setApplicationWorkspaceView(button.dataset.appView)));
+  $('#application-query').addEventListener('input', renderApplicationList);
+  for (const selector of ['#application-review-filter','#application-company-filter','#application-sent-filter']) {
+    $(selector).addEventListener('change', renderApplicationList);
+  }
+}
+
+function populateApplicationCompanyFilter() {
+  const select = $('#application-company-filter');
+  const saved = select.value;
+  const companies = [...new Set(applicationDrafts.map((draft) => draft.company).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  select.innerHTML = '<option value="">All companies</option>' + companies.map((company) =>
+    `<option value="${escapeHtml(company)}">${escapeHtml(company)}</option>`).join('');
+  if (companies.includes(saved)) select.value = saved;
+}
+
+function filteredApplications() {
+  const query = $('#application-query').value.trim().toLowerCase();
+  const review = $('#application-review-filter').value;
+  const company = $('#application-company-filter').value;
+  const sent = $('#application-sent-filter').value;
+  return applicationDrafts.filter((draft) => {
+    const searchable = `${draft.job_title || ''} ${draft.company || ''} ${providerLabel(draft.provider_mode)}`.toLowerCase();
+    if (query && !searchable.includes(query)) return false;
+    if (review && applicationReviewKey(draft) !== review) return false;
+    if (company && draft.company !== company) return false;
+    if (sent === 'sent' && !applicationIsSent(draft)) return false;
+    if (sent === 'unsent' && applicationIsSent(draft)) return false;
+    return true;
+  });
+}
+
+function renderApplicationList() {
+  const visible = filteredApplications();
+  const summary = $('#application-list-summary');
+  summary.textContent = applicationDrafts.length
+    ? `${visible.length} of ${applicationDrafts.length} application${applicationDrafts.length === 1 ? '' : 's'} shown`
+    : 'No applications prepared yet.';
+  const list = $('#application-list');
+  if (!applicationDrafts.length) {
+    list.innerHTML = '<div class="panel empty"><p>No applications yet. Start with a job posting.</p><button id="applications-browse-jobs" class="primary">Browse jobs →</button></div>';
+    $('#applications-browse-jobs')?.addEventListener('click', () => showTab('jobs'));
+    return;
+  }
+  if (!visible.length) {
+    list.innerHTML = '<div class="empty">No applications match these filters.</div>';
+    return;
+  }
+  list.innerHTML = visible.map((draft) => {
+    const selected = draft.id === activeApplicationId;
+    const tone = applicationReviewTone(draft);
+    return `<button type="button" class="item clickable application-card surface-action ${selected ? 'is-selected' : ''}" data-application="${draft.id}" ${selected ? 'aria-current="true"' : ''}>
+      <div class="item-title">${escapeHtml(draft.job_title)} <span class="status-badge status-badge--${tone}">${escapeHtml(applicationReviewLabel(draft))}</span></div>
+      <div class="item-meta">${escapeHtml(draft.company)} · ${escapeHtml(providerLabel(draft.provider_mode))}</div>
+      <div class="item-meta">Updated ${when(draft.updated_at)}${applicationIsSent(draft) ? ' · Sent' : ''}</div>
+    </button>`;
+  }).join('');
+  list.querySelectorAll('[data-application]').forEach((node) => node.addEventListener('click', async () => {
+    await showApplication(node.dataset.application);
+    if (window.matchMedia('(max-width: 900px)').matches) scrollNodeIntoView($('#application-detail'), {block:'start'});
+  }));
+}
+
 async function loadApplications(selectedId = null) {
+  bindApplicationWorkspace();
   await loadAutoApply();
-  const drafts = await api('/api/applications');
-  $('#application-list').innerHTML = drafts.length ? drafts.map((draft) => `<button type="button" class="item clickable application-card surface-action" data-application="${draft.id}"><div class="item-title">${escapeHtml(draft.job_title)} <span class="status-badge ${draft.review_status === 'awaiting_review' ? 'status-badge--success' : 'status-badge--warning'}">${escapeHtml(draft.review_status === 'awaiting_review' ? 'Ready for review' : draft.review_status === 'needs_review' ? 'Needs changes' : draft.review_status || draft.status)}</span></div><div class="item-meta">${escapeHtml(draft.company)} · ${escapeHtml(draft.provider_mode)}</div><div class="item-meta">Updated ${when(draft.updated_at)}</div></button>`).join('') : '<div class="panel empty"><p>No applications yet. Start with a job posting.</p><button id="applications-browse-jobs" class="primary">Browse jobs →</button></div>';
-  $('#applications-browse-jobs')?.addEventListener('click', () => showTab('jobs'));
-  document.querySelectorAll('[data-application]').forEach((node) => node.addEventListener('click', () => showApplication(node.dataset.application)));
+  applicationDrafts = await api('/api/applications');
+  populateApplicationCompanyFilter();
+  if (selectedId) {
+    activeApplicationId = selectedId;
+    setApplicationWorkspaceView('drafts');
+  } else if (activeApplicationId && !applicationDrafts.some((draft) => draft.id === activeApplicationId)) {
+    activeApplicationId = null;
+  }
+  renderApplicationList();
   if (selectedId) await showApplication(selectedId);
 }
 
