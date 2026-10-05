@@ -499,7 +499,6 @@ async def send_application(db: Database, settings: Settings, draft_id: str, expe
         db.execute("UPDATE submissions SET status=?,receipt=?,updated_at=? WHERE id=?", (status, receipt, now(), identifier))
         if status in CONFIRMED_SUBMISSION_STATUSES:
             db.execute("UPDATE application_drafts SET status='sent',updated_at=? WHERE id=?", (now(), draft_id))
-            db.execute("UPDATE vacancies SET state='applied',updated_at=? WHERE id=?", (now(), draft["vacancy_id"]))
         elif status in UNCERTAIN_SUBMISSION_STATUSES:
             db.execute("UPDATE application_drafts SET status='submission_uncertain',updated_at=? WHERE id=?", (now(), draft_id))
         return {"id": identifier, "status": status, "receipt": receipt,

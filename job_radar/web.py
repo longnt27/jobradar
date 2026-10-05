@@ -28,9 +28,12 @@ from .linkedin_searches import search_from_url
 from .github import list_public_repositories
 from .mail_config import save_smtp, send_test_email, smtp_config, smtp_config_fingerprint
 from .local_analysis import clean_saved_analysis, list_local_models, validate_local_model
+from .job_inbox import (application_filter_sql, enrich_jobs, mark_seen, release_due_snoozes,
+                        set_decision, set_manual_applied, set_recruiting_outcome)
 from .matching import MatchManager
 from .notifications import discover_telegram_chats, save_telegram, telegram_config
 from .ranking import rescore_vacancies, score_job
+from .search_intent import fit_summary, normalize_search_intent, seniority_key
 from .resume_import import parse_resume_template
 from .resume_extract import extract_resume
 from .seeds import seed
@@ -44,6 +47,12 @@ from .work_queue import work_queue
 JOBS_ORDER = ("CASE WHEN v.analysis_status='done' THEN 0 ELSE 1 END, "
               "CASE WHEN v.analysis_status='done' THEN v.score END DESC, "
               "v.first_seen_at DESC,v.id")
+
+
+JOB_VIEW_FILTER_KEYS = {
+    "q", "inbox", "decision", "application", "outcome", "score", "freshness",
+    "mode", "location", "source", "seniority", "sort",
+}
 
 
 class SourceInput(BaseModel):
@@ -80,6 +89,26 @@ class StateInput(BaseModel):
     reason: str | None = None
 
 
+class DecisionInput(BaseModel):
+    decision: Literal["undecided", "shortlisted", "ignored", "later"]
+    reason: str | None = Field(default=None, max_length=200)
+    snoozed_until: str | None = None
+
+
+class RecruitingOutcomeInput(BaseModel):
+    outcome: Literal["none", "interview", "rejected", "offer"]
+
+
+class ManualAppliedInput(BaseModel):
+    applied: bool = True
+
+
+class SavedJobViewInput(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    filters: dict[str, Any] = Field(default_factory=dict)
+    set_default: bool = False
+
+
 class EvidenceInput(BaseModel):
     kind: Literal["experience", "project", "education", "achievement", "certification"]
     title: str = Field(min_length=2)
@@ -109,7 +138,22 @@ class MatchingModelInput(BaseModel):
 
 class AutoApplyInput(BaseModel):
     enabled: bool = False
-    threshold: int = Field(default=80, ge=0, le=100)
+    threshold: int | None = Field(default=None, ge=0, le=100)
+
+
+class SearchIntentInput(BaseModel):
+    role_families: list[str] = Field(default_factory=list)
+    seniority_levels: list[str] = Field(default_factory=list)
+    preferred_locations: list[str] = Field(default_factory=list)
+    work_modes: list[str] = Field(default_factory=list)
+    preferred_employers: list[str] = Field(default_factory=list)
+    excluded_employers: list[str] = Field(default_factory=list)
+    negative_keywords: list[str] = Field(default_factory=list)
+    hard_constraints: dict[str, bool] = Field(default_factory=dict)
+    minimum_salary: int | None = Field(default=None, ge=0)
+    salary_currency: str = "VND"
+    salary_unknown_ok: bool = True
+    strong_match_threshold: int = Field(default=80, ge=0, le=100)
 
 
 class ProjectGenerationInput(BaseModel):
@@ -155,6 +199,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings.ensure_dirs()
     db = Database(settings.database_path)
     seed(db)
+    if not db.get_setting("search_intent", {}):
+        legacy_auto_apply = db.get_setting("auto_apply", {})
+        db.set_setting("search_intent", normalize_search_intent({
+            "strong_match_threshold": legacy_auto_apply.get("threshold", 80),
+        }))
     clean_saved_analysis(db)
     scan_manager = ScanManager(db, settings)
     auto_apply_manager = AutoApplyManager(db, settings, scan_manager.browser_lock)
@@ -199,7 +248,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         db.set_setting("profile", profile)
         matching_fields = ("skills", "location", "relocation", "experience", "education")
         if any(previous.get(field) != profile.get(field) for field in matching_fields):
-            rescore_vacancies(db, profile)
+            rescore_vacancies(db, profile, db.get_setting("search_intent", {}))
             match_manager.wake()
 
     def attach_career_source(employer_id: str, name: str, url: str) -> None:
@@ -212,6 +261,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         else:
             db.execute("INSERT INTO sources(id,kind,name,url,employer_id,interval_minutes,created_at) VALUES(?,?,?,?,?,?,?)",
                        (new_id(), "career", f"{name} careers", url, employer_id, 240, now()))
+
+    def saved_job_views() -> list[dict[str, Any]]:
+        views = db.get_setting("job_saved_views", [])
+        return views if isinstance(views, list) else []
+
+    def sanitize_job_view_filters(filters: dict[str, Any]) -> dict[str, str]:
+        clean: dict[str, str] = {}
+        for key, value in filters.items():
+            if key not in JOB_VIEW_FILTER_KEYS or value in (None, ""):
+                continue
+            clean[key] = str(value)[:200]
+        return clean
 
     @app.get("/")
     def index():
@@ -239,17 +300,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             counts["vacancies"] = conn.execute("SELECT COUNT(*) FROM vacancies v WHERE NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm')").fetchone()[0]
             counts["active_sources"] = conn.execute("SELECT COUNT(*) FROM sources WHERE enabled=1").fetchone()[0]
             counts["career_sources_enabled"] = conn.execute("SELECT COUNT(*) FROM sources WHERE enabled=1 AND kind='career'").fetchone()[0]
-            counts["high_fit_new"] = conn.execute("SELECT COUNT(*) FROM vacancies WHERE state='new' AND analysis_status='done' AND score>=80").fetchone()[0]
+            threshold = normalize_search_intent(db.get_setting("search_intent", {}))["strong_match_threshold"]
+            counts["unseen_jobs"] = conn.execute("SELECT COUNT(*) FROM vacancies WHERE seen_at IS NULL AND decision_state='undecided' AND snoozed_until IS NULL").fetchone()[0]
             counts["recent_jobs"] = conn.execute("SELECT COUNT(*) FROM vacancies WHERE julianday(first_seen_at)>=julianday('now','-1 day')").fetchone()[0]
             counts["drafts_needing_review"] = conn.execute("SELECT COUNT(*) FROM auto_application_attempts WHERE status IN ('awaiting_review','needs_review')").fetchone()[0]
             counts["analysis_failures"] = conn.execute("SELECT COUNT(*) FROM vacancies WHERE analysis_status='failed'").fetchone()[0]
         recent = db.all("SELECT scan_runs.*, sources.name AS source_name FROM scan_runs JOIN sources ON sources.id=scan_runs.source_id ORDER BY started_at DESC LIMIT 10")
+        preferences = db.get_setting("search_intent", {})
+        strong_jobs = []
+        for item in db.all("SELECT id,title,company,score,score_detail FROM vacancies WHERE decision_state='undecided' AND snoozed_until IS NULL AND analysis_status='done' AND score>=? ORDER BY score DESC,first_seen_at DESC", (threshold,)):
+            try:
+                detail = json.loads(item.pop("score_detail") or "{}")
+            except (TypeError, ValueError):
+                detail = {}
+            item.update(fit_summary(item.get("score"), detail, preferences))
+            if item["fit_class"] == "strong":
+                strong_jobs.append(item)
+        counts["high_fit_new"] = len(strong_jobs)
         attention = {
-            "jobs": db.all("SELECT id,title,company,score FROM vacancies WHERE state='new' AND analysis_status='done' AND score>=80 ORDER BY score DESC,first_seen_at DESC LIMIT 4"),
+            "jobs": strong_jobs[:4],
             "drafts": db.all("SELECT a.draft_id AS id,v.title,v.company,a.status FROM auto_application_attempts a JOIN vacancies v ON v.id=a.vacancy_id WHERE a.status IN ('awaiting_review','needs_review') AND a.draft_id IS NOT NULL ORDER BY a.updated_at DESC LIMIT 4"),
             "failures": db.all("SELECT id,title,company,analysis_error AS detail FROM vacancies WHERE analysis_status='failed' ORDER BY updated_at DESC LIMIT 4"),
         }
-        return {"counts": counts, "attention": attention, "recent_runs": recent, "data_dir": str(settings.data_dir)}
+        return {"counts": counts, "attention": attention, "recent_runs": recent, "data_dir": str(settings.data_dir),
+                "strong_match_threshold": threshold}
 
     @app.get("/api/queue")
     async def queue():
@@ -427,6 +501,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/profile")
     def get_profile():
         return db.get_setting("profile", {})
+
+    @app.get("/api/search-intent")
+    def get_search_intent():
+        raw = db.get_setting("search_intent", {})
+        if not raw:
+            legacy = db.get_setting("auto_apply", {})
+            raw = {"strong_match_threshold": legacy.get("threshold", 80)}
+        return normalize_search_intent(raw)
+
+    @app.put("/api/search-intent")
+    def put_search_intent(payload: SearchIntentInput):
+        preferences = normalize_search_intent(payload.model_dump())
+        db.set_setting("search_intent", preferences)
+        profile = db.get_setting("profile", {})
+        rescore_vacancies(db, profile, preferences)
+        match_manager.wake()
+        auto_apply_manager.wake()
+        return preferences
+
 
     @app.put("/api/profile")
     def put_profile(profile: dict[str, Any] = Body(...)):
@@ -698,48 +791,163 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         attach_career_source(employer_id, employer["name"], url)
         return {"id": employer_id, "career_url": url}
 
+    def attach_job_sources(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not rows:
+            return rows
+        placeholders = ",".join("?" for _ in rows)
+        origins = db.all(
+            "SELECT vo.vacancy_id,o.url,o.last_seen_at,s.kind,s.name FROM vacancy_observations vo "
+            "JOIN observations o ON o.id=vo.observation_id JOIN sources s ON s.id=o.source_id "
+            f"WHERE vo.vacancy_id IN ({placeholders}) ORDER BY o.last_seen_at DESC",
+            tuple(row["id"] for row in rows),
+        )
+        by_id: dict[str, dict[str, Any]] = {}
+        for origin in origins:
+            by_id.setdefault(origin["vacancy_id"], {
+                key: origin[key] for key in ("url", "last_seen_at", "kind", "name")
+            })
+        for row in rows:
+            row["source"] = by_id.get(row["id"])
+        return rows
+
+    def legacy_job_state_filter(state: str) -> tuple[str, str]:
+        return {
+            "new": ("decision", "undecided"),
+            "interesting": ("decision", "shortlisted"),
+            "ignored": ("decision", "ignored"),
+            "prepare": ("application", "draft_ready"),
+            "ready": ("application", "draft_ready"),
+            "applied": ("application", "applied"),
+            "interview": ("outcome", "interview"),
+            "rejected": ("outcome", "rejected"),
+            "offer": ("outcome", "offer"),
+        }.get(state, ("", ""))
+
+    @app.post("/api/jobs/visit")
+    def visit_jobs():
+        release_due_snoozes(db)
+        previous = db.get_setting("jobs_last_visit_at")
+        current = now()
+        db.set_setting("jobs_last_visit_at", current)
+        base = (
+            "decision_state='undecided' AND snoozed_until IS NULL "
+            "AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=vacancies.employer_id "
+            "AND e.coverage_status='excluded_hcm')"
+        )
+        unseen = db.one(
+            f"SELECT COUNT(*) AS count FROM vacancies WHERE {base} AND seen_at IS NULL"
+        )["count"]
+        since = unseen if not previous else db.one(
+            f"SELECT COUNT(*) AS count FROM vacancies WHERE {base} AND datetime(first_seen_at)>datetime(?)",
+            (previous,),
+        )["count"]
+        return {"previous": previous, "current": current, "unseen": unseen, "since_last_visit": since}
+
+    @app.get("/api/jobs/views")
+    def list_job_views():
+        return saved_job_views()
+
+    @app.post("/api/jobs/views", status_code=201)
+    def save_job_view(payload: SavedJobViewInput):
+        views = saved_job_views()
+        if len(views) >= 20:
+            raise HTTPException(409, "Delete an old saved view before adding another")
+        identifier = new_id()
+        view = {
+            "id": identifier,
+            "name": payload.name.strip(),
+            "filters": sanitize_job_view_filters(payload.filters),
+            "default": bool(payload.set_default),
+            "created_at": now(),
+        }
+        if view["default"]:
+            for existing in views:
+                existing["default"] = False
+        views.append(view)
+        db.set_setting("job_saved_views", views)
+        return view
+
+    @app.delete("/api/jobs/views/{view_id}")
+    def delete_job_view(view_id: str):
+        views = saved_job_views()
+        remaining = [view for view in views if view.get("id") != view_id]
+        if len(remaining) == len(views):
+            raise HTTPException(404, "Saved view not found")
+        db.set_setting("job_saved_views", remaining)
+        return {"deleted": True}
+
     @app.get("/api/jobs")
     def jobs(q: str = "", state: str = "", limit: int = Query(100, ge=1, le=500)):
-        def with_sources(rows: list[dict]) -> list[dict]:
-            if not rows:
-                return rows
-            placeholders = ",".join("?" for _ in rows)
-            origins = db.all(
-                "SELECT vo.vacancy_id,o.url,o.last_seen_at,s.kind,s.name FROM vacancy_observations vo "
-                "JOIN observations o ON o.id=vo.observation_id JOIN sources s ON s.id=o.source_id "
-                f"WHERE vo.vacancy_id IN ({placeholders}) ORDER BY o.last_seen_at DESC",
-                tuple(row["id"] for row in rows),
-            )
-            by_id = {}
-            for origin in origins:
-                by_id.setdefault(origin["vacancy_id"], {key: origin[key] for key in ("url", "last_seen_at", "kind", "name")})
-            for row in rows:
-                row["source"] = by_id.get(row["id"])
-            return rows
-        if q.strip():
-            terms = q.strip().split()
-            predicates = " AND ".join("(v.title LIKE ? ESCAPE '\\' OR v.company LIKE ? ESCAPE '\\' OR v.description LIKE ? ESCAPE '\\')" for _ in terms)
-            values = tuple(value for term in terms for value in (["%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"] * 3))
-            return with_sources(db.all(
-                f"SELECT v.* FROM vacancies v WHERE {predicates} AND (?='' OR v.state=?) AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm') ORDER BY {JOBS_ORDER} LIMIT ?",
-                (*values, state, state, limit),
-            ))
-        return with_sources(db.all(
-            f"SELECT v.* FROM vacancies v WHERE (?='' OR v.state=?) AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm') ORDER BY {JOBS_ORDER} LIMIT ?",
-            (state, state, limit),
-        ))
+        release_due_snoozes(db)
+        conditions = [
+            "NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm')"
+        ]
+        values: list[Any] = []
+        dimension, value = legacy_job_state_filter(state)
+        if dimension == "decision":
+            conditions.append("v.decision_state=?")
+            values.append(value)
+        elif dimension == "outcome":
+            conditions.append("v.recruiting_outcome=?")
+            values.append(value)
+        elif dimension == "application":
+            conditions.append(application_filter_sql(value))
+        for term in q.strip().split():
+            conditions.append("(v.title LIKE ? ESCAPE '\\' OR v.company LIKE ? ESCAPE '\\' OR v.description LIKE ? ESCAPE '\\')")
+            pattern = "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+            values.extend([pattern] * 3)
+        rows = db.all(
+            f"SELECT v.* FROM vacancies v WHERE {' AND '.join(conditions)} ORDER BY {JOBS_ORDER} LIMIT ?",
+            (*values, limit),
+        )
+        return attach_job_sources(enrich_jobs(db, rows))
 
     @app.get("/api/jobs/page")
-    def jobs_page(q: str = "", state: str = "", min_score: int | None = Query(None, ge=0, le=100),
+    def jobs_page(q: str = "", decision: str = "", application: str = "", outcome: str = "",
+                  inbox: str = "", since: str = "", state: str = "",
+                  min_score: int | None = Query(None, ge=0, le=100),
                   freshness: int | None = Query(None, ge=1, le=3650), work_mode: str = "",
                   location: str = "", source: str = "", seniority: str = "", sort: str = "best",
                   page: int = Query(1, ge=1), page_size: int = Query(25, ge=1, le=50)):
+        release_due_snoozes(db)
+        if state and not any((decision, application, outcome)):
+            dimension, legacy_value = legacy_job_state_filter(state)
+            if dimension == "decision":
+                decision = legacy_value
+            elif dimension == "application":
+                application = legacy_value
+            elif dimension == "outcome":
+                outcome = legacy_value
+        if decision and decision not in {"undecided", "shortlisted", "ignored", "later"}:
+            raise HTTPException(422, "Unsupported job decision filter")
+        if outcome and outcome not in {"none", "interview", "rejected", "offer"}:
+            raise HTTPException(422, "Unsupported recruiting outcome filter")
+        if inbox and inbox not in {"since_last_visit", "unseen", "all"}:
+            raise HTTPException(422, "Unsupported inbox filter")
+
         terms = q.strip().split()
         conditions = [
-            "(?='' OR v.state=?)",
             "NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm')",
         ]
-        values: list[Any] = [state, state]
+        values: list[Any] = []
+        if decision:
+            conditions.append("v.decision_state=?")
+            values.append(decision)
+        if outcome:
+            conditions.append("v.recruiting_outcome=?")
+            values.append(outcome)
+        if application:
+            try:
+                conditions.append(application_filter_sql(application))
+            except ValueError as error:
+                raise HTTPException(422, str(error)) from error
+        if inbox == "unseen":
+            conditions.extend(["v.seen_at IS NULL", "v.decision_state='undecided'", "v.snoozed_until IS NULL"])
+        elif inbox == "since_last_visit":
+            conditions.extend(["v.decision_state='undecided'", "v.snoozed_until IS NULL"])
+            if since:
+                conditions.append("datetime(v.first_seen_at)>datetime(?)")
+                values.append(since)
         for term in terms:
             conditions.append("(v.title LIKE ? ESCAPE '\\' OR v.company LIKE ? ESCAPE '\\' OR v.description LIKE ? ESCAPE '\\')")
             pattern = "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
@@ -757,8 +965,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             conditions.append("lower(COALESCE(v.location,'')) LIKE lower(?)")
             values.append(f"%{location}%")
         if seniority:
-            conditions.append("lower(COALESCE(json_extract(v.score_detail,'$.facts.seniority'),'')) LIKE lower(?)")
-            values.append(f"%{seniority}%")
+            patterns = {
+                "intern": ("%intern%", "%trainee%"),
+                "entry": ("%junior%", "%entry%", "%graduate%", "%fresher%"),
+                "mid": ("%mid%", "%middle%"),
+                "senior": ("%senior%", "%sr.%"),
+                "lead_plus": ("%lead%", "%principal%", "%staff%", "%manager%", "%director%", "%head%"),
+            }.get(seniority, ())
+            if patterns:
+                seniority_text = "lower(COALESCE(NULLIF(json_extract(v.score_detail,'$.facts.seniority'),''),v.title,''))"
+                conditions.append("(" + " OR ".join(f"{seniority_text} LIKE ?" for _ in patterns) + ")")
+                values.extend(patterns)
         if source:
             conditions.append(
                 "EXISTS(SELECT 1 FROM vacancy_observations vf JOIN observations o ON o.id=vf.observation_id "
@@ -774,55 +991,117 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         where = " AND ".join(conditions)
         total = db.one(f"SELECT COUNT(*) AS count FROM vacancies v WHERE {where}", tuple(values))["count"]
         rows = db.all(
-            "SELECT v.id,v.company,v.title,v.location,v.work_mode,v.published_at,v.first_seen_at,v.state,v.score,v.score_detail,v.analysis_status "
+            "SELECT v.id,v.company,v.title,v.location,v.work_mode,v.published_at,v.first_seen_at,"
+            "v.state,v.decision_state,v.seen_at,v.snoozed_until,v.recruiting_outcome,"
+            "v.manual_applied_at,v.manual_applied_source,v.score,v.score_detail,v.analysis_status "
             f"FROM vacancies v WHERE {where} ORDER BY {order} LIMIT ? OFFSET ?",
             (*values, page_size, (page - 1) * page_size),
         )
+        enrich_jobs(db, rows)
         for row in rows:
             detail = json.loads(row.get("score_detail") or "{}")
             facts = detail.get("facts") or {}
             row["work_mode"] = row.get("work_mode") or facts.get("work_mode") or ""
             row["seniority"] = facts.get("seniority") or ""
+            row["salary_range"] = facts.get("salary_range") or ""
             criteria = detail.get("criteria") or {}
             row["match_signals"] = [
                 {"label": key.replace("_", " ").title(), "score": item.get("score"), "reason": item.get("reason", "")}
                 for key, item in criteria.items() if isinstance(item, dict) and isinstance(item.get("score"), (int, float))
             ]
+            row.update(fit_summary(row.get("score"), detail, db.get_setting("search_intent", {})))
+            row["seniority_key"] = seniority_key(f"{facts.get('seniority') or ''} {row.get('title') or ''}")
             row.pop("score_detail", None)
-        if rows:
-            placeholders = ",".join("?" for _ in rows)
-            origins = db.all(
-                "SELECT vo.vacancy_id,o.url,o.last_seen_at,s.kind,s.name FROM vacancy_observations vo "
-                "JOIN observations o ON o.id=vo.observation_id JOIN sources s ON s.id=o.source_id "
-                f"WHERE vo.vacancy_id IN ({placeholders}) ORDER BY o.last_seen_at DESC",
-                tuple(row["id"] for row in rows),
-            )
-            by_id = {}
-            for origin in origins:
-                by_id.setdefault(origin["vacancy_id"], {key: origin[key] for key in ("url", "last_seen_at", "kind", "name")})
-            for row in rows:
-                row["source"] = by_id.get(row["id"])
-        return {"items": rows, "page": page, "page_size": page_size, "total": total,
-                "pages": max(1, (total + page_size - 1) // page_size)}
+        attach_job_sources(rows)
+
+        inbox_base = (
+            "v.decision_state='undecided' AND v.snoozed_until IS NULL "
+            "AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm')"
+        )
+        unseen_count = db.one(
+            f"SELECT COUNT(*) AS count FROM vacancies v WHERE {inbox_base} AND v.seen_at IS NULL"
+        )["count"]
+        since_count = unseen_count if not since else db.one(
+            f"SELECT COUNT(*) AS count FROM vacancies v WHERE {inbox_base} AND datetime(v.first_seen_at)>datetime(?)",
+            (since,),
+        )["count"]
+        return {
+            "items": rows,
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "pages": max(1, (total + page_size - 1) // page_size),
+            "inbox": {"unseen": unseen_count, "since_last_visit": since_count, "since": since or None},
+        }
 
     @app.get("/api/jobs/{job_id}")
     def job(job_id: str):
+        release_due_snoozes(db)
         row = db.one("SELECT * FROM vacancies WHERE id=?", (job_id,))
         if not row:
             raise HTTPException(404, "Job not found")
+        enrich_jobs(db, [row])
         row["observations"] = db.all(
-            "SELECT o.url,o.first_seen_at,o.published_at,s.kind,s.name FROM vacancy_observations vo JOIN observations o ON o.id=vo.observation_id JOIN sources s ON s.id=o.source_id WHERE vo.vacancy_id=?",
+            "SELECT o.url,o.first_seen_at,o.published_at,s.kind,s.name FROM vacancy_observations vo "
+            "JOIN observations o ON o.id=vo.observation_id JOIN sources s ON s.id=o.source_id "
+            "WHERE vo.vacancy_id=?",
             (job_id,),
         )
+        try:
+            detail = json.loads(row.get("score_detail") or "{}")
+        except (TypeError, ValueError):
+            detail = {}
+        row.update(fit_summary(row.get("score"), detail, db.get_setting("search_intent", {})))
+        feedback = db.one(
+            "SELECT reason FROM feedback WHERE vacancy_id=? AND state=? AND reason IS NOT NULL "
+            "ORDER BY created_at DESC LIMIT 1",
+            (job_id, row["decision_state"]),
+        )
+        row["decision_reason"] = feedback["reason"] if feedback else None
         return row
+
+    @app.post("/api/jobs/{job_id}/seen")
+    def see_job(job_id: str):
+        try:
+            return mark_seen(db, job_id)
+        except KeyError as error:
+            raise HTTPException(404, str(error)) from error
+
+    @app.post("/api/jobs/{job_id}/decision")
+    def decide_job(job_id: str, payload: DecisionInput):
+        try:
+            return set_decision(
+                db, job_id, payload.decision, reason=payload.reason, snoozed_until=payload.snoozed_until
+            )
+        except KeyError as error:
+            raise HTTPException(404, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+
+    @app.post("/api/jobs/{job_id}/outcome")
+    def set_job_outcome(job_id: str, payload: RecruitingOutcomeInput):
+        try:
+            return set_recruiting_outcome(db, job_id, payload.outcome)
+        except KeyError as error:
+            raise HTTPException(404, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+
+    @app.post("/api/jobs/{job_id}/manual-applied")
+    def manual_applied(job_id: str, payload: ManualAppliedInput):
+        try:
+            return set_manual_applied(db, job_id, payload.applied)
+        except KeyError as error:
+            raise HTTPException(404, str(error)) from error
 
     @app.post("/api/jobs/import", status_code=201)
     def import_job(payload: JobInput):
         identifier = new_id()
         timestamp = now()
         employer = db.one("SELECT id FROM employers WHERE lower(name)=lower(?)", (payload.company,))
-        score, detail = score_job({"title": payload.title, "description": payload.description,
-                                   "location": payload.location, "first_seen_at": timestamp}, db.get_setting("profile", {}))
+        score, detail = score_job({"company": payload.company, "title": payload.title, "description": payload.description,
+                                   "location": payload.location, "first_seen_at": timestamp}, db.get_setting("profile", {}),
+                                  db.get_setting("search_intent", {}))
         matching_model = db.get_setting("matching_model", "")
         with db.connection() as conn:
             conn.execute(
@@ -874,12 +1153,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/jobs/{job_id}/state")
     def update_state(job_id: str, payload: StateInput):
-        if not db.one("SELECT id FROM vacancies WHERE id=?", (job_id,)):
-            raise HTTPException(404, "Job not found")
-        with db.connection() as conn:
-            conn.execute("UPDATE vacancies SET state=?,updated_at=? WHERE id=?", (payload.state, now(), job_id))
-            conn.execute("INSERT INTO feedback(id,vacancy_id,state,reason,created_at) VALUES(?,?,?,?,?)",
-                         (new_id(), job_id, payload.state, payload.reason, now()))
+        # Backward-compatible adapter for older clients. New UI uses independent
+        # decision/outcome/application endpoints.
+        try:
+            if payload.state == "new":
+                result = set_decision(db, job_id, "undecided", reason=payload.reason)
+            elif payload.state == "interesting":
+                result = set_decision(db, job_id, "shortlisted", reason=payload.reason)
+            elif payload.state == "ignored":
+                result = set_decision(db, job_id, "ignored", reason=payload.reason)
+            elif payload.state in {"interview", "rejected", "offer"}:
+                result = set_recruiting_outcome(db, job_id, payload.state)
+            elif payload.state in {"prepare", "ready", "applied"}:
+                raise HTTPException(
+                    409,
+                    "Application progress is derived from drafts and submissions. "
+                    "Use the explicit external-applied action when you applied outside Job Radar.",
+                )
+            else:
+                raise HTTPException(422, "Unsupported legacy job state")
+        except KeyError as error:
+            raise HTTPException(404, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
         return {"state": payload.state}
 
     @app.get("/api/evidence")

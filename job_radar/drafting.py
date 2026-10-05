@@ -343,7 +343,6 @@ def prepare_draft(db: Database, settings: Settings, vacancy_id: str, provider: s
                    (identifier, vacancy_id, provider, PROVIDERS[provider], json.dumps([card["id"] for card in selected]), json.dumps(resume, ensure_ascii=False),
                     json.dumps(message, ensure_ascii=False), "{}", json.dumps(destination), resume_path, resume_hash,
                     json.dumps(warnings), now(), now()))
-    db.execute("UPDATE vacancies SET state='prepare',updated_at=? WHERE id=?", (now(), vacancy_id))
     return get_draft(db, identifier)
 
 

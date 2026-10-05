@@ -49,7 +49,7 @@ def work_queue(db: Database, scans: ScanManager, matching: MatchManager,
         "WHERE a.status='queued' AND v.analysis_status='done' ORDER BY a.created_at")
     implicit_ready = db.all(
         "SELECT v.id,NULL AS draft_id,v.title,v.company,v.score,v.first_seen_at AS created_at,'queued' AS stage "
-        "FROM vacancies v WHERE v.analysis_status='done' AND v.score>=? AND v.state='new' "
+        "FROM vacancies v WHERE v.analysis_status='done' AND v.score>=? AND v.decision_state IN ('undecided','shortlisted') AND v.snoozed_until IS NULL "
         "AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm') "
         "AND NOT EXISTS(SELECT 1 FROM auto_application_attempts a WHERE a.vacancy_id=v.id) "
         "ORDER BY v.score DESC,v.first_seen_at DESC", (draft_config["threshold"],)) if draft_config["enabled"] else []

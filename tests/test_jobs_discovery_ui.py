@@ -56,14 +56,14 @@ def test_jobs_url_state_cards_and_page_scroll(tmp_path: Path) -> None:
                 page = browser.new_page(viewport={"width": 1280, "height": 900})
                 page.goto(
                     f"http://127.0.0.1:{port}/#jobs?q=Senior&score=80&mode=remote"
-                    f"&location=Hanoi&seniority=Senior&sort=posted&page=1&job={first}"
+                    f"&location=Hanoi&seniority=senior&sort=posted&page=1&job={first}"
                 )
                 page.locator("#jobs.active").wait_for()
                 assert page.locator("#job-query").input_value() == "Senior"
                 assert page.locator("#job-score").input_value() == "80"
                 assert page.locator("#job-work-mode").input_value() == "remote"
                 assert page.locator("#job-location").input_value() == "Hanoi"
-                assert page.locator("#job-seniority").input_value() == "Senior"
+                assert page.locator("#job-seniority").input_value() == "senior"
                 assert page.locator("#job-sort").input_value() == "posted"
                 card = page.get_by_role("button", name="Open Senior AI Engineer at Example Robotics")
                 card.wait_for()
@@ -78,7 +78,9 @@ def test_jobs_url_state_cards_and_page_scroll(tmp_path: Path) -> None:
                 assert "Location" in card.inner_text()
                 assert "ago" in card.inner_text() or "Yesterday" in card.inner_text()
                 page.get_by_role("heading", name="Senior AI Engineer").wait_for()
-                assert page.locator("#job-state-control").input_value() == "new"
+                assert page.locator("#job-outcome-control").input_value() == "none"
+                assert "No decision yet" in page.locator("#job-detail").inner_text()
+                assert client.get(f"/api/jobs/{first}").json()["read_state"] == "seen"
                 assert page.locator("#job-list").evaluate("node => getComputedStyle(node).overflowY") == "visible"
                 assert page.locator("#job-list").evaluate("node => getComputedStyle(node).maxHeight") == "none"
 
