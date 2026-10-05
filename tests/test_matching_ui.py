@@ -136,7 +136,7 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                     page.locator(selector).wait_for()
                     page.wait_for_function(
                         "(selector) => { const node = document.querySelector(selector); return node && !node.classList.contains('warning'); }",
-                        selector,
+                        arg=selector,
                     )
             finally:
                 browser.close()
