@@ -461,3 +461,26 @@ button.danger,.text-button.danger{color:#a4382d;border-color:#e7c2bd}
     transition-duration:.01ms!important
   }
 }
+
+.application-pagination{margin-top:14px}
+.submission-history-list{margin-top:16px}
+.submission-history-card .section-head{align-items:flex-start;margin-bottom:8px}
+.submission-history-card p{overflow-wrap:anywhere}
+.button-link{display:inline-flex;align-items:center;border:1px solid #bcd4c6;background:#fff;color:#194738;border-radius:9px;padding:10px 13px;font-weight:650;font-size:13px;text-decoration:none}
+.button-link:hover{filter:brightness(.94)}
+.submission-proof{border:1px solid #cbded2;border-radius:12px;padding:16px;margin:16px 0;background:#f8fbf9}
+.submission-proof .section-head{align-items:flex-start;margin-bottom:12px}
+.submission-proof h4{margin:0}
+.submission-proof-grid,.submission-package-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.submission-proof-grid>div,.submission-package-grid>div{display:grid;gap:4px;min-width:0}
+.submission-proof-grid strong,.submission-package-grid strong{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#60786e}
+.submission-proof-grid span,.submission-package-grid p{margin:0;overflow-wrap:anywhere;font-size:12px}
+.submission-package{margin-top:14px;border-top:1px solid #d9e5de;padding-top:12px}
+.submission-package summary{cursor:pointer;font-weight:750;color:#214d3e}
+.submission-package>div{margin-top:12px}
+.submission-message{margin-top:14px}
+.submission-message>p{margin:7px 0;font-size:12px;line-height:1.5}
+.submission-message-body{white-space:pre-wrap}
+.submission-form-answers{display:grid;gap:7px;padding-left:18px}
+.submission-form-answers li span{display:block;color:#526a62;margin-top:2px}
+@media(max-width:650px){.submission-proof-grid,.submission-package-grid{grid-template-columns:1fr}.submission-history-card .section-head{display:block}.submission-history-card .status-badge{margin-top:8px}}
