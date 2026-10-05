@@ -73,7 +73,7 @@
           <div class="jobs-search-row"><input id="job-query" type="search" placeholder="Search jobs, skills, or companies" aria-label="Search jobs"><button id="job-search" type="button">Search</button><button id="jobs-clear-filters" class="text-button" type="button">Clear filters</button></div>
           <div class="job-filter-grid">
             <label>State<select id="job-state"><option value="">All states</option><option value="new">New</option><option value="interesting">Interesting</option><option value="prepare">Prepare</option><option value="ready">Ready</option><option value="applied">Applied</option><option value="interview">Interview</option><option value="rejected">Rejected</option><option value="offer">Offer</option><option value="ignored">Ignored</option></select></label>
-            <label>Minimum score<select id="job-score"><option value="">Any score</option><option value="80">80+</option><option value="60">60+</option><option value="40">40+</option></select></label>
+            <label>Minimum score<input id="job-score" type="number" min="0" max="100" placeholder="Any score"></label>
             <label>Freshness<select id="job-freshness"><option value="">Any time</option><option value="1">Past 24 hours</option><option value="3">Past 3 days</option><option value="7">Past week</option><option value="30">Past month</option></select></label>
             <label>Work mode<select id="job-work-mode"><option value="">Any mode</option><option value="remote">Remote</option><option value="hybrid">Hybrid</option><option value="onsite">On-site</option></select></label>
             <label>Location<input id="job-location" placeholder="e.g. Hanoi"></label>
