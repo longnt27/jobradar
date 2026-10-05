@@ -286,6 +286,7 @@ def test_browser_job_inbox_triage_marks_seen_without_deciding(tmp_path: Path) ->
                 dialog = page.locator("#job-ignore-reason-dialog")
                 dialog.wait_for(state="visible")
                 dialog.get_by_role("button", name="Salary", exact=True).click()
+                page.get_by_role("status").filter(has_text="Ignore reason saved: Salary.").wait_for()
                 reason = app.state.db.one(
                     "SELECT reason FROM feedback WHERE vacancy_id=? AND reason IS NOT NULL ORDER BY created_at DESC LIMIT 1",
                     (second,),
