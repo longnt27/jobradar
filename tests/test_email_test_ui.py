@@ -49,11 +49,11 @@ def test_email_settings_can_be_tested_from_profile(tmp_path: Path, monkeypatch) 
                 page.locator('#setup-smtp-form button[type="submit"]').click()
                 page.wait_for_function("!document.querySelector('#smtp-send-test').disabled")
                 button.click()
-                page.wait_for_function("document.querySelector('#smtp-test-result').textContent.includes('SMTP accepted')")
+                page.wait_for_function("document.querySelector('#smtp-test-result').textContent.includes('accepted')")
                 assert "alex@gmail.com" in page.locator("#smtp-test-result").inner_text()
                 assert page.locator("#setup-smtp-status").inner_text() == "Test email accepted"
                 page.reload()
-                page.wait_for_function("document.querySelector('#setup-smtp-status').textContent === 'SMTP accepted'")
+                page.wait_for_function("document.querySelector('#setup-smtp-status').textContent === 'Test email accepted'")
             finally:
                 browser.close()
     finally:
