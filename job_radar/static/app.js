@@ -30,6 +30,10 @@ let discoveredRepos = [];
 let selectedProjectId = null;
 let projectProviderReady = false;
 let applicationDrafts = [];
+let applicationsPage = 1;
+let applicationsPages = 1;
+let submissionHistoryPage = 1;
+let submissionHistoryPages = 1;
 let activeApplicationId = null;
 let applicationWorkspaceView = 'drafts';
 let editingPositionId = null;
@@ -1105,7 +1109,9 @@ function providerLabel(value) {
 
 function applicationReviewKey(draft) {
   if (draft.review_status) return draft.review_status;
-  return draft.status === 'sent' ? 'sent' : 'draft';
+  if (draft.status === 'sent') return 'sent';
+  if (draft.status === 'submission_uncertain') return 'submission_uncertain';
+  return 'draft';
 }
 
 function applicationReviewLabel(draft) {
@@ -1113,6 +1119,7 @@ function applicationReviewLabel(draft) {
   return ({
     awaiting_review:'Ready for review',
     needs_review:'Needs changes',
+    submission_uncertain:'Submission status uncertain',
     sent:'Sent',
     sending:'Sending',
     regenerating:'Regenerating',
@@ -1125,18 +1132,60 @@ function applicationReviewLabel(draft) {
 function applicationReviewTone(draft) {
   const key = applicationReviewKey(draft);
   if (key === 'sent') return 'success';
-  if (key === 'awaiting_review') return 'info';
-  if (['needs_review','queued','regenerating'].includes(key)) return 'warning';
+  if (key === 'awaiting_review' || key === 'sending') return 'info';
+  if (['needs_review','queued','regenerating','submission_uncertain'].includes(key)) return 'warning';
   if (key === 'failed') return 'danger';
   return 'neutral';
 }
 
 function applicationIsSent(draft) {
-  return draft.status === 'sent' || draft.review_status === 'sent';
+  return draft.status === 'sent' || draft.review_status === 'sent' ||
+    ['email_sent','application_submitted'].includes(draft.latest_submission?.outcome?.key);
+}
+
+function applicationIsUncertain(draft) {
+  return draft.status === 'submission_uncertain' || draft.review_status === 'submission_uncertain' ||
+    draft.latest_submission?.outcome?.key === 'submission_uncertain';
+}
+
+function submissionTarget(submission) {
+  const destination = submission?.destination || {};
+  return destination.email || destination.url || 'No destination recorded';
+}
+
+function renderSubmissionProof(submission, includePackage = false) {
+  if (!submission) return '';
+  const outcome = submission.outcome || {};
+  const packageData = submission.package || {};
+  const message = packageData.message_data || {};
+  const formData = packageData.form_data || {};
+  const formAnswers = (formData.fields || []).map((field) => {
+    const answer = formData.answers?.[String(field.index)] || '';
+    if (!answer || field.type === 'file') return '';
+    return `<li><strong>${escapeHtml(field.label || field.name || 'Form field')}</strong><span>${escapeHtml(answer)}</span></li>`;
+  }).filter(Boolean).join('');
+  const proof = includePackage ? `<details class="submission-package"><summary>Exact reviewed package</summary>
+      <div class="submission-package-grid">
+        <div><strong>Resume</strong><p>${submission.resume_available ? `<a href="/api/submissions/${submission.id}/resume" target="_blank" rel="noopener noreferrer">Open exact submitted resume ↗</a>` : 'Exact resume file is unavailable for this older record.'}</p></div>
+        <div><strong>Package fingerprint</strong><p class="mono">${escapeHtml((submission.package_hash || '').slice(0, 20))}</p></div>
+      </div>
+      ${message.subject || message.body ? `<div class="submission-message"><strong>Application message</strong>${message.subject ? `<p><b>Subject:</b> ${escapeHtml(message.subject)}</p>` : ''}${message.body ? `<p class="submission-message-body">${escapeHtml(message.body)}</p>` : ''}</div>` : ''}
+      ${formAnswers ? `<div><strong>Reviewed form answers</strong><ul class="submission-form-answers">${formAnswers}</ul></div>` : ''}
+    </details>` : '';
+  return `<section class="submission-proof surface-status">
+      <div class="section-head"><div><h4>${escapeHtml(outcome.label || 'Submission recorded')}</h4><p class="hint">${escapeHtml(outcome.guidance || '')}</p></div><span class="status-badge status-badge--${escapeHtml(outcome.tone || 'neutral')}">${escapeHtml(outcome.label || 'Recorded')}</span></div>
+      <div class="submission-proof-grid">
+        <div><strong>When</strong><span>${escapeHtml(when(submission.sent_at))}</span></div>
+        <div><strong>Channel</strong><span>${escapeHtml(outcome.channel || 'Application')}</span></div>
+        <div><strong>Destination</strong><span>${escapeHtml(submissionTarget(submission))}</span></div>
+        <div><strong>Proof</strong><span>${escapeHtml(submission.receipt || submission.error || 'No additional receipt recorded')}</span></div>
+      </div>
+      ${proof}
+    </section>`;
 }
 
 function setApplicationWorkspaceView(view) {
-  applicationWorkspaceView = ['drafts','automation','activity'].includes(view) ? view : 'drafts';
+  applicationWorkspaceView = ['drafts','automation','activity','history'].includes(view) ? view : 'drafts';
   document.querySelectorAll('[data-app-view]').forEach((button) => {
     const active = button.dataset.appView === applicationWorkspaceView;
     button.classList.toggle('active', active);
@@ -1151,61 +1200,68 @@ function bindApplicationWorkspace() {
   const root = $('#applications');
   if (!root || root.dataset.workspaceBound === 'true') return;
   root.dataset.workspaceBound = 'true';
-  root.querySelectorAll('[data-app-view]').forEach((button) => button.addEventListener('click', () => setApplicationWorkspaceView(button.dataset.appView)));
-  $('#application-query').addEventListener('input', renderApplicationList);
+  root.querySelectorAll('[data-app-view]').forEach((button) => button.addEventListener('click', () => {
+    setApplicationWorkspaceView(button.dataset.appView);
+    if (button.dataset.appView === 'history') loadSubmissionHistory().catch((error) => notice(error.message, true));
+  }));
+  const reloadApplications = () => { applicationsPage = 1; loadApplications().catch((error) => notice(error.message, true)); };
+  $('#application-query').addEventListener('input', reloadApplications);
   for (const selector of ['#application-review-filter','#application-company-filter','#application-sent-filter']) {
-    $(selector).addEventListener('change', renderApplicationList);
+    $(selector).addEventListener('change', reloadApplications);
   }
+  $('#applications-prev').addEventListener('click', () => {
+    applicationsPage = Math.max(1, applicationsPage - 1);
+    loadApplications().catch((error) => notice(error.message, true));
+  });
+  $('#applications-next').addEventListener('click', () => {
+    applicationsPage = Math.min(applicationsPages, applicationsPage + 1);
+    loadApplications().catch((error) => notice(error.message, true));
+  });
+  $('#submission-history-query').addEventListener('input', () => {
+    submissionHistoryPage = 1;
+    loadSubmissionHistory().catch((error) => notice(error.message, true));
+  });
+  $('#submission-history-prev').addEventListener('click', () => {
+    submissionHistoryPage = Math.max(1, submissionHistoryPage - 1);
+    loadSubmissionHistory().catch((error) => notice(error.message, true));
+  });
+  $('#submission-history-next').addEventListener('click', () => {
+    submissionHistoryPage = Math.min(submissionHistoryPages, submissionHistoryPage + 1);
+    loadSubmissionHistory().catch((error) => notice(error.message, true));
+  });
 }
 
-function populateApplicationCompanyFilter() {
+function populateApplicationCompanyFilter(companies = []) {
   const select = $('#application-company-filter');
   const saved = select.value;
-  const companies = [...new Set(applicationDrafts.map((draft) => draft.company).filter(Boolean))].sort((a, b) => a.localeCompare(b));
   select.innerHTML = '<option value="">All companies</option>' + companies.map((company) =>
     `<option value="${escapeHtml(company)}">${escapeHtml(company)}</option>`).join('');
   if (companies.includes(saved)) select.value = saved;
 }
 
-function filteredApplications() {
-  const query = $('#application-query').value.trim().toLowerCase();
-  const review = $('#application-review-filter').value;
-  const company = $('#application-company-filter').value;
-  const sent = $('#application-sent-filter').value;
-  return applicationDrafts.filter((draft) => {
-    const searchable = `${draft.job_title || ''} ${draft.company || ''} ${providerLabel(draft.provider_mode)}`.toLowerCase();
-    if (query && !searchable.includes(query)) return false;
-    if (review && applicationReviewKey(draft) !== review) return false;
-    if (company && draft.company !== company) return false;
-    if (sent === 'sent' && !applicationIsSent(draft)) return false;
-    if (sent === 'unsent' && applicationIsSent(draft)) return false;
-    return true;
-  });
-}
-
-function renderApplicationList() {
-  const visible = filteredApplications();
+function renderApplicationList(total = applicationDrafts.length) {
   const summary = $('#application-list-summary');
-  summary.textContent = applicationDrafts.length
-    ? `${visible.length} of ${applicationDrafts.length} application${applicationDrafts.length === 1 ? '' : 's'} shown`
+  summary.textContent = total
+    ? `${total} application${total === 1 ? '' : 's'} · page ${applicationsPage} of ${applicationsPages}`
     : 'No applications prepared yet.';
+  $('#applications-page-summary').textContent = total ? `Page ${applicationsPage} of ${applicationsPages}` : 'No applications';
+  $('#applications-prev').disabled = applicationsPage <= 1;
+  $('#applications-next').disabled = applicationsPage >= applicationsPages;
   const list = $('#application-list');
   if (!applicationDrafts.length) {
-    list.innerHTML = '<div class="panel empty"><p>No applications yet. Start with a job posting.</p><button id="applications-browse-jobs" class="primary">Browse jobs →</button></div>';
+    list.innerHTML = total ? '<div class="empty">No applications on this page.</div>' :
+      '<div class="panel empty"><p>No applications match these filters.</p><button id="applications-browse-jobs" class="primary">Browse jobs →</button></div>';
     $('#applications-browse-jobs')?.addEventListener('click', () => showTab('jobs'));
     return;
   }
-  if (!visible.length) {
-    list.innerHTML = '<div class="empty">No applications match these filters.</div>';
-    return;
-  }
-  list.innerHTML = visible.map((draft) => {
+  list.innerHTML = applicationDrafts.map((draft) => {
     const selected = draft.id === activeApplicationId;
     const tone = applicationReviewTone(draft);
+    const delivery = draft.latest_submission?.outcome?.label;
     return `<button type="button" class="item clickable application-card surface-action ${selected ? 'is-selected' : ''}" data-application="${draft.id}" aria-pressed="${selected ? 'true' : 'false'}">
       <div class="item-title">${escapeHtml(draft.job_title)} <span class="status-badge status-badge--${tone}">${escapeHtml(applicationReviewLabel(draft))}</span></div>
       <div class="item-meta">${escapeHtml(draft.company)} · ${escapeHtml(providerLabel(draft.provider_mode))}</div>
-      <div class="item-meta">Updated ${when(draft.updated_at)}${applicationIsSent(draft) ? ' · Sent' : ''}</div>
+      <div class="item-meta">Updated ${when(draft.updated_at)}${delivery ? ` · ${escapeHtml(delivery)}` : ''}</div>
     </button>`;
   }).join('');
   list.querySelectorAll('[data-application]').forEach((node) => node.addEventListener('click', async () => {
@@ -1218,16 +1274,50 @@ function renderApplicationList() {
 async function loadApplications(selectedId = null) {
   bindApplicationWorkspace();
   await loadAutoApply();
-  applicationDrafts = await api('/api/applications');
-  populateApplicationCompanyFilter();
+  const query = new URLSearchParams({
+    page: applicationsPage,
+    page_size: 25,
+    q: $('#application-query').value.trim(),
+    review: $('#application-review-filter').value,
+    company: $('#application-company-filter').value,
+    delivery: $('#application-sent-filter').value,
+  });
+  const result = await api(`/api/applications/page?${query}`);
+  applicationDrafts = result.items;
+  applicationsPage = result.page;
+  applicationsPages = result.pages;
+  populateApplicationCompanyFilter(result.companies || []);
   if (selectedId) {
     activeApplicationId = selectedId;
     setApplicationWorkspaceView('drafts');
   } else if (activeApplicationId && !applicationDrafts.some((draft) => draft.id === activeApplicationId)) {
     activeApplicationId = null;
   }
-  renderApplicationList();
+  renderApplicationList(result.total);
   if (selectedId) await showApplication(selectedId);
+}
+
+async function loadSubmissionHistory() {
+  const query = new URLSearchParams({
+    page: submissionHistoryPage,
+    page_size: 25,
+    q: $('#submission-history-query').value.trim(),
+  });
+  const result = await api(`/api/submissions/page?${query}`);
+  submissionHistoryPage = result.page;
+  submissionHistoryPages = result.pages;
+  $('#submission-history-page-summary').textContent = result.total ? `Page ${result.page} of ${result.pages} · ${result.total} records` : 'No submissions';
+  $('#submission-history-prev').disabled = result.page <= 1;
+  $('#submission-history-next').disabled = result.page >= result.pages;
+  const list = $('#submission-history-list');
+  list.innerHTML = result.items.length ? result.items.map((submission) => `
+    <article class="item submission-history-card">
+      <div class="section-head"><div><div class="item-title">${escapeHtml(submission.job_title)} · ${escapeHtml(submission.company)}</div><div class="item-meta">${escapeHtml(when(submission.sent_at))} · ${escapeHtml(submission.outcome?.channel || 'Application')}</div></div><span class="status-badge status-badge--${escapeHtml(submission.outcome?.tone || 'neutral')}">${escapeHtml(submission.outcome?.label || 'Recorded')}</span></div>
+      <p class="item-meta">${escapeHtml(submissionTarget(submission))}</p>
+      <p>${escapeHtml(submission.receipt || submission.error || submission.outcome?.guidance || '')}</p>
+      <div class="actions"><button type="button" data-history-application="${submission.draft_id}" class="secondary">Open application</button>${submission.resume_available ? `<a class="button-link" href="/api/submissions/${submission.id}/resume" target="_blank" rel="noopener noreferrer">Exact resume ↗</a>` : ''}</div>
+    </article>`).join('') : '<p class="empty">No submission history matches this search.</p>';
+  list.querySelectorAll('[data-history-application]').forEach((button) => button.addEventListener('click', () => loadApplications(button.dataset.historyApplication).catch((error) => notice(error.message, true))));
 }
 
 async function loadAutoApply() {
