@@ -710,7 +710,8 @@ async function loadPositions() {
 }
 
 async function showTab(name, historyMode = 'push') {
-  const requested = name.split('/');
+  const [route] = name.split('?');
+  const requested = route.split('/');
   const selectedDraft = requested[0] === 'applications' ? requested[1] : null;
   name = requested[0];
   if (name === 'setup') name = 'settings';
