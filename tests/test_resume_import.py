@@ -20,7 +20,8 @@ def test_fresh_profile_requires_provider_before_pdf_import(tmp_path: Path) -> No
     assert client.get("/api/evidence").json() == []
     response = client.post("/api/profile/resume/pdf", files={"file": ("resume.pdf", b"%PDF-", "application/pdf")})
     assert response.status_code == 409
-    assert "Profile" in response.json()["detail"]
+    assert "drafting provider" in response.json()["detail"]
+    assert "Settings" in response.json()["detail"]
 
 
 def test_pdf_reader_accepts_real_text_pdf_and_rejects_other_files() -> None:
