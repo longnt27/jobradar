@@ -90,6 +90,7 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 assert pending_card.locator(".score-pending").count() == 1
                 page.get_by_role("button", name="Open AI Engineer at Example").click()
                 page.locator("#job-detail summary").filter(has_text="Full extracted requirements").wait_for()
+                page.locator("#job-detail summary").filter(has_text="Full extracted requirements").click()
                 assert "Python" in page.locator("#job-detail .fact-grid").inner_text()
                 assert "Not stated" in page.locator("#job-detail .decision-basics-grid").inner_text()
                 breakdown = page.locator("#job-detail summary").filter(has_text="Detailed match breakdown")
