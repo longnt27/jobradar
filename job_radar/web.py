@@ -215,7 +215,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         db.set_setting("profile", profile)
         matching_fields = ("skills", "location", "relocation", "experience", "education")
         if any(previous.get(field) != profile.get(field) for field in matching_fields):
-            rescore_vacancies(db, profile)
+            rescore_vacancies(db, profile, db.get_setting("search_intent", {}))
             match_manager.wake()
 
     def attach_career_source(employer_id: str, name: str, url: str) -> None:
@@ -262,10 +262,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             counts["analysis_failures"] = conn.execute("SELECT COUNT(*) FROM vacancies WHERE analysis_status='failed'").fetchone()[0]
         recent = db.all("SELECT scan_runs.*, sources.name AS source_name FROM scan_runs JOIN sources ON sources.id=scan_runs.source_id ORDER BY started_at DESC LIMIT 10")
         attention = {
-            "jobs": db.all("SELECT id,title,company,score FROM vacancies WHERE state='new' AND analysis_status='done' AND score>=? ORDER BY score DESC,first_seen_at DESC LIMIT 4", (threshold,)),
+            "jobs": db.all("SELECT id,title,company,score,score_detail FROM vacancies WHERE state='new' AND analysis_status='done' AND score>=? ORDER BY score DESC,first_seen_at DESC LIMIT 4", (threshold,)),
             "drafts": db.all("SELECT a.draft_id AS id,v.title,v.company,a.status FROM auto_application_attempts a JOIN vacancies v ON v.id=a.vacancy_id WHERE a.status IN ('awaiting_review','needs_review') AND a.draft_id IS NOT NULL ORDER BY a.updated_at DESC LIMIT 4"),
             "failures": db.all("SELECT id,title,company,analysis_error AS detail FROM vacancies WHERE analysis_status='failed' ORDER BY updated_at DESC LIMIT 4"),
         }
+        preferences = db.get_setting("search_intent", {})
+        for item in attention["jobs"]:
+            try:
+                detail = json.loads(item.pop("score_detail") or "{}")
+            except (TypeError, ValueError):
+                detail = {}
+            item.update(fit_summary(item.get("score"), detail, preferences))
         return {"counts": counts, "attention": attention, "recent_runs": recent, "data_dir": str(settings.data_dir),
                 "strong_match_threshold": threshold}
 
