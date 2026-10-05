@@ -965,6 +965,8 @@ $('#matching-model-form select').addEventListener('change', (event) => {
   button.textContent = button.disabled && event.target.value ? 'Selected' : 'Use model';
 });
 
+$('#job-analysis-settings').addEventListener('click', () => openSetupPanel('provider-panel'));
+
 $('#matching-retry-all').addEventListener('click', async (event) => {
   const button = event.currentTarget;
   button.disabled = true;
