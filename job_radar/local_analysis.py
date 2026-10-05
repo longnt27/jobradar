@@ -413,7 +413,7 @@ def finalize_match(job: dict, facts: dict, profile: dict,
         weighted = max(0, weighted - 12)
 
     salary_text = str(facts.get("salary_range") or "")
-    stated_salary_floor = salary_floor(salary_text)
+    stated_salary_floor = salary_floor(salary_text, prefs.get("salary_currency"))
     minimum_salary = prefs.get("minimum_salary")
     if minimum_salary is not None and hard.get("minimum_salary"):
         if stated_salary_floor is not None and stated_salary_floor < minimum_salary:
