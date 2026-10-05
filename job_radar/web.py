@@ -28,6 +28,8 @@ from .linkedin_searches import search_from_url
 from .github import list_public_repositories
 from .mail_config import save_smtp, send_test_email, smtp_config, smtp_config_fingerprint
 from .local_analysis import clean_saved_analysis, list_local_models, validate_local_model
+from .job_inbox import (application_filter_sql, enrich_jobs, mark_seen, release_due_snoozes,
+                        set_decision, set_manual_applied, set_recruiting_outcome)
 from .matching import MatchManager
 from .notifications import discover_telegram_chats, save_telegram, telegram_config
 from .ranking import rescore_vacancies, score_job
@@ -44,6 +46,12 @@ from .work_queue import work_queue
 JOBS_ORDER = ("CASE WHEN v.analysis_status='done' THEN 0 ELSE 1 END, "
               "CASE WHEN v.analysis_status='done' THEN v.score END DESC, "
               "v.first_seen_at DESC,v.id")
+
+
+JOB_VIEW_FILTER_KEYS = {
+    "q", "inbox", "decision", "application", "outcome", "score", "freshness",
+    "mode", "location", "source", "seniority", "sort",
+}
 
 
 class SourceInput(BaseModel):
@@ -78,6 +86,26 @@ class JobInput(BaseModel):
 class StateInput(BaseModel):
     state: Literal["new", "interesting", "ignored", "prepare", "ready", "applied", "interview", "rejected", "offer"]
     reason: str | None = None
+
+
+class DecisionInput(BaseModel):
+    decision: Literal["undecided", "shortlisted", "ignored", "later"]
+    reason: str | None = Field(default=None, max_length=200)
+    snoozed_until: str | None = None
+
+
+class RecruitingOutcomeInput(BaseModel):
+    outcome: Literal["none", "interview", "rejected", "offer"]
+
+
+class ManualAppliedInput(BaseModel):
+    applied: bool = True
+
+
+class SavedJobViewInput(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    filters: dict[str, Any] = Field(default_factory=dict)
+    set_default: bool = False
 
 
 class EvidenceInput(BaseModel):
