@@ -149,7 +149,8 @@ DATE_TOKEN = re.compile(
 
 
 def extract_years_required(text: str) -> int | None:
-    unrelated = re.compile(r"^\s*(?:ago\b|old\b|in\s+business\b|of\s+(?:history|operation|innovation|service)\b|anniversary\b)", re.I)
+    unrelated = re.compile(r"^\s*(?:ago\b|old\b|in\s+business\b|of\s+(?:history|operation|innovation|service)\b|anniversary\b|"
+                           r"(?:hình\s+thành|thành\s+lập|hoạt\s+động|phát\s+triển|đồng\s+hành|kinh\s+doanh)\b)", re.I)
     years = [int(match.group(1)) for match in YEARS_REQUIRED.finditer(text)
              if not unrelated.search(text[match.end():match.end() + 50])]
     words = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
@@ -278,6 +279,33 @@ def _has_advanced_degree(profile: dict, kind: str) -> bool:
     return False
 
 
+def _role_family(value: str) -> str:
+    title = value.casefold()
+    for family, pattern in (
+        ("Data Scientist", r"\bdata scientist\b|\bkhoa học dữ liệu\b"),
+        ("Data Analyst", r"\bdata analyst\b|\bphân tích dữ liệu\b"),
+        ("Data Engineer", r"\bdata engineer\b"),
+        ("AI Engineer", r"\b(?:ai|ml|machine learning|applied ai|llm)\b.{0,30}\b(?:engineer|engineering|trainee|intern)\b|\b(?:engineer|engineering)\b.{0,20}\b(?:ai|ml)\b"),
+        ("Software Engineer", r"\b(?:software|backend|frontend|fullstack)\b.{0,20}\b(?:engineer|developer)\b"),
+    ):
+        if re.search(pattern, title):
+            return family
+    return ""
+
+
+def role_fallback(job: dict, profile: dict) -> dict[str, Any]:
+    """Use documented position titles when a model explains role fit using a degree."""
+    family = _role_family(str(job.get("title") or ""))
+    positions = [str(item.get("role") or "") for item in profile.get("experience") or [] if isinstance(item, dict)]
+    matched = next((role for role in positions if _role_family(role) == family), "") if family else ""
+    related = next((role for role in positions if _role_family(role) in {"AI Engineer", "Data Scientist", "Data Analyst", "Data Engineer"}), "")
+    if matched:
+        return {"score": 9, "reason": f"{family} aligns with the documented {matched} position."}
+    if family in {"AI Engineer", "Data Scientist", "Data Analyst", "Data Engineer"} and related:
+        return {"score": 7, "reason": f"{family} is related to documented {related} work; direct role experience is not shown."}
+    return {"score": 5, "reason": "Role fit is unverified from documented work or projects."}
+
+
 def finalize_match(job: dict, facts: dict, profile: dict,
                    criteria: dict[str, dict]) -> tuple[int, dict[str, dict], list[str]]:
     """Apply explicit eligibility rules and weights after the model judges qualitative fit."""
@@ -296,7 +324,7 @@ def finalize_match(job: dict, facts: dict, profile: dict,
                                "reason": ("Profile documents the required advanced degree."
                                           if qualified else f"Posting requires {degree[1]}; profile does not document it.")}
     if re.search(r"\b(?:bachelor|master|ph\.?d|degree|education|university|school|college)\b", graded["role"]["reason"], re.I):
-        graded["role"]["reason"] = "Role score reflects the job title and relevant work or projects, not education."
+        graded["role"] = role_fallback(job, profile)
 
     location = str(job.get("location") or "").strip()
     trusted_location = bool(location and not GENERIC_LOCATION.fullmatch(location))

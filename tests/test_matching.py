@@ -7,7 +7,7 @@ import httpx
 from fastapi.testclient import TestClient
 
 from job_radar.ingest import ObservedJob, ingest
-from job_radar.local_analysis import Criterion, JobFacts, LocalModelUnavailable, MatchJudgment, _generate, _ground_facts, analyze_job, clean_saved_analysis, experience_criterion, extract_salary_range, freshness_criterion, validate_local_model, finalize_match, extract_years_required
+from job_radar.local_analysis import Criterion, JobFacts, LocalModelUnavailable, MatchJudgment, _generate, _ground_facts, analyze_job, clean_saved_analysis, experience_criterion, extract_salary_range, freshness_criterion, validate_local_model, finalize_match, extract_years_required, role_fallback
 from job_radar.settings import Settings
 from job_radar.web import create_app
 
@@ -65,12 +65,16 @@ def test_binance_advanced_degree_is_hard_rejection_and_role_stays_about_role(mon
     assert detail["facts"]["seniority"] == ""
     assert detail["facts"]["role"] == "Data Scientist"
     assert "degree" not in detail["criteria"]["role"]["reason"].casefold()
+    assert detail["criteria"]["role"]["score"] == 5
     assert detail["criteria"]["education"]["score"] == 1
 
 
 def test_salary_can_be_extracted_from_facebook_post_title() -> None:
     title = "[VCCorp-HN] Tuyển 2 AI Engineer, làm AI Agent, LLM, từ 1-2 năm kn. Offer 14- 23M."
     assert extract_salary_range(title) == "Offer 14- 23M."
+    assert extract_years_required(title + "\nVới hơn 15 năm hình thành và phát triển, VCCorp tuyển AI Engineer.") == 1
+    assert role_fallback({"title": title}, {"experience": [{"role": "AI Engineering Intern"}]}) == {
+        "score": 9, "reason": "AI Engineer aligns with the documented AI Engineering Intern position."}
 
 
 def test_unstated_requirements_get_neutral_score(monkeypatch) -> None:
