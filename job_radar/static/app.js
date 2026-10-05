@@ -38,7 +38,7 @@ function renderJobAnalysis(job, score) {
     : status === 'failed' ? `Local analysis failed: ${escapeHtml(job.analysis_error || 'Unknown error')}`
     : status === 'dismissed' ? 'Failed analysis dismissed. This job remains in your list without a match score.'
     : ['pending', 'running'].includes(status) ? 'Local model is extracting requirements and scoring this job.'
-    : 'Basic keyword score. Choose a local matching model in My profile for a detailed assessment.';
+    : 'Basic keyword score. Choose a local matching model in Settings for a detailed assessment.';
   const retry = status === 'failed' ? `<div class="actions"><button type="button" data-analyze="${job.id}" class="secondary">Try analysis again</button><button type="button" data-dismiss-analysis="${job.id}" class="secondary">Dismiss failed analysis</button></div>`
     : status === 'dismissed' ? `<button type="button" data-analyze="${job.id}" class="secondary">Run analysis again</button>` : '';
   const completed = status === 'done';
@@ -188,7 +188,7 @@ async function openSocialSignIn() {
 }
 
 async function openSetupPanel(id) {
-  const loading = showTab('profile');
+  const loading = showTab('settings');
   const panel = $(`#${id}`);
   const step = panel.closest('details.flow-panel') || panel;
   step.open = true;
@@ -224,7 +224,7 @@ async function loadSetup() {
     alertForm.elements.chat_id.value = data.telegram_chat_id || '';
     alertForm.dataset.initialized = 'true';
   }
-  if ((['opening', 'open'].includes(data.browser.state) || data.matching.download_state === 'downloading') && $('#profile').classList.contains('active')) window.setupPoll = setTimeout(() => loadSetup().catch((error) => notice(error.message, true)), 2000);
+  if ((['opening', 'open'].includes(data.browser.state) || data.matching.download_state === 'downloading') && $('#settings').classList.contains('active')) window.setupPoll = setTimeout(() => loadSetup().catch((error) => notice(error.message, true)), 2000);
   return data;
 }
 
@@ -245,11 +245,11 @@ async function loadHome() {
     : 'Company career feeds scan every four hours.';
   const hasProfile = Boolean(profile.name && profile.email);
   const steps = [
-    {label:'Set up AI models', detail:!profile.drafting_provider ? 'Choose an application writing provider' : !setup.matching.model ? 'Choose a local job matching model' : 'Application writing and job matching are ready', done:!!profile.drafting_provider && !!setup.matching.model, tab:'profile', panel:'provider-panel'},
+    {label:'Set up AI models', detail:!profile.drafting_provider ? 'Choose an application writing provider' : !setup.matching.model ? 'Choose a local job matching model' : 'Application writing and job matching are ready', done:!!profile.drafting_provider && !!setup.matching.model, tab:'settings', panel:'provider-panel'},
     {label:'Add your resume', detail:'Import a PDF or enter details yourself', done:hasProfile, tab:'profile', panel:'resume-panel'},
-    {label:setup.browser.sites.length ? 'Sign in to social sites again' : 'Connect LinkedIn and Facebook', detail:setup.browser.sites.length ? `${socialSiteNames(setup.browser)} session expired` : 'Separate one-time sign-in for each site', done:setup.browser.connected_sites.length === 2 && !setup.browser.sites.length, tab:'profile', socialAuth:true},
-    {label:'Telegram application reviews', detail:'Connect a private bot chat to review application drafts', done:setup.telegram_configured, tab:'profile', panel:'telegram-panel', optional:true},
-    {label:'Email applications', detail:setup.smtp_test?.status === 'accepted' ? 'Mail server accepted your latest test email' : setup.smtp_test?.status === 'failed' ? 'Test failed; check your saved settings' : setup.smtp_configured ? 'Settings saved; send a test email to check them' : 'Connect Gmail or another SMTP account', done:setup.smtp_test?.status === 'accepted', tab:'profile', panel:'smtp-panel', optional:true},
+    {label:setup.browser.sites.length ? 'Sign in to social sites again' : 'Connect LinkedIn and Facebook', detail:setup.browser.sites.length ? `${socialSiteNames(setup.browser)} session expired` : 'Separate one-time sign-in for each site', done:setup.browser.connected_sites.length === 2 && !setup.browser.sites.length, tab:'settings', socialAuth:true},
+    {label:'Telegram application reviews', detail:'Connect a private bot chat to review application drafts', done:setup.telegram_configured, tab:'settings', panel:'telegram-panel', optional:true},
+    {label:'Email applications', detail:setup.smtp_test?.status === 'accepted' ? 'Mail server accepted your latest test email' : setup.smtp_test?.status === 'failed' ? 'Test failed; check your saved settings' : setup.smtp_configured ? 'Settings saved; send a test email to check them' : 'Connect Gmail or another SMTP account', done:setup.smtp_test?.status === 'accepted', tab:'settings', panel:'smtp-panel', optional:true},
     {label:'Select your projects', detail:'Choose GitHub repositories for tailored applications', done:setup.approved_evidence > 0, tab:'projects'},
     {label:'Review live jobs', detail:`${c.vacancies} job${c.vacancies === 1 ? '' : 's'} found; check original postings`, done:false, tab:'jobs'},
   ];
@@ -327,7 +327,7 @@ async function loadQueue() {
     catch(error) { notice(error.message, true); }
   }));
   if (analysis.service_error) $('#queue-analysis-waiting').insertAdjacentHTML('beforeend', `<p class="queue-attention">${escapeHtml(analysis.service_error)}</p>`);
-  else if (!analysis.model) $('#queue-analysis-waiting').insertAdjacentHTML('beforeend', '<p class="queue-attention">Choose a local model in My profile to start analysis.</p>');
+  else if (!analysis.model) $('#queue-analysis-waiting').insertAdjacentHTML('beforeend', '<p class="queue-attention">Choose a local model in Settings to start analysis.</p>');
   $('#queue-draft-active').innerHTML = drafts.active.length
     ? `<div class="queue-now-head">Preparing now</div>${drafts.active.map((item) => queueRow(item, 'draft', item.stage === 'regenerating' ? 'Regenerating' : 'Preparing draft', null, true)).join('')}`
     : '<p class="queue-empty">No draft being prepared.</p>';
@@ -394,13 +394,13 @@ async function showJob(id, pin = false) {
   $('#job-detail').innerHTML = `<h2>${escapeHtml(job.title)}</h2><div class="item-meta">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div>
     <div class="item-meta">${escapeHtml(job.work_mode || '')} · ${job.published_at ? `Posted ${when(job.published_at)}` : 'Posting date unavailable'} · First seen ${when(job.first_seen_at)}</div>
     <div class="actions"><button data-state="interesting">Interesting</button><button data-state="interview">Interview</button><button data-state="rejected" class="danger">Rejected</button><button data-state="offer">Offer</button><button data-state="ignored" class="danger">Ignore</button></div>
-    <div class="review-section"><p class="hint">Drafting provider: ${escapeHtml(provider || 'Choose one in Profile first')} · <button class="text-button" data-tab="profile">Change provider</button></p><div class="actions"><button data-prepare="${id}" class="primary" ${provider ? '' : 'disabled'}>Prepare application</button></div></div>
+    <div class="review-section"><p class="hint">Drafting provider: ${escapeHtml(provider || 'Choose one in Settings first')} · <button class="text-button" data-tab="settings">Change provider</button></p><div class="actions"><button data-prepare="${id}" class="primary" ${provider ? '' : 'disabled'}>Prepare application</button></div></div>
     ${job.apply_url ? `<p><a href="${escapeHtml(job.apply_url)}" target="_blank" rel="noopener noreferrer">${job.apply_url.startsWith('mailto:') ? 'Application email ↗' : 'Application page ↗'}</a></p>` : ''}
     ${!job.apply_url ? '<p class="hint">No application form has been verified for this posting. Check the original source for its application instructions before sending.</p>' : ''}
     ${links ? `<p class="item-meta">${links}</p>` : ''}
     ${renderJobAnalysis(job, score)}
     <div class="description"><h3>Original description</h3>${formatDescription(job.description)}</div>`;
-  $('#job-detail').querySelector('[data-tab="profile"]').addEventListener('click', () => showTab('profile'));
+  $('#job-detail').querySelector('[data-tab="settings"]').addEventListener('click', () => showTab('settings'));
   $('#job-detail').querySelector('[data-analyze]')?.addEventListener('click', async () => {
     try { await api(`/api/jobs/${id}/analyze`, {method:'POST'}); notice('Local analysis queued'); await loadJobs(); }
     catch(error) { notice(error.message, true); }
@@ -478,8 +478,8 @@ async function loadEmployers() {
   }));
 }
 
-async function loadProfile() {
-  const [profile, setup, cards] = await Promise.all([api('/api/profile'), loadSetup(), api('/api/evidence')]);
+async function loadSettings() {
+  const [profile, setup] = await Promise.all([api('/api/profile'), loadSetup()]);
   await loadMatchingModels();
   const availability = {codex:setup.providers.codex, codex_local:setup.providers.codex && setup.providers.ollama,
     agy:setup.providers.agy, claude:setup.providers.claude};
@@ -491,11 +491,19 @@ async function loadProfile() {
   setStepStatus('#drafting-status', profile.drafting_provider ? `Using ${profile.drafting_provider}` : 'Choose a provider', profile.drafting_provider ? '' : 'warning');
   $('#provider-panel').open = modelCount < 2;
   const hasResume = Boolean(profile.name && profile.email);
-  $('#resume-panel-label').textContent = hasResume ? 'Your resume details' : 'Import your resume';
-  setStepStatus('#resume-status', hasResume ? 'Details ready' : 'Needs details', hasResume ? '' : 'warning');
-  $('#resume-panel').open = Boolean(modelCount === 2 && !hasResume);
   $('#social-sign-in-panel').open = Boolean(profile.drafting_provider && hasResume && (setup.browser.sites.length || setup.browser.connected_sites.length < 2));
   $('#telegram-panel').open = Boolean(hasResume && setup.matching.model && !setup.telegram_configured);
+  return setup;
+}
+
+async function loadProfile() {
+  const [profile, setup, cards] = await Promise.all([api('/api/profile'), api('/api/setup'), api('/api/evidence')]);
+  const availability = {codex:setup.providers.codex, codex_local:setup.providers.codex && setup.providers.ollama,
+    agy:setup.providers.agy, claude:setup.providers.claude};
+  const hasResume = Boolean(profile.name && profile.email);
+  $('#resume-panel-label').textContent = hasResume ? 'Your resume details' : 'Import your resume';
+  setStepStatus('#resume-status', hasResume ? 'Details ready' : 'Needs details', hasResume ? '' : 'warning');
+  $('#resume-panel').open = !hasResume;
   $('#pdf-resume-form button[type="submit"]').disabled = !profile.drafting_provider || !availability[profile.drafting_provider];
   const projectCount = cards.filter((card) => card.kind === 'project' && card.approved).length;
   $('#profile-summary').textContent = hasResume
@@ -549,19 +557,12 @@ async function loadMatchingModels() {
   $('#matching-model-detail').textContent = data.matching.download_error || data.matching.service_error || data.error ||
     (state === 'downloading' ? 'Downloading in the background. Job Radar will select it when ready.' :
      saved ? '' : 'Choose an installed model to analyze jobs locally.');
-  if (state === 'downloading' && $('#profile').classList.contains('active')) window.matchingPoll = setTimeout(() => loadMatchingModels().then(loadSetup).catch((error) => notice(error.message, true)), 5000);
+  if (state === 'downloading' && $('#settings').classList.contains('active')) window.matchingPoll = setTimeout(() => loadMatchingModels().then(loadSetup).catch((error) => notice(error.message, true)), 5000);
   return data;
 }
 
 async function loadJobAnalysis() {
-  const [setup, failures] = await Promise.all([api('/api/setup'), api('/api/matching/failures')]);
-  const matching = setup.matching;
-  $('#job-analysis-model').textContent = matching.model ? `Using ${matching.model}` : 'Choose a local model to score jobs';
-  $('#matching-overview').innerHTML = [
-    [matching.completed, 'analyzed', ''],
-    [matching.pending, 'in queue', ''],
-    [matching.failed, 'need attention', matching.failed ? 'needs-attention' : ''],
-  ].map(([count, label, tone]) => `<div class="matching-stat ${tone}"><strong>${count}</strong><span>${label}</span></div>`).join('');
+  const failures = await api('/api/matching/failures');
   $('#matching-failures').hidden = !failures.length;
   $('#matching-failures-title').textContent = `${failures.length} job${failures.length === 1 ? '' : 's'} need attention`;
   $('#matching-retry-all').textContent = `Retry all ${failures.length}`;
@@ -576,7 +577,7 @@ async function loadJobAnalysis() {
     catch (error) { button.disabled = false; notice(error.message, true); }
   }));
   $('#matching-failure-list').querySelectorAll('[data-matching-dismiss]').forEach((button) => button.addEventListener('click', () => dismissFailedAnalysis(button.dataset.matchingDismiss)));
-  return matching;
+  return failures;
 }
 
 async function dismissFailedAnalysis(id) {
@@ -625,11 +626,11 @@ async function showTab(name, historyMode = 'push') {
   const requested = name.split('/');
   const selectedDraft = requested[0] === 'applications' ? requested[1] : null;
   name = requested[0];
-  if (name === 'setup') name = 'profile';
+  if (name === 'setup') name = 'settings';
   if (name === 'overview') name = 'home';
   if (!document.getElementById(name)?.classList.contains('tab')) name = 'home';
-  if (name !== 'profile') clearTimeout(window.setupPoll);
-  if (name !== 'profile') clearTimeout(window.matchingPoll);
+  if (name !== 'settings') clearTimeout(window.setupPoll);
+  if (name !== 'settings') clearTimeout(window.matchingPoll);
   if (name !== 'jobs') clearTimeout(window.jobPoll);
   if (name !== 'applications') clearTimeout(window.autoApplyPoll);
   if (name !== 'queue') clearTimeout(window.queuePoll);
@@ -638,16 +639,23 @@ async function showTab(name, historyMode = 'push') {
   document.querySelectorAll('.tab').forEach((tab) => tab.classList.toggle('active', tab.id === name));
   const target = document.getElementById(name);
   const nav = ['personal','experience','projects'].includes(name) ? 'profile' : name === 'employers' ? 'sources' : name;
-  document.querySelectorAll('.sidebar nav [data-tab]').forEach((button) => button.classList.toggle('active', button.dataset.tab === nav));
-  $('#page-title').textContent = ({home:'Home',queue:'Queue',jobs:'Jobs',applications:'Applications',profile:'My profile',
+  document.querySelectorAll('.sidebar [data-tab]').forEach((control) => {
+    const active = control.dataset.tab === nav;
+    control.classList.toggle('active', active);
+    if (active) control.setAttribute('aria-current', 'page');
+    else control.removeAttribute('aria-current');
+  });
+  const title = ({home:'Home',queue:'Activity',jobs:'Jobs',applications:'Applications',profile:'My profile',settings:'Settings',
     personal:'Personal details',experience:'Work history',projects:'GitHub projects',sources:'Job sources',employers:'Employers'})[name];
+  $('#page-title').textContent = title;
+  document.title = `${title} · Job Radar`;
   const desiredHash = selectedDraft ? `#applications/${selectedDraft}` : `#${name}`;
   if (historyMode === 'replace') history.replaceState({tab:name}, '', desiredHash);
   else if (historyMode === 'push' && location.hash !== desiredHash) history.pushState({tab:name}, '', desiredHash);
   window.scrollTo(0, 0);
-  if (!['home', 'profile'].includes(name)) refreshSocialAuth().catch((error) => notice(error.message, true));
+  if (!['home', 'settings'].includes(name)) refreshSocialAuth().catch((error) => notice(error.message, true));
   const loader = ({home:loadHome,queue:loadQueue,jobs:loadJobs,applications:loadApplications,personal:loadPersonalDetails,
-    experience:loadPositions,projects:loadEvidence,sources:loadSources,employers:loadEmployers,profile:loadProfile})[name];
+    experience:loadPositions,projects:loadEvidence,sources:loadSources,employers:loadEmployers,profile:loadProfile,settings:loadSettings})[name];
   if (!loader) return;
   setTabLoading(target, true);
   try {
@@ -874,8 +882,8 @@ async function loadEvidence(focusId = null) {
     agy:setup.providers.agy, claude:setup.providers.claude};
   projectProviderReady = Boolean(profile.drafting_provider && availability[profile.drafting_provider]);
   $('#project-provider-status').textContent = projectProviderReady
-    ? `Project drafts use ${profile.drafting_provider}. You can change this in My profile.`
-    : 'Choose an available AI provider in My profile before adding a project.';
+    ? `Project drafts use ${profile.drafting_provider}. You can change this in Settings.`
+    : 'Choose an available AI provider in Settings before adding a project.';
   $('#project-provider-action').hidden = projectProviderReady;
   const readyCount = projectCards.filter((card) => card.approved).length;
   $('#selected-project-count').textContent = `${readyCount} ready for resumes`;
@@ -944,10 +952,15 @@ async function loadEvidence(focusId = null) {
   renderRepositoryResults($('#repo-filter')?.value || '');
 }
 
-document.querySelectorAll('[data-tab]').forEach((button) => button.addEventListener('click', () => button.dataset.socialAuth === 'true' ? openSocialSignIn() : button.dataset.setupPanel ? openSetupPanel(button.dataset.setupPanel) : showTab(button.dataset.tab)));
+document.querySelectorAll('[data-tab]').forEach((control) => control.addEventListener('click', (event) => {
+  if (control.matches('a[href^="#"]')) {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+  }
+  control.dataset.socialAuth === 'true' ? openSocialSignIn() : control.dataset.setupPanel ? openSetupPanel(control.dataset.setupPanel) : showTab(control.dataset.tab);
+}));
 $('#social-auth-action').addEventListener('click', openSocialSignIn);
 setInterval(() => refreshSocialAuth().catch(() => {}), 60000);
-$('#job-analysis-settings').addEventListener('click', () => openSetupPanel('matching-panel').catch((error) => notice(error.message, true)));
 $('#clock').textContent = new Date().toLocaleDateString(undefined, {weekday:'long', day:'numeric', month:'long'});
 $('#job-search').addEventListener('click', () => { jobsPage = 1; loadJobs().catch((error) => notice(error.message, true)); });
 $('#job-query').addEventListener('keydown', (event) => { if (event.key === 'Enter') { jobsPage = 1; loadJobs().catch((error) => notice(error.message, true)); } });
@@ -1078,7 +1091,7 @@ $('#matching-model-form').addEventListener('submit', async (event) => {
   const pendingButton = beginPending(event.submitter || event.target.querySelector('button[type="submit"]'), 'Saving…');
   try {
     await api('/api/matching/model', {method:'PUT', body:JSON.stringify({model:event.target.elements.model.value})});
-    await loadProfile();
+    await loadSettings();
     notice('Local matching model saved. Existing jobs are being analyzed.');
   } catch(error) { notice(error.message, true); }
   finally { endPending(pendingButton); const model = event.target.elements.model.value; pendingButton.disabled = !model || model === event.target.dataset.saved; }
@@ -1100,9 +1113,9 @@ $('#provider-form').addEventListener('submit', async (event) => {
   try {
     const provider = event.target.elements.provider.value;
     await api('/api/profile/provider', {method:'PUT', body:JSON.stringify({provider})});
-    await loadProfile();
+    await loadSettings();
+    notice('Application writing provider saved.');
     scrollNodeIntoView($('#resume-panel'), {block:'start'});
-    notice('Provider saved. Add your resume next.');
   } catch(error) { notice(error.message, true); }
   finally { endPending(pendingButton); }
 });
@@ -1202,7 +1215,7 @@ $('#position-form').addEventListener('submit', async (event) => {
 
 async function inspectSelectedRepository(url, button = null) {
   if (!projectProviderReady) {
-    $('#project-add-status').textContent = 'Choose an available AI provider in My profile first.';
+    $('#project-add-status').textContent = 'Choose an available AI provider in Settings first.';
     return;
   }
   if (button) button.disabled = true;
@@ -1233,7 +1246,7 @@ function parseGitHubEntry(input) {
 }
 
 $('#project-provider-action').addEventListener('click', () => {
-  showTab('profile');
+  showTab('settings');
   $('#provider-panel').open = true;
   scrollNodeIntoView($('#provider-panel'), {block:'start'});
 });
@@ -1281,7 +1294,7 @@ function refreshAfterReturn() {
   clearTimeout(window.returnRefresh);
   window.returnRefresh = setTimeout(() => {
     const active = document.querySelector('.tab.active')?.id;
-    const refresh = active === 'profile' ? loadSetup : active === 'home' ? loadHome : refreshSocialAuth;
+    const refresh = active === 'settings' ? loadSettings : active === 'home' ? loadHome : refreshSocialAuth;
     refresh().catch((error) => notice(error.message, true));
   }, 100);
 }
