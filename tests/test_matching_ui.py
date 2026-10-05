@@ -53,7 +53,7 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 page.locator("#provider-panel[open]").wait_for()
                 assert page.locator("#provider-form select").is_visible()
                 assert page.locator("#matching-model-form select").is_visible()
-                page.get_by_role("button", name="Home", exact=True).click()
+                page.get_by_role("link", name="Home", exact=True).click()
                 page.get_by_role("button", name="Telegram application reviews").click()
                 page.locator("#telegram-panel[open]").wait_for()
                 assert page.get_by_role("button", name="Find my chat ID").is_visible()
@@ -75,12 +75,12 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 page.goto(f"http://127.0.0.1:{port}/#projects")
                 page.locator("#projects.active #project-add-form").wait_for()
                 assert page.url.endswith("#projects")
-                page.get_by_role("button", name="Applications", exact=True).first.click()
+                page.get_by_role("link", name="Applications", exact=True).click()
                 page.locator("#auto-apply-panel summary").click()
                 assert page.locator("#auto-apply-form input[name='enabled']").is_visible()
                 assert page.locator("#auto-apply-status").inner_text() == "Off"
                 assert page.locator("#queue-existing-drafts").is_disabled()
-                page.get_by_role("button", name="Jobs", exact=True).first.click()
+                page.get_by_role("link", name="Jobs", exact=True).click()
                 pending_card = page.get_by_role("button", name="Open Python Engineer at Pending Example")
                 pending_card.wait_for()
                 assert "Analyzing" in pending_card.inner_text()
@@ -96,7 +96,7 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 high_color = page.get_by_role("button", name="Open AI Engineer at Example").locator(".score-high").evaluate("node => getComputedStyle(node).backgroundColor")
                 pending_color = pending_card.locator(".score-pending").evaluate("node => getComputedStyle(node).backgroundColor")
                 assert high_color != pending_color
-                page.get_by_role("button", name="My profile", exact=True).first.click()
+                page.get_by_role("link", name="My profile", exact=True).click()
                 page.locator("#edit-profile-button").click()
                 page.locator("#personal.active #profile-form").wait_for()
                 page.locator("#profile-form input[name='name']").fill("Alex Example")
@@ -107,6 +107,8 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 assert app.state.db.get_setting("profile", {})["name"] == "Alex Example"
                 page.locator("#personal [data-tab='profile']").click()
                 page.locator("#resume-status.status-badge--success").wait_for()
+                page.get_by_role("link", name="Settings", exact=True).click()
+                page.locator("#settings.active").wait_for()
                 page.locator("#smtp-panel summary").click()
                 page.locator("#smtp-panel[open]").wait_for()
                 page.locator("#smtp-gmail-preset").click()
@@ -123,7 +125,7 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 monkeypatch.setattr(app.state.login_manager, "status", lambda: {"sites": [], "connected_sites": ["linkedin", "facebook"], "state": "idle", "error": None, "last_saved_at": None})
                 monkeypatch.setattr("job_radar.web.telegram_config", lambda _settings: {"token": "test-token", "chat_id": "123"})
                 page.goto("about:blank")
-                page.goto(f"http://127.0.0.1:{port}/#profile")
+                page.goto(f"http://127.0.0.1:{port}/#settings")
                 page.locator("#provider-panel summary").click()
                 for selector in ("#provider-status", "#resume-status", "#matching-status", "#social-sign-in-status", "#setup-telegram-status"):
                     page.locator(f"{selector}.status-badge:not(.status-badge--warning):not(.status-badge--neutral)").wait_for()
@@ -185,7 +187,8 @@ def test_failed_matching_jobs_are_visible_and_retryable_from_jobs(tmp_path: Path
                 page.locator("#matching-retry-all").click()
                 page.locator("#matching-failures").wait_for(state="hidden")
                 assert db.one("SELECT COUNT(*) AS n FROM vacancies WHERE analysis_status='failed'")["n"] == 0
-                page.locator("#job-analysis-settings").click()
+                page.get_by_role("link", name="Settings", exact=True).click()
+                page.locator("#settings.active").wait_for()
                 assert "need attention" not in page.locator("#matching-status").inner_text()
                 assert page.locator("#provider-panel").get_attribute("open") is not None
             finally:
