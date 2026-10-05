@@ -17,6 +17,7 @@ from .ranking import NEGATIVE_WORDS
 
 OLLAMA_URL = "http://127.0.0.1:11434"
 RECOMMENDED_MODEL = "qwen2.5:3b"
+ANALYSIS_VERSION = 2
 
 
 class LocalModelUnavailable(RuntimeError):

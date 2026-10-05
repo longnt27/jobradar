@@ -10,7 +10,7 @@ import subprocess
 
 from .db import Database, now
 from .auto_apply import AutoApplyManager
-from .local_analysis import LocalModelUnavailable, RECOMMENDED_MODEL, analyze_job, validate_local_model
+from .local_analysis import ANALYSIS_VERSION, LocalModelUnavailable, RECOMMENDED_MODEL, analyze_job, validate_local_model
 from .settings import Settings
 
 
@@ -44,6 +44,9 @@ class MatchManager:
         self.loop = asyncio.get_running_loop()
         model = self.db.get_setting("matching_model", "")
         if model:
+            if self.db.get_setting("analysis_version", 0) != ANALYSIS_VERSION:
+                self.invalidate_all()
+                self.db.set_setting("analysis_version", ANALYSIS_VERSION)
             self.db.execute(
                 "UPDATE vacancies SET analysis_status='pending',analysis_stage=NULL WHERE analysis_status='running' "
                 "OR analysis_status='not_configured' OR (analysis_status='done' AND analysis_model<>?)",

@@ -1,4 +1,5 @@
 import json
+import asyncio
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -10,6 +11,7 @@ from job_radar.ingest import ObservedJob, ingest
 from job_radar.local_analysis import Criterion, JobFacts, LocalModelUnavailable, MatchJudgment, _generate, _ground_facts, analyze_job, clean_saved_analysis, experience_criterion, extract_salary_range, freshness_criterion, validate_local_model, finalize_match, extract_years_required, role_fallback
 from job_radar.settings import Settings
 from job_radar.web import create_app
+from job_radar.matching import MatchManager
 
 
 def test_local_analysis_extracts_facts_and_weights_nine_scores(monkeypatch) -> None:
@@ -75,6 +77,23 @@ def test_salary_can_be_extracted_from_facebook_post_title() -> None:
     assert extract_years_required(title + "\nVới hơn 15 năm hình thành và phát triển, VCCorp tuyển AI Engineer.") == 1
     assert role_fallback({"title": title}, {"experience": [{"role": "AI Engineering Intern"}]}) == {
         "score": 9, "reason": "AI Engineer aligns with the documented AI Engineering Intern position."}
+
+
+def test_analysis_policy_change_queues_existing_jobs_once(tmp_path) -> None:
+    settings = Settings(tmp_path)
+    app = create_app(settings)
+    db = app.state.db
+    job_id = TestClient(app).post("/api/jobs/import", json={"company": "Example", "title": "AI Engineer",
+        "description": "Build AI systems in Hanoi."}).json()["id"]
+    db.set_setting("matching_model", "test:small")
+    db.execute("UPDATE vacancies SET analysis_status='done' WHERE id=?", (job_id,))
+    manager = MatchManager(db, settings)
+    async def start_and_stop():
+        await manager.start()
+        assert db.one("SELECT analysis_status FROM vacancies WHERE id=?", (job_id,))["analysis_status"] == "pending"
+        await manager.stop()
+    asyncio.run(start_and_stop())
+    assert db.get_setting("analysis_version", 0) == 2
 
 
 def test_unstated_requirements_get_neutral_score(monkeypatch) -> None:
