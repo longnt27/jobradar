@@ -123,7 +123,7 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 assert page.locator("#setup-smtp-form input[name='user']").input_value() == "alex@example.org"
                 page.locator("#setup-smtp-form input[name='password']").fill("test-app-password")
                 page.locator("#setup-smtp-form button[type='submit']").click()
-                page.locator("#setup-smtp-status.pill:not(.muted)").wait_for()
+                page.locator("#setup-smtp-status.status-badge--success").wait_for()
                 assert json.loads((tmp_path / "smtp.json").read_text())["host"] == "smtp.gmail.com"
                 app.state.db.set_setting("profile", {"name": "Alex Example", "email": "alex@example.org", "drafting_provider": "codex", "experience": []})
                 app.state.db.set_setting("matching_model", "test:small")
