@@ -24,6 +24,11 @@ function scoreBadge(job) {
 let activeJob = null;
 let activeJobPinned = false;
 let jobsPage = 1;
+let jobsInboxMode = 'since_last_visit';
+let jobsVisitBoundary = null;
+let jobsWorkspaceReady = false;
+let savedJobViews = [];
+let pendingIgnoreJobId = null;
 let employerPage = 1;
 let projectCards = [];
 let discoveredRepos = [];
@@ -115,7 +120,7 @@ function clearNotice() {
   node.replaceChildren();
 }
 
-function notice(message, error = false) {
+function notice(message, error = false, action = null) {
   const node = $('#notice');
   clearTimeout(window.noticeTimeout);
   node.hidden = false;
@@ -125,14 +130,29 @@ function notice(message, error = false) {
   const messageNode = document.createElement('span');
   messageNode.className = 'toast-message';
   messageNode.textContent = message;
+  const children = [messageNode];
+  if (action?.label && typeof action.onClick === 'function') {
+    const actionButton = document.createElement('button');
+    actionButton.type = 'button';
+    actionButton.className = 'toast-action';
+    actionButton.textContent = action.label;
+    actionButton.addEventListener('click', async () => {
+      clearTimeout(window.noticeTimeout);
+      actionButton.disabled = true;
+      try { await action.onClick(); clearNotice(); }
+      catch (error) { notice(error.message, true); }
+    });
+    children.push(actionButton);
+  }
   const dismiss = document.createElement('button');
   dismiss.type = 'button';
   dismiss.className = 'toast-dismiss';
   dismiss.setAttribute('aria-label', 'Dismiss notification');
   dismiss.textContent = '×';
   dismiss.addEventListener('click', clearNotice);
-  node.replaceChildren(messageNode, dismiss);
-  if (!error) window.noticeTimeout = setTimeout(clearNotice, 6000);
+  children.push(dismiss);
+  node.replaceChildren(...children);
+  if (!error) window.noticeTimeout = setTimeout(clearNotice, action ? 9000 : 6000);
 }
 
 function beginPending(button, label = 'Working…') {
