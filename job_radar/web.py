@@ -241,6 +241,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             db.execute("INSERT INTO sources(id,kind,name,url,employer_id,interval_minutes,created_at) VALUES(?,?,?,?,?,?,?)",
                        (new_id(), "career", f"{name} careers", url, employer_id, 240, now()))
 
+    def saved_job_views() -> list[dict[str, Any]]:
+        views = db.get_setting("job_saved_views", [])
+        return views if isinstance(views, list) else []
+
+    def sanitize_job_view_filters(filters: dict[str, Any]) -> dict[str, str]:
+        clean: dict[str, str] = {}
+        for key, value in filters.items():
+            if key not in JOB_VIEW_FILTER_KEYS or value in (None, ""):
+                continue
+            clean[key] = str(value)[:200]
+        return clean
+
     @app.get("/")
     def index():
         return FileResponse(Path(__file__).parent / "static" / "index.html")
@@ -267,13 +279,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             counts["vacancies"] = conn.execute("SELECT COUNT(*) FROM vacancies v WHERE NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm')").fetchone()[0]
             counts["active_sources"] = conn.execute("SELECT COUNT(*) FROM sources WHERE enabled=1").fetchone()[0]
             counts["career_sources_enabled"] = conn.execute("SELECT COUNT(*) FROM sources WHERE enabled=1 AND kind='career'").fetchone()[0]
-            counts["high_fit_new"] = conn.execute("SELECT COUNT(*) FROM vacancies WHERE state='new' AND analysis_status='done' AND score>=80").fetchone()[0]
+            counts["high_fit_new"] = conn.execute("SELECT COUNT(*) FROM vacancies WHERE decision_state='undecided' AND snoozed_until IS NULL AND analysis_status='done' AND score>=80").fetchone()[0]
+            counts["unseen_jobs"] = conn.execute("SELECT COUNT(*) FROM vacancies WHERE seen_at IS NULL AND decision_state='undecided' AND snoozed_until IS NULL").fetchone()[0]
             counts["recent_jobs"] = conn.execute("SELECT COUNT(*) FROM vacancies WHERE julianday(first_seen_at)>=julianday('now','-1 day')").fetchone()[0]
             counts["drafts_needing_review"] = conn.execute("SELECT COUNT(*) FROM auto_application_attempts WHERE status IN ('awaiting_review','needs_review')").fetchone()[0]
             counts["analysis_failures"] = conn.execute("SELECT COUNT(*) FROM vacancies WHERE analysis_status='failed'").fetchone()[0]
         recent = db.all("SELECT scan_runs.*, sources.name AS source_name FROM scan_runs JOIN sources ON sources.id=scan_runs.source_id ORDER BY started_at DESC LIMIT 10")
         attention = {
-            "jobs": db.all("SELECT id,title,company,score FROM vacancies WHERE state='new' AND analysis_status='done' AND score>=80 ORDER BY score DESC,first_seen_at DESC LIMIT 4"),
+            "jobs": db.all("SELECT id,title,company,score FROM vacancies WHERE decision_state='undecided' AND snoozed_until IS NULL AND analysis_status='done' AND score>=80 ORDER BY score DESC,first_seen_at DESC LIMIT 4"),
             "drafts": db.all("SELECT a.draft_id AS id,v.title,v.company,a.status FROM auto_application_attempts a JOIN vacancies v ON v.id=a.vacancy_id WHERE a.status IN ('awaiting_review','needs_review') AND a.draft_id IS NOT NULL ORDER BY a.updated_at DESC LIMIT 4"),
             "failures": db.all("SELECT id,title,company,analysis_error AS detail FROM vacancies WHERE analysis_status='failed' ORDER BY updated_at DESC LIMIT 4"),
         }
