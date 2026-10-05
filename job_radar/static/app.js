@@ -833,14 +833,8 @@ function syncStrongThresholdUi(intent) {
   const threshold = Number(intent?.strong_match_threshold ?? 80);
   const score = $('#job-score');
   if (score) {
-    let option = score.querySelector('[data-strong-threshold]');
-    if (!option) {
-      option = document.createElement('option');
-      option.dataset.strongThreshold = 'true';
-      score.insertBefore(option, score.options[1] || null);
-    }
-    option.value = String(threshold);
-    option.textContent = `Strong matches (${threshold}+)`;
+    score.placeholder = `Any score · strong is ${threshold}+`;
+    score.title = `Strong matches use the shared ${threshold}+ threshold`;
   }
   const auto = $('#auto-apply-form')?.elements.threshold;
   if (auto) auto.value = threshold;
@@ -1830,7 +1824,7 @@ function applyJobControls() {
 $('#job-search').addEventListener('click', applyJobControls);
 $('#job-query').addEventListener('keydown', (event) => { if (event.key === 'Enter') applyJobControls(); });
 for (const selector of ['#job-state','#job-score','#job-freshness','#job-work-mode','#job-source','#job-seniority','#job-sort']) $(selector).addEventListener('change', applyJobControls);
-$('#job-location').addEventListener('keydown', (event) => { if (event.key === 'Enter') applyJobControls(); });
+for (const selector of ['#job-location','#job-score']) $(selector).addEventListener('keydown', (event) => { if (event.key === 'Enter') applyJobControls(); });
 $('#jobs-clear-filters').addEventListener('click', () => {
   for (const [key, selector] of Object.entries(JOB_FILTERS)) $(selector).value = key === 'sort' ? 'best' : '';
   applyJobControls();
