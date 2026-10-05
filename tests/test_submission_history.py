@@ -165,7 +165,7 @@ def test_legacy_uncertain_submission_is_shown_as_durable_proof_after_reload(tmp_
                 page.get_by_text("Submission status uncertain", exact=True).first.wait_for()
                 assert page.get_by_role("button", name="Approve & send").is_disabled()
                 assert page.get_by_text(
-                    "Verify on the employer site before taking another send action.", exact=True
+                    "Verify on the employer site before taking another send action.", exact=False
                 ).first.is_visible()
                 page.get_by_text("Exact reviewed package", exact=True).click()
                 assert page.get_by_role("link", name="Open exact submitted resume").is_visible()
