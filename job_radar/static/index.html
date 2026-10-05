@@ -20,6 +20,7 @@
         <button data-tab="sources">Job sources</button>
         <button data-tab="applications">Applications</button>
         <button data-tab="profile">My profile</button>
+        <button data-tab="settings">Settings</button>
       </nav>
       <div class="sidebar-foot"><span class="status-dot"></span> Running on this Mac</div>
     </aside>
@@ -85,14 +86,15 @@
         <div class="two-col jobs-layout"><div id="application-list" class="stack"></div><div id="application-detail" class="panel detail"><div class="empty">No application selected.</div></div></div>
       </section>
 
-      <section id="profile" class="tab">
-        <p class="section-intro">Build your resume once. Job Radar uses it to prepare drafts you review.</p>
+      <section id="settings" class="tab">
+        <p class="section-intro">Configure models and integrations separately from the resume data employers see.</p>
         <details class="panel flow-panel" id="provider-panel">
           <summary><span><span class="step-number">1</span><strong>AI models</strong></span><span id="provider-status" class="pill warning">Choose models</span></summary>
           <div class="ai-model-section">
             <div class="section-head"><h3>Application writing</h3><span id="drafting-status" class="pill warning">Choose a provider</span></div>
             <p class="hint">Choose an installed CLI to read your resume and write application drafts. Remote providers receive the resume text; Codex OSS with Ollama runs locally.</p>
             <form id="provider-form" class="form-grid"><label class="full">Provider<select name="provider" required><option value="">Choose a provider</option><option value="codex">Codex CLI · remote model</option><option value="codex_local">Codex OSS · local Ollama model</option><option value="agy">Antigravity CLI · remote model</option><option value="claude">Claude Code CLI · remote model</option></select></label><button class="primary" type="submit">Save provider</button></form>
+            <div id="provider-availability" class="provider-availability" role="status" aria-live="polite"></div>
           </div>
           <div class="ai-model-section" id="matching-panel">
             <div class="section-head"><h3>Local job matching</h3><span id="matching-status" class="pill warning">Choose a model</span></div>
@@ -101,20 +103,14 @@
               <form id="matching-model-form"><label>Installed text model<select name="model" required><option value="">Choose an installed model</option></select></label><button class="primary" type="submit">Use model</button></form>
               <button id="matching-refresh" class="text-button" type="button">Refresh models</button>
             </div>
-            <button id="matching-download" class="secondary" type="button">Download recommended small model</button>
+            <div class="download-actions"><button id="matching-download" class="secondary" type="button">Download recommended small model</button><button id="matching-download-cancel" class="secondary danger" type="button" hidden>Cancel download</button></div>
+            <div id="matching-download-progress" class="download-progress" hidden><progress id="matching-download-meter" max="100" value="0"></progress><span id="matching-download-label" class="hint"></span></div>
             <p id="matching-model-detail" class="hint" role="status"></p>
           </div>
         </details>
-        <details class="panel flow-panel" id="resume-panel">
-          <summary><span><span class="step-number">2</span><strong id="resume-panel-label">Import your resume</strong></span><span id="resume-status" class="pill warning">Needs details</span></summary>
-          <p class="hint">Upload a text-based PDF. Your provider extracts contact details, past positions, education, achievements, and skills. Projects come from GitHub separately.</p>
-          <form id="pdf-resume-form" class="form-grid"><label class="full">Resume PDF<input name="file" type="file" accept="application/pdf,.pdf" required></label><button class="primary" type="submit" disabled>Extract resume details</button></form>
-          <p id="pdf-import-status" class="hint" role="status"></p>
-          <details class="inline-details"><summary>Have a LaTeX resume instead?</summary><form id="latex-import-form"><label>LaTeX source<textarea name="latex" rows="8" required></textarea></label><button class="secondary" type="submit">Import details</button></form></details>
-        </details>
         <details class="panel flow-panel" id="social-sign-in-panel">
-          <summary><span><span class="step-number">3</span><strong>Connect LinkedIn and Facebook</strong></span><span id="social-sign-in-status" class="pill warning">Sign-in needed</span></summary>
-          <p class="hint">Choose a site. Job Radar opens regular Chrome with a separate saved profile. When sign-in finishes, Chrome closes and Job Radar returns automatically. Four-hour scans reuse the session until the site asks you to sign in again.</p>
+          <summary><span><span class="step-number">2</span><strong>Connect LinkedIn and Facebook</strong></span><span id="social-sign-in-status" class="pill warning">Sign-in needed</span></summary>
+          <p class="hint">Choose a site. Job Radar opens regular Chrome with a separate saved profile. Four-hour scans reuse the session until the site asks you to sign in again.</p>
           <div class="social-sign-in-content">
             <div class="social-site-row"><span><strong>LinkedIn</strong><small id="linkedin-sign-in-status">Sign-in needed</small></span><button id="setup-linkedin-start" class="primary" type="button">Sign in to LinkedIn</button></div>
             <div class="social-site-row"><span><strong>Facebook</strong><small id="facebook-sign-in-status">Sign-in needed</small></span><button id="setup-facebook-start" class="primary" type="button">Sign in to Facebook</button></div>
@@ -122,22 +118,31 @@
           </div>
         </details>
         <details class="panel flow-panel" id="telegram-panel">
-          <summary><span><span class="step-number">4</span><strong>Telegram application reviews</strong></span><span id="setup-telegram-status" class="pill muted">Optional</span></summary>
-          <p class="hint">Create a bot with <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer">BotFather</a>, then message it in a private chat. Job Radar sends the complete application and resume PDF only after a draft is ready. Approve, edit, or regenerate it from the review message. The score cutoff is set in Applications.</p>
-          <form id="setup-telegram-form" class="form-grid"><label class="full">Bot token<input name="token" type="password" autocomplete="off" placeholder="Leave blank to keep the saved token"></label><label>Chat ID<input name="chat_id" required></label><button id="telegram-find-chat" class="secondary" type="button">Find my chat ID</button><button class="primary" type="submit">Save Telegram</button><button id="setup-telegram-remove" class="secondary" type="button">Remove settings</button><div id="telegram-chat-results" class="full"></div><p id="setup-telegram-message" class="full hint" role="status"></p></form>
+          <summary><span><span class="step-number">3</span><strong>Telegram application reviews</strong></span><span id="setup-telegram-status" class="pill muted">Optional</span></summary>
+          <p class="hint">Connect a private bot chat for draft review. Removing this later requires reconnecting the bot and chat.</p>
+          <form id="setup-telegram-form" class="form-grid"><label class="full">Bot token<input name="token" type="password" autocomplete="off" placeholder="Leave blank to keep the saved token"></label><label>Chat ID<input name="chat_id" required></label><button id="telegram-find-chat" class="secondary" type="button">Find my chat ID</button><button class="primary" type="submit">Save Telegram</button><button id="setup-telegram-remove" class="secondary danger" type="button">Remove settings</button><div id="telegram-chat-results" class="full"></div><p id="setup-telegram-message" class="full hint" role="status"></p></form>
         </details>
         <details class="panel flow-panel" id="smtp-panel">
-          <summary><span><span class="step-number">5</span><strong>Email applications</strong></span><span id="setup-smtp-status" class="pill muted">Optional</span></summary>
-          <p class="hint">Connect an email account to send applications after you approve them. Email setup is optional for jobs with application forms.</p>
-          <div class="smtp-guide">
-            <div><strong>Use Gmail</strong><p class="hint">Turn on <a href="https://support.google.com/accounts/answer/185839" target="_blank" rel="noopener noreferrer">2-Step Verification</a>, then create an <a href="https://support.google.com/accounts/answer/185833" target="_blank" rel="noopener noreferrer">app password</a>. Enter that app password below; your regular Google password will not work here.</p></div>
-            <button id="smtp-gmail-preset" class="secondary" type="button">Use Gmail settings</button>
-          </div>
-          <form id="setup-smtp-form" class="form-grid"><label>SMTP host<input name="host" placeholder="smtp.gmail.com" required></label><label>Port<select name="port"><option value="587">587 (STARTTLS)</option><option value="465">465 (TLS)</option></select></label><label>SMTP username <span class="hint">For Gmail, your full email address</span><input name="user" autocomplete="username"></label><label>Password or app password <span class="hint">For Gmail, use an app password. Leave blank only to keep a password saved for this server.</span><input name="password" type="password" autocomplete="new-password"></label><p class="full hint">Need a Gmail app password? <a href="https://support.google.com/accounts/answer/185833?hl=en" target="_blank" rel="noopener noreferrer">Follow Google's instructions to create one</a>.</p><label class="full">From address<input name="from_address" type="email" required></label><button class="primary" type="submit">Save email settings</button><button id="setup-smtp-remove" class="secondary" type="button">Remove settings</button></form>
-          <div class="smtp-test"><div><strong>Test your connection</strong><p class="hint">Sends a test message to your saved From address. No resume or application details are included.</p><p id="smtp-test-result" class="hint" role="status" aria-live="polite">Save settings to send a test email.</p></div><button id="smtp-send-test" class="secondary" type="button" disabled>Send test email</button></div>
+          <summary><span><span class="step-number">4</span><strong>Email applications</strong></span><span id="setup-smtp-status" class="pill muted">Optional</span></summary>
+          <p class="hint">Connect an email account to send applications after you approve them. Removing saved credentials requires entering them again.</p>
+          <div class="smtp-guide"><div><strong>Use Gmail</strong><p class="hint">Use a Google app password rather than your normal account password.</p></div><button id="smtp-gmail-preset" class="secondary" type="button">Use Gmail settings</button></div>
+          <form id="setup-smtp-form" class="form-grid"><label>SMTP host<input name="host" placeholder="smtp.gmail.com" required></label><label>Port<select name="port"><option value="587">587 (STARTTLS)</option><option value="465">465 (TLS)</option></select></label><label>SMTP username<input name="user" autocomplete="username"></label><label>Password or app password<input name="password" type="password" autocomplete="new-password"></label><label class="full">From address<input name="from_address" type="email" required></label><button class="primary" type="submit">Save email settings</button><button id="setup-smtp-remove" class="secondary danger" type="button">Remove settings</button></form>
+          <div class="smtp-test"><div><strong>Test your connection</strong><p id="smtp-test-result" class="hint" role="status" aria-live="polite">Save settings to send a test email.</p></div><button id="smtp-send-test" class="secondary" type="button" disabled>Send test email</button></div>
+        </details>
+      </section>
+
+      <section id="profile" class="tab">
+        <p class="section-intro">Build your candidate data once. Job Radar uses only the details and projects you choose.</p>
+        <details class="panel flow-panel" id="resume-panel">
+          <summary><span><strong id="resume-panel-label">Import your resume</strong></span><span id="resume-status" class="pill warning">Needs details</span></summary>
+          <p id="resume-panel-help" class="hint">Upload a text-based PDF to seed your structured profile. You can review every extracted field afterward.</p>
+          <div id="resume-review-actions" class="actions" hidden><button data-tab="personal" class="secondary" type="button">Review personal details</button><button data-tab="experience" class="secondary" type="button">Review work history</button></div>
+          <form id="pdf-resume-form" class="form-grid"><label class="full">Resume PDF<input name="file" type="file" accept="application/pdf,.pdf" required></label><button class="primary" type="submit" disabled>Import or replace details</button></form>
+          <p id="pdf-import-status" class="hint" role="status"></p>
+          <details class="inline-details"><summary>Have a LaTeX resume instead?</summary><form id="latex-import-form"><label>LaTeX source<textarea name="latex" rows="8" required></textarea></label><button class="secondary" type="submit">Import details</button></form></details>
         </details>
         <div class="panel" id="profile-summary-panel">
-          <div class="section-head"><h3>Your resume</h3><span id="profile-summary-status" class="pill warning">Needs details</span></div>
+          <div class="section-head"><h3>Your resume details</h3><span id="profile-summary-status" class="pill warning">Needs details</span></div>
           <p id="profile-summary" class="hint">Add your resume or enter your details manually.</p>
           <div class="action-cards">
             <button id="edit-profile-button" data-tab="personal" class="action-card" type="button"><strong>Personal details</strong><span>Contact, education, skills</span></button>
@@ -151,18 +156,18 @@
         <button class="back-link" data-tab="profile">← My profile</button>
         <div class="panel">
           <h3>Personal details</h3>
-          <p class="hint">Review your contact details, education, skills, and application preferences.</p>
+          <p class="hint">Review your contact details, education, skills, links, and application preferences.</p>
           <p id="personal-loading" class="hint" role="status">Loading personal details…</p>
           <form id="profile-form" class="form-grid" hidden>
             <label>Name<input name="name"></label><label>Email<input name="email" type="email"></label>
-            <label>Given name for application forms <span class="hint">Optional; leave blank to review each form</span><input name="given_name"></label><label>Family name for application forms <span class="hint">Optional; enter your preferred order</span><input name="family_name"></label>
+            <label>Given name for application forms <span class="hint">Optional</span><input name="given_name"></label><label>Family name for application forms <span class="hint">Optional</span><input name="family_name"></label>
             <label>Phone<input name="phone"></label><label>Location<input name="location"></label>
             <label class="full">Professional summary<textarea name="summary" rows="4"></textarea></label>
-            <label class="full">Skills <span class="hint">One per line for job matching</span><textarea name="skills" rows="4"></textarea></label>
-            <label class="full">Resume skill categories <span class="hint">One per line: Programming: Python, C++</span><textarea name="skill_groups" rows="3"></textarea></label>
-            <label class="full">Education <span class="hint">One per line: University | Degree | Dates</span><textarea name="education" rows="3"></textarea></label>
-            <label class="full">Achievements <span class="hint">One per line</span><textarea name="achievements" rows="3"></textarea></label>
-            <label class="full">Links <span class="hint">One per line</span><textarea name="links" rows="3"></textarea></label>
+            <fieldset class="structured-field full"><legend>Skills</legend><p class="hint">Add skills individually so matching does not depend on delimiter syntax.</p><div id="skills-editor" class="repeatable-list"></div><button id="add-skill" class="secondary" type="button">Add skill</button></fieldset>
+            <fieldset class="structured-field full"><legend>Resume skill categories</legend><p class="hint">Group related skills for resume formatting.</p><div id="skill-groups-editor" class="repeatable-list"></div><button id="add-skill-group" class="secondary" type="button">Add category</button></fieldset>
+            <fieldset class="structured-field full"><legend>Education</legend><div id="education-editor" class="repeatable-list"></div><button id="add-education" class="secondary" type="button">Add education</button></fieldset>
+            <fieldset class="structured-field full"><legend>Achievements</legend><div id="achievements-editor" class="repeatable-list"></div><button id="add-achievement" class="secondary" type="button">Add achievement</button></fieldset>
+            <fieldset class="structured-field full"><legend>Links</legend><div id="links-editor" class="repeatable-list"></div><button id="add-link" class="secondary" type="button">Add link</button></fieldset>
             <div class="full"><details class="inline-details"><summary>Application preferences</summary><div class="form-grid preferences-grid">
               <label>Salary expectation<input name="salary_expectation" placeholder="Leave blank to answer manually"></label>
               <label>Work authorization<input name="work_authorization" placeholder="Leave blank to answer manually"></label>
@@ -176,7 +181,7 @@
 
       <section id="experience" class="tab subpage">
         <button class="back-link" data-tab="profile">← My profile</button>
-        <div class="section-head"><p>Previous jobs appear in the Experience section of your resume.</p></div>
+        <div class="section-head"><p>Keep work history compact, edit one role at a time, and order it exactly as it should appear on resumes.</p></div>
         <div class="two-col">
           <div class="panel"><h3>Add a position</h3><form id="position-form" class="form-grid"><label>Company<input name="company" required></label><label>Role<input name="role" required></label><label class="full">Dates<input name="dates" placeholder="Dec 2025 – May 2026" required></label><label class="full">Work and outcomes <span class="hint">One bullet per line</span><textarea name="bullets" rows="4" required></textarea></label><button class="primary" type="submit">Add position</button></form></div>
           <div class="panel"><h3>Previous positions</h3><div id="position-list" class="stack"></div></div>
@@ -187,19 +192,14 @@
         <button class="back-link" data-tab="profile">← My profile</button>
         <div class="panel project-add-panel">
           <h3>Add a GitHub project</h3>
-          <p class="hint">Enter your GitHub username to browse your public repos, or paste a repository URL to add it directly.</p>
-          <form id="project-add-form" class="project-add-form">
-            <label class="full">GitHub username or repository URL<input id="project-github-input" name="github" placeholder="your-username or https://github.com/you/project" autocomplete="off" required></label>
-            <button class="primary" type="submit">Continue</button>
-          </form>
-          <p id="project-provider-status" class="hint"></p>
-          <button id="project-provider-action" class="text-button" type="button" hidden>Choose a provider in My profile →</button>
-          <p id="project-add-status" class="hint" role="status" aria-live="polite"></p>
-          <div id="github-repos"></div>
+          <p class="hint">Enter your GitHub username to browse public repositories, or paste a repository URL directly.</p>
+          <form id="project-add-form" class="project-add-form"><label class="full">GitHub username or repository URL<input id="project-github-input" name="github" placeholder="your-username or https://github.com/you/project" autocomplete="off" required></label><button class="primary" type="submit">Continue</button></form>
+          <p id="project-provider-status" class="hint"></p><button id="project-provider-action" class="text-button" type="button" hidden>Choose a provider in Settings →</button>
+          <p id="project-add-status" class="hint" role="status" aria-live="polite"></p><div id="github-repos"></div>
         </div>
         <div class="panel">
-          <div class="section-head"><div><h3>Your projects</h3><p class="hint">Review a draft before using it in tailored resumes.</p></div><span id="selected-project-count" class="pill muted"></span></div>
-          <div class="project-workspace"><div id="evidence-list" class="stack"></div><div id="project-editor"></div></div>
+          <div class="section-head"><div><h3>Your projects</h3><p class="hint">Save edits independently, then choose whether each project belongs in resumes.</p></div><span id="selected-project-count" class="pill muted"></span></div>
+          <div class="project-workspace"><div id="evidence-list" class="stack"></div><div id="project-editor" tabindex="-1"></div></div>
         </div>
       </section>
 
