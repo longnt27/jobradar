@@ -1303,7 +1303,7 @@ async function loadAutoApply() {
   existingButton.disabled = !data.enabled || !(data.eligible_existing || data.waiting_existing);
   $('#existing-draft-count').textContent = !data.enabled ? 'Enable and save automatic drafts first.'
     : (data.eligible_existing || data.waiting_existing) ? `${data.eligible_existing} scored match${data.eligible_existing === 1 ? '' : 'es'} at ${data.threshold}+ · ${data.waiting_existing} still being checked · ${(data.counts.queued || 0)} queued.`
-    : data.highest_existing_score != null ? `No undrafted jobs score at least ${data.threshold}; the highest is ${data.highest_existing_score}. Lower the minimum and save to include them.`
+    : data.highest_existing_score != null ? `No undrafted jobs score at least ${data.threshold}; the highest is ${data.highest_existing_score}. Change the strong-match threshold in Settings to include more jobs.`
     : `${data.counts.queued || 0} queued · No undrafted, scored jobs are ready.`;
   const activity = $('#auto-apply-activity');
   activity.innerHTML = data.recent.length ? `${data.recent.map((item) =>
