@@ -102,6 +102,15 @@ def _facebook_posted_at(tooltip: str, timezone_id: str = "Asia/Ho_Chi_Minh") -> 
     return None
 
 
+async def _facebook_detail_matches(page: Page, text: str) -> bool:
+    """Check the opened post, excluding unrelated cards behind its dialog."""
+    opened_post = page.locator('[role="dialog"] [data-ad-rendering-role="story_message"]')
+    await opened_post.first.wait_for(timeout=7000)
+    lead = re.sub(r"\s+", " ", text).casefold()[:80]
+    return any(lead in re.sub(r"\s+", " ", item).casefold()
+               for item in await opened_post.all_inner_texts())
+
+
 async def _page_text(page: Page, selectors: tuple[str, ...]) -> str:
     for selector in selectors:
         locator = page.locator(selector).first
@@ -350,12 +359,17 @@ async def collect_facebook(context: BrowserContext, source: dict) -> list[Observ
                         detail = await opened.value
                         try:
                             await detail.wait_for_url(re.compile(r"/groups/[^/]+/(?:posts|permalink)/\d+"), timeout=7000)
-                            await detail.locator('[data-ad-rendering-role="story_message"]').first.wait_for(timeout=7000)
-                            lead = re.sub(r"\s+", " ", text).casefold()[:80]
-                            detail_texts = await detail.locator('[data-ad-rendering-role="story_message"]').all_inner_texts()
-                            if not any(lead in re.sub(r"\s+", " ", item).casefold() for item in detail_texts):
+                            if not await _facebook_detail_matches(detail, text):
                                 continue
                             post_url = _facebook_post_url(source["url"], [detail.url])
+                        finally:
+                            await detail.close()
+                    elif post_url:
+                        detail = await context.new_page()
+                        try:
+                            await detail.goto(post_url, wait_until="domcontentloaded", timeout=30000)
+                            if not await _facebook_detail_matches(detail, text):
+                                continue
                         finally:
                             await detail.close()
                     if post_url:
