@@ -1076,6 +1076,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         review = db.one("SELECT status FROM auto_application_attempts WHERE draft_id=?", (draft_id,))
         if review and review["status"] in ("sending", "regenerating"):
             raise HTTPException(409, "This application is being processed. Try again when it finishes.")
+        if review and review["status"] == "submission_uncertain":
+            raise HTTPException(409, "Submission status uncertain. Verify on the employer site before changing or sending this application again.")
         prior = db.one(
             "SELECT status FROM submissions WHERE draft_id=? AND status IN "
             "('sent_confirmed','submitted_confirmed','submitted_unconfirmed','sending') LIMIT 1", (draft_id,))
