@@ -886,7 +886,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         identifier = new_id()
         timestamp = now()
         employer = db.one("SELECT id FROM employers WHERE lower(name)=lower(?)", (payload.company,))
-        score, detail = score_job({"title": payload.title, "description": payload.description,
+        score, detail = score_job({"company": payload.company, "title": payload.title, "description": payload.description,
                                    "location": payload.location, "first_seen_at": timestamp}, db.get_setting("profile", {}),
                                   db.get_setting("search_intent", {}))
         matching_model = db.get_setting("matching_model", "")
