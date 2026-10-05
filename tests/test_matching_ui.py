@@ -89,10 +89,10 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 assert "No score" not in pending_card.inner_text()
                 assert pending_card.locator(".score-pending").count() == 1
                 page.get_by_role("button", name="Open AI Engineer at Example").click()
-                page.locator("#job-detail summary").filter(has_text="Job at a glance").wait_for()
-                assert "Python" in page.locator(".job-facts").inner_text()
-                assert "Salary range" in page.locator(".job-facts").inner_text()
-                breakdown = page.locator("#job-detail summary").filter(has_text="Match breakdown")
+                page.locator("#job-detail summary").filter(has_text="Full extracted requirements").wait_for()
+                assert "Python" in page.locator("#job-detail .fact-grid").inner_text()
+                assert "Not stated" in page.locator("#job-detail .decision-basics-grid").inner_text()
+                breakdown = page.locator("#job-detail summary").filter(has_text="Detailed match breakdown")
                 assert "82/100" in breakdown.inner_text()
                 breakdown.click()
                 assert "Salary is not included in the match score" in page.locator("#job-detail").inner_text()
@@ -191,7 +191,7 @@ def test_failed_matching_jobs_are_visible_and_retryable_from_jobs(tmp_path: Path
                 page.locator("#matching-failure-list .matching-failure-row").filter(has_text="Engineer 1").get_by_role("button", name="Dismiss").click()
                 page.wait_for_function("document.querySelectorAll('#matching-failure-list .matching-failure-row').length === 1")
                 assert db.one("SELECT analysis_status FROM vacancies WHERE title='Engineer 1'")["analysis_status"] == "dismissed"
-                page.locator("#job-detail").get_by_role("button", name="Run analysis again").wait_for()
+                page.locator("#job-detail").get_by_role("button", name="Run match review").wait_for()
                 page.locator("#matching-retry-all").click()
                 page.locator("#matching-failures").wait_for(state="hidden")
                 assert db.one("SELECT COUNT(*) AS n FROM vacancies WHERE analysis_status='failed'")["n"] == 0
