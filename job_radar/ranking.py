@@ -20,6 +20,10 @@ def score_job(job: dict[str, Any], profile: dict[str, Any], preferences: dict[st
     location = (job.get("location") or "").casefold()
     role_matches = [word for word in ROLE_WORDS if word in title]
     role = 25 if role_matches else (10 if any(word in description for word in ROLE_WORDS) else 0)
+    selected_families = [item.casefold() for item in prefs["role_families"]]
+    family_match = not selected_families or any(item in title or item in description for item in selected_families)
+    if selected_families:
+        role = max(role, 25) if family_match else min(role, 5)
     negative_role = next((word for word in prefs["negative_keywords"] if word.casefold() in title), None)
     if negative_role:
         role = min(role, 5)
@@ -64,7 +68,18 @@ def score_job(job: dict[str, Any], profile: dict[str, Any], preferences: dict[st
     )
     if negative_role:
         explanation = f"Excluded role term in title: {negative_role}. " + explanation
-    return min(100, sum(components.values())), {"method": "rules", "components": components, "matched_skills": matched_skills, "years_required": years_required, "explanation": explanation, "excluded_role": negative_role}
+    score = min(100, sum(components.values()))
+    hard = prefs["hard_constraints"]
+    exclusions = []
+    if hard.get("role_family") and selected_families and not family_match:
+        exclusions.append("Role family is outside your explicit search limits.")
+    if hard.get("location") and prefs["preferred_locations"] and location and local < 5:
+        exclusions.append("Location is outside your explicit search limits.")
+    if exclusions:
+        score = 0
+    return score, {"method": "rules", "components": components, "matched_skills": matched_skills,
+                   "years_required": years_required, "explanation": explanation, "excluded_role": negative_role,
+                   "hard_exclusions": exclusions}
 
 
 def rescore_vacancies(db: Database, profile: dict[str, Any], preferences: dict[str, Any] | None = None) -> None:
