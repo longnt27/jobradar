@@ -710,6 +710,7 @@ async function loadPositions() {
 }
 
 async function showTab(name, historyMode = 'push') {
+  const routeInput = name;
   const [route] = name.split('?');
   const requested = route.split('/');
   const selectedDraft = requested[0] === 'applications' ? requested[1] : null;
@@ -733,16 +734,16 @@ async function showTab(name, historyMode = 'push') {
     if (active) control.setAttribute('aria-current', 'page');
     else control.removeAttribute('aria-current');
   });
+  if (name === 'jobs' && routeInput.includes('?')) readJobsHashState();
   const title = ({home:'Home',queue:'Activity',jobs:'Jobs',applications:'Applications',profile:'My profile',settings:'Settings',
     personal:'Personal details',experience:'Work history',projects:'GitHub projects',sources:'Job sources',employers:'Employers'})[name];
   $('#page-title').textContent = title;
   document.title = `${title} · Job Radar`;
-  const desiredHash = selectedDraft ? `#applications/${selectedDraft}` : `#${name}`;
+  const desiredHash = selectedDraft ? `#applications/${selectedDraft}` : name === 'jobs' ? jobsHash() : `#${name}`;
   if (historyMode === 'replace') history.replaceState({tab:name}, '', desiredHash);
   else if (historyMode === 'push' && location.hash !== desiredHash) history.pushState({tab:name}, '', desiredHash);
   window.scrollTo(0, 0);
   if (!['home', 'settings'].includes(name)) refreshSocialAuth().catch((error) => notice(error.message, true));
-  if (name === 'jobs' && (historyMode === 'none' || location.hash.startsWith('#jobs?'))) readJobsHashState();
   const loader = ({home:loadHome,queue:loadQueue,jobs:loadJobs,applications:loadApplications,personal:loadPersonalDetails,
     experience:loadPositions,projects:loadEvidence,sources:loadSources,employers:loadEmployers,profile:loadProfile,settings:loadSettings})[name];
   if (!loader) return;
