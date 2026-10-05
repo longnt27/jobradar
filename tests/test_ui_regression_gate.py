@@ -54,7 +54,7 @@ def ui_server(tmp_path_factory):
         "apply_url": "https://example.org/apply",
     }).json()
     app.state.db.execute(
-        "UPDATE vacancies SET analysis_status='done',score=91,state='interesting',"
+        "UPDATE vacancies SET analysis_status='done',score=91,state='interesting',decision_state='shortlisted',"
         "work_mode='Hybrid',published_at='2026-10-04T09:00:00+00:00',score_detail=? WHERE id=?",
         (json.dumps({"facts": {"seniority": "Mid", "work_mode": "Hybrid"}}), job["id"]),
     )
