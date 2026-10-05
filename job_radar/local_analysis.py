@@ -12,7 +12,6 @@ import httpx
 from pydantic import BaseModel, Field
 
 from .db import Database
-from .ranking import NEGATIVE_WORDS
 from .search_intent import normalize_search_intent, seniority_key
 
 
@@ -346,6 +345,8 @@ def finalize_match(job: dict, facts: dict, profile: dict,
     preferred_locations = [item.casefold() for item in prefs["preferred_locations"]]
     preferred_modes = [item.casefold().replace("-", "").replace(" ", "") for item in prefs["work_modes"]]
     location_match = bool(location and any(item in location.casefold() or location.casefold() in item for item in preferred_locations))
+    if location and any(item in {"hanoi", "ha noi", "hà nội"} for item in preferred_locations) and HANOI_LOCATION.search(location):
+        location_match = True
     normalized_mode = mode.casefold().replace("-", "").replace(" ", "")
     mode_match = bool(normalized_mode and any(item in normalized_mode or normalized_mode in item for item in preferred_modes))
     if remote and any(item in {"remote", "wfh", "workfromhome"} for item in preferred_modes):
@@ -368,7 +369,9 @@ def finalize_match(job: dict, facts: dict, profile: dict,
 
     family = _role_family(str(job.get("title") or ""))
     selected_families = [item.casefold() for item in prefs["role_families"]]
-    role_matches_preference = not selected_families or bool(family and family.casefold() in selected_families)
+    role_title = str(job.get("title") or "").casefold()
+    role_matches_preference = not selected_families or any(
+        item in role_title or (family and family.casefold() == item) for item in selected_families)
     if selected_families and not role_matches_preference:
         graded["role"]["score"] = min(int(graded["role"].get("score", 5)), 3)
         graded["role"]["reason"] = f"{family or 'This role'} is outside your preferred role families."
@@ -415,6 +418,8 @@ def finalize_match(job: dict, facts: dict, profile: dict,
     lowered_salary = salary_text.casefold()
     if salary_floor is not None:
         if any(unit in lowered_salary for unit in ("million", "triệu", "tr ")):
+            salary_floor *= 1_000_000
+        elif re.search(r"\b\d+(?:\.\d+)?\s*m\b", lowered_salary):
             salary_floor *= 1_000_000
         elif re.search(r"\b\d+(?:\.\d+)?\s*k\b", lowered_salary):
             salary_floor *= 1_000
