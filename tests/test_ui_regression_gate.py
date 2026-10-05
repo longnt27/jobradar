@@ -151,13 +151,20 @@ def _new_page(browser, viewport: dict) -> Page:
     page = context.new_page()
     page.set_default_timeout(6000)
     issues = {"api": [], "page": [], "pending": set()}
+
+    def record_failed_request(request) -> None:
+        if "/api/" not in request.url:
+            return
+        issues["pending"].discard(request.url)
+        failure = str(request.failure or "")
+        expected_pdf_abort = request.url.endswith("/resume") and "ERR_ABORTED" in failure
+        if not expected_pdf_abort:
+            issues["api"].append(f"request failed {request.method} {request.url}: {failure}")
+
     page.on("request", lambda request: issues["pending"].add(request.url)
             if "/api/" in request.url else None)
     page.on("requestfinished", lambda request: issues["pending"].discard(request.url))
-    page.on("requestfailed", lambda request: (
-        issues["pending"].discard(request.url),
-        issues["api"].append(f"request failed {request.method} {request.url}: {request.failure}")
-    ) if "/api/" in request.url else None)
+    page.on("requestfailed", record_failed_request)
     page.on("response", lambda response: issues["api"].append(
         f"{response.status} {response.request.method} {response.url}"
     ) if "/api/" in response.url and response.status >= 400 else None)
