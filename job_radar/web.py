@@ -1084,13 +1084,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/jobs/{job_id}/state")
     def update_state(job_id: str, payload: StateInput):
-        if not db.one("SELECT id FROM vacancies WHERE id=?", (job_id,)):
-            raise HTTPException(404, "Job not found")
-        with db.connection() as conn:
-            conn.execute("UPDATE vacancies SET state=?,updated_at=? WHERE id=?", (payload.state, now(), job_id))
-            conn.execute("INSERT INTO feedback(id,vacancy_id,state,reason,created_at) VALUES(?,?,?,?,?)",
-                         (new_id(), job_id, payload.state, payload.reason, now()))
-        return {"state": payload.state}
+        # Backward-compatible adapter for older clients. New UI uses independent
+        # decision/outcome/application endpoints.
+        try:
+            if payload.state == "new":
+                result = set_decision(db, job_id, "undecided", reason=payload.reason)
+            elif payload.state == "interesting":
+                result = set_decision(db, job_id, "shortlisted", reason=payload.reason)
+            elif payload.state == "ignored":
+                result = set_decision(db, job_id, "ignored", reason=payload.reason)
+            elif payload.state in {"interview", "rejected", "offer"}:
+                result = set_recruiting_outcome(db, job_id, payload.state)
+            elif payload.state in {"prepare", "ready", "applied"}:
+                raise HTTPException(
+                    409,
+                    "Application progress is derived from drafts and submissions. "
+                    "Use the explicit external-applied action when you applied outside Job Radar.",
+                )
+            else:
+                raise HTTPException(422, "Unsupported legacy job state")
+        except KeyError as error:
+            raise HTTPException(404, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+        return {"state": payload.state, **result}
 
     @app.get("/api/evidence")
     def evidence_list():
