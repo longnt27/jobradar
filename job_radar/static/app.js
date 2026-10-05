@@ -1142,6 +1142,7 @@ $('#smtp-gmail-preset').addEventListener('click', async () => {
 });
 
 $('#setup-smtp-remove').addEventListener('click', async () => {
+  if (!window.confirm('Remove saved email settings? You will need to enter the SMTP credentials again to send email applications.')) return;
   try { await api('/api/setup/smtp', {method:'DELETE'}); $('#setup-smtp-form').reset(); delete $('#setup-smtp-form').dataset.initialized; delete $('#setup-smtp-form').dataset.dirty; await loadSetup(); notice('Email settings removed'); }
   catch(error) { notice(error.message, true); }
 });
@@ -1196,9 +1197,16 @@ $('#telegram-find-chat').addEventListener('click', async () => {
 });
 
 $('#setup-telegram-remove').addEventListener('click', async () => {
+  if (!window.confirm('Remove Telegram review settings? You will need the bot token and chat configuration to reconnect it.')) return;
   try { await api('/api/setup/telegram', {method:'DELETE'}); $('#setup-telegram-form').reset(); delete $('#setup-telegram-form').dataset.initialized; await loadSetup(); notice('Telegram reviews removed'); }
   catch(error) { notice(error.message, true); }
 });
+
+$('#add-skill').addEventListener('click', () => appendRepeatable($('#skills-editor'), skillRow()));
+$('#add-skill-group').addEventListener('click', () => appendRepeatable($('#skill-groups-editor'), groupRow()));
+$('#add-education').addEventListener('click', () => appendRepeatable($('#education-editor'), educationRow()));
+$('#add-achievement').addEventListener('click', () => appendRepeatable($('#achievements-editor'), simpleRow('data-achievement', '', 'Achievement')));
+$('#add-link').addEventListener('click', () => appendRepeatable($('#links-editor'), simpleRow('data-profile-link type="url"', '', 'https://...')));
 
 $('#profile-form').addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -1207,11 +1215,18 @@ $('#profile-form').addEventListener('submit', async (event) => {
     const profile = await api('/api/profile');
     const form = event.target;
     for (const key of ['name','given_name','family_name','email','phone','location','summary','salary_expectation','work_authorization','notice_period','relocation']) profile[key] = form.elements[key].value.trim();
-    profile.skills = form.elements.skills.value.split('\n').map((x) => x.trim()).filter(Boolean);
-    profile.links = form.elements.links.value.split('\n').map((x) => x.trim()).filter(Boolean);
-    profile.achievements = form.elements.achievements.value.split('\n').map((x) => x.trim()).filter(Boolean);
-    profile.education = form.elements.education.value.split('\n').map((x) => x.trim()).filter(Boolean).map((line) => { const [school, degree, dates] = line.split('|').map((x) => x.trim()); return {school, degree:degree || '', dates:dates || ''}; });
-    profile.skill_groups = Object.fromEntries(form.elements.skill_groups.value.split('\n').map((x) => x.trim()).filter(Boolean).map((line) => { const colon = line.indexOf(':'); return colon < 0 ? [line, ''] : [line.slice(0, colon).trim(), line.slice(colon + 1).trim()]; }));
+    profile.skills = [...form.querySelectorAll('[data-skill]')].map((input) => input.value.trim()).filter(Boolean);
+    profile.links = [...form.querySelectorAll('[data-profile-link]')].map((input) => input.value.trim()).filter(Boolean);
+    profile.achievements = [...form.querySelectorAll('[data-achievement]')].map((input) => input.value.trim()).filter(Boolean);
+    profile.education = [...form.querySelectorAll('.repeatable-row--education')].map((row) => ({
+      school:row.querySelector('[data-education-school]').value.trim(),
+      degree:row.querySelector('[data-education-degree]').value.trim(),
+      dates:row.querySelector('[data-education-dates]').value.trim(),
+    })).filter((item) => item.school || item.degree || item.dates);
+    profile.skill_groups = Object.fromEntries([...form.querySelectorAll('.repeatable-row--group')].map((row) => [
+      row.querySelector('[data-skill-group-label]').value.trim(),
+      row.querySelector('[data-skill-group-values]').value.trim(),
+    ]).filter(([label]) => label));
     await api('/api/profile', {method:'PUT', body:JSON.stringify(profile)});
     await loadPersonalDetails();
     notice('Personal details saved');
@@ -1234,7 +1249,15 @@ $('#matching-download').addEventListener('click', async () => {
   try {
     await api('/api/matching/model/download', {method:'POST'});
     await loadMatchingModels();
-    notice('Model download started. It will be selected automatically.');
+    notice('Model download started. Progress is shown in Settings.');
+  } catch(error) { notice(error.message, true); }
+});
+
+$('#matching-download-cancel').addEventListener('click', async () => {
+  try {
+    await api('/api/matching/model/download', {method:'DELETE'});
+    await loadMatchingModels();
+    notice('Model download cancelled');
   } catch(error) { notice(error.message, true); }
 });
 
