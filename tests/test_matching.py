@@ -83,6 +83,21 @@ def test_salary_can_be_extracted_from_facebook_post_title() -> None:
         "score": 9, "reason": "AI Engineer aligns with the documented AI Engineering Intern position."}
 
 
+def test_vietnamese_jd_requirements_survive_small_model_noise() -> None:
+    description = ("YÊU CẦU CÔNG VIỆC\n* Kiến thức OOP, Design Pattern.\n"
+                   "* Kiến thức nền tốt về học máy, deep learning, LLM\n"
+                   "* Có kinh nghiệm với agent framework như langchain, Autogen hoặc vector database như qdrant\n"
+                   "LƯƠNG VÀ THƯỞNG:\n* Dải lương dự kiến: 14,000,000 – 23,000,000 VNĐ")
+    model = JobFacts(role="AI Engineer", seniority="Senior", required_skills=["Triển khai và fine-tuning các mô hình LLM"],
+                     preferred_skills=[], years_required=None, location="Hanoi", work_mode="",
+                     responsibilities=[], education=[], languages=[], summary="Senior AI Engineer tại Hà Nội")
+    facts = _ground_facts(model, {"title": "AI Engineer", "description": description})
+    assert facts.required_skills == ["LLM", "LangChain", "AutoGen", "Vector database", "Qdrant",
+                                    "Machine learning", "Deep learning", "OOP"]
+    assert facts.seniority == ""
+    assert "Senior" not in facts.summary
+
+
 def test_analysis_policy_change_queues_existing_jobs_once(tmp_path) -> None:
     settings = Settings(tmp_path)
     app = create_app(settings)
@@ -97,7 +112,7 @@ def test_analysis_policy_change_queues_existing_jobs_once(tmp_path) -> None:
         assert db.one("SELECT analysis_status FROM vacancies WHERE id=?", (job_id,))["analysis_status"] == "pending"
         await manager.stop()
     asyncio.run(start_and_stop())
-    assert db.get_setting("analysis_version", 0) == 3
+    assert db.get_setting("analysis_version", 0) == 4
 
 
 def test_unstated_requirements_get_neutral_score(monkeypatch) -> None:
