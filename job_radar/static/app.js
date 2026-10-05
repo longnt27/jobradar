@@ -24,6 +24,7 @@ function scoreBadge(job) {
 let activeJob = null;
 let activeJobPinned = false;
 let jobsPage = 1;
+let employerPage = 1;
 let projectCards = [];
 let discoveredRepos = [];
 let selectedProjectId = null;
@@ -517,32 +518,100 @@ async function showJob(id, pin = false) {
   });
 }
 
+function sourceStatusLabel(source) {
+  const state = source.scan_state;
+  return state === 'queued' ? `Queued · #${source.queue_position}` : ({
+    scanning:'Scanning', auto_off:'Automatic scans off', needs_refresh:'Needs refresh',
+    not_scanned:'Never scanned', success:'Healthy', empty:'Healthy · no jobs',
+    failed:'Scan failed', auth_required:'Sign-in needed', interrupted:'Retry queued soon',
+  })[state] || state;
+}
+
+function sourceStatusTone(state) {
+  if (['scanning', 'success', 'empty', 'queued'].includes(state)) return 'status-badge--success';
+  if (['failed', 'auth_required'].includes(state)) return 'status-badge--danger';
+  return 'status-badge--warning';
+}
+
+function filterSources(sources) {
+  const query = $('#source-query').value.trim().toLowerCase();
+  const kind = $('#source-kind').value;
+  const status = $('#source-status').value;
+  const enabled = $('#source-enabled').value;
+  const success = $('#source-success').value;
+  const filtered = sources.filter((source) => {
+    const haystack = `${source.name} ${source.url} ${source.kind}`.toLowerCase();
+    if (query && !haystack.includes(query)) return false;
+    if (kind && source.kind !== kind) return false;
+    if (enabled === 'enabled' && !source.enabled) return false;
+    if (enabled === 'paused' && source.enabled) return false;
+    if (success === 'has_success' && !source.last_success_at) return false;
+    if (success === 'never' && source.last_success_at) return false;
+    if (status === 'attention' && !['failed', 'auth_required', 'needs_refresh', 'interrupted'].includes(source.scan_state)) return false;
+    if (status === 'healthy' && !['success', 'empty'].includes(source.scan_state)) return false;
+    if (status === 'unscanned' && source.scan_state !== 'not_scanned') return false;
+    if (status && !['attention', 'healthy', 'unscanned'].includes(status) && source.scan_state !== status) return false;
+    return true;
+  });
+  const sort = $('#source-sort').value;
+  filtered.sort((a, b) => {
+    if (sort === 'last_success') return new Date(b.last_success_at || 0) - new Date(a.last_success_at || 0) || a.name.localeCompare(b.name);
+    if (sort === 'jobs') return (Number(b.new_job_count) || 0) - (Number(a.new_job_count) || 0) || a.name.localeCompare(b.name);
+    if (sort === 'status') return sourceStatusLabel(a).localeCompare(sourceStatusLabel(b)) || a.name.localeCompare(b.name);
+    return a.name.localeCompare(b.name);
+  });
+  return filtered;
+}
+
 async function loadSources() {
   clearTimeout(window.sourcePoll);
-  const kind = $('#source-kind').value;
-  const sources = await api(`/api/sources${kind ? `?kind=${kind}` : ''}`);
+  const sources = await api('/api/sources');
+  const visible = filterSources(sources);
   const running = sources.filter((source) => source.scan_state === 'scanning').length;
   const waiting = sources.filter((source) => source.scan_state === 'queued').length;
   const unscanned = sources.filter((source) => source.enabled && !source.last_success_at && !['queued', 'scanning'].includes(source.scan_state)).length;
-  $('#source-queue-summary').textContent = `${running} scanning · ${waiting} queued · ${unscanned} awaiting a successful scan${kind ? ' in this view' : ''}. LinkedIn and Facebook use one browser, so queued scans run in order.`;
-  $('#source-list').innerHTML = sources.length ? sources.map((source) => {
+  $('#source-queue-summary').textContent = `${running} scanning · ${waiting} queued · ${unscanned} never successfully scanned. LinkedIn and Facebook share one browser, so queued scans run in order.`;
+  $('#source-result-summary').textContent = `Showing ${visible.length} of ${sources.length} configured sources`;
+  $('#source-list').innerHTML = visible.length ? visible.map((source) => {
     const total = Number(source.job_count) || 0;
     const recent = Number(source.new_job_count) || 0;
     const state = source.scan_state;
-    const status = state === 'queued' ? `Queued · #${source.queue_position}` : ({scanning:'Scanning',auto_off:'Auto scan off',needs_refresh:'Needs refresh',not_scanned:'Not scanned',success:'Scanned',empty:'No jobs found',failed:'Scan failed',auth_required:'Sign-in needed',interrupted:'Retry queued soon'})[state] || state;
+    const status = sourceStatusLabel(source);
     const latest = source.latest_observed_count;
     const cap = Number(source.config?.max_results || source.config?.max_posts || 0);
-    const latestText = latest == null ? 'No completed scan for this search' : `${latest} postings checked in latest scan${cap && latest >= cap ? ` · limit ${cap} reached` : ''}`;
-    return `<div class="item" data-source-id="${source.id}"><div class="item-title">${escapeHtml(source.name)} <span class="pill muted">${escapeHtml(source.kind)}</span> <span class="status-badge ${['scanning','success','queued'].includes(state) ? 'status-badge--success' : state === 'failed' ? 'status-badge--danger' : 'status-badge--warning'}">${escapeHtml(status)}</span></div><div class="item-meta source-job-count"><strong>${total} ${total === 1 ? 'unique job' : 'unique jobs'} credited here</strong>${source.last_success_at ? ` <span class="pill ${recent ? '' : 'muted'}">${recent} new in latest scan</span>` : ''}</div><div class="item-meta">${escapeHtml(latestText)} · Last success ${when(source.last_success_at)}</div><div class="actions"><button data-scan="${source.id}" ${['scanning','queued'].includes(state) ? 'disabled' : ''}>${state === 'scanning' ? 'Scanning…' : state === 'queued' ? 'Queued' : 'Scan now'}</button><a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer">Open source ↗</a><label class="source-auto"><input type="checkbox" data-toggle="${source.id}" ${source.enabled ? 'checked' : ''}> Automatic every ${source.interval_minutes / 60} hours</label></div></div>`;
-  }).join('') : '<div class="empty">No sources configured for this filter.</div>';
+    const latestText = latest == null ? 'No completed scan' : `${latest} postings checked${cap && latest >= cap ? ` · collection limit ${cap} reached` : ''}`;
+    return `<div class="item source-card" data-source-id="${source.id}">
+      <div class="source-card-head"><div><div class="item-title">${escapeHtml(source.name)} <span class="pill muted">${escapeHtml(source.kind)}</span></div><div class="item-meta">Last successful scan: ${when(source.last_success_at)}</div></div><span class="status-badge ${sourceStatusTone(state)}">${escapeHtml(status)}</span></div>
+      <div class="source-health"><span><strong>${recent}</strong> new in latest scan</span></div>
+      <div class="actions"><button data-scan="${source.id}" ${['scanning','queued'].includes(state) ? 'disabled' : ''}>${state === 'scanning' ? 'Scanning…' : state === 'queued' ? 'Queued' : 'Scan now'}</button><a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer">Open source ↗</a><label class="source-auto"><input type="checkbox" data-toggle="${source.id}" ${source.enabled ? 'checked' : ''}><span>Automatic every ${source.interval_minutes / 60} hours</span><span class="source-auto-status" aria-live="polite"></span></label></div>
+      <details class="source-diagnostics"><summary>Diagnostics</summary><div class="item-meta">${total} jobs attributed · ${escapeHtml(latestText)} · Interval ${source.interval_minutes} minutes</div><div class="item-meta mono">${escapeHtml(source.url)}</div></details>
+    </div>`;
+  }).join('') : '<div class="empty">No sources match these filters.</div>';
   document.querySelectorAll('[data-toggle]').forEach((input) => input.addEventListener('change', async () => {
-    try { await api(`/api/sources/${input.dataset.toggle}`, {method:'PATCH', body:JSON.stringify({enabled:input.checked})}); await loadSources(); }
-    catch(error) { notice(error.message, true); }
+    const desired = input.checked;
+    const label = input.closest('.source-auto');
+    const feedback = label.querySelector('.source-auto-status');
+    input.disabled = true;
+    label.setAttribute('aria-busy', 'true');
+    feedback.textContent = 'Saving…';
+    try {
+      await api(`/api/sources/${input.dataset.toggle}`, {method:'PATCH', body:JSON.stringify({enabled:desired})});
+      feedback.textContent = 'Saved';
+      window.setTimeout(() => {
+        if ($('#sources').classList.contains('active')) loadSources().catch(() => {});
+      }, 1200);
+    } catch(error) {
+      input.checked = !desired;
+      feedback.textContent = 'Could not save';
+      notice(error.message, true);
+    } finally {
+      input.disabled = false;
+      label.removeAttribute('aria-busy');
+    }
   }));
   document.querySelectorAll('[data-scan]').forEach((button) => button.addEventListener('click', async () => {
     try {
       beginPending(button, 'Queueing…');
-      notice('Scan added to the queue');
       const result = await api(`/api/sources/${button.dataset.scan}/scan`, {method:'POST'});
       await Promise.all([loadSources(), loadHome()]);
       notice(result.status === 'queued' ? `Scan queued${result.position ? ` at position ${result.position}` : ''}. It will run in the background.` : 'This source is already queued or scanning.');
@@ -554,18 +623,49 @@ async function loadSources() {
 }
 
 async function loadEmployers() {
-  const q = $('#employer-query').value;
-  const employers = await api(`/api/employers?q=${encodeURIComponent(q)}&limit=2000`);
-  $('#employer-count').textContent = `${employers.length} employers shown`;
-  $('#employer-list').innerHTML = employers.map((employer) =>
-    `<div class="employer surface-readonly"><strong>${escapeHtml(employer.name)}</strong><small>${escapeHtml(employer.category)} · ${escapeHtml(employer.live_coverage)}</small>${employer.career_url ? `<small><a href="${escapeHtml(employer.career_url)}" target="_blank" rel="noopener noreferrer">Career page ↗</a></small>` : ''}<button data-employer-source="${employer.id}">Set career page</button></div>`
-  ).join('');
-  document.querySelectorAll('[data-employer-source]').forEach((button) => button.addEventListener('click', async () => {
-    const row = employers.find((employer) => employer.id === button.dataset.employerSource);
-    const url = window.prompt(`Career page URL for ${row.name}`, row.career_url || '');
-    if (!url) return;
-    try { await api(`/api/employers/${row.id}`, {method:'PATCH', body:JSON.stringify({career_url:url})}); await loadEmployers(); notice('Career page added to four-hour scans'); }
-    catch(error) { notice(error.message, true); }
+  const query = new URLSearchParams({q: $('#employer-query').value, page: employerPage, page_size: 48});
+  const result = await api(`/api/employers/page?${query}`);
+  if (employerPage > result.pages) { employerPage = result.pages; return loadEmployers(); }
+  const employers = result.items;
+  $('#employer-count').textContent = result.total ? `${result.total} employers in this result` : 'No employers found';
+  $('#employer-page-summary').textContent = result.total ? `Page ${result.page} of ${result.pages}` : 'No pages';
+  $('#employers-prev').disabled = employerPage <= 1;
+  $('#employers-next').disabled = employerPage >= result.pages;
+  $('#employer-list').innerHTML = employers.length ? employers.map((employer) =>
+    `<div class="employer surface-readonly" data-employer-id="${employer.id}"><strong>${escapeHtml(employer.name)}</strong><small>${escapeHtml(employer.category)} · ${escapeHtml(employer.live_coverage)}</small>${employer.career_url ? `<small><a href="${escapeHtml(employer.career_url)}" target="_blank" rel="noopener noreferrer">Career page ↗</a></small>` : '<small>No career page configured</small>'}<button type="button" data-employer-source="${employer.id}">${employer.career_url ? 'Edit career page' : 'Add career page'}</button><form class="employer-career-form" data-employer-form="${employer.id}" hidden><label>Career page URL<input name="career_url" type="url" required placeholder="https://company.example/careers" value="${escapeHtml(employer.career_url || '')}"></label><p class="field-message employer-career-error" role="alert"></p><div class="actions"><button class="primary" type="submit">Save career page</button><button class="secondary" type="button" data-employer-cancel="${employer.id}">Cancel</button></div></form></div>`
+  ).join('') : '<div class="empty">No employers match this search.</div>';
+  document.querySelectorAll('[data-employer-source]').forEach((button) => button.addEventListener('click', () => {
+    const card = button.closest('.employer');
+    const form = card.querySelector('.employer-career-form');
+    form.hidden = false;
+    button.hidden = true;
+    form.elements.career_url.focus();
+  }));
+  document.querySelectorAll('[data-employer-cancel]').forEach((button) => button.addEventListener('click', () => {
+    const card = button.closest('.employer');
+    const form = card.querySelector('.employer-career-form');
+    form.reset();
+    form.querySelector('.employer-career-error').textContent = '';
+    form.hidden = true;
+    card.querySelector('[data-employer-source]').hidden = false;
+  }));
+  document.querySelectorAll('[data-employer-form]').forEach((form) => form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!form.reportValidity()) return;
+    const save = form.querySelector('button[type="submit"]');
+    const errorText = form.querySelector('.employer-career-error');
+    errorText.textContent = '';
+    try {
+      beginPending(save, 'Saving…');
+      await api(`/api/employers/${form.dataset.employerForm}`, {method:'PATCH', body:JSON.stringify({career_url:form.elements.career_url.value.trim()})});
+      await loadEmployers();
+      notice('Career page saved and added to four-hour scans');
+    } catch(error) {
+      errorText.textContent = error.message;
+      notice(error.message, true);
+    } finally {
+      endPending(save);
+    }
   }));
 }
 
@@ -852,7 +952,7 @@ async function showTab(name, historyMode = 'push') {
   if (name !== 'sources') clearTimeout(window.sourcePoll);
   document.querySelectorAll('.tab').forEach((tab) => tab.classList.toggle('active', tab.id === name));
   const target = document.getElementById(name);
-  const nav = ['personal','experience','projects'].includes(name) ? 'profile' : name === 'employers' ? 'sources' : name;
+  const nav = ['personal','experience','projects'].includes(name) ? 'profile' : name;
   document.querySelectorAll('.sidebar [data-tab]').forEach((control) => {
     const active = control.dataset.tab === nav;
     control.classList.toggle('active', active);
@@ -1566,9 +1666,21 @@ $('#jobs-clear-filters').addEventListener('click', () => {
 });
 $('#jobs-prev').addEventListener('click', () => { jobsPage = Math.max(1, jobsPage - 1); activeJob = null; activeJobPinned = false; syncJobsHash('push'); loadJobs().catch((error) => notice(error.message, true)); });
 $('#jobs-next').addEventListener('click', () => { jobsPage += 1; activeJob = null; activeJobPinned = false; syncJobsHash('push'); loadJobs().catch((error) => notice(error.message, true)); });
-$('#source-kind').addEventListener('change', () => loadSources().catch((error) => notice(error.message, true)));
+for (const selector of ['#source-kind', '#source-status', '#source-enabled', '#source-success', '#source-sort']) {
+  $(selector).addEventListener('change', () => loadSources().catch((error) => notice(error.message, true)));
+}
+$('#source-query').addEventListener('input', () => {
+  clearTimeout(window.sourceFilterTimer);
+  window.sourceFilterTimer = setTimeout(() => loadSources().catch((error) => notice(error.message, true)), 150);
+});
 $('#queue-refresh').addEventListener('click', () => loadQueue().catch((error) => notice(error.message, true)));
-$('#employer-search').addEventListener('click', () => loadEmployers().catch((error) => notice(error.message, true)));
+$('#employer-search-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  employerPage = 1;
+  loadEmployers().catch((error) => notice(error.message, true));
+});
+$('#employers-prev').addEventListener('click', () => { employerPage = Math.max(1, employerPage - 1); loadEmployers().catch((error) => notice(error.message, true)); });
+$('#employers-next').addEventListener('click', () => { employerPage += 1; loadEmployers().catch((error) => notice(error.message, true)); });
 
 for (const site of ['linkedin', 'facebook']) {
   $(`#setup-${site}-start`).addEventListener('click', async () => {

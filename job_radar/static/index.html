@@ -18,6 +18,7 @@
         <button data-tab="queue">Queue</button>
         <button data-tab="jobs">Jobs</button>
         <button data-tab="sources">Job sources</button>
+        <button data-tab="employers">Employers</button>
         <button data-tab="applications">Applications</button>
         <button data-tab="profile">My profile</button>
         <button data-tab="settings">Settings</button>
@@ -260,16 +261,30 @@
       </section>
 
       <section id="sources" class="tab">
-        <div class="section-head"><p>Enabled sources scan every four hours. LinkedIn and Facebook share one signed-in browser and scan in order.</p><div class="actions"><button class="secondary" data-tab="employers">Employers</button><button class="primary" id="scan-unscanned">Scan all unscanned</button><button class="secondary" id="scan-due">Scan due sources</button></div></div>
+        <div class="section-head"><div><h3>Job sources</h3><p>Manage the feeds, searches, and pages Job Radar checks for new roles.</p></div></div>
+        <div class="panel source-operations">
+          <div class="section-head"><div><h3>Scan operations</h3><p>Run scans outside the automatic schedule without changing source settings.</p></div><div class="actions"><button class="primary" id="scan-unscanned">Scan never-checked sources</button><button class="secondary" id="scan-due">Scan sources due now</button></div></div>
+          <p id="source-queue-summary" class="hint"></p>
+          <div class="source-scan-help"><span><strong>Never checked</strong> gets first-time sources through an initial successful scan.</span><span><strong>Due now</strong> runs only sources whose normal schedule is ready.</span></div>
+        </div>
         <details class="panel"><summary>Add a source</summary><form id="source-form" class="form-grid"><label>Type<select name="kind"><option value="facebook">Facebook group</option><option value="career">Career page</option><option value="linkedin">LinkedIn search</option></select></label><label id="source-name-label">Name<input name="name"></label><label class="full">URL<input name="url" type="url" placeholder="https://www.facebook.com/groups/..." required></label><p id="source-url-hint" class="full hint">Paste a Facebook group link. Job Radar names it from the page or link.</p><button class="primary" type="submit">Add source</button></form></details>
-        <div class="panel"><div class="section-head"><h3>Configured sources</h3><select id="source-kind" aria-label="Source type"><option value="">All</option><option value="linkedin">LinkedIn</option><option value="facebook">Facebook</option><option value="career">Career</option></select></div><p id="source-queue-summary" class="hint"></p><div id="source-list" class="stack"></div></div>
+        <div class="panel"><div class="section-head"><div><h3>Configured sources</h3><p>Search, filter, and sort without digging through scan diagnostics.</p></div></div>
+          <div class="source-controls">
+            <input id="source-query" type="search" placeholder="Search name or URL" aria-label="Search configured sources">
+            <select id="source-kind" aria-label="Filter source type"><option value="">All types</option><option value="linkedin">LinkedIn</option><option value="facebook">Facebook</option><option value="career">Career</option></select>
+            <select id="source-status" aria-label="Filter scan status"><option value="">All scan states</option><option value="attention">Needs attention</option><option value="healthy">Healthy</option><option value="queued">Queued</option><option value="scanning">Scanning</option><option value="unscanned">Never scanned</option><option value="auto_off">Automatic off</option></select>
+            <select id="source-enabled" aria-label="Filter automatic scan setting"><option value="">Automatic: all</option><option value="enabled">Automatic on</option><option value="paused">Automatic off</option></select>
+            <select id="source-success" aria-label="Filter last successful scan"><option value="">Last success: all</option><option value="has_success">Has succeeded</option><option value="never">Never succeeded</option></select>
+            <select id="source-sort" aria-label="Sort configured sources"><option value="name">Sort: name</option><option value="last_success">Sort: last success</option><option value="jobs">Sort: new jobs</option><option value="status">Sort: status</option></select>
+          </div>
+          <p id="source-result-summary" class="hint"></p><div id="source-list" class="stack"></div>
+        </div>
       </section>
 
-      <section id="employers" class="tab subpage">
-        <button class="back-link" data-tab="sources">← Job sources</button>
-        <div class="section-head"><p>A company is actively scanned only when it has an enabled source.</p></div>
-        <div class="toolbar"><input id="employer-query" type="search" placeholder="Find an employer" aria-label="Search employers"><button id="employer-search">Search</button></div>
-        <div class="panel"><div id="employer-count" class="hint"></div><div id="employer-list" class="employer-grid"></div></div>
+      <section id="employers" class="tab">
+        <div class="section-head"><div><h3>Employer directory</h3><p>Manage companies and career pages separately from source scanning. A company is actively scanned only when it has an enabled source.</p></div></div>
+        <form id="employer-search-form" class="toolbar"><input id="employer-query" type="search" placeholder="Find an employer" aria-label="Search employers"><button id="employer-search" type="submit">Search</button></form>
+        <div class="panel"><div id="employer-count" class="hint"></div><div id="employer-list" class="employer-grid"></div><div class="job-pagination employer-pagination"><button id="employers-prev" type="button">Previous</button><span id="employer-page-summary"></span><button id="employers-next" type="button">Next</button></div></div>
         <details class="panel"><summary>Add an employer</summary><form id="employer-form" class="form-grid"><label>Name<input name="name" required></label><label>Category<input name="category" value="custom"></label><label class="full">Career URL<input name="career_url" type="url"></label><button class="primary" type="submit">Add employer</button></form></details>
       </section>
     </main>

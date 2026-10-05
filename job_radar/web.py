@@ -641,6 +641,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             (f"%{q}%", category, category, limit),
         )
 
+    @app.get("/api/employers/page")
+    def employers_page(q: str = "", category: str = "", page: int = Query(1, ge=1),
+                       page_size: int = Query(48, ge=1, le=100)):
+        where = "e.coverage_status!='excluded_hcm' AND e.name LIKE ? AND (?='' OR e.category=?)"
+        values = (f"%{q}%", category, category)
+        total = db.one(f"SELECT COUNT(*) AS count FROM employers e WHERE {where}", values)["count"]
+        rows = db.all(
+            "SELECT e.*,CASE WHEN EXISTS(SELECT 1 FROM sources s WHERE s.employer_id=e.id AND s.enabled=1) "
+            "THEN 'active_scan' ELSE 'source_discovery' END AS live_coverage "
+            f"FROM employers e WHERE {where} ORDER BY e.name LIMIT ? OFFSET ?",
+            (*values, page_size, (page - 1) * page_size),
+        )
+        return {"items": rows, "page": page, "page_size": page_size, "total": total,
+                "pages": max(1, (total + page_size - 1) // page_size)}
+
     @app.post("/api/employers", status_code=201)
     def add_employer(employer: EmployerInput):
         if db.one("SELECT id FROM employers WHERE lower(name)=lower(?)", (employer.name,)):
