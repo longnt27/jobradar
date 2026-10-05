@@ -111,6 +111,64 @@ async def _facebook_detail_matches(page: Page, text: str) -> bool:
                for item in await opened_post.all_inner_texts())
 
 
+def _google_doc_url(link: str) -> str | None:
+    """Unwrap Facebook's outbound redirect and accept only Google Documents."""
+    parts = urlsplit(link)
+    if parts.hostname == "l.facebook.com":
+        link = dict(parse_qsl(parts.query)).get("u", "")
+        parts = urlsplit(link)
+    if parts.scheme != "https" or parts.hostname != "docs.google.com":
+        return None
+    match = re.fullmatch(r"/document/d/([A-Za-z0-9_-]+)(?:/.*)?", parts.path)
+    return f"https://docs.google.com/document/d/{match.group(1)}/edit" if match else None
+
+
+async def _poster_comment_documents(page: Page, post_text: str) -> list[str]:
+    """Read JD links in comments authored by the original poster only."""
+    leads = await page.evaluate("""lead => {
+      const dialog = [...document.querySelectorAll('[role="dialog"]')].find(d =>
+        [...d.querySelectorAll('[data-ad-rendering-role="story_message"]')].some(n =>
+          (n.innerText || '').replace(/\\s+/g, ' ').toLowerCase().includes(lead)));
+      if (!dialog) return [];
+      const author = [...dialog.querySelectorAll('a[href*="/user/"]')]
+        .map(a => a.href.match(/\\/user\\/(\\d+)/)?.[1]).find(Boolean);
+      if (!author) return [];
+      const results = [];
+      for (const time of dialog.querySelectorAll('a[href*="comment_id="]')) {
+        let node = time.parentElement;
+        while (node && node !== dialog && (node.innerText || '').length < 1200) {
+          const by = [...node.querySelectorAll('a[href*="/user/"]')]
+            .map(a => a.href.match(/\\/user\\/(\\d+)/)?.[1]).find(Boolean);
+          const links = [...node.querySelectorAll('a[href]')].map(a => a.href)
+            .filter(h => h.includes('docs.google.com'));
+          if (by && links.length) {
+            if (by === author) results.push(...links);
+            break;
+          }
+          node = node.parentElement;
+        }
+      }
+      return [...new Set(results)];
+    }""", re.sub(r"\s+", " ", post_text).casefold()[:80])
+    return list(dict.fromkeys(url for link in leads if (url := _google_doc_url(link))))[:2]
+
+
+async def _google_doc_text(url: str) -> str:
+    doc = _google_doc_url(url)
+    if not doc:
+        return ""
+    identifier = urlsplit(doc).path.split("/")[3]
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=15) as client:
+            response = await client.get(f"https://docs.google.com/document/d/{identifier}/export?format=txt")
+            response.raise_for_status()
+            if "text/plain" not in response.headers.get("content-type", "") or len(response.content) > 100_000:
+                return ""
+            return response.text.lstrip("\ufeff").strip()[:20_000]
+    except httpx.HTTPError:
+        return ""
+
+
 async def _page_text(page: Page, selectors: tuple[str, ...]) -> str:
     for selector in selectors:
         locator = page.locator(selector).first
@@ -333,7 +391,7 @@ async def collect_facebook(context: BrowserContext, source: dict) -> list[Observ
                     if await see_more.count():
                         await see_more.first.click(timeout=2500)
                         text = (await message.inner_text(timeout=2500)).strip()
-                    post_url, published_at = direct_url, None
+                    post_url, published_at, doc_urls = direct_url, None, []
                     timestamp = await message.evaluate_handle("""node => {
                       let parent = node;
                       while (parent && parent.getAttribute('role') !== 'feed') {
@@ -362,6 +420,7 @@ async def collect_facebook(context: BrowserContext, source: dict) -> list[Observ
                             if not await _facebook_detail_matches(detail, text):
                                 continue
                             post_url = _facebook_post_url(source["url"], [detail.url])
+                            doc_urls = await _poster_comment_documents(detail, text)
                         finally:
                             await detail.close()
                     elif post_url:
@@ -370,11 +429,13 @@ async def collect_facebook(context: BrowserContext, source: dict) -> list[Observ
                             await detail.goto(post_url, wait_until="domcontentloaded", timeout=30000)
                             if not await _facebook_detail_matches(detail, text):
                                 continue
+                            doc_urls = await _poster_comment_documents(detail, text)
                         finally:
                             await detail.close()
                     if post_url:
                         if post_url not in posts_by_url or len(text) > len(posts_by_url[post_url]["text"]):
                             posts_by_url[post_url] = {"text": text, "url": post_url, "links": row["external"],
+                                                      "doc_urls": doc_urls,
                                                       "published_at": published_at}
                 except Exception:
                     continue
@@ -400,8 +461,18 @@ async def collect_facebook(context: BrowserContext, source: dict) -> list[Observ
             company_match = re.search(r"^(?:company|employer|công ty|đơn vị)\s*[:：-]\s*(.{3,100})$", text[:1000], re.I | re.M)
             company = company_match.group(1).strip() if company_match else "Facebook post"
             external = next((link for link in post["links"] if "facebook.com" not in link), None)
+            description = text
+            for doc_url in post.get("doc_urls", []):
+                doc_text = await _google_doc_text(doc_url)
+                description += f"\n\nJob description linked by the original poster: {doc_url}"
+                if doc_text:
+                    description += f"\n{doc_text}"
+                    if not external:
+                        external = _application_destination(BeautifulSoup(doc_text, "html.parser"), doc_url)
+                        if external == doc_url:
+                            external = None
             jobs.append(ObservedJob(
-                url=url, title=title[:180], company=company, description=text[:30000],
+                url=url, title=title[:180], company=company, description=description[:30000],
                 apply_url=external, published_at=post["published_at"], raw_text=text[:30000],
             ))
         return jobs

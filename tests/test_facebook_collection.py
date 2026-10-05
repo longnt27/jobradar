@@ -1,6 +1,6 @@
 import asyncio
 
-from job_radar.collectors import RECRUITING, _facebook_detail_matches, _facebook_post_url, _facebook_posted_at
+from job_radar.collectors import RECRUITING, _facebook_detail_matches, _facebook_post_url, _facebook_posted_at, _google_doc_url
 
 
 def test_facebook_post_links_from_group_card() -> None:
@@ -15,6 +15,14 @@ def test_facebook_post_links_from_group_card() -> None:
         "https://www.facebook.com/groups/other/posts/789/",
         "https://www.facebook.com/photo/?set=gm.789&idorvanity=other",
     ]) is None
+
+
+def test_poster_google_document_link_is_unwrapped() -> None:
+    from urllib.parse import quote
+    document = "https://docs.google.com/document/d/1Vuy47wG7ksnRQacLIWbOVkhoQuUIJMDBbwOEnIXUACc/edit?tab=t.0"
+    wrapped = "https://l.facebook.com/l.php?u=" + quote(document, safe="") + "&h=tracking"
+    assert _google_doc_url(wrapped) == document.split("?")[0]
+    assert _google_doc_url("https://docs.google.com.evil.example/document/d/123/edit") is None
 
 
 def test_facebook_timestamp_tooltip_is_saved_as_posting_date() -> None:
