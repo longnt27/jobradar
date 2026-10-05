@@ -18,7 +18,7 @@ from .search_intent import normalize_search_intent, seniority_key
 
 OLLAMA_URL = "http://127.0.0.1:11434"
 RECOMMENDED_MODEL = "qwen2.5:3b"
-ANALYSIS_VERSION = 4
+ANALYSIS_VERSION = 5
 
 
 class LocalModelUnavailable(RuntimeError):
@@ -402,6 +402,29 @@ def finalize_match(job: dict, facts: dict, profile: dict,
 
     weighted = round(sum(CRITERION_WEIGHTS[name] * graded[name]["score"] / 10
                          for name in CRITERION_WEIGHTS))
+    preferred_employers = [item.casefold() for item in prefs["preferred_employers"]]
+    excluded_employers = [item.casefold() for item in prefs["excluded_employers"]]
+    if preferred_employers and any(item in company.casefold() for item in preferred_employers):
+        weighted = min(100, weighted + 3)
+    if excluded_employers and any(item in company.casefold() for item in excluded_employers) and not hard.get("employer"):
+        weighted = max(0, weighted - 12)
+
+    salary_text = str(facts.get("salary_range") or "")
+    salary_numbers = [float(value.replace(",", "")) for value in re.findall(r"\d+(?:[.,]\d+)?", salary_text.replace(",", ""))]
+    salary_floor = min(salary_numbers) if salary_numbers else None
+    lowered_salary = salary_text.casefold()
+    if salary_floor is not None:
+        if any(unit in lowered_salary for unit in ("million", "triệu", "tr ")):
+            salary_floor *= 1_000_000
+        elif re.search(r"\b\d+(?:\.\d+)?\s*k\b", lowered_salary):
+            salary_floor *= 1_000
+    minimum_salary = prefs.get("minimum_salary")
+    if minimum_salary is not None and hard.get("minimum_salary"):
+        if salary_floor is not None and salary_floor < minimum_salary:
+            exclusions.append("Salary is below your explicit minimum.")
+        elif salary_floor is None and not prefs.get("salary_unknown_ok", True):
+            exclusions.append("Salary is not stated and your search requires known salary.")
+
     return (0 if exclusions else weighted), graded, exclusions
 
 
