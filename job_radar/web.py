@@ -189,9 +189,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def configured_provider() -> str:
         provider = db.get_setting("profile", {}).get("drafting_provider", "")
         if not provider:
-            raise HTTPException(409, "Choose a drafting provider in Profile first")
+            raise HTTPException(409, "Choose a drafting provider in Settings first")
         if not provider_available(provider):
-            raise HTTPException(422, f"{provider} is not available on this Mac; change it in Profile")
+            raise HTTPException(422, f"{provider} is not available on this Mac; change it in Settings")
         return provider
 
     def save_profile(profile: dict[str, Any]) -> None:
@@ -398,6 +398,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return match_manager.download_recommended()
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
+
+    @app.delete("/api/matching/model/download")
+    async def cancel_matching_model_download():
+        return match_manager.cancel_download()
 
     @app.get("/api/matching/failures")
     def matching_failures():
@@ -646,6 +650,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             (f"%{q}%", category, category, limit),
         )
 
+    @app.get("/api/employers/page")
+    def employers_page(q: str = "", category: str = "", page: int = Query(1, ge=1),
+                       page_size: int = Query(48, ge=1, le=100)):
+        where = "e.coverage_status!='excluded_hcm' AND e.name LIKE ? AND (?='' OR e.category=?)"
+        values = (f"%{q}%", category, category)
+        total = db.one(f"SELECT COUNT(*) AS count FROM employers e WHERE {where}", values)["count"]
+        rows = db.all(
+            "SELECT e.*,CASE WHEN EXISTS(SELECT 1 FROM sources s WHERE s.employer_id=e.id AND s.enabled=1) "
+            "THEN 'active_scan' ELSE 'source_discovery' END AS live_coverage "
+            f"FROM employers e WHERE {where} ORDER BY e.name LIMIT ? OFFSET ?",
+            (*values, page_size, (page - 1) * page_size),
+        )
+        return {"items": rows, "page": page, "page_size": page_size, "total": total,
+                "pages": max(1, (total + page_size - 1) // page_size)}
+
     @app.post("/api/employers", status_code=201)
     def add_employer(employer: EmployerInput):
         if db.one("SELECT id FROM employers WHERE lower(name)=lower(?)", (employer.name,)):
@@ -711,33 +730,76 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ))
 
     @app.get("/api/jobs/page")
-    def jobs_page(q: str = "", state: str = "", page: int = Query(1, ge=1),
-                  page_size: int = Query(25, ge=1, le=50)):
+    def jobs_page(q: str = "", state: str = "", min_score: int | None = Query(None, ge=0, le=100),
+                  freshness: int | None = Query(None, ge=1, le=3650), work_mode: str = "",
+                  location: str = "", source: str = "", seniority: str = "", sort: str = "best",
+                  page: int = Query(1, ge=1), page_size: int = Query(25, ge=1, le=50)):
         terms = q.strip().split()
-        conditions = ["(?='' OR v.state=?)", "NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm')"]
-        values: list[str] = [state, state]
+        conditions = [
+            "(?='' OR v.state=?)",
+            "NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm')",
+        ]
+        values: list[Any] = [state, state]
         for term in terms:
             conditions.append("(v.title LIKE ? ESCAPE '\\' OR v.company LIKE ? ESCAPE '\\' OR v.description LIKE ? ESCAPE '\\')")
             pattern = "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
             values.extend([pattern] * 3)
+        if min_score is not None:
+            conditions.append("v.analysis_status='done' AND v.score>=?")
+            values.append(min_score)
+        if freshness is not None:
+            conditions.append("datetime(COALESCE(v.published_at,v.first_seen_at)) >= datetime('now', ?)")
+            values.append(f"-{freshness} days")
+        if work_mode:
+            conditions.append("replace(replace(lower(COALESCE(NULLIF(v.work_mode,''), json_extract(v.score_detail,'$.facts.work_mode'), '')),'-',''),' ','')=replace(replace(lower(?),'-',''),' ','')")
+            values.append(work_mode)
+        if location:
+            conditions.append("lower(COALESCE(v.location,'')) LIKE lower(?)")
+            values.append(f"%{location}%")
+        if seniority:
+            conditions.append("lower(COALESCE(json_extract(v.score_detail,'$.facts.seniority'),'')) LIKE lower(?)")
+            values.append(f"%{seniority}%")
+        if source:
+            conditions.append(
+                "EXISTS(SELECT 1 FROM vacancy_observations vf JOIN observations o ON o.id=vf.observation_id "
+                "JOIN sources s ON s.id=o.source_id WHERE vf.vacancy_id=v.id AND s.kind=?)"
+            )
+            values.append(source)
+        order = {
+            "best": JOBS_ORDER,
+            "posted": "COALESCE(v.published_at,v.first_seen_at) DESC,v.id",
+            "found": "v.first_seen_at DESC,v.id",
+            "company": "lower(v.company),lower(v.title),v.id",
+        }.get(sort, JOBS_ORDER)
         where = " AND ".join(conditions)
         total = db.one(f"SELECT COUNT(*) AS count FROM vacancies v WHERE {where}", tuple(values))["count"]
         rows = db.all(
-            "SELECT v.id,v.company,v.title,v.location,v.published_at,v.first_seen_at,v.state,v.score,v.analysis_status "
-            f"FROM vacancies v WHERE {where} ORDER BY {JOBS_ORDER} LIMIT ? OFFSET ?",
+            "SELECT v.id,v.company,v.title,v.location,v.work_mode,v.published_at,v.first_seen_at,v.state,v.score,v.score_detail,v.analysis_status "
+            f"FROM vacancies v WHERE {where} ORDER BY {order} LIMIT ? OFFSET ?",
             (*values, page_size, (page - 1) * page_size),
         )
+        for row in rows:
+            detail = json.loads(row.get("score_detail") or "{}")
+            facts = detail.get("facts") or {}
+            row["work_mode"] = row.get("work_mode") or facts.get("work_mode") or ""
+            row["seniority"] = facts.get("seniority") or ""
+            criteria = detail.get("criteria") or {}
+            row["match_signals"] = [
+                {"label": key.replace("_", " ").title(), "score": item.get("score"), "reason": item.get("reason", "")}
+                for key, item in criteria.items() if isinstance(item, dict) and isinstance(item.get("score"), (int, float))
+            ]
+            row.pop("score_detail", None)
         if rows:
             placeholders = ",".join("?" for _ in rows)
             origins = db.all(
-                "SELECT vo.vacancy_id,o.url,o.last_seen_at,s.kind FROM vacancy_observations vo "
+                "SELECT vo.vacancy_id,o.url,o.last_seen_at,s.kind,s.name FROM vacancy_observations vo "
                 "JOIN observations o ON o.id=vo.observation_id JOIN sources s ON s.id=o.source_id "
                 f"WHERE vo.vacancy_id IN ({placeholders}) ORDER BY o.last_seen_at DESC",
                 tuple(row["id"] for row in rows),
             )
             by_id = {}
             for origin in origins:
-                by_id.setdefault(origin["vacancy_id"], {key: origin[key] for key in ("url", "last_seen_at", "kind")})
+                by_id.setdefault(origin["vacancy_id"], {key: origin[key] for key in ("url", "last_seen_at", "kind", "name")})
             for row in rows:
                 row["source"] = by_id.get(row["id"])
         return {"items": rows, "page": page, "page_size": page_size, "total": total,
@@ -859,6 +921,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if (validated.approved or row["approved"]) and (validated.kind == "project" or row["kind"] == "project"):
             match_manager.invalidate_all()
         return {"id": evidence_id}
+
+    @app.delete("/api/evidence/{evidence_id}")
+    def delete_evidence(evidence_id: str):
+        row = db.one("SELECT kind,approved FROM evidence WHERE id=?", (evidence_id,))
+        if not row:
+            raise HTTPException(404, "Evidence not found")
+        db.execute("DELETE FROM evidence WHERE id=?", (evidence_id,))
+        if row["kind"] == "project" and row["approved"]:
+            match_manager.invalidate_all()
+        return {"deleted": True}
 
     @app.post("/api/repositories/inspect")
     def inspect_repo(payload: RepositoryInput):

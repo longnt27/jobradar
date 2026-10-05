@@ -76,7 +76,7 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 page.locator("#projects.active #project-add-form").wait_for()
                 assert page.url.endswith("#projects")
                 page.get_by_role("button", name="Applications", exact=True).first.click()
-                page.locator("#auto-apply-panel summary").click()
+                page.get_by_role("tab", name="Automation").click()
                 assert page.locator("#auto-apply-form input[name='enabled']").is_visible()
                 assert page.locator("#auto-apply-status").inner_text() == "Off"
                 assert page.locator("#queue-existing-drafts").is_disabled()
@@ -87,11 +87,15 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 assert "No score" not in pending_card.inner_text()
                 assert pending_card.locator(".score-pending").count() == 1
                 page.get_by_role("button", name="Open AI Engineer at Example").click()
-                page.get_by_role("heading", name="Job at a glance").wait_for()
+                page.locator("#job-detail summary").filter(has_text="Job at a glance").wait_for()
                 assert "Python" in page.locator(".job-facts").inner_text()
                 assert "Salary range" in page.locator(".job-facts").inner_text()
-                assert "Match breakdown" in page.locator("#job-detail").inner_text()
+                breakdown = page.locator("#job-detail summary").filter(has_text="Match breakdown")
+                assert "82/100" in breakdown.inner_text()
+                breakdown.click()
                 assert "Salary is not included in the match score" in page.locator("#job-detail").inner_text()
+                assert page.locator("#job-detail .score").count() == 0
+                assert page.locator("#job-detail .criterion-weight").count() >= 1
                 assert page.get_by_role("button", name="Open AI Engineer at Example").locator(".score-high").inner_text() == "82"
                 high_color = page.get_by_role("button", name="Open AI Engineer at Example").locator(".score-high").evaluate("node => getComputedStyle(node).backgroundColor")
                 pending_color = pending_card.locator(".score-pending").evaluate("node => getComputedStyle(node).backgroundColor")
@@ -107,6 +111,7 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 assert app.state.db.get_setting("profile", {})["name"] == "Alex Example"
                 page.locator("#personal [data-tab='profile']").click()
                 page.locator("#resume-status.pill:not(.warning)").wait_for()
+                page.get_by_role("button", name="Settings", exact=True).click()
                 page.locator("#smtp-panel summary").click()
                 page.locator("#smtp-panel[open]").wait_for()
                 page.locator("#smtp-gmail-preset").click()
@@ -123,7 +128,7 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 monkeypatch.setattr(app.state.login_manager, "status", lambda: {"sites": [], "connected_sites": ["linkedin", "facebook"], "state": "idle", "error": None, "last_saved_at": None})
                 monkeypatch.setattr("job_radar.web.telegram_config", lambda _settings: {"token": "test-token", "chat_id": "123"})
                 page.goto("about:blank")
-                page.goto(f"http://127.0.0.1:{port}/#profile")
+                page.goto(f"http://127.0.0.1:{port}/#settings")
                 page.locator("#provider-panel summary").click()
                 for selector in ("#provider-status", "#resume-status", "#matching-status", "#social-sign-in-status", "#setup-telegram-status"):
                     page.locator(f"{selector}.pill:not(.warning):not(.muted)").wait_for()

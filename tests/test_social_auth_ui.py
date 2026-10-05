@@ -33,7 +33,7 @@ def test_social_sign_in_is_a_setup_step_and_expiry_is_visible_from_jobs(tmp_path
                 page.goto(f"http://127.0.0.1:{port}/#home")
                 page.get_by_role("button", name="Connect LinkedIn and Facebook").click()
                 assert page.locator("#social-sign-in-panel").evaluate("node => node.open")
-                assert page.locator("#profile").get_attribute("class").find("active") >= 0
+                assert page.locator("#settings").get_attribute("class").find("active") >= 0
                 assert page.get_by_role("button", name="Sign in to LinkedIn").is_visible()
                 assert page.get_by_role("button", name="Sign in to Facebook").is_visible()
                 assert page.locator("#setup-browser-finish").count() == 0
@@ -66,10 +66,11 @@ def test_social_sign_in_is_a_setup_step_and_expiry_is_visible_from_jobs(tmp_path
                 page.locator("#source-form [name='kind']").select_option("linkedin")
                 assert page.locator("#source-name-label").is_hidden()
                 assert "LinkedIn Jobs search link" in page.locator("#source-url-hint").inner_text()
-                page.locator("#sources [data-tab='employers']").click()
+                page.locator(".sidebar nav [data-tab='employers']").click()
                 page.locator("#employers.active").wait_for()
-                assert page.locator(".sidebar nav [data-tab='sources']").get_attribute("class") == "active"
-                page.locator("#employers [data-tab='sources']").click()
+                assert page.locator(".sidebar nav [data-tab='employers']").get_attribute("class") == "active"
+                assert page.locator(".sidebar nav [data-tab='sources']").get_attribute("class") != "active"
+                page.locator(".sidebar nav [data-tab='sources']").click()
                 page.locator("#sources.active").wait_for()
             finally:
                 browser.close()
