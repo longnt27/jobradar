@@ -230,10 +230,14 @@ class AutoApplyManager:
                 if previous_message_id and previous_message_id != message_id:
                     try:
                         async with httpx.AsyncClient(timeout=10) as client:
-                            await _post(client, config["token"], "deleteMessage",
-                                        json={"chat_id": config["chat_id"], "message_id": previous_message_id})
+                            await _post(client, config["token"], "editMessageText", json={
+                                "chat_id": config["chat_id"],
+                                "message_id": previous_message_id,
+                                "text": "Superseded application review. Use the latest review message before approving or editing.",
+                                "reply_markup": {"inline_keyboard": []},
+                            })
                     except (httpx.HTTPError, RuntimeError):
-                        log.info("Could not remove superseded Telegram review %s", previous_message_id)
+                        log.info("Could not invalidate superseded Telegram review %s", previous_message_id)
         except (httpx.HTTPError, OSError, ValueError, RuntimeError) as error:
             log.warning("Could not deliver application review %s: %s", draft_id, type(error).__name__)
             if telegram_config(self.settings) == config:
