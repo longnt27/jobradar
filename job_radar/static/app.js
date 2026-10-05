@@ -72,12 +72,79 @@ async function api(path, options = {}) {
   return body;
 }
 
+function prefersReducedMotion() {
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+function scrollNodeIntoView(node, options = {}) {
+  if (!node) return;
+  node.scrollIntoView({...options, behavior: prefersReducedMotion() ? 'auto' : (options.behavior || 'smooth')});
+}
+
+function statusClass(tone = 'success') {
+  const normalized = tone === 'muted' ? 'neutral' : tone || 'success';
+  return `status-badge status-badge--${normalized}`;
+}
+
+function clearNotice() {
+  const node = $('#notice');
+  clearTimeout(window.noticeTimeout);
+  node.hidden = true;
+  node.className = 'toast';
+  node.replaceChildren();
+}
+
 function notice(message, error = false) {
   const node = $('#notice');
-  node.textContent = message;
-  node.classList.toggle('error', error);
   clearTimeout(window.noticeTimeout);
-  window.noticeTimeout = setTimeout(() => { node.textContent = ''; node.classList.remove('error'); }, 6000);
+  node.hidden = false;
+  node.className = `toast${error ? ' error' : ''}`;
+  node.setAttribute('role', error ? 'alert' : 'status');
+  node.setAttribute('aria-live', error ? 'assertive' : 'polite');
+  const messageNode = document.createElement('span');
+  messageNode.className = 'toast-message';
+  messageNode.textContent = message;
+  const dismiss = document.createElement('button');
+  dismiss.type = 'button';
+  dismiss.className = 'toast-dismiss';
+  dismiss.setAttribute('aria-label', 'Dismiss notification');
+  dismiss.textContent = '×';
+  dismiss.addEventListener('click', clearNotice);
+  node.replaceChildren(messageNode, dismiss);
+  if (!error) window.noticeTimeout = setTimeout(clearNotice, 6000);
+}
+
+function beginPending(button, label = 'Working…') {
+  if (!button) return null;
+  button.dataset.pendingText = button.textContent;
+  button.dataset.pendingDisabled = button.disabled ? 'true' : 'false';
+  button.disabled = true;
+  button.setAttribute('aria-busy', 'true');
+  if (label) button.textContent = label;
+  button.form?.setAttribute('aria-busy', 'true');
+  return button;
+}
+
+function endPending(button, {restoreDisabled = true} = {}) {
+  if (!button) return;
+  const wasDisabled = button.dataset.pendingDisabled === 'true';
+  const idleText = button.dataset.pendingText;
+  button.removeAttribute('aria-busy');
+  button.form?.removeAttribute('aria-busy');
+  if (idleText != null) button.textContent = idleText;
+  button.disabled = restoreDisabled ? wasDisabled : false;
+  delete button.dataset.pendingText;
+  delete button.dataset.pendingDisabled;
+}
+
+function setTabLoading(target, loading) {
+  if (!target) return;
+  target.classList.toggle('is-loading', loading);
+  if (loading) target.setAttribute('aria-busy', 'true');
+  else target.removeAttribute('aria-busy');
+  const indicator = $('#tab-loading');
+  indicator.hidden = !loading;
+  if (loading) indicator.textContent = `Loading ${($('#page-title').textContent || 'page').toLowerCase()}…`;
 }
 
 function socialSiteNames(browser) {
@@ -87,7 +154,7 @@ function socialSiteNames(browser) {
 function setStepStatus(selector, label, tone = '') {
   const node = $(selector);
   node.textContent = label;
-  node.className = `pill ${tone}`.trim();
+  node.className = statusClass(tone);
 }
 
 function renderSocialAuth(browser) {
@@ -125,7 +192,7 @@ async function openSetupPanel(id) {
   const panel = $(`#${id}`);
   const step = panel.closest('details.flow-panel') || panel;
   step.open = true;
-  panel.scrollIntoView({behavior:'smooth', block:'start'});
+  scrollNodeIntoView(panel, {block:'start'});
   await loading;
   step.open = true;
 }
@@ -273,7 +340,7 @@ async function loadQueue() {
       $('#source-kind').value = '';
       await showTab('sources');
       const card = [...document.querySelectorAll('#source-list [data-source-id]')].find((node) => node.dataset.sourceId === id);
-      card?.scrollIntoView({behavior:'smooth', block:'center'});
+      scrollNodeIntoView(card, {block:'center'});
     } else if (kind === 'draft' && button.dataset.queueDraft) {
       await showTab('applications'); await showApplication(button.dataset.queueDraft);
     } else {
@@ -294,12 +361,12 @@ async function loadJobs() {
   $('#jobs-next').disabled = jobsPage >= result.pages;
   const sourceLabel = (source) => !source ? 'Manually added' : source.kind === 'career' ? 'Company career page' : source.kind === 'linkedin' ? 'LinkedIn listing' : 'Facebook group lead';
   $('#job-list').innerHTML = jobs.length ? jobs.map((job) =>
-    `<div class="item job-card"><button type="button" class="card-select" data-job="${job.id}" aria-label="Open ${escapeHtml(job.title)} at ${escapeHtml(job.company)}">${scoreBadge(job)}<div class="item-title">${escapeHtml(job.title)}</div><div class="item-meta">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div><div class="item-meta">${escapeHtml(sourceLabel(job.source))}${job.source ? ` · Checked ${when(job.source.last_seen_at)}` : ''}</div><div class="item-meta">${job.published_at ? `Posted ${when(job.published_at)}` : 'Posting date unavailable'} · First seen ${when(job.first_seen_at)} <span class="pill muted">${escapeHtml(job.state)}</span> · ${job.analysis_status === 'done' ? 'Local match' : job.analysis_status === 'failed' ? 'Analysis failed' : job.analysis_status === 'dismissed' ? 'Analysis dismissed' : ['pending','running'].includes(job.analysis_status) ? 'Analyzing locally' : 'Waiting for local model'}</div></button>${job.source ? `<a href="${escapeHtml(job.source.url)}" target="_blank" rel="noopener noreferrer">Original posting ↗</a>` : ''}</div>`
+    `<div class="item job-card surface-action"><button type="button" class="card-select" data-job="${job.id}" aria-label="Open ${escapeHtml(job.title)} at ${escapeHtml(job.company)}">${scoreBadge(job)}<div class="item-title">${escapeHtml(job.title)}</div><div class="item-meta">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div><div class="item-meta">${escapeHtml(sourceLabel(job.source))}${job.source ? ` · Checked ${when(job.source.last_seen_at)}` : ''}</div><div class="item-meta">${job.published_at ? `Posted ${when(job.published_at)}` : 'Posting date unavailable'} · First seen ${when(job.first_seen_at)} <span class="status-badge status-badge--neutral">${escapeHtml(job.state)}</span> · ${job.analysis_status === 'done' ? 'Local match' : job.analysis_status === 'failed' ? 'Analysis failed' : job.analysis_status === 'dismissed' ? 'Analysis dismissed' : ['pending','running'].includes(job.analysis_status) ? 'Analyzing locally' : 'Waiting for local model'}</div></button>${job.source ? `<a href="${escapeHtml(job.source.url)}" target="_blank" rel="noopener noreferrer">Original posting ↗</a>` : ''}</div>`
   ).join('') : '<div class="empty">No jobs found. Run a scan or import a job.</div>';
   document.querySelectorAll('[data-job]').forEach((node) => node.addEventListener('click', async () => {
     try {
       await showJob(node.dataset.job);
-      if (window.matchMedia('(max-width: 900px)').matches) $('#job-detail').scrollIntoView({behavior:'smooth', block:'start'});
+      if (window.matchMedia('(max-width: 900px)').matches) scrollNodeIntoView($('#job-detail'), {block:'start'});
     } catch(error) { notice(error.message, true); }
   }));
   if (activeJob && (activeJobPinned || jobs.some((job) => job.id === activeJob))) await showJob(activeJob, activeJobPinned);
@@ -326,7 +393,7 @@ async function showJob(id, pin = false) {
   const score = job.score_detail ? JSON.parse(job.score_detail) : null;
   $('#job-detail').innerHTML = `<h2>${escapeHtml(job.title)}</h2><div class="item-meta">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div>
     <div class="item-meta">${escapeHtml(job.work_mode || '')} · ${job.published_at ? `Posted ${when(job.published_at)}` : 'Posting date unavailable'} · First seen ${when(job.first_seen_at)}</div>
-    <div class="actions"><button data-state="interesting">Interesting</button><button data-state="interview">Interview</button><button data-state="rejected">Rejected</button><button data-state="offer">Offer</button><button data-state="ignored">Ignore</button></div>
+    <div class="actions"><button data-state="interesting">Interesting</button><button data-state="interview">Interview</button><button data-state="rejected" class="danger">Rejected</button><button data-state="offer">Offer</button><button data-state="ignored" class="danger">Ignore</button></div>
     <div class="review-section"><p class="hint">Drafting provider: ${escapeHtml(provider || 'Choose one in Profile first')} · <button class="text-button" data-tab="profile">Change provider</button></p><div class="actions"><button data-prepare="${id}" class="primary" ${provider ? '' : 'disabled'}>Prepare application</button></div></div>
     ${job.apply_url ? `<p><a href="${escapeHtml(job.apply_url)}" target="_blank" rel="noopener noreferrer">${job.apply_url.startsWith('mailto:') ? 'Application email ↗' : 'Application page ↗'}</a></p>` : ''}
     ${!job.apply_url ? '<p class="hint">No application form has been verified for this posting. Check the original source for its application instructions before sending.</p>' : ''}
@@ -345,8 +412,7 @@ async function showJob(id, pin = false) {
   }));
   $('#job-detail').querySelector('[data-prepare]').addEventListener('click', async () => {
     const button = $('#job-detail').querySelector('[data-prepare]');
-    button.disabled = true;
-    button.textContent = 'Preparing…';
+    beginPending(button, 'Preparing…');
     try {
       const draft = await api(`/api/jobs/${id}/prepare`, {method:'POST', body:'{}'});
       if (draft.destination.kind === 'web') {
@@ -356,7 +422,7 @@ async function showJob(id, pin = false) {
       showTab('applications'); await loadApplications(draft.id);
     }
     catch(error) { notice(error.message, true); }
-    finally { button.disabled = false; button.textContent = 'Prepare application'; }
+    finally { endPending(button); }
   });
 }
 
@@ -376,7 +442,7 @@ async function loadSources() {
     const latest = source.latest_observed_count;
     const cap = Number(source.config?.max_results || source.config?.max_posts || 0);
     const latestText = latest == null ? 'No completed scan for this search' : `${latest} postings checked in latest scan${cap && latest >= cap ? ` · limit ${cap} reached` : ''}`;
-    return `<div class="item" data-source-id="${source.id}"><div class="item-title">${escapeHtml(source.name)} <span class="pill muted">${escapeHtml(source.kind)}</span> <span class="pill ${['scanning','success','queued'].includes(state) ? '' : 'warning'}">${escapeHtml(status)}</span></div><div class="item-meta source-job-count"><strong>${total} ${total === 1 ? 'unique job' : 'unique jobs'} credited here</strong>${source.last_success_at ? ` <span class="pill ${recent ? '' : 'muted'}">${recent} new in latest scan</span>` : ''}</div><div class="item-meta">${escapeHtml(latestText)} · Last success ${when(source.last_success_at)}</div><div class="actions"><button data-scan="${source.id}" ${['scanning','queued'].includes(state) ? 'disabled' : ''}>${state === 'scanning' ? 'Scanning…' : state === 'queued' ? 'Queued' : 'Scan now'}</button><a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer">Open source ↗</a><label class="source-auto"><input type="checkbox" data-toggle="${source.id}" ${source.enabled ? 'checked' : ''}> Automatic every ${source.interval_minutes / 60} hours</label></div></div>`;
+    return `<div class="item" data-source-id="${source.id}"><div class="item-title">${escapeHtml(source.name)} <span class="pill muted">${escapeHtml(source.kind)}</span> <span class="status-badge ${['scanning','success','queued'].includes(state) ? 'status-badge--success' : state === 'failed' ? 'status-badge--danger' : 'status-badge--warning'}">${escapeHtml(status)}</span></div><div class="item-meta source-job-count"><strong>${total} ${total === 1 ? 'unique job' : 'unique jobs'} credited here</strong>${source.last_success_at ? ` <span class="pill ${recent ? '' : 'muted'}">${recent} new in latest scan</span>` : ''}</div><div class="item-meta">${escapeHtml(latestText)} · Last success ${when(source.last_success_at)}</div><div class="actions"><button data-scan="${source.id}" ${['scanning','queued'].includes(state) ? 'disabled' : ''}>${state === 'scanning' ? 'Scanning…' : state === 'queued' ? 'Queued' : 'Scan now'}</button><a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer">Open source ↗</a><label class="source-auto"><input type="checkbox" data-toggle="${source.id}" ${source.enabled ? 'checked' : ''}> Automatic every ${source.interval_minutes / 60} hours</label></div></div>`;
   }).join('') : '<div class="empty">No sources configured for this filter.</div>';
   document.querySelectorAll('[data-toggle]').forEach((input) => input.addEventListener('change', async () => {
     try { await api(`/api/sources/${input.dataset.toggle}`, {method:'PATCH', body:JSON.stringify({enabled:input.checked})}); await loadSources(); }
@@ -384,14 +450,14 @@ async function loadSources() {
   }));
   document.querySelectorAll('[data-scan]').forEach((button) => button.addEventListener('click', async () => {
     try {
-      button.disabled = true;
+      beginPending(button, 'Queueing…');
       notice('Scan added to the queue');
       const result = await api(`/api/sources/${button.dataset.scan}/scan`, {method:'POST'});
       await Promise.all([loadSources(), loadHome()]);
       notice(result.status === 'queued' ? `Scan queued${result.position ? ` at position ${result.position}` : ''}. It will run in the background.` : 'This source is already queued or scanning.');
     }
     catch(error) { notice(error.message, true); }
-    finally { button.disabled = false; }
+    finally { endPending(button); }
   }));
   if ($('#sources').classList.contains('active')) window.sourcePoll = setTimeout(() => loadSources().catch(() => {}), 15000);
 }
@@ -401,7 +467,7 @@ async function loadEmployers() {
   const employers = await api(`/api/employers?q=${encodeURIComponent(q)}&limit=2000`);
   $('#employer-count').textContent = `${employers.length} employers shown`;
   $('#employer-list').innerHTML = employers.map((employer) =>
-    `<div class="employer"><strong>${escapeHtml(employer.name)}</strong><small>${escapeHtml(employer.category)} · ${escapeHtml(employer.live_coverage)}</small>${employer.career_url ? `<small><a href="${escapeHtml(employer.career_url)}" target="_blank" rel="noopener noreferrer">Career page ↗</a></small>` : ''}<button data-employer-source="${employer.id}">Set career page</button></div>`
+    `<div class="employer surface-readonly"><strong>${escapeHtml(employer.name)}</strong><small>${escapeHtml(employer.category)} · ${escapeHtml(employer.live_coverage)}</small>${employer.career_url ? `<small><a href="${escapeHtml(employer.career_url)}" target="_blank" rel="noopener noreferrer">Career page ↗</a></small>` : ''}<button data-employer-source="${employer.id}">Set career page</button></div>`
   ).join('');
   document.querySelectorAll('[data-employer-source]').forEach((button) => button.addEventListener('click', async () => {
     const row = employers.find((employer) => employer.id === button.dataset.employerSource);
@@ -436,7 +502,7 @@ async function loadProfile() {
     ? `${profile.name} · ${profile.email}. ${(profile.experience || []).length} previous position${profile.experience?.length === 1 ? '' : 's'} and ${projectCount} selected project${projectCount === 1 ? '' : 's'}.`
     : 'Import a resume PDF or enter your details manually. You can review and edit every field.';
   $('#profile-summary-status').textContent = hasResume ? 'Ready to review' : 'Needs details';
-  $('#profile-summary-status').className = `pill ${hasResume ? '' : 'warning'}`;
+  $('#profile-summary-status').className = statusClass(hasResume ? 'success' : 'warning');
   $('#position-count').textContent = `${(profile.experience || []).length} previous position${profile.experience?.length === 1 ? '' : 's'}`;
   $('#project-count').textContent = `${projectCount} selected project${projectCount === 1 ? '' : 's'}`;
 }
@@ -501,7 +567,7 @@ async function loadJobAnalysis() {
   $('#matching-retry-all').textContent = `Retry all ${failures.length}`;
   $('#matching-failure-list').innerHTML = failures.map((job) => `<div class="matching-failure-row"><div class="matching-failure-copy"><strong>${escapeHtml(job.title)}</strong><small>${escapeHtml(job.company)} · ${escapeHtml(job.error || 'Local analysis failed')}</small></div><div class="matching-failure-actions"><button type="button" class="secondary" data-matching-open="${job.id}">View job</button><button type="button" class="secondary" data-matching-retry="${job.id}">Retry</button><button type="button" class="secondary" data-matching-dismiss="${job.id}">Dismiss</button></div></div>`).join('');
   $('#matching-failure-list').querySelectorAll('[data-matching-open]').forEach((button) => button.addEventListener('click', async () => {
-    try { await showJob(button.dataset.matchingOpen, true); $('#job-detail').scrollIntoView({behavior:'smooth', block:'start'}); }
+    try { await showJob(button.dataset.matchingOpen, true); scrollNodeIntoView($('#job-detail'), {block:'start'}); }
     catch (error) { notice(error.message, true); }
   }));
   $('#matching-failure-list').querySelectorAll('[data-matching-retry]').forEach((button) => button.addEventListener('click', async () => {
@@ -540,9 +606,9 @@ $('#matching-retry-all').addEventListener('click', async (event) => {
 
 async function loadPositions() {
   const positions = await api('/api/positions');
-  $('#position-list').innerHTML = positions.length ? positions.map((item) => `<div class="item" data-position="${item.id}">
+  $('#position-list').innerHTML = positions.length ? positions.map((item) => `<div class="item surface-editable" data-position="${item.id}">
     <div class="form-grid"><label>Company<input data-field="company" value="${escapeHtml(item.company)}"></label><label>Role<input data-field="role" value="${escapeHtml(item.role)}"></label><label class="full">Dates<input data-field="dates" value="${escapeHtml(item.dates)}"></label><label class="full">Work and outcomes<textarea data-field="bullets" rows="4">${escapeHtml((item.bullets || []).join('\n'))}</textarea></label></div>
-    <div class="actions"><button data-save-position="${item.id}">Save position</button><button data-delete-position="${item.id}">Remove</button></div></div>`).join('') : '<div class="empty">No positions yet. Add your previous jobs above.</div>';
+    <div class="actions"><button data-save-position="${item.id}">Save position</button><button data-delete-position="${item.id}" class="danger">Remove</button></div></div>`).join('') : '<div class="empty">No positions yet. Add your previous jobs above.</div>';
   document.querySelectorAll('[data-save-position]').forEach((button) => button.addEventListener('click', async () => {
     const row = button.closest('[data-position]');
     const field = (name) => row.querySelector(`[data-field="${name}"]`).value.trim();
@@ -555,7 +621,7 @@ async function loadPositions() {
   }));
 }
 
-function showTab(name, historyMode = 'push') {
+async function showTab(name, historyMode = 'push') {
   const requested = name.split('/');
   const selectedDraft = requested[0] === 'applications' ? requested[1] : null;
   name = requested[0];
@@ -570,6 +636,7 @@ function showTab(name, historyMode = 'push') {
   if (name !== 'home') clearTimeout(window.homeQueuePoll);
   if (name !== 'sources') clearTimeout(window.sourcePoll);
   document.querySelectorAll('.tab').forEach((tab) => tab.classList.toggle('active', tab.id === name));
+  const target = document.getElementById(name);
   const nav = ['personal','experience','projects'].includes(name) ? 'profile' : name === 'employers' ? 'sources' : name;
   document.querySelectorAll('.sidebar nav [data-tab]').forEach((button) => button.classList.toggle('active', button.dataset.tab === nav));
   $('#page-title').textContent = ({home:'Home',queue:'Queue',jobs:'Jobs',applications:'Applications',profile:'My profile',
@@ -581,13 +648,21 @@ function showTab(name, historyMode = 'push') {
   if (!['home', 'profile'].includes(name)) refreshSocialAuth().catch((error) => notice(error.message, true));
   const loader = ({home:loadHome,queue:loadQueue,jobs:loadJobs,applications:loadApplications,personal:loadPersonalDetails,
     experience:loadPositions,projects:loadEvidence,sources:loadSources,employers:loadEmployers,profile:loadProfile})[name];
-  return loader?.(selectedDraft).catch((error) => notice(error.message, true));
+  if (!loader) return;
+  setTabLoading(target, true);
+  try {
+    return await loader(selectedDraft);
+  } catch (error) {
+    notice(error.message, true);
+  } finally {
+    setTabLoading(target, false);
+  }
 }
 
 async function loadApplications(selectedId = null) {
   await loadAutoApply();
   const drafts = await api('/api/applications');
-  $('#application-list').innerHTML = drafts.length ? drafts.map((draft) => `<button type="button" class="item clickable application-card" data-application="${draft.id}"><div class="item-title">${escapeHtml(draft.job_title)} <span class="pill ${draft.review_status === 'awaiting_review' ? '' : 'warning'}">${escapeHtml(draft.review_status === 'awaiting_review' ? 'Ready for review' : draft.review_status === 'needs_review' ? 'Needs changes' : draft.review_status || draft.status)}</span></div><div class="item-meta">${escapeHtml(draft.company)} · ${escapeHtml(draft.provider_mode)}</div><div class="item-meta">Updated ${when(draft.updated_at)}</div></button>`).join('') : '<div class="panel empty"><p>No applications yet. Start with a job posting.</p><button id="applications-browse-jobs" class="primary">Browse jobs →</button></div>';
+  $('#application-list').innerHTML = drafts.length ? drafts.map((draft) => `<button type="button" class="item clickable application-card surface-action" data-application="${draft.id}"><div class="item-title">${escapeHtml(draft.job_title)} <span class="status-badge ${draft.review_status === 'awaiting_review' ? 'status-badge--success' : 'status-badge--warning'}">${escapeHtml(draft.review_status === 'awaiting_review' ? 'Ready for review' : draft.review_status === 'needs_review' ? 'Needs changes' : draft.review_status || draft.status)}</span></div><div class="item-meta">${escapeHtml(draft.company)} · ${escapeHtml(draft.provider_mode)}</div><div class="item-meta">Updated ${when(draft.updated_at)}</div></button>`).join('') : '<div class="panel empty"><p>No applications yet. Start with a job posting.</p><button id="applications-browse-jobs" class="primary">Browse jobs →</button></div>';
   $('#applications-browse-jobs')?.addEventListener('click', () => showTab('jobs'));
   document.querySelectorAll('[data-application]').forEach((node) => node.addEventListener('click', () => showApplication(node.dataset.application)));
   if (selectedId) await showApplication(selectedId);
@@ -603,7 +678,7 @@ async function loadAutoApply() {
     form.dataset.initialized = 'true';
   }
   $('#auto-apply-status').textContent = data.enabled ? `On · ${data.threshold}+` : 'Off';
-  $('#auto-apply-status').className = `pill ${data.enabled ? '' : 'muted'}`;
+  $('#auto-apply-status').className = statusClass(data.enabled ? 'success' : 'neutral');
   const existingButton = $('#queue-existing-drafts');
   existingButton.disabled = !data.enabled || !(data.eligible_existing || data.waiting_existing);
   $('#existing-draft-count').textContent = !data.enabled ? 'Enable and save automatic drafts first.'
@@ -612,7 +687,7 @@ async function loadAutoApply() {
     : `${data.counts.queued || 0} queued · No undrafted, scored jobs are ready.`;
   const activity = $('#auto-apply-activity');
   activity.innerHTML = data.recent.length ? `<h4>Draft activity</h4>${data.recent.map((item) =>
-    `<div class="item"><div class="item-title">${escapeHtml(item.title)} · ${escapeHtml(item.company)} <span class="pill ${item.status === 'sent' ? '' : 'warning'}">${escapeHtml(item.status.replace('_', ' '))}</span></div><div class="item-meta">${item.analysis_status === 'done' && item.score != null ? `${escapeHtml(item.score)}/100 · ` : 'Analyzing · '}${escapeHtml(item.detail || '')}</div><div class="actions">${item.draft_id ? `<button type="button" data-auto-draft="${item.draft_id}">Open application</button>` : `<button type="button" data-auto-job="${item.vacancy_id}">Open job</button>`}</div></div>`
+    `<div class="item"><div class="item-title">${escapeHtml(item.title)} · ${escapeHtml(item.company)} <span class="status-badge ${item.status === 'sent' ? 'status-badge--success' : 'status-badge--warning'}">${escapeHtml(item.status.replace('_', ' '))}</span></div><div class="item-meta">${item.analysis_status === 'done' && item.score != null ? `${escapeHtml(item.score)}/100 · ` : 'Analyzing · '}${escapeHtml(item.detail || '')}</div><div class="actions">${item.draft_id ? `<button type="button" data-auto-draft="${item.draft_id}">Open application</button>` : `<button type="button" data-auto-job="${item.vacancy_id}">Open job</button>`}</div></div>`
   ).join('')}` : '<p class="hint">No prepared drafts yet.</p>';
   activity.querySelectorAll('[data-auto-draft]').forEach((button) => button.addEventListener('click', () => showApplication(button.dataset.autoDraft).catch((error) => notice(error.message, true))));
   activity.querySelectorAll('[data-auto-job]').forEach((button) => button.addEventListener('click', async () => { await showTab('jobs'); await showJob(button.dataset.autoJob); }));
@@ -669,14 +744,14 @@ async function showApplication(id) {
     ${draft.send_blockers?.length ? `<div class="review-section"><h4>Before sending</h4>${draft.send_blockers.map((reason) => `<p class="hint">${escapeHtml(reason)}</p>`).join('')}</div>` : ''}
     <div class="review-section"><h4>Regenerate draft</h4><label>Custom instructions for regeneration<textarea id="regenerate-prompt" rows="3" placeholder="Example: emphasize production search work and shorten the opening paragraph"></textarea></label><div class="actions"><button id="regenerate-draft" ${draft.provider === 'template' ? 'disabled' : ''}>Regenerate draft</button></div>${draft.provider === 'template' ? '<p class="hint">This draft used the basic template. Create a new draft with an AI provider to regenerate it with instructions.</p>' : ''}</div>
     <div class="actions"><button id="edit-draft">Edit details</button><button id="save-draft" class="primary">Save changes</button><button id="inspect-draft">Inspect form</button><button id="send-draft" ${draft.send_ready && draft.review_status === 'awaiting_review' ? '' : 'disabled'}>Approve &amp; send</button></div><p class="hint">Package fingerprint: <span class="mono">${escapeHtml(draft.package_hash.slice(0, 16))}</span>. Open the PDF after saving changes.</p><div id="application-outcome" class="hint"></div>`;
-  $('#edit-draft').addEventListener('click', () => { $('#draft-destination').focus(); $('#draft-destination').scrollIntoView({behavior:'smooth', block:'center'}); });
+  $('#edit-draft').addEventListener('click', () => { $('#draft-destination').focus(); scrollNodeIntoView($('#draft-destination'), {block:'center'}); });
   $('#regenerate-draft').addEventListener('click', async () => {
     const prompt = $('#regenerate-prompt').value.trim();
     if (!prompt) { notice('Enter custom instructions to regenerate the draft.', true); return; }
     const button = $('#regenerate-draft');
-    button.disabled = true; button.textContent = 'Regenerating…';
+    beginPending(button, 'Regenerating…');
     try { await api(`/api/applications/${id}/regenerate`, {method:'POST', body:JSON.stringify({prompt})}); await showApplication(id); await loadApplications(id); notice('New draft prepared for review.'); }
-    catch(error) { button.disabled = false; button.textContent = 'Regenerate draft'; notice(error.message, true); }
+    catch(error) { endPending(button); notice(error.message, true); }
   });
   $('#application-detail').querySelectorAll('input,select,textarea').forEach((field) => field.addEventListener('input', () => { $('#send-draft').disabled = true; $('#application-outcome').textContent = 'Save and review your changes before sending.'; }));
   $('#application-detail').querySelectorAll('[data-attachment-file]').forEach((input) => input.addEventListener('change', () => {
@@ -686,21 +761,24 @@ async function showApplication(id) {
       select.value = 'uploaded';
     }
   }));
-  $('#save-draft').addEventListener('click', async () => {
+  $('#save-draft').addEventListener('click', async (event) => {
+    const button = beginPending(event.currentTarget, 'Saving…');
     try { await saveApplication(id, draft); await showApplication(id); }
     catch(error) { notice(error.message, true); }
+    finally { endPending(button); }
   });
-  $('#inspect-draft').addEventListener('click', async () => {
+  $('#inspect-draft').addEventListener('click', async (event) => {
+    const button = beginPending(event.currentTarget, 'Inspecting…');
     try { await saveApplication(id, draft); await api(`/api/applications/${id}/inspect`, {method:'POST'}); await showApplication(id); notice('Form fields inspected'); }
     catch(error) { notice(error.message, true); }
+    finally { endPending(button); }
   });
   $('#send-draft').addEventListener('click', async () => {
     const button = $('#send-draft');
-    button.disabled = true;
-    button.textContent = 'Sending…';
+    beginPending(button, 'Sending…');
     try { const result = await api(`/api/applications/${id}/approve`, {method:'POST', body:JSON.stringify({package_hash:draft.package_hash})}); $('#application-outcome').textContent = `${result.status}: ${result.receipt || result.error || ''}`; await loadApplications(id); notice(`Application outcome: ${result.status}`); }
     catch(error) { notice(error.message, true); }
-    finally { button.textContent = 'Approve & send'; }
+    finally { endPending(button); }
   });
 }
 
@@ -774,7 +852,7 @@ function renderRepositoryResults(filter = '') {
     if (saved) {
       selectedProjectId = saved.id;
       await loadEvidence(saved.id);
-      $('#project-editor').scrollIntoView({behavior:'smooth', block:'start'});
+      scrollNodeIntoView($('#project-editor'), {block:'start'});
       return;
     }
     await inspectSelectedRepository(button.dataset.addRepo, button);
@@ -800,7 +878,7 @@ async function loadEvidence(focusId = null) {
   const readyCount = projectCards.filter((card) => card.approved).length;
   $('#selected-project-count').textContent = `${readyCount} ready for resumes`;
   $('#evidence-list').innerHTML = projectCards.length ? projectCards.map((card) => `<button class="project-list-row ${card.id === selectedProjectId ? 'is-selected' : ''}" data-open-project="${card.id}" type="button">
-    <strong>${escapeHtml(card.title)}</strong><span class="pill ${card.approved ? '' : 'warning'}">${card.approved ? 'Ready for resume' : 'Needs review'}</span>
+    <strong>${escapeHtml(card.title)}</strong><span class="status-badge ${card.approved ? 'status-badge--success' : 'status-badge--warning'}">${card.approved ? 'Ready for resume' : 'Needs review'}</span>
     <small>${escapeHtml(card.repository_url || 'Manual project')}</small></button>`).join('') : '<div class="empty">No projects yet. Enter your GitHub username or a repository URL above.</div>';
   document.querySelectorAll('[data-open-project]').forEach((button) => button.addEventListener('click', async () => {
     selectedProjectId = button.dataset.openProject;
@@ -814,7 +892,7 @@ async function loadEvidence(focusId = null) {
   }
   const details = JSON.parse(card.details || '{}');
   const needsOriginalClaim = !details.generated_by && (details.contribution === 'unverified' || ['pending','failed'].includes(details.generation_status));
-  $('#project-editor').innerHTML = `<div class="project-editor-head"><div><p class="eyebrow">REVIEW PROJECT</p><h3>${escapeHtml(card.title)}</h3></div><span class="pill ${card.approved ? '' : 'warning'}">${card.approved ? 'Ready for resume' : 'Needs review'}</span></div>
+  $('#project-editor').innerHTML = `<div class="project-editor-head"><div><p class="eyebrow">REVIEW PROJECT</p><h3>${escapeHtml(card.title)}</h3></div><span class="status-badge ${card.approved ? 'status-badge--success' : 'status-badge--warning'}">${card.approved ? 'Ready for resume' : 'Needs review'}</span></div>
     <p class="hint">Check the generated claims against your own work. Only projects marked ready can be used in an application.</p>
     ${details.generation_status === 'failed' ? `<p class="hint error-text">Project draft generation failed: ${escapeHtml(details.generation_error || 'Try generating again or write your own project bullet.')}</p>` : ''}
     ${needsOriginalClaim ? '<p class="hint">Write a specific bullet about your contribution before adding this project to resumes.</p>' : ''}
@@ -825,7 +903,7 @@ async function loadEvidence(focusId = null) {
       <label>What this project demonstrates <span class="hint">One resume bullet per line</span><textarea id="project-edit-bullets" rows="7">${escapeHtml((details.bullets || [card.claim]).join('\n'))}</textarea></label></div>
     <p id="project-review-status" class="hint" role="status" aria-live="polite"></p>
     <div class="actions"><button id="project-save" class="secondary">${card.approved ? 'Save changes' : 'Save draft'}</button>
-      <button id="project-approval" class="${card.approved ? 'secondary' : 'primary'}" ${needsOriginalClaim ? 'disabled' : ''}>${card.approved ? 'Remove from resumes' : 'Save and use on resumes'}</button>
+      <button id="project-approval" class="${card.approved ? 'danger' : 'primary'}" ${needsOriginalClaim ? 'disabled' : ''}>${card.approved ? 'Remove from resumes' : 'Save and use on resumes'}</button>
       ${card.repository_url && !card.approved ? '<button id="project-regenerate" class="secondary">Generate again</button>' : ''}</div>`;
   const content = () => {
     const bullets = $('#project-edit-bullets').value.split('\n').map((line) => line.trim()).filter(Boolean);
@@ -926,8 +1004,7 @@ for (const eventName of ['input', 'change']) $('#setup-smtp-form').addEventListe
 
 $('#smtp-send-test').addEventListener('click', async (event) => {
   const button = event.currentTarget;
-  button.disabled = true;
-  button.textContent = 'Sending test…';
+  beginPending(button, 'Sending test…');
   $('#smtp-test-result').textContent = 'Connecting to your email server…';
   try {
     await api('/api/setup/smtp/test', {method:'POST'});
@@ -936,7 +1013,7 @@ $('#smtp-send-test').addEventListener('click', async (event) => {
     await loadSetup();
     notice(error.message, true);
   } finally {
-    button.textContent = 'Send test email';
+    endPending(button);
   }
 });
 
@@ -1013,7 +1090,7 @@ $('#provider-form').addEventListener('submit', async (event) => {
     const provider = event.target.elements.provider.value;
     await api('/api/profile/provider', {method:'PUT', body:JSON.stringify({provider})});
     await loadProfile();
-    $('#resume-panel').scrollIntoView({behavior:'smooth', block:'start'});
+    scrollNodeIntoView($('#resume-panel'), {block:'start'});
     notice('Provider saved. Add your resume next.');
   } catch(error) { notice(error.message, true); }
 });
@@ -1116,7 +1193,7 @@ async function inspectSelectedRepository(url, button = null) {
     $('#project-add-status').textContent = result.generation_warning
       ? `Repository added, but the draft needs attention: ${result.generation_warning}`
       : 'Project draft ready. Review the claims below, then choose “Save and use on resumes”.';
-    $('#project-editor').scrollIntoView({behavior:'smooth', block:'start'});
+    scrollNodeIntoView($('#project-editor'), {block:'start'});
   } catch(error) {
     $('#project-add-status').textContent = error.message;
     notice(error.message, true);
@@ -1138,7 +1215,7 @@ function parseGitHubEntry(input) {
 $('#project-provider-action').addEventListener('click', () => {
   showTab('profile');
   $('#provider-panel').open = true;
-  $('#provider-panel').scrollIntoView({behavior:'smooth', block:'start'});
+  scrollNodeIntoView($('#provider-panel'), {block:'start'});
 });
 
 $('#project-add-form').addEventListener('submit', async (event) => {
@@ -1151,7 +1228,7 @@ $('#project-add-form').addEventListener('submit', async (event) => {
       if (saved) {
         await loadEvidence(saved.id);
         $('#project-add-status').textContent = 'This repository is already in your projects. Review it below.';
-        $('#project-editor').scrollIntoView({behavior:'smooth', block:'start'});
+        scrollNodeIntoView($('#project-editor'), {block:'start'});
         return;
       }
       await inspectSelectedRepository(entry.repository, button);
