@@ -152,3 +152,50 @@ def test_literal_cpp_search_returns_matching_job(tmp_path: Path) -> None:
     assert response.status_code == 200
     assert [row["id"] for row in response.json()] == [job["id"]]
     assert client.get("/api/jobs", params={"q": "C%"}).json() == []
+
+
+
+def test_jobs_page_supports_discovery_filters_and_sorting(tmp_path: Path) -> None:
+    import json
+    from datetime import datetime, timedelta, timezone
+
+    app = create_app(Settings(tmp_path))
+    client = TestClient(app)
+    db = app.state.db
+    source = db.one("SELECT id,kind FROM sources WHERE enabled=1 LIMIT 1")
+    assert source is not None
+
+    senior_id, _ = ingest(db, source["id"], ObservedJob(
+        "https://example.org/senior", "Senior AI Engineer", "Zulu Robotics",
+        "Build Python systems.", location="Hanoi"))
+    junior_id, _ = ingest(db, source["id"], ObservedJob(
+        "https://example.org/junior", "Junior Engineer", "Alpha Labs",
+        "Build backend systems.", location="Da Nang"))
+
+    recent = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    old = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
+    db.execute(
+        "UPDATE vacancies SET score=92,analysis_status='done',work_mode='Remote',published_at=?,score_detail=? WHERE id=?",
+        (recent, json.dumps({"facts":{"seniority":"Senior","work_mode":"Remote"},
+                            "criteria":{"role":{"score":9,"reason":"Strong role fit"}}}), senior_id),
+    )
+    db.execute(
+        "UPDATE vacancies SET score=55,analysis_status='done',work_mode='On-site',published_at=?,score_detail=? WHERE id=?",
+        (old, json.dumps({"facts":{"seniority":"Junior","work_mode":"On-site"},
+                         "criteria":{"role":{"score":5,"reason":"Partial role fit"}}}), junior_id),
+    )
+
+    assert [row["id"] for row in client.get("/api/jobs/page", params={"min_score": 80}).json()["items"]] == [senior_id]
+    assert [row["id"] for row in client.get("/api/jobs/page", params={"freshness": 1}).json()["items"]] == [senior_id]
+    assert [row["id"] for row in client.get("/api/jobs/page", params={"work_mode": "remote"}).json()["items"]] == [senior_id]
+    assert [row["id"] for row in client.get("/api/jobs/page", params={"location": "Hanoi"}).json()["items"]] == [senior_id]
+    assert [row["id"] for row in client.get("/api/jobs/page", params={"seniority": "senior"}).json()["items"]] == [senior_id]
+    source_rows = client.get("/api/jobs/page", params={"source": source["kind"]}).json()["items"]
+    assert {row["id"] for row in source_rows} >= {senior_id, junior_id}
+    company_sorted = client.get("/api/jobs/page", params={"sort": "company"}).json()["items"]
+    selected = [row["company"] for row in company_sorted if row["id"] in {senior_id, junior_id}]
+    assert selected == ["Alpha Labs", "Zulu Robotics"]
+    senior = next(row for row in client.get("/api/jobs/page", params={"q": "Senior AI"}).json()["items"] if row["id"] == senior_id)
+    assert senior["work_mode"] == "Remote"
+    assert senior["seniority"] == "Senior"
+    assert senior["match_signals"][0]["label"] == "Role"
