@@ -165,6 +165,15 @@ def _stabilize(page: Page, active_selector: str) -> None:
         visibility: hidden !important;
       }
     """)
+    page.evaluate("""() => {
+      document.querySelectorAll('.job-card-footer > span:first-child').forEach((node) => {
+        node.textContent = 'Found recently';
+        node.removeAttribute('title');
+      });
+      document.querySelectorAll('.application-card .item-meta:last-child').forEach((node) => {
+        node.textContent = node.textContent.includes('Sent') ? 'Updated recently · Sent' : 'Updated recently';
+      });
+    }""")
     page.wait_for_timeout(120)
 
 
