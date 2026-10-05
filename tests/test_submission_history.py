@@ -1,6 +1,7 @@
 import hashlib
 import json
 import socket
+import smtplib
 import time
 from pathlib import Path
 from threading import Thread
@@ -10,7 +11,7 @@ from fastapi.testclient import TestClient
 from playwright.sync_api import sync_playwright
 
 from job_radar.db import new_id, now
-from job_radar.drafting import prepare_draft
+from job_radar.drafting import get_draft, prepare_draft
 from job_radar.mail_config import save_smtp
 from job_radar.settings import Settings
 from job_radar.web import create_app
@@ -44,6 +45,21 @@ def test_uncertain_submission_is_human_readable_and_cannot_be_retried(tmp_path: 
         "host": "smtp.example.org", "port": 587, "user": "", "password": "",
         "from": "alex@example.org",
     })
+    attachment_bytes = b"%PDF-1.4\nexact reviewed portfolio\n%%EOF"
+    attachment_path = tmp_path / "portfolio.pdf"
+    attachment_path.write_bytes(attachment_bytes)
+    app.state.db.execute(
+        "UPDATE application_drafts SET form_data=?,updated_at=? WHERE id=?",
+        (json.dumps({
+            "fields": [{"index": 0, "name": "portfolio", "type": "file", "label": "Portfolio"}],
+            "answers": {},
+            "attachments": {"0": {
+                "kind": "uploaded", "path": str(attachment_path),
+                "sha256": hashlib.sha256(attachment_bytes).hexdigest(), "name": "portfolio.pdf",
+            }},
+        }), now(), draft["id"]),
+    )
+    draft = get_draft(app.state.db, draft["id"])
     attempts = []
 
     def ambiguous_send(item, _settings):
@@ -82,6 +98,50 @@ def test_uncertain_submission_is_human_readable_and_cannot_be_retried(tmp_path: 
         proof = client.get(f"/api/submissions/{result['id']}/resume")
         assert proof.status_code == 200
         assert hashlib.sha256(proof.content).hexdigest() == draft["resume_hash"]
+
+        attachment = client.get(f"/api/submissions/{result['id']}/attachments/0")
+        assert attachment.status_code == 200
+        assert attachment.content == attachment_bytes
+        attachment_path.write_bytes(b"%PDF-1.4\nmutated later\n%%EOF")
+        assert client.get(f"/api/submissions/{result['id']}/attachments/0").content == attachment_bytes
+
+
+def test_definite_smtp_rejection_is_retryable_and_not_marked_uncertain(tmp_path: Path, monkeypatch) -> None:
+    app = create_app(Settings(tmp_path))
+    draft = _prepare_email_draft(app, "Retryable Email")
+    save_smtp(app.state.settings, {
+        "host": "smtp.example.org", "port": 587, "user": "", "password": "",
+        "from": "alex@example.org",
+    })
+    calls = []
+
+    def send(item, _settings):
+        calls.append(item["id"])
+        if len(calls) == 1:
+            raise smtplib.SMTPAuthenticationError(535, b"Authentication rejected")
+        return "accepted"
+
+    monkeypatch.setattr("job_radar.apply._send_email", send)
+
+    with TestClient(app) as client:
+        first = client.post(
+            f"/api/applications/{draft['id']}/send",
+            json={"package_hash": draft["package_hash"]},
+        )
+        assert first.status_code == 200
+        assert first.json()["status"] == "failed"
+        assert first.json()["outcome"]["key"] == "send_failed"
+        assert first.json()["outcome"]["retry_blocked"] is False
+        assert app.state.db.one("SELECT status FROM application_drafts WHERE id=?", (draft["id"],))["status"] == "draft"
+
+        second = client.post(
+            f"/api/applications/{draft['id']}/send",
+            json={"package_hash": draft["package_hash"]},
+        )
+        assert second.status_code == 200
+        assert second.json()["status"] == "sent_confirmed"
+        assert second.json()["outcome"]["label"] == "Email sent"
+        assert len(calls) == 2
 
 
 def test_interrupted_send_claim_blocks_raw_api_retry_without_submission_row(tmp_path: Path, monkeypatch) -> None:
