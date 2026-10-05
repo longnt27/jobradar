@@ -164,7 +164,7 @@ def enrich_jobs(db: Database, rows: list[dict[str, Any]]) -> list[dict[str, Any]
     placeholders = ",".join("?" for _ in identifiers)
 
     draft_rows = db.all(
-        "SELECT vacancy_id,status,updated_at FROM application_drafts "
+        "SELECT id,vacancy_id,status,updated_at FROM application_drafts "
         f"WHERE vacancy_id IN ({placeholders}) ORDER BY updated_at DESC",
         tuple(identifiers),
     )
@@ -199,5 +199,6 @@ def enrich_jobs(db: Database, rows: list[dict[str, Any]]) -> list[dict[str, Any]
         row["latest_submission_status"] = status
         row["latest_submission_at"] = submission["sent_at"] if submission else None
         row["latest_draft_status"] = draft["status"] if draft else None
+        row["latest_draft_id"] = draft["id"] if draft else None
         row["read_state"] = "seen" if row.get("seen_at") else "unseen"
     return rows
