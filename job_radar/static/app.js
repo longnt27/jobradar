@@ -751,7 +751,7 @@ async function loadJobs() {
   $('#jobs-next').disabled = jobsPage >= result.pages;
   const sourceLabel = (source) => !source ? 'Manual' : source.kind === 'career' ? 'Career page' : source.kind === 'linkedin' ? 'LinkedIn' : 'Facebook';
   const emptyCopy = jobsInboxMode === 'since_last_visit' ? 'Nothing new since your previous visit.'
-    : jobsInboxMode === 'unseen' ? 'No unseen jobs left. Humanity has briefly achieved inbox zero.'
+    : jobsInboxMode === 'unseen' ? 'No unseen jobs left.'
     : 'No jobs match these filters.';
   $('#job-list').innerHTML = jobs.length ? jobs.map((job) => {
     const signals = topMatchSignals(job);
