@@ -90,16 +90,58 @@ def _facebook_post_url(group_url: str, links: list[str]) -> str | None:
 
 
 def _facebook_posted_at(tooltip: str, timezone_id: str = "Asia/Ho_Chi_Minh") -> str | None:
-    """Parse the exact local time shown when hovering a Facebook post timestamp."""
+    """Read machine timestamps or controlled vi/en exact dates, returning UTC."""
     value = re.sub(r"\s+", " ", tooltip).strip()
-    for pattern in ("%A %d %B %Y at %H:%M", "%A, %B %d, %Y at %I:%M %p",
-                    "%A, %B %d, %Y at %H:%M", "%d %B %Y at %H:%M"):
-        try:
-            local = datetime.strptime(value, pattern).replace(tzinfo=ZoneInfo(timezone_id))
-            return local.astimezone(timezone.utc).isoformat(timespec="seconds")
-        except ValueError:
-            pass
-    return None
+    try:
+        if re.fullmatch(r"[0-9]{10}(?:[0-9]{3})?", value):
+            seconds = int(value) / (1000 if len(value) == 13 else 1)
+            return datetime.fromtimestamp(seconds, timezone.utc).isoformat(timespec="seconds")
+        if re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}(?::[0-9]{2}(?:\.[0-9]+)?)?(?:Z|[+-][0-9]{2}:[0-9]{2})?", value):
+            local = datetime.fromisoformat(value)
+        else:
+            value = value.casefold()
+            value = re.sub(r"^(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|thứ (?:hai|ba|tư|năm|sáu|bảy)|chủ nhật),? ", "", value)
+            months = "january february march april may june july august september october november december".split()
+            # Normalize month names explicitly; strptime's %B/%A depend on host locale.
+            for month, name in enumerate(months, 1):
+                value = re.sub(rf"\b{name}\b", f"tháng {month}", value)
+            value = re.sub(r"^(tháng [0-9]+) ([0-9]+),", r"\2 \1,", value)
+            match = re.fullmatch(r"([0-9]{1,2}) tháng ([0-9]{1,2})(?:,| năm)? ([0-9]{4}) (?:at|lúc) ([0-9]{1,2}):([0-9]{2})(?: (am|pm))?", value)
+            if not match:
+                return None
+            day, month, year, hour, minute = map(int, match.groups()[:5])
+            if period := match.group(6):
+                if not 1 <= hour <= 12:
+                    return None
+                hour = hour % 12 + (12 if period == "pm" else 0)
+            local = datetime(year, month, day, hour, minute)
+        if local.tzinfo is None:
+            local = local.replace(tzinfo=ZoneInfo(timezone_id))
+        return local.astimezone(timezone.utc).isoformat(timespec="seconds")
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
+async def _facebook_timestamp_date(timestamp, page: Page, timezone_id: str) -> str | None:
+    """Prefer metadata on the timestamp itself, never dates from other cards."""
+    try:
+        values = await timestamp.evaluate("""link => [link,
+          ...link.querySelectorAll('[datetime], [data-utime]')]
+          .flatMap(node => [node.getAttribute('data-utime'), node.getAttribute('datetime')])
+          .filter(Boolean)""")
+        for value in values:
+            if parsed := _facebook_posted_at(value, timezone_id):
+                return parsed
+    except Exception:
+        pass  # Metadata may be absent or the timestamp may have been unmounted.
+    try:
+        await page.mouse.move(0, 0)
+        await timestamp.hover(timeout=3500)
+        tooltip = page.locator('[role="tooltip"]').last
+        await tooltip.wait_for(state="visible", timeout=2500)
+        return _facebook_posted_at(await tooltip.inner_text(), timezone_id)
+    except Exception:
+        return None  # Keep the post; an unreadable date remains unknown.
 
 
 async def _facebook_detail_matches(page: Page, text: str) -> bool:
@@ -346,14 +388,7 @@ async def collect_facebook(context: BrowserContext, source: dict) -> list[Observ
                       return null;
                     }""")
                     if await timestamp.evaluate("link => !!link"):
-                        try:
-                            await page.mouse.move(0, 0)
-                            await timestamp.hover(timeout=3500)
-                            tooltip = page.locator('[role="tooltip"]').last
-                            await tooltip.wait_for(state="visible", timeout=2500)
-                            published_at = _facebook_posted_at(await tooltip.inner_text(), timezone_id)
-                        except Exception:
-                            pass  # Keep the post; an unreadable date remains unknown.
+                        published_at = await _facebook_timestamp_date(timestamp, page, timezone_id)
                         async with context.expect_page(timeout=7000) as opened:
                             await timestamp.click(modifiers=["Meta"], timeout=5000)
                         detail = await opened.value
