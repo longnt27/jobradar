@@ -1149,6 +1149,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 outcome = result.get("outcome", {})
                 next_status = ("sent" if result["status"] in ("sent_confirmed", "submitted_confirmed")
                                else "submission_uncertain" if outcome.get("key") == "submission_uncertain"
+                               else "awaiting_review" if outcome.get("key") == "send_failed"
                                else "needs_review")
                 auto_apply_manager._set_status(
                     attempt["vacancy_id"], next_status,
