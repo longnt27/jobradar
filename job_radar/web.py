@@ -261,23 +261,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             counts["active_sources"] = conn.execute("SELECT COUNT(*) FROM sources WHERE enabled=1").fetchone()[0]
             counts["career_sources_enabled"] = conn.execute("SELECT COUNT(*) FROM sources WHERE enabled=1 AND kind='career'").fetchone()[0]
             threshold = normalize_search_intent(db.get_setting("search_intent", {}))["strong_match_threshold"]
-            counts["high_fit_new"] = conn.execute("SELECT COUNT(*) FROM vacancies WHERE state='new' AND analysis_status='done' AND score>=?", (threshold,)).fetchone()[0]
             counts["recent_jobs"] = conn.execute("SELECT COUNT(*) FROM vacancies WHERE julianday(first_seen_at)>=julianday('now','-1 day')").fetchone()[0]
             counts["drafts_needing_review"] = conn.execute("SELECT COUNT(*) FROM auto_application_attempts WHERE status IN ('awaiting_review','needs_review')").fetchone()[0]
             counts["analysis_failures"] = conn.execute("SELECT COUNT(*) FROM vacancies WHERE analysis_status='failed'").fetchone()[0]
         recent = db.all("SELECT scan_runs.*, sources.name AS source_name FROM scan_runs JOIN sources ON sources.id=scan_runs.source_id ORDER BY started_at DESC LIMIT 10")
-        attention = {
-            "jobs": db.all("SELECT id,title,company,score,score_detail FROM vacancies WHERE state='new' AND analysis_status='done' AND score>=? ORDER BY score DESC,first_seen_at DESC LIMIT 4", (threshold,)),
-            "drafts": db.all("SELECT a.draft_id AS id,v.title,v.company,a.status FROM auto_application_attempts a JOIN vacancies v ON v.id=a.vacancy_id WHERE a.status IN ('awaiting_review','needs_review') AND a.draft_id IS NOT NULL ORDER BY a.updated_at DESC LIMIT 4"),
-            "failures": db.all("SELECT id,title,company,analysis_error AS detail FROM vacancies WHERE analysis_status='failed' ORDER BY updated_at DESC LIMIT 4"),
-        }
         preferences = db.get_setting("search_intent", {})
-        for item in attention["jobs"]:
+        strong_jobs = []
+        for item in db.all("SELECT id,title,company,score,score_detail FROM vacancies WHERE state='new' AND analysis_status='done' AND score>=? ORDER BY score DESC,first_seen_at DESC", (threshold,)):
             try:
                 detail = json.loads(item.pop("score_detail") or "{}")
             except (TypeError, ValueError):
                 detail = {}
             item.update(fit_summary(item.get("score"), detail, preferences))
+            if item["fit_class"] == "strong":
+                strong_jobs.append(item)
+        counts["high_fit_new"] = len(strong_jobs)
+        attention = {
+            "jobs": strong_jobs[:4],
+            "drafts": db.all("SELECT a.draft_id AS id,v.title,v.company,a.status FROM auto_application_attempts a JOIN vacancies v ON v.id=a.vacancy_id WHERE a.status IN ('awaiting_review','needs_review') AND a.draft_id IS NOT NULL ORDER BY a.updated_at DESC LIMIT 4"),
+            "failures": db.all("SELECT id,title,company,analysis_error AS detail FROM vacancies WHERE analysis_status='failed' ORDER BY updated_at DESC LIMIT 4"),
+        }
         return {"counts": counts, "attention": attention, "recent_runs": recent, "data_dir": str(settings.data_dir),
                 "strong_match_threshold": threshold}
 
