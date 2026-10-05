@@ -254,7 +254,7 @@ async function loadHome() {
   renderSocialAuth(setup.browser);
   const c = data.counts;
   $('#metrics').innerHTML = [
-    ['High-fit new jobs', c.high_fit_new], ['New in 24h', c.recent_jobs],
+    [`Strong matches (${data.strong_match_threshold}+)`, c.high_fit_new], ['New in 24h', c.recent_jobs],
     ['Drafts to review', c.drafts_needing_review], ['Analysis failures', c.analysis_failures],
   ].map(([label, value]) => `<div class="metric"><strong>${value}</strong><span>${label}</span></div>`).join('');
 
@@ -525,7 +525,8 @@ async function loadJobs() {
     sort: $('#job-sort').value,
   });
   [...query.entries()].forEach(([key,value]) => { if (value === '') query.delete(key); });
-  const [result, analysis] = await Promise.all([api(`/api/jobs/page?${query}`), loadJobAnalysis()]);
+  const [result, analysis, intent] = await Promise.all([api(`/api/jobs/page?${query}`), loadJobAnalysis(), api('/api/search-intent')]);
+  syncStrongThresholdUi(intent);
   if (jobsPage > result.pages) { jobsPage = result.pages; syncJobsHash(); return loadJobs(); }
   const jobs = result.items;
   $('#jobs-page-summary').textContent = result.total ? `Page ${result.page} of ${result.pages} · ${result.total} jobs` : 'No jobs';
@@ -534,12 +535,13 @@ async function loadJobs() {
   const sourceLabel = (source) => !source ? 'Manual' : source.kind === 'career' ? 'Career page' : source.kind === 'linkedin' ? 'LinkedIn' : 'Facebook';
   $('#job-list').innerHTML = jobs.length ? jobs.map((job) => {
     const signals = topMatchSignals(job);
-    const tags = [job.work_mode, job.seniority, sourceLabel(job.source)].filter(Boolean);
+    const tags = [fitClassLabel(job.fit_class), job.work_mode, job.seniority, sourceLabel(job.source)].filter(Boolean);
     const dateValue = job.published_at || job.first_seen_at;
     return `<div class="item job-card surface-action"><button type="button" class="card-select" data-job="${job.id}" aria-pressed="${job.id === activeJob ? 'true' : 'false'}" aria-label="Open ${escapeHtml(job.title)} at ${escapeHtml(job.company)}">
       ${scoreBadge(job)}<div class="item-title">${escapeHtml(job.title)}</div>
       <div class="job-card-company">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div>
-      <div class="job-card-tags">${tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join('')}</div>
+      <div class="job-card-tags"><span class="status-badge status-badge--${fitClassTone(job.fit_class)}">${escapeHtml(tags.shift() || '')}</span>${tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join('')}</div>
+      ${job.missing_evidence?.length ? `<div class="job-card-uncertainty">Missing: ${escapeHtml(job.missing_evidence.slice(0, 2).join(', '))}</div>` : ''}
       <div class="job-card-signals">${signals.map((signal) => `<span class="${signal.tone}" title="${escapeHtml(signal.reason || '')}">${signal.tone === 'good' ? '✓' : '!' } ${escapeHtml(signal.label)}</span>`).join('')}</div>
       <div class="job-card-footer"><span${exactTimeTitle(dateValue)}>${job.published_at ? 'Posted' : 'Found'} ${relativeWhen(dateValue)}</span><span class="status-badge status-badge--neutral">${escapeHtml(job.state)}</span></div>
     </button>${job.source ? `<a href="${escapeHtml(job.source.url)}" target="_blank" rel="noopener noreferrer" aria-label="Open original posting for ${escapeHtml(job.title)} at ${escapeHtml(job.company)}">Original posting ↗</a>` : ''}</div>`;
@@ -586,6 +588,12 @@ async function showJob(id, pin = false) {
     ${job.apply_url ? `<p><a href="${escapeHtml(job.apply_url)}" target="_blank" rel="noopener noreferrer">${job.apply_url.startsWith('mailto:') ? 'Application email ↗' : 'Application page ↗'}</a></p>` : ''}
     ${!job.apply_url ? '<p class="hint">No application form has been verified for this posting. Check the original source for its application instructions before sending.</p>' : ''}
     ${links ? `<p class="item-meta">${links}</p>` : ''}
+    <div class="match-summary-card surface-status">
+      <div><span class="status-badge status-badge--${fitClassTone(job.fit_class)}">${escapeHtml(fitClassLabel(job.fit_class))}</span><strong>${job.score == null ? 'Score pending' : `${job.score}/100`}</strong></div>
+      ${job.strongest_signal ? `<p><strong>Strongest signal:</strong> ${escapeHtml(job.strongest_signal.reason)}</p>` : ''}
+      ${job.main_gap ? `<p><strong>Main gap:</strong> ${escapeHtml(job.main_gap.reason)}</p>` : ''}
+      ${job.missing_evidence?.length ? `<p><strong>Missing evidence:</strong> ${escapeHtml(job.missing_evidence.join(', '))}</p>` : '<p class="hint">No major evidence gaps detected.</p>'}
+    </div>
     ${renderJobAnalysis(job, score)}
     <details class="detail-disclosure"><summary>Original description</summary><div class="description">${formatDescription(job.description)}</div></details>`;
   $('#job-detail').querySelector('[data-tab="settings"]').addEventListener('click', () => showTab('settings'));
@@ -804,9 +812,65 @@ function renderProviderAvailability(availability) {
     : '<p class="hint">All supported drafting providers are available.</p>';
 }
 
+function commaList(value) {
+  return String(value || '').split(',').map((item) => item.trim()).filter(Boolean);
+}
+
+function setMultiSelect(select, values) {
+  const selected = new Set(values || []);
+  [...select.options].forEach((option) => { option.selected = selected.has(option.value); });
+}
+
+function fitClassLabel(value) {
+  return ({strong:'Strong match', stretch:'Worth a stretch', uncertain:'Uncertain', outside:'Outside preferences'})[value] || 'Uncertain';
+}
+
+function fitClassTone(value) {
+  return value === 'strong' ? 'success' : value === 'stretch' ? 'warning' : value === 'outside' ? 'danger' : 'neutral';
+}
+
+function syncStrongThresholdUi(intent) {
+  const threshold = Number(intent?.strong_match_threshold ?? 80);
+  const score = $('#job-score');
+  if (score) {
+    let option = score.querySelector('[data-strong-threshold]');
+    if (!option) {
+      option = document.createElement('option');
+      option.dataset.strongThreshold = 'true';
+      score.insertBefore(option, score.options[1] || null);
+    }
+    option.value = String(threshold);
+    option.textContent = `Strong matches (${threshold}+)`;
+  }
+  const auto = $('#auto-apply-form')?.elements.threshold;
+  if (auto) auto.value = threshold;
+}
+
+function renderSearchIntentForm(intent) {
+  const form = $('#search-intent-form');
+  if (!form) return;
+  for (const name of ['role_families','preferred_locations','preferred_employers','excluded_employers','negative_keywords']) {
+    form.elements[name].value = (intent[name] || []).join(', ');
+  }
+  setMultiSelect(form.elements.seniority_levels, intent.seniority_levels);
+  setMultiSelect(form.elements.work_modes, intent.work_modes);
+  form.elements.strong_match_threshold.value = intent.strong_match_threshold;
+  form.elements.minimum_salary.value = intent.minimum_salary ?? '';
+  form.elements.salary_currency.value = intent.salary_currency || 'VND';
+  form.elements.salary_unknown_ok.checked = intent.salary_unknown_ok !== false;
+  const hard = intent.hard_constraints || {};
+  for (const key of ['role_family','seniority','location','work_mode','employer','minimum_salary']) {
+    form.elements[`hard_${key}`].checked = Boolean(hard[key]);
+  }
+  const active = [...(intent.role_families || []), ...(intent.preferred_locations || []), ...(intent.work_modes || [])].length;
+  setStepStatus('#search-intent-status', active ? `${active} preferences · strong at ${intent.strong_match_threshold}+` : `Flexible · strong at ${intent.strong_match_threshold}+`, active ? '' : 'muted');
+  syncStrongThresholdUi(intent);
+}
+
 async function loadSettings() {
-  const [profile, setup] = await Promise.all([api('/api/profile'), loadSetup()]);
+  const [profile, setup, intent] = await Promise.all([api('/api/profile'), loadSetup(), api('/api/search-intent')]);
   await loadMatchingModels();
+  renderSearchIntentForm(intent);
   const availability = {codex:setup.providers.codex, codex_local:setup.providers.codex && setup.providers.ollama,
     agy:setup.providers.agy, claude:setup.providers.claude};
   const providerForm = $('#provider-form');
@@ -1261,7 +1325,7 @@ $('#auto-apply-form').addEventListener('submit', async (event) => {
   const pendingButton = beginPending(event.submitter || event.target.querySelector('button[type="submit"]'), 'Saving…');
   const form = event.target;
   try {
-    const result = await api('/api/auto-apply', {method:'PUT', body:JSON.stringify({enabled:form.elements.enabled.checked, threshold:Number(form.elements.threshold.value)})});
+    const result = await api('/api/auto-apply', {method:'PUT', body:JSON.stringify({enabled:form.elements.enabled.checked})});
     delete form.dataset.initialized;
     await loadAutoApply();
     notice(result.enabled ? `Automatic drafts enabled for jobs scoring ${result.threshold} or higher. Every application waits for your approval.` : 'Automatic draft preparation paused.');
@@ -1765,8 +1829,8 @@ function applyJobControls() {
 }
 $('#job-search').addEventListener('click', applyJobControls);
 $('#job-query').addEventListener('keydown', (event) => { if (event.key === 'Enter') applyJobControls(); });
-for (const selector of ['#job-state','#job-score','#job-freshness','#job-work-mode','#job-source','#job-sort']) $(selector).addEventListener('change', applyJobControls);
-for (const selector of ['#job-location','#job-seniority']) $(selector).addEventListener('keydown', (event) => { if (event.key === 'Enter') applyJobControls(); });
+for (const selector of ['#job-state','#job-score','#job-freshness','#job-work-mode','#job-source','#job-seniority','#job-sort']) $(selector).addEventListener('change', applyJobControls);
+$('#job-location').addEventListener('keydown', (event) => { if (event.key === 'Enter') applyJobControls(); });
 $('#jobs-clear-filters').addEventListener('click', () => {
   for (const [key, selector] of Object.entries(JOB_FILTERS)) $(selector).value = key === 'sort' ? 'best' : '';
   applyJobControls();
@@ -1921,6 +1985,36 @@ $('#profile-form').addEventListener('submit', async (event) => {
     await loadPersonalDetails();
     notice('Personal details saved');
   } catch(error) { notice(error.message, true); }
+  finally { endPending(pendingButton); }
+});
+
+$('#search-intent-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.target;
+  const pendingButton = beginPending(event.submitter || form.querySelector('button[type="submit"]'), 'Saving…');
+  const selected = (name) => [...form.elements[name].selectedOptions].map((option) => option.value);
+  const payload = {
+    role_families: commaList(form.elements.role_families.value),
+    seniority_levels: selected('seniority_levels'),
+    preferred_locations: commaList(form.elements.preferred_locations.value),
+    work_modes: selected('work_modes'),
+    preferred_employers: commaList(form.elements.preferred_employers.value),
+    excluded_employers: commaList(form.elements.excluded_employers.value),
+    negative_keywords: commaList(form.elements.negative_keywords.value),
+    minimum_salary: form.elements.minimum_salary.value ? Number(form.elements.minimum_salary.value) : null,
+    salary_currency: form.elements.salary_currency.value.trim() || 'VND',
+    salary_unknown_ok: form.elements.salary_unknown_ok.checked,
+    strong_match_threshold: Number(form.elements.strong_match_threshold.value),
+    hard_constraints: Object.fromEntries(['role_family','seniority','location','work_mode','employer','minimum_salary']
+      .map((key) => [key, form.elements[`hard_${key}`].checked])),
+  };
+  try {
+    const saved = await api('/api/search-intent', {method:'PUT', body:JSON.stringify(payload)});
+    renderSearchIntentForm(saved);
+    delete $('#auto-apply-form').dataset.initialized;
+    $('#search-intent-message').textContent = 'Saved. Existing jobs are being rescored against these preferences.';
+    notice('Search preferences saved');
+  } catch(error) { $('#search-intent-message').textContent = error.message; notice(error.message, true); }
   finally { endPending(pendingButton); }
 });
 
