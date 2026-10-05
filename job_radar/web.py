@@ -110,7 +110,7 @@ class MatchingModelInput(BaseModel):
 
 class AutoApplyInput(BaseModel):
     enabled: bool = False
-    threshold: int = Field(default=80, ge=0, le=100)
+    threshold: int | None = Field(default=None, ge=0, le=100)
 
 
 class SearchIntentInput(BaseModel):
