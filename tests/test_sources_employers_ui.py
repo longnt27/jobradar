@@ -32,6 +32,9 @@ def test_sources_and_employers_management_ui(tmp_path: Path) -> None:
                 page.set_default_timeout(4000)
                 page.goto(f"http://127.0.0.1:{port}/#sources")
                 page.locator("#source-list .source-card").first.wait_for()
+                first_source = page.locator("#source-list .source-card").first
+                source_name = first_source.locator(".item-title").inner_text().split("\n")[0].strip()
+                assert first_source.get_by_role("link", name=f"Open source {source_name}").is_visible()
 
                 assert page.locator("#source-status").is_visible()
                 assert page.locator("#source-enabled").is_visible()
@@ -55,9 +58,11 @@ def test_sources_and_employers_management_ui(tmp_path: Path) -> None:
                 page.locator("#employer-query").press("Enter")
                 employer = page.locator("#employer-list .employer", has_text="GSM / Xanh SM")
                 employer.wait_for()
+                career_button = employer.locator("[data-employer-source]")
+                assert "GSM / Xanh SM" in career_button.get_attribute("aria-label")
 
                 page.evaluate("window.prompt = () => { throw new Error('native prompt should not be used'); }")
-                employer.locator("[data-employer-source]").click()
+                career_button.click()
                 assert employer.locator(".employer-career-form").is_visible()
                 employer.locator("[data-employer-cancel]").click()
                 assert employer.locator(".employer-career-form").is_hidden()
