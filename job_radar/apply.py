@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import smtplib
 from email.message import EmailMessage
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -167,6 +168,11 @@ def submission_outcome(status: str, destination: dict | None = None) -> dict:
         "needs_user_attention": {
             "key": "needs_help", "label": "Needs your help", "tone": "warning", "confirmed": False,
             "retry_blocked": False, "guidance": "The reviewed application could not be submitted safely without your input.",
+        },
+        "failed": {
+            "key": "send_failed", "label": "Send failed", "tone": "danger", "confirmed": False,
+            "retry_blocked": False,
+            "guidance": "The external service rejected the send before accepting it. Fix the problem, then retry the reviewed application.",
         },
     }
     outcome = dict(outcomes.get(status, {
@@ -470,6 +476,14 @@ async def send_application(db: Database, settings: Settings, draft_id: str, expe
             db.execute("UPDATE application_drafts SET status='submission_uncertain',updated_at=? WHERE id=?", (now(), draft_id))
         return {"id": identifier, "status": status, "receipt": receipt,
                 "outcome": submission_outcome(status, draft["destination"])}
+    except (smtplib.SMTPConnectError, smtplib.SMTPAuthenticationError, smtplib.SMTPRecipientsRefused,
+            smtplib.SMTPSenderRefused, smtplib.SMTPDataError, smtplib.SMTPHeloError,
+            smtplib.SMTPNotSupportedError) as error:
+        # These SMTP failures include a definite rejection before the server accepted the message.
+        db.execute("UPDATE submissions SET status='failed',error=?,updated_at=? WHERE id=?",
+                   (str(error)[:1000], now(), identifier))
+        return {"id": identifier, "status": "failed", "error": str(error),
+                "outcome": submission_outcome("failed", draft["destination"])}
     except Exception as error:
         # The transport or browser may have completed the send before failing. Block another send.
         db.execute("UPDATE submissions SET status='submitted_unconfirmed',error=?,updated_at=? WHERE id=?", (str(error)[:1000], now(), identifier))
