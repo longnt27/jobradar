@@ -328,7 +328,6 @@ async def send_application(db: Database, settings: Settings, draft_id: str, expe
         db.execute("UPDATE submissions SET status=?,receipt=?,updated_at=? WHERE id=?", (status, receipt, now(), identifier))
         if status in ("sent_confirmed", "submitted_confirmed"):
             db.execute("UPDATE application_drafts SET status='sent',updated_at=? WHERE id=?", (now(), draft_id))
-            db.execute("UPDATE vacancies SET state='applied',updated_at=? WHERE id=?", (now(), draft["vacancy_id"]))
         return {"id": identifier, "status": status, "receipt": receipt}
     except Exception as error:
         # The transport or browser may have completed the send before failing. Block another send.
