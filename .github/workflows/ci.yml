@@ -40,3 +40,12 @@ jobs:
 
       - name: Run tests
         run: uv run pytest -q
+
+      - name: Upload UI regression artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-regression-${{ github.run_attempt }}
+          path: artifacts/ui-regression/
+          if-no-files-found: ignore
+          retention-days: 14
