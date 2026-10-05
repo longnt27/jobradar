@@ -112,7 +112,7 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 assert page.url.endswith("#personal")
                 assert app.state.db.get_setting("profile", {})["name"] == "Alex Example"
                 page.locator("#personal [data-tab='profile']").click()
-                page.locator("#resume-status.pill:not(.warning)").wait_for()
+                page.locator("#resume-status.status-badge--success").wait_for()
                 page.get_by_role("button", name="Settings", exact=True).click()
                 page.locator("#smtp-panel summary").click()
                 page.locator("#smtp-panel[open]").wait_for()
