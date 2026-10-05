@@ -16,6 +16,7 @@ let projectCards = [];
 let discoveredRepos = [];
 let selectedProjectId = null;
 let projectProviderReady = false;
+let editingPositionId = null;
 
 function formatDescription(value) {
   const blocks = String(value ?? '').replace(/\r\n/g, '\n').split(/\n{2,}/).map((part) => part.trim()).filter(Boolean);
@@ -681,24 +682,69 @@ $('#matching-retry-all').addEventListener('click', async (event) => {
   } catch (error) { button.disabled = false; notice(error.message, true); }
 });
 
+async function movePosition(positionId, delta) {
+  const profile = await api('/api/profile');
+  const positions = profile.experience || [];
+  const index = positions.findIndex((item) => item.id === positionId);
+  const next = index + delta;
+  if (index < 0 || next < 0 || next >= positions.length) return;
+  [positions[index], positions[next]] = [positions[next], positions[index]];
+  profile.experience = positions;
+  await api('/api/profile', {method:'PUT', body:JSON.stringify(profile)});
+  await loadPositions();
+  notice('Work history order updated');
+}
+
 async function loadPositions() {
   const positions = await api('/api/positions');
-  $('#position-list').innerHTML = positions.length ? positions.map((item) => `<div class="item surface-editable" data-position="${item.id}">
-    <div class="form-grid"><label>Company<input data-field="company" value="${escapeHtml(item.company)}"></label><label>Role<input data-field="role" value="${escapeHtml(item.role)}"></label><label class="full">Dates<input data-field="dates" value="${escapeHtml(item.dates)}"></label><label class="full">Work and outcomes<textarea data-field="bullets" rows="4">${escapeHtml((item.bullets || []).join('\n'))}</textarea></label></div>
-    <div class="actions"><button data-save-position="${item.id}">Save position</button><button data-delete-position="${item.id}" class="danger">Remove</button></div></div>`).join('') : '<div class="empty">No positions yet. Add your previous jobs above.</div>';
+  if (!positions.some((item) => item.id === editingPositionId)) editingPositionId = null;
+  $('#position-list').innerHTML = positions.length ? positions.map((item, index) => {
+    const editing = item.id === editingPositionId;
+    const preview = (item.bullets || []).slice(0, 2);
+    return \`<div class="item position-card \${editing ? 'is-editing' : ''}" data-position="\${item.id}">
+      <div class="position-card-head"><div><strong>\${escapeHtml(item.role)}</strong><span>\${escapeHtml(item.company)} · \${escapeHtml(item.dates)}</span></div>
+        <div class="position-order" aria-label="Reorder \${escapeHtml(item.role)}"><button type="button" class="text-button" data-move-position="-1" \${index === 0 ? 'disabled' : ''} aria-label="Move up">↑</button><button type="button" class="text-button" data-move-position="1" \${index === positions.length - 1 ? 'disabled' : ''} aria-label="Move down">↓</button></div></div>
+      \${preview.length ? \`<ul class="position-preview">\${preview.map((bullet) => \`<li>\${escapeHtml(bullet)}</li>\`).join('')}</ul>\` : '<p class="hint">No outcome bullets yet.</p>'}
+      \${editing ? \`<div class="position-editor form-grid"><label>Company<input data-field="company" value="\${escapeHtml(item.company)}"></label><label>Role<input data-field="role" value="\${escapeHtml(item.role)}"></label><label class="full">Dates<input data-field="dates" value="\${escapeHtml(item.dates)}"></label><label class="full">Work and outcomes<textarea data-field="bullets" rows="5">\${escapeHtml((item.bullets || []).join('\\n'))}</textarea></label></div>\` : ''}
+      <div class="actions">\${editing ? \`<button data-save-position="\${item.id}" class="primary">Save changes</button><button data-cancel-position="\${item.id}" class="secondary">Cancel</button>\` : \`<button data-edit-position="\${item.id}" class="secondary">Edit</button>\`}<button data-delete-position="\${item.id}" class="secondary danger">Remove</button></div>
+    </div>\`;
+  }).join('') : '<div class="empty">No positions yet. Add your previous jobs above.</div>';
+
+  document.querySelectorAll('[data-edit-position]').forEach((button) => button.addEventListener('click', async () => {
+    editingPositionId = button.dataset.editPosition;
+    await loadPositions();
+    document.querySelector(\`[data-position="\${editingPositionId}"] input\`)?.focus();
+  }));
+  document.querySelectorAll('[data-cancel-position]').forEach((button) => button.addEventListener('click', async () => {
+    editingPositionId = null;
+    await loadPositions();
+  }));
   document.querySelectorAll('[data-save-position]').forEach((button) => button.addEventListener('click', async () => {
     const row = button.closest('[data-position]');
-    const field = (name) => row.querySelector(`[data-field="${name}"]`).value.trim();
-    try { await api(`/api/positions/${button.dataset.savePosition}`, {method:'PUT', body:JSON.stringify({company:field('company'),role:field('role'),dates:field('dates'),bullets:field('bullets').split('\n').map((x) => x.trim()).filter(Boolean)})}); notice('Position saved'); await loadPositions(); }
-    catch(error) { notice(error.message, true); }
+    const field = (name) => row.querySelector(\`[data-field="\${name}"]\`).value.trim();
+    try {
+      await api(\`/api/positions/\${button.dataset.savePosition}\`, {method:'PUT', body:JSON.stringify({company:field('company'),role:field('role'),dates:field('dates'),bullets:field('bullets').split('\\n').map((x) => x.trim()).filter(Boolean)})});
+      editingPositionId = null;
+      notice('Position saved');
+      await loadPositions();
+    } catch(error) { notice(error.message, true); }
+  }));
+  document.querySelectorAll('[data-move-position]').forEach((button) => button.addEventListener('click', () => {
+    movePosition(button.closest('[data-position]').dataset.position, Number(button.dataset.movePosition)).catch((error) => notice(error.message, true));
   }));
   document.querySelectorAll('[data-delete-position]').forEach((button) => button.addEventListener('click', async () => {
-    try { await api(`/api/positions/${button.dataset.deletePosition}`, {method:'DELETE'}); await loadPositions(); notice('Position removed'); }
-    catch(error) { notice(error.message, true); }
+    const row = positions.find((item) => item.id === button.dataset.deletePosition);
+    if (!window.confirm(\`Remove \${row?.role || 'this position'} at \${row?.company || 'this company'}? This cannot be undone.\`)) return;
+    try {
+      await api(\`/api/positions/\${button.dataset.deletePosition}\`, {method:'DELETE'});
+      if (editingPositionId === button.dataset.deletePosition) editingPositionId = null;
+      await loadPositions();
+      notice('Position removed');
+    } catch(error) { notice(error.message, true); }
   }));
 }
 
-async function showTab(name, historyMode = 'push') {
+async function showTab(async function showTab(name, historyMode = 'push') {
   const requested = name.split('/');
   const selectedDraft = requested[0] === 'applications' ? requested[1] : null;
   name = requested[0];
