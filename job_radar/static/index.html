@@ -60,19 +60,35 @@
       </section>
 
       <section id="jobs" class="tab">
-        <div class="section-head"><p>Open a posting, check its source, then prepare an application.</p></div>
+        <div class="section-head jobs-page-head"><div><h2>Job inbox</h2><p>Start with what changed, triage quickly, then inspect the jobs worth your time.</p></div></div>
         <div class="panel job-analysis-panel" aria-label="Job match status">
           <div class="job-analysis-heading"><div><strong>Job match status</strong><p id="job-analysis-model" class="hint">Checking model…</p></div><button id="job-analysis-settings" class="text-button" type="button">Change model</button></div>
           <div id="matching-overview" class="matching-overview" role="status" aria-live="polite"></div>
           <section id="matching-failures" class="matching-failures" aria-label="Failed job analyses" hidden>
-            <div class="matching-failures-head"><div><strong id="matching-failures-title">Jobs needing attention</strong><p>These jobs have no completed local score yet.</p></div><button id="matching-retry-all" class="secondary" type="button">Retry all</button></div>
+            <div class="matching-failures-head"><div><strong id="matching-failures-title">Jobs needing attention</strong><p>These jobs have no completed match review yet.</p></div><button id="matching-retry-all" class="secondary" type="button">Retry all</button></div>
             <div id="matching-failure-list" class="matching-failure-list"></div>
           </section>
         </div>
+
+        <div class="jobs-inbox-strip panel">
+          <div class="jobs-inbox-tabs" role="tablist" aria-label="Job inbox view">
+            <button type="button" role="tab" data-job-inbox="since_last_visit" aria-selected="true">Since last visit <span id="jobs-since-count" class="pill muted"></span></button>
+            <button type="button" role="tab" data-job-inbox="unseen" aria-selected="false">Unseen <span id="jobs-unseen-count" class="pill muted"></span></button>
+            <button type="button" role="tab" data-job-inbox="all" aria-selected="false">All jobs</button>
+          </div>
+          <div class="jobs-saved-views">
+            <label>Saved view<select id="job-view-select" aria-label="Saved job view"><option value="">None</option></select></label>
+            <button id="job-save-view" type="button" class="secondary">Save current view</button>
+            <button id="job-delete-view" type="button" class="text-button danger" disabled>Delete view</button>
+          </div>
+        </div>
+
         <div class="jobs-controls panel">
           <div class="jobs-search-row"><input id="job-query" type="search" placeholder="Search jobs, skills, or companies" aria-label="Search jobs"><button id="job-search" type="button">Search</button><button id="jobs-clear-filters" class="text-button" type="button">Clear filters</button></div>
           <div class="job-filter-grid">
-            <label>State<select id="job-state"><option value="">All states</option><option value="new">New</option><option value="interesting">Interesting</option><option value="prepare">Prepare</option><option value="ready">Ready</option><option value="applied">Applied</option><option value="interview">Interview</option><option value="rejected">Rejected</option><option value="offer">Offer</option><option value="ignored">Ignored</option></select></label>
+            <label>Decision<select id="job-decision"><option value="">Any decision</option><option value="undecided">Undecided</option><option value="shortlisted">Shortlisted</option><option value="later">Later</option><option value="ignored">Ignored</option></select></label>
+            <label>Application<select id="job-application"><option value="">Any progress</option><option value="not_started">Not started</option><option value="draft_ready">Draft ready</option><option value="applied">Applied</option><option value="attention">Needs attention</option></select></label>
+            <label>Recruiting outcome<select id="job-outcome"><option value="">Any outcome</option><option value="none">No outcome yet</option><option value="interview">Interview</option><option value="offer">Offer</option><option value="rejected">Rejected</option></select></label>
             <label>Minimum score<select id="job-score"><option value="">Any score</option><option value="80">80+</option><option value="60">60+</option><option value="40">40+</option></select></label>
             <label>Freshness<select id="job-freshness"><option value="">Any time</option><option value="1">Past 24 hours</option><option value="3">Past 3 days</option><option value="7">Past week</option><option value="30">Past month</option></select></label>
             <label>Work mode<select id="job-work-mode"><option value="">Any mode</option><option value="remote">Remote</option><option value="hybrid">Hybrid</option><option value="onsite">On-site</option></select></label>
@@ -82,8 +98,35 @@
             <label>Sort<select id="job-sort"><option value="best">Best match</option><option value="posted">Newest posted</option><option value="found">Recently found</option><option value="company">Company</option></select></label>
           </div>
         </div>
-        <div class="two-col jobs-layout"><div class="job-list-pane"><div id="job-list" class="stack"></div><div class="job-pagination"><button id="jobs-prev" type="button" class="secondary">Previous</button><span id="jobs-page-summary" aria-live="polite"></span><button id="jobs-next" type="button" class="secondary">Next</button></div></div><div id="job-detail" class="panel detail" role="region" aria-label="Job details" tabindex="-1"><div class="empty">Select a job to see details.</div></div>
+        <p id="jobs-inbox-summary" class="hint jobs-inbox-summary" role="status" aria-live="polite"></p>
+        <div class="two-col jobs-layout"><div class="job-list-pane"><div id="job-list" class="stack"></div><div class="job-pagination"><button id="jobs-prev" type="button" class="secondary">Previous</button><span id="jobs-page-summary" aria-live="polite"></span><button id="jobs-next" type="button" class="secondary">Next</button></div></div><div id="job-detail" class="panel detail" role="region" aria-label="Job details" tabindex="-1"><div class="empty">Select a job to see details.</div></div></div>
         <details class="panel"><summary>Add a job from a description</summary><form id="job-import" class="form-grid"><label>Company<input name="company" required></label><label>Title<input name="title" required></label><label>Location<input name="location"></label><label>Application URL<input name="apply_url" type="url"></label><label class="full">Description<textarea name="description" required rows="6"></textarea></label><button class="primary" type="submit">Add job</button></form></details>
+
+        <dialog id="job-ignore-reason-dialog" class="confirm-dialog" aria-labelledby="job-ignore-title">
+          <form method="dialog">
+            <h3 id="job-ignore-title">Ignored. Want to add a reason?</h3>
+            <p>Optional. This helps future ranking learn what “not for me” actually meant.</p>
+            <div class="ignore-reason-grid">
+              <button type="button" value="role" data-ignore-reason="Role mismatch">Role</button>
+              <button type="button" value="location" data-ignore-reason="Location or work mode">Location</button>
+              <button type="button" value="salary" data-ignore-reason="Salary">Salary</button>
+              <button type="button" value="company" data-ignore-reason="Company">Company</button>
+              <button type="button" value="duplicate" data-ignore-reason="Duplicate or already reviewed">Duplicate</button>
+              <button type="button" value="timing" data-ignore-reason="Timing">Timing</button>
+            </div>
+            <div class="actions"><button type="submit" value="close" class="secondary">No reason</button></div>
+          </form>
+        </dialog>
+
+        <dialog id="job-view-dialog" class="confirm-dialog" aria-labelledby="job-view-title">
+          <form id="job-view-form" method="dialog">
+            <h3 id="job-view-title">Save this Jobs view</h3>
+            <p>Reuse the current filters and sort without rebuilding them every morning like some kind of spreadsheet monk.</p>
+            <label>View name<input name="name" maxlength="60" required placeholder="Fresh remote AI roles"></label>
+            <label class="checkbox-label"><input name="set_default" type="checkbox"><span>Use this as my default Jobs view</span></label>
+            <div class="actions"><button type="button" id="job-view-cancel" class="secondary">Cancel</button><button type="submit" class="primary">Save view</button></div>
+          </form>
+        </dialog>
       </section>
 
       <section id="applications" class="tab">
