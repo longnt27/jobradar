@@ -3,7 +3,8 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from job_radar.search_intent import fit_summary, normalize_search_intent, seniority_key
+from job_radar.local_analysis import MatchJudgment, finalize_match
+from job_radar.search_intent import fit_summary, normalize_search_intent, salary_floor, seniority_key
 from job_radar.settings import Settings
 from job_radar.web import create_app
 
@@ -60,6 +61,30 @@ def test_fit_summary_distinguishes_strong_stretch_uncertain_and_outside() -> Non
 
     outside = fit_summary(0, {**complete, "hard_exclusions": ["Location is outside limits"]}, prefs)
     assert outside["fit_class"] == "outside"
+
+
+def test_salary_discovery_constraint_is_separate_and_only_hard_when_configured() -> None:
+    assert salary_floor("Salary: 20–30 million VND") == 20_000_000
+    criteria = {name: {"score": 7, "reason": "Reasonable fit"}
+                for name in MatchJudgment.model_fields if name != "summary"}
+    job = {"company": "Example", "title": "AI Engineer", "description": "Salary: 20–30 million VND"}
+    facts = {"years_required": None, "location": "", "work_mode": "", "salary_range": "20–30 million VND"}
+
+    score, _, exclusions = finalize_match(job, facts, {}, criteria, {
+        "minimum_salary": 30_000_000,
+        "salary_currency": "VND",
+        "hard_constraints": {"minimum_salary": False},
+    })
+    assert score > 0
+    assert exclusions == []
+
+    score, _, exclusions = finalize_match(job, facts, {}, criteria, {
+        "minimum_salary": 30_000_000,
+        "salary_currency": "VND",
+        "hard_constraints": {"minimum_salary": True},
+    })
+    assert score == 0
+    assert any("Salary" in reason for reason in exclusions)
 
 
 def test_search_intent_api_is_separate_from_application_salary_and_migrates_threshold(tmp_path: Path) -> None:
@@ -124,5 +149,6 @@ def test_search_intent_ui_contract_is_unified() -> None:
     assert '<option value="lead_plus">Lead+</option>' in html
     assert 'name="threshold" type="number" min="0" max="100" value="80" readonly' in html
     assert "fitClassLabel" in js
+    assert "Evidence confidence:" in js
     assert "Missing evidence:" in js
     assert "strong_match_threshold" in js
