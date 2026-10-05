@@ -83,9 +83,10 @@ def test_job_state_can_return_to_new_and_destructive_change_can_be_cancelled(tmp
                 assert client.get(f"/api/jobs/{job['id']}").json()["state"] == "new"
                 page.evaluate("window.confirm = () => true")
                 page.locator("#job-state-control").select_option("interesting")
-                page.wait_for_function("document.querySelector('#job-state-control').value === 'interesting'")
+                page.wait_for_function("document.querySelector('#notice').textContent.includes('Job status changed to interesting.')")
+                assert client.get(f"/api/jobs/{job['id']}").json()["state"] == "interesting"
                 page.locator("#job-state-control").select_option("new")
-                page.wait_for_function("document.querySelector('#job-state-control').value === 'new'")
+                page.wait_for_function("document.querySelector('#notice').textContent.includes('Job status changed to new.')")
                 assert client.get(f"/api/jobs/{job['id']}").json()["state"] == "new"
             finally:
                 browser.close()
