@@ -506,7 +506,7 @@ function renderProviderAvailability(availability) {
   };
   const missing = Object.entries(availability).filter(([, ready]) => !ready);
   $('#provider-availability').innerHTML = missing.length
-    ? \`<p class="hint">Unavailable options</p><ul>\${missing.map(([key]) => \`<li><strong>\${escapeHtml(providerLabel(key))}</strong> · \${escapeHtml(reasons[key])}</li>\`).join('')}</ul>\`
+    ? `<p class="hint">Unavailable options</p><ul>${missing.map(([key]) => `<li><strong>${escapeHtml(providerLabel(key))}</strong> · ${escapeHtml(reasons[key])}</li>`).join('')}</ul>`
     : '<p class="hint">All supported drafting providers are available.</p>';
 }
 
@@ -521,7 +521,7 @@ async function loadSettings() {
   renderProviderAvailability(availability);
   const modelCount = Number(Boolean(profile.drafting_provider)) + Number(Boolean(setup.matching.model));
   setStepStatus('#provider-status', modelCount === 2 ? 'Both configured' : modelCount ? '1 of 2 configured' : 'Choose models', modelCount === 2 ? '' : 'warning');
-  setStepStatus('#drafting-status', profile.drafting_provider ? \`Using \${providerLabel(profile.drafting_provider)}\` : 'Choose a provider', profile.drafting_provider ? '' : 'warning');
+  setStepStatus('#drafting-status', profile.drafting_provider ? `Using ${providerLabel(profile.drafting_provider)}` : 'Choose a provider', profile.drafting_provider ? '' : 'warning');
   const hasResume = Boolean(profile.name && profile.email);
   const needsSocial = Boolean(profile.drafting_provider && hasResume && (setup.browser.sites.length || setup.browser.connected_sites.length < 2));
   closeSetupPanels(modelCount < 2 ? 'provider-panel' : needsSocial ? 'social-sign-in-panel' : null);
@@ -543,12 +543,12 @@ async function loadProfile() {
   $('#pdf-resume-form button[type="submit"]').disabled = !profile.drafting_provider || !availability[profile.drafting_provider];
   const projectCount = cards.filter((card) => card.kind === 'project' && card.approved).length;
   $('#profile-summary').textContent = hasResume
-    ? \`\${profile.name} · \${profile.email}. \${(profile.experience || []).length} previous position\${profile.experience?.length === 1 ? '' : 's'} and \${projectCount} selected project\${projectCount === 1 ? '' : 's'}.\`
+    ? `${profile.name} · ${profile.email}. ${(profile.experience || []).length} previous position${profile.experience?.length === 1 ? '' : 's'} and ${projectCount} selected project${projectCount === 1 ? '' : 's'}.`
     : 'Import a resume PDF or enter your details manually. You can review and edit every field.';
   $('#profile-summary-status').textContent = hasResume ? 'Ready to review' : 'Needs details';
   $('#profile-summary-status').className = statusClass(hasResume ? 'success' : 'warning');
-  $('#position-count').textContent = \`\${(profile.experience || []).length} previous position\${profile.experience?.length === 1 ? '' : 's'}\`;
-  $('#project-count').textContent = \`\${projectCount} selected project\${projectCount === 1 ? '' : 's'}\`;
+  $('#position-count').textContent = `${(profile.experience || []).length} previous position${profile.experience?.length === 1 ? '' : 's'}`;
+  $('#project-count').textContent = `${projectCount} selected project${projectCount === 1 ? '' : 's'}`;
 }
 
 function removeRepeatableRow(button) {
@@ -556,20 +556,20 @@ function removeRepeatableRow(button) {
 }
 
 function skillRow(value = '') {
-  return \`<div class="repeatable-row repeatable-row--simple"><input data-skill value="\${escapeHtml(value)}" placeholder="Python"><button type="button" class="text-button danger" data-remove-row aria-label="Remove skill">Remove</button></div>\`;
+  return `<div class="repeatable-row repeatable-row--simple"><input data-skill value="${escapeHtml(value)}" placeholder="Python"><button type="button" class="text-button danger" data-remove-row aria-label="Remove skill">Remove</button></div>`;
 }
 
 function groupRow(label = '', value = '') {
-  return \`<div class="repeatable-row repeatable-row--group"><input data-skill-group-label value="\${escapeHtml(label)}" placeholder="Category, e.g. Programming"><input data-skill-group-values value="\${escapeHtml(Array.isArray(value) ? value.join(', ') : value)}" placeholder="Python, C++"><button type="button" class="text-button danger" data-remove-row aria-label="Remove skill category">Remove</button></div>\`;
+  return `<div class="repeatable-row repeatable-row--group"><input data-skill-group-label value="${escapeHtml(label)}" placeholder="Category, e.g. Programming"><input data-skill-group-values value="${escapeHtml(Array.isArray(value) ? value.join(', ') : value)}" placeholder="Python, C++"><button type="button" class="text-button danger" data-remove-row aria-label="Remove skill category">Remove</button></div>`;
 }
 
 function educationRow(item = {}) {
   const value = typeof item === 'string' ? {school:item} : item;
-  return \`<div class="repeatable-row repeatable-row--education"><input data-education-school value="\${escapeHtml(value.school || '')}" placeholder="School"><input data-education-degree value="\${escapeHtml(value.degree || '')}" placeholder="Degree"><input data-education-dates value="\${escapeHtml(value.dates || '')}" placeholder="Dates"><button type="button" class="text-button danger" data-remove-row aria-label="Remove education">Remove</button></div>\`;
+  return `<div class="repeatable-row repeatable-row--education"><input data-education-school value="${escapeHtml(value.school || '')}" placeholder="School"><input data-education-degree value="${escapeHtml(value.degree || '')}" placeholder="Degree"><input data-education-dates value="${escapeHtml(value.dates || '')}" placeholder="Dates"><button type="button" class="text-button danger" data-remove-row aria-label="Remove education">Remove</button></div>`;
 }
 
 function simpleRow(attribute, value = '', placeholder = '') {
-  return \`<div class="repeatable-row repeatable-row--simple"><input \${attribute} value="\${escapeHtml(value)}" placeholder="\${escapeHtml(placeholder)}"><button type="button" class="text-button danger" data-remove-row>Remove</button></div>\`;
+  return `<div class="repeatable-row repeatable-row--simple"><input ${attribute} value="${escapeHtml(value)}" placeholder="${escapeHtml(placeholder)}"><button type="button" class="text-button danger" data-remove-row>Remove</button></div>`;
 }
 
 function bindRepeatableEditor(target) {
@@ -612,8 +612,8 @@ async function loadMatchingModels() {
   const saved = data.matching.model;
   $('#matching-model-form').dataset.saved = saved || '';
   select.replaceChildren(new Option('Choose an installed model', ''));
-  for (const model of data.models) select.add(new Option(\`\${model.name} · \${(model.size / 1e9).toFixed(1)} GB\`, model.name));
-  if (saved && !data.models.some((model) => model.name === saved)) select.add(new Option(\`\${saved} (unavailable)\`, saved));
+  for (const model of data.models) select.add(new Option(`${model.name} · ${(model.size / 1e9).toFixed(1)} GB`, model.name));
+  if (saved && !data.models.some((model) => model.name === saved)) select.add(new Option(`${saved} (unavailable)`, saved));
   select.value = saved || '';
   const saveButton = $('#matching-model-form button[type="submit"]');
   saveButton.disabled = !select.value || select.value === saved;
@@ -623,12 +623,12 @@ async function loadMatchingModels() {
   const installed = data.models.some((model) => model.name === data.matching.recommended);
   $('#matching-download').hidden = installed && !downloading;
   $('#matching-download').disabled = downloading;
-  $('#matching-download').textContent = downloading ? 'Downloading model…' : state === 'failed' || state === 'cancelled' ? 'Retry model download' : \`Download \${data.matching.recommended} (about 2 GB)\`;
+  $('#matching-download').textContent = downloading ? 'Downloading model…' : state === 'failed' || state === 'cancelled' ? 'Retry model download' : `Download ${data.matching.recommended} (about 2 GB)`;
   $('#matching-download-cancel').hidden = !downloading;
   $('#matching-download-progress').hidden = !downloading;
   $('#matching-download-meter').value = Number(data.matching.download_progress || 0);
   $('#matching-download-label').textContent = downloading
-    ? \`\${Number(data.matching.download_progress || 0)}% · \${data.matching.download_detail || 'Downloading about 2 GB'}\`
+    ? `${Number(data.matching.download_progress || 0)}% · ${data.matching.download_detail || 'Downloading about 2 GB'}`
     : '';
   $('#matching-model-detail').textContent = data.matching.download_error || data.matching.service_error || data.error ||
     (state === 'cancelled' ? 'Download cancelled. You can retry whenever you are ready.' :
@@ -701,19 +701,19 @@ async function loadPositions() {
   $('#position-list').innerHTML = positions.length ? positions.map((item, index) => {
     const editing = item.id === editingPositionId;
     const preview = (item.bullets || []).slice(0, 2);
-    return \`<div class="item position-card \${editing ? 'is-editing' : ''}" data-position="\${item.id}">
-      <div class="position-card-head"><div><strong>\${escapeHtml(item.role)}</strong><span>\${escapeHtml(item.company)} · \${escapeHtml(item.dates)}</span></div>
-        <div class="position-order" aria-label="Reorder \${escapeHtml(item.role)}"><button type="button" class="text-button" data-move-position="-1" \${index === 0 ? 'disabled' : ''} aria-label="Move up">↑</button><button type="button" class="text-button" data-move-position="1" \${index === positions.length - 1 ? 'disabled' : ''} aria-label="Move down">↓</button></div></div>
-      \${preview.length ? \`<ul class="position-preview">\${preview.map((bullet) => \`<li>\${escapeHtml(bullet)}</li>\`).join('')}</ul>\` : '<p class="hint">No outcome bullets yet.</p>'}
-      \${editing ? \`<div class="position-editor form-grid"><label>Company<input data-field="company" value="\${escapeHtml(item.company)}"></label><label>Role<input data-field="role" value="\${escapeHtml(item.role)}"></label><label class="full">Dates<input data-field="dates" value="\${escapeHtml(item.dates)}"></label><label class="full">Work and outcomes<textarea data-field="bullets" rows="5">\${escapeHtml((item.bullets || []).join('\\n'))}</textarea></label></div>\` : ''}
-      <div class="actions">\${editing ? \`<button data-save-position="\${item.id}" class="primary">Save changes</button><button data-cancel-position="\${item.id}" class="secondary">Cancel</button>\` : \`<button data-edit-position="\${item.id}" class="secondary">Edit</button>\`}<button data-delete-position="\${item.id}" class="secondary danger">Remove</button></div>
-    </div>\`;
+    return `<div class="item position-card ${editing ? 'is-editing' : ''}" data-position="${item.id}">
+      <div class="position-card-head"><div><strong>${escapeHtml(item.role)}</strong><span>${escapeHtml(item.company)} · ${escapeHtml(item.dates)}</span></div>
+        <div class="position-order" aria-label="Reorder ${escapeHtml(item.role)}"><button type="button" class="text-button" data-move-position="-1" ${index === 0 ? 'disabled' : ''} aria-label="Move up">↑</button><button type="button" class="text-button" data-move-position="1" ${index === positions.length - 1 ? 'disabled' : ''} aria-label="Move down">↓</button></div></div>
+      ${preview.length ? `<ul class="position-preview">${preview.map((bullet) => `<li>${escapeHtml(bullet)}</li>`).join('')}</ul>` : '<p class="hint">No outcome bullets yet.</p>'}
+      ${editing ? `<div class="position-editor form-grid"><label>Company<input data-field="company" value="${escapeHtml(item.company)}"></label><label>Role<input data-field="role" value="${escapeHtml(item.role)}"></label><label class="full">Dates<input data-field="dates" value="${escapeHtml(item.dates)}"></label><label class="full">Work and outcomes<textarea data-field="bullets" rows="5">${escapeHtml((item.bullets || []).join('\\n'))}</textarea></label></div>` : ''}
+      <div class="actions">${editing ? `<button data-save-position="${item.id}" class="primary">Save changes</button><button data-cancel-position="${item.id}" class="secondary">Cancel</button>` : `<button data-edit-position="${item.id}" class="secondary">Edit</button>`}<button data-delete-position="${item.id}" class="secondary danger">Remove</button></div>
+    </div>`;
   }).join('') : '<div class="empty">No positions yet. Add your previous jobs above.</div>';
 
   document.querySelectorAll('[data-edit-position]').forEach((button) => button.addEventListener('click', async () => {
     editingPositionId = button.dataset.editPosition;
     await loadPositions();
-    document.querySelector(\`[data-position="\${editingPositionId}"] input\`)?.focus();
+    document.querySelector(`[data-position="${editingPositionId}"] input`)?.focus();
   }));
   document.querySelectorAll('[data-cancel-position]').forEach((button) => button.addEventListener('click', async () => {
     editingPositionId = null;
@@ -721,9 +721,9 @@ async function loadPositions() {
   }));
   document.querySelectorAll('[data-save-position]').forEach((button) => button.addEventListener('click', async () => {
     const row = button.closest('[data-position]');
-    const field = (name) => row.querySelector(\`[data-field="\${name}"]\`).value.trim();
+    const field = (name) => row.querySelector(`[data-field="${name}"]`).value.trim();
     try {
-      await api(\`/api/positions/\${button.dataset.savePosition}\`, {method:'PUT', body:JSON.stringify({company:field('company'),role:field('role'),dates:field('dates'),bullets:field('bullets').split('\\n').map((x) => x.trim()).filter(Boolean)})});
+      await api(`/api/positions/${button.dataset.savePosition}`, {method:'PUT', body:JSON.stringify({company:field('company'),role:field('role'),dates:field('dates'),bullets:field('bullets').split('\\n').map((x) => x.trim()).filter(Boolean)})});
       editingPositionId = null;
       notice('Position saved');
       await loadPositions();
@@ -734,9 +734,9 @@ async function loadPositions() {
   }));
   document.querySelectorAll('[data-delete-position]').forEach((button) => button.addEventListener('click', async () => {
     const row = positions.find((item) => item.id === button.dataset.deletePosition);
-    if (!window.confirm(\`Remove \${row?.role || 'this position'} at \${row?.company || 'this company'}? This cannot be undone.\`)) return;
+    if (!window.confirm(`Remove ${row?.role || 'this position'} at ${row?.company || 'this company'}? This cannot be undone.`)) return;
     try {
-      await api(\`/api/positions/\${button.dataset.deletePosition}\`, {method:'DELETE'});
+      await api(`/api/positions/${button.dataset.deletePosition}`, {method:'DELETE'});
       if (editingPositionId === button.dataset.deletePosition) editingPositionId = null;
       await loadPositions();
       notice('Position removed');
@@ -997,19 +997,19 @@ function renderRepositoryResults(filter = null) {
   const input = $('#repo-filter');
   if (filter !== null && document.activeElement !== input) input.value = filter;
   const query = (filter === null ? input.value : filter).trim().toLowerCase();
-  const visible = discoveredRepos.filter((repo) => \`\${repo.name} \${repo.description || ''} \${repo.language || ''}\`.toLowerCase().includes(query));
-  $('#repo-result-count').textContent = \`\${visible.length} of \${discoveredRepos.length}\`;
+  const visible = discoveredRepos.filter((repo) => `${repo.name} ${repo.description || ''} ${repo.language || ''}`.toLowerCase().includes(query));
+  $('#repo-result-count').textContent = `${visible.length} of ${discoveredRepos.length}`;
   const list = target.querySelector('.project-results-list');
   list.innerHTML = visible.length ? visible.map((repo) => {
     const saved = projectCards.find((card) => card.repository_url && normalizeRepoUrl(card.repository_url) === normalizeRepoUrl(repo.url));
-    return \`<div class="project-repo-row"><div><strong>\${escapeHtml(repo.name)}</strong>\${repo.fork ? ' <span class="pill muted">Fork</span>' : ''}
-      <p class="hint">\${escapeHtml(repo.description || 'No description')}\${repo.language ? \` · \${escapeHtml(repo.language)}\` : ''}</p></div>
-      <div class="actions"><button data-add-repo="\${escapeHtml(repo.url)}" \${saved ? '' : !projectProviderReady ? 'disabled' : ''}>\${saved ? 'Review project' : 'Add project'}</button><a href="\${escapeHtml(repo.url)}" target="_blank" rel="noopener noreferrer">Open ↗</a></div></div>\`;
+    return `<div class="project-repo-row"><div><strong>${escapeHtml(repo.name)}</strong>${repo.fork ? ' <span class="pill muted">Fork</span>' : ''}
+      <p class="hint">${escapeHtml(repo.description || 'No description')}${repo.language ? ` · ${escapeHtml(repo.language)}` : ''}</p></div>
+      <div class="actions"><button data-add-repo="${escapeHtml(repo.url)}" ${saved ? '' : !projectProviderReady ? 'disabled' : ''}>${saved ? 'Review project' : 'Add project'}</button><a href="${escapeHtml(repo.url)}" target="_blank" rel="noopener noreferrer">Open ↗</a></div></div>`;
   }).join('') : '<div class="empty">No repositories match that filter.</div>';
   bindRepositoryButtons(list);
 }
 
-function normalizeRepoUrl(value) {function normalizeRepoUrl(value) {
+function normalizeRepoUrl(value) {
   return value.replace(/\.git\/?$/, '').replace(/\/$/, '');
 }
 
@@ -1022,14 +1022,14 @@ async function loadEvidence(focusId = null) {
     agy:setup.providers.agy, claude:setup.providers.claude};
   projectProviderReady = Boolean(profile.drafting_provider && availability[profile.drafting_provider]);
   $('#project-provider-status').textContent = projectProviderReady
-    ? \`Project drafts use \${providerLabel(profile.drafting_provider)}. You can change this in Settings.\`
+    ? `Project drafts use ${providerLabel(profile.drafting_provider)}. You can change this in Settings.`
     : 'Choose an available AI provider in Settings before adding a project.';
   $('#project-provider-action').hidden = projectProviderReady;
   const readyCount = projectCards.filter((card) => card.approved).length;
-  $('#selected-project-count').textContent = \`\${readyCount} ready for resumes\`;
-  $('#evidence-list').innerHTML = projectCards.length ? projectCards.map((card) => \`<button class="project-list-row \${card.id === selectedProjectId ? 'is-selected' : ''}" data-open-project="\${card.id}" type="button">
-    <strong>\${escapeHtml(card.title)}</strong><span class="status-badge \${card.approved ? 'status-badge--success' : 'status-badge--neutral'}">\${card.approved ? 'Included in resumes' : 'Saved only'}</span>
-    <small>\${escapeHtml(card.repository_url || 'Manual project')}</small></button>\`).join('') : '<div class="empty">No projects yet. Enter your GitHub username or a repository URL above.</div>';
+  $('#selected-project-count').textContent = `${readyCount} ready for resumes`;
+  $('#evidence-list').innerHTML = projectCards.length ? projectCards.map((card) => `<button class="project-list-row ${card.id === selectedProjectId ? 'is-selected' : ''}" data-open-project="${card.id}" type="button">
+    <strong>${escapeHtml(card.title)}</strong><span class="status-badge ${card.approved ? 'status-badge--success' : 'status-badge--neutral'}">${card.approved ? 'Included in resumes' : 'Saved only'}</span>
+    <small>${escapeHtml(card.repository_url || 'Manual project')}</small></button>`).join('') : '<div class="empty">No projects yet. Enter your GitHub username or a repository URL above.</div>';
   document.querySelectorAll('[data-open-project]').forEach((button) => button.addEventListener('click', async () => {
     selectedProjectId = button.dataset.openProject;
     await loadEvidence(selectedProjectId);
@@ -1044,20 +1044,20 @@ async function loadEvidence(focusId = null) {
   }
   const details = JSON.parse(card.details || '{}');
   const needsOriginalClaim = !details.generated_by && (details.contribution === 'unverified' || ['pending','failed'].includes(details.generation_status));
-  $('#project-editor').innerHTML = \`<div class="project-editor-head"><div><p class="eyebrow">REVIEW PROJECT</p><h3>\${escapeHtml(card.title)}</h3></div><span class="status-badge \${card.approved ? 'status-badge--success' : 'status-badge--neutral'}">\${card.approved ? 'Included in resumes' : 'Saved only'}</span></div>
+  $('#project-editor').innerHTML = `<div class="project-editor-head"><div><p class="eyebrow">REVIEW PROJECT</p><h3>${escapeHtml(card.title)}</h3></div><span class="status-badge ${card.approved ? 'status-badge--success' : 'status-badge--neutral'}">${card.approved ? 'Included in resumes' : 'Saved only'}</span></div>
     <p class="hint">Save content changes first. Including a project in resumes is a separate choice.</p>
-    \${details.generation_status === 'failed' ? \`<p class="hint error-text">Project draft generation failed: \${escapeHtml(details.generation_error || 'Try generating again or write your own project bullet.')}</p>\` : ''}
-    \${needsOriginalClaim ? '<p class="hint">Write and save a specific bullet about your contribution before including this project in resumes.</p>' : ''}
-    \${card.repository_url ? \`<p class="item-meta"><a href="\${escapeHtml(card.repository_url)}" target="_blank" rel="noopener noreferrer">Open repository ↗</a> · Commit \${escapeHtml(card.commit_sha?.slice(0, 8))}</p>\` : ''}
-    <div class="project-fields"><label>Project title<input id="project-edit-title" value="\${escapeHtml(card.title)}"></label>
-      <label>Project summary<textarea id="project-edit-summary" rows="3" placeholder="What the project does">\${escapeHtml(details.summary || '')}</textarea></label>
-      <label>Technologies<input id="project-edit-stack" value="\${escapeHtml((details.tech_stack || []).join(', '))}" placeholder="Python, React, ..."></label>
-      <label>What this project demonstrates <span class="hint">One resume bullet per line</span><textarea id="project-edit-bullets" rows="7">\${escapeHtml((details.bullets || [card.claim]).join('\\n'))}</textarea></label></div>
+    ${details.generation_status === 'failed' ? `<p class="hint error-text">Project draft generation failed: ${escapeHtml(details.generation_error || 'Try generating again or write your own project bullet.')}</p>` : ''}
+    ${needsOriginalClaim ? '<p class="hint">Write and save a specific bullet about your contribution before including this project in resumes.</p>' : ''}
+    ${card.repository_url ? `<p class="item-meta"><a href="${escapeHtml(card.repository_url)}" target="_blank" rel="noopener noreferrer">Open repository ↗</a> · Commit ${escapeHtml(card.commit_sha?.slice(0, 8))}</p>` : ''}
+    <div class="project-fields"><label>Project title<input id="project-edit-title" value="${escapeHtml(card.title)}"></label>
+      <label>Project summary<textarea id="project-edit-summary" rows="3" placeholder="What the project does">${escapeHtml(details.summary || '')}</textarea></label>
+      <label>Technologies<input id="project-edit-stack" value="${escapeHtml((details.tech_stack || []).join(', '))}" placeholder="Python, React, ..."></label>
+      <label>What this project demonstrates <span class="hint">One resume bullet per line</span><textarea id="project-edit-bullets" rows="7">${escapeHtml((details.bullets || [card.claim]).join('\\n'))}</textarea></label></div>
     <p id="project-review-status" class="hint" role="status" aria-live="polite"></p>
     <div class="actions"><button id="project-save" class="primary">Save changes</button>
-      <button id="project-approval" class="secondary">\${card.approved ? 'Remove from resumes' : 'Include in resumes'}</button>
-      \${card.repository_url && !card.approved ? '<button id="project-regenerate" class="secondary">Generate again</button>' : ''}
-      <button id="project-delete" class="secondary danger">Delete project</button></div>\`;
+      <button id="project-approval" class="secondary">${card.approved ? 'Remove from resumes' : 'Include in resumes'}</button>
+      ${card.repository_url && !card.approved ? '<button id="project-regenerate" class="secondary">Generate again</button>' : ''}
+      <button id="project-delete" class="secondary danger">Delete project</button></div>`;
   const content = () => {
     const bullets = $('#project-edit-bullets').value.split('\\n').map((line) => line.trim()).filter(Boolean);
     const title = $('#project-edit-title').value.trim();
@@ -1069,7 +1069,7 @@ async function loadEvidence(focusId = null) {
     const status = $('#project-review-status');
     try {
       status.textContent = 'Saving project…';
-      await api(\`/api/evidence/\${card.id}\`, {method:'PATCH', body:JSON.stringify(content())});
+      await api(`/api/evidence/${card.id}`, {method:'PATCH', body:JSON.stringify(content())});
       await loadEvidence(card.id);
       $('#project-review-status').textContent = 'Project changes saved. Resume inclusion is unchanged.';
     } catch(error) { status.textContent = error.message; notice(error.message, true); }
@@ -1078,15 +1078,15 @@ async function loadEvidence(focusId = null) {
     const status = $('#project-review-status');
     try {
       status.textContent = card.approved ? 'Removing from resumes…' : 'Including in resumes…';
-      await api(\`/api/evidence/\${card.id}\`, {method:'PATCH', body:JSON.stringify({approved:!card.approved})});
+      await api(`/api/evidence/${card.id}`, {method:'PATCH', body:JSON.stringify({approved:!card.approved})});
       await loadEvidence(card.id);
       $('#project-review-status').textContent = card.approved ? 'Project removed from future resumes.' : 'Project included in future resumes.';
     } catch(error) { status.textContent = error.message; notice(error.message, true); }
   });
   $('#project-delete').addEventListener('click', async () => {
-    if (!window.confirm(\`Delete "\${card.title}" from your project library? This cannot be undone.\`)) return;
+    if (!window.confirm(`Delete "${card.title}" from your project library? This cannot be undone.`)) return;
     try {
-      await api(\`/api/evidence/\${card.id}\`, {method:'DELETE'});
+      await api(`/api/evidence/${card.id}`, {method:'DELETE'});
       selectedProjectId = null;
       await loadEvidence();
       notice('Project deleted');
@@ -1097,7 +1097,7 @@ async function loadEvidence(focusId = null) {
     try {
       button.disabled = true;
       $('#project-review-status').textContent = 'Generating a new draft from the repository…';
-      await api(\`/api/evidence/\${card.id}/generate\`, {method:'POST', body:'{}'});
+      await api(`/api/evidence/${card.id}/generate`, {method:'POST', body:'{}'});
       await loadEvidence(card.id);
       $('#project-review-status').textContent = 'New draft ready. Review and save it before including it in resumes.';
     } catch(error) { await loadEvidence(card.id); $('#project-review-status').textContent = error.message; }
