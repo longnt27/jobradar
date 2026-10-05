@@ -865,7 +865,7 @@ function applicationActionTarget(destination) {
 }
 
 function applicationFormFieldLabel(field) {
-  return field.label || field.name || \`Field \${field.index}\`;
+  return field.label || field.name || `Field ${field.index}`;
 }
 
 function renderApplicationFormField(field, draft) {
@@ -877,18 +877,18 @@ function renderApplicationFormField(field, draft) {
   if (field.type === 'file') {
     const assignment = draft.form_data.attachments?.[key] || {};
     const uploaded = assignment.kind === 'uploaded';
-    return \`<label class="application-form-field">\${escapeHtml(label)}\${required}
-      <select data-attachment="\${field.index}" data-draft-field>
-        <option value="" \${!assignment.kind ? 'selected' : ''}>Choose an attachment</option>
-        <option value="resume" \${assignment.kind === 'resume' ? 'selected' : ''}>Generated resume PDF</option>
-        <option value="uploaded" \${uploaded ? 'selected' : ''}>Custom PDF</option>
-        \${!field.required ? \`<option value="none" \${assignment.kind === 'none' ? 'selected' : ''}>No file</option>\` : ''}
+    return `<label class="application-form-field">${escapeHtml(label)}${required}
+      <select data-attachment="${field.index}" data-draft-field>
+        <option value="" ${!assignment.kind ? 'selected' : ''}>Choose an attachment</option>
+        <option value="resume" ${assignment.kind === 'resume' ? 'selected' : ''}>Generated resume PDF</option>
+        <option value="uploaded" ${uploaded ? 'selected' : ''}>Custom PDF</option>
+        ${!field.required ? `<option value="none" ${assignment.kind === 'none' ? 'selected' : ''}>No file</option>` : ''}
       </select>
-      <span class="application-attachment-upload" data-attachment-upload="\${field.index}" \${uploaded ? '' : 'hidden'}>
-        <input type="file" accept="application/pdf,.pdf" data-attachment-file="\${field.index}" data-draft-field aria-label="Upload PDF for \${escapeHtml(label)}">
-        <span class="hint">\${uploaded && assignment.name ? \`Current custom file: \${escapeHtml(assignment.name)}. Choose another PDF to replace it.\` : 'Choose a PDF smaller than 10 MB.'}</span>
+      <span class="application-attachment-upload" data-attachment-upload="${field.index}" ${uploaded ? '' : 'hidden'}>
+        <input type="file" accept="application/pdf,.pdf" data-attachment-file="${field.index}" data-draft-field aria-label="Upload PDF for ${escapeHtml(label)}">
+        <span class="hint">${uploaded && assignment.name ? `Current custom file: ${escapeHtml(assignment.name)}. Choose another PDF to replace it.` : 'Choose a PDF smaller than 10 MB.'}</span>
       </span>
-    </label>\`;
+    </label>`;
   }
 
   const options = Array.isArray(field.options) ? field.options.map((option) => {
@@ -898,39 +898,39 @@ function renderApplicationFormField(field, draft) {
 
   if (options.length) {
     const known = options.some((option) => option.value === answer);
-    return \`<label class="application-form-field">\${escapeHtml(label)}\${required}
-      <select data-answer="\${field.index}" data-draft-field \${field.required ? 'required' : ''}>
+    return `<label class="application-form-field">${escapeHtml(label)}${required}
+      <select data-answer="${field.index}" data-draft-field ${field.required ? 'required' : ''}>
         <option value="">Choose an option</option>
-        \${!known && answer ? \`<option value="\${escapeHtml(answer)}" selected>\${escapeHtml(answer)}</option>\` : ''}
-        \${options.map((option) => \`<option value="\${escapeHtml(option.value)}" \${option.value === answer ? 'selected' : ''}>\${escapeHtml(option.label || option.value)}</option>\`).join('')}
+        ${!known && answer ? `<option value="${escapeHtml(answer)}" selected>${escapeHtml(answer)}</option>` : ''}
+        ${options.map((option) => `<option value="${escapeHtml(option.value)}" ${option.value === answer ? 'selected' : ''}>${escapeHtml(option.label || option.value)}</option>`).join('')}
       </select>
-    </label>\`;
+    </label>`;
   }
 
   if (field.type === 'textarea' || answer.length > 120) {
-    return \`<label class="application-form-field">\${escapeHtml(label)}\${required}<textarea data-answer="\${field.index}" data-draft-field rows="3" \${field.required ? 'required' : ''}>\${escapeHtml(answer)}</textarea></label>\`;
+    return `<label class="application-form-field">${escapeHtml(label)}${required}<textarea data-answer="${field.index}" data-draft-field rows="3" ${field.required ? 'required' : ''}>${escapeHtml(answer)}</textarea></label>`;
   }
 
   const inputType = ['email','tel','url','number','date'].includes(field.type) ? field.type : 'text';
-  return \`<label class="application-form-field">\${escapeHtml(label)}\${required}<input type="\${inputType}" data-answer="\${field.index}" data-draft-field value="\${escapeHtml(answer)}" \${field.required ? 'required' : ''}></label>\`;
+  return `<label class="application-form-field">${escapeHtml(label)}${required}<input type="${inputType}" data-answer="${field.index}" data-draft-field value="${escapeHtml(answer)}" ${field.required ? 'required' : ''}></label>`;
 }
 
 function applicationAlert(kind, title, items) {
   if (!items?.length) return '';
   const role = kind === 'danger' ? 'alert' : 'status';
-  return \`<div class="application-alert application-alert--\${kind}" role="\${role}"><strong>\${escapeHtml(title)}</strong><ul>\${items.map((item) => \`<li>\${escapeHtml(item)}</li>\`).join('')}</ul></div>\`;
+  return `<div class="application-alert application-alert--${kind}" role="${role}"><strong>${escapeHtml(title)}</strong><ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul></div>`;
 }
 
 function confirmApplicationSend(draft) {
   const dialog = $('#application-send-confirm');
   const destination = draft.destination || {};
-  const target = \`\${applicationActionLabel(destination)} · \${applicationActionTarget(destination)}\`;
+  const target = `${applicationActionLabel(destination)} · ${applicationActionTarget(destination)}`;
   const fields = draft.form_data?.fields?.length || 0;
   const attachments = Object.keys(draft.form_data?.attachments || {}).length;
   $('#application-send-confirm-target').textContent = target;
-  $('#application-send-confirm-summary').textContent = \`\${providerLabel(draft.provider_mode || draft.provider)} · \${fields} form field\${fields === 1 ? '' : 's'} reviewed · \${attachments} attachment\${attachments === 1 ? '' : 's'}\`;
+  $('#application-send-confirm-summary').textContent = `${providerLabel(draft.provider_mode || draft.provider)} · ${fields} form field${fields === 1 ? '' : 's'} reviewed · ${attachments} attachment${attachments === 1 ? '' : 's'}`;
   if (typeof dialog.showModal !== 'function') {
-    return Promise.resolve(window.confirm(\`Approve and send to \${applicationActionTarget(destination)}?\`));
+    return Promise.resolve(window.confirm(`Approve and send to ${applicationActionTarget(destination)}?`));
   }
   if (dialog.open) dialog.close('cancel');
   return new Promise((resolve) => {
@@ -940,12 +940,12 @@ function confirmApplicationSend(draft) {
 }
 
 async function showApplication(id) {
-  if ($('#applications').classList.contains('active') && location.hash !== \`#applications/\${id}\`) history.replaceState({tab:'applications'}, '', \`#applications/\${id}\`);
+  if ($('#applications').classList.contains('active') && location.hash !== `#applications/${id}`) history.replaceState({tab:'applications'}, '', `#applications/${id}`);
   setApplicationWorkspaceView('drafts');
   activeApplicationId = id;
   renderApplicationList();
 
-  const draft = await api(\`/api/applications/\${id}\`);
+  const draft = await api(`/api/applications/${id}`);
   const resume = draft.resume_data || {};
   const message = draft.message_data || {};
   const destination = draft.destination || {kind:'manual', action_type:'unknown'};
@@ -961,9 +961,9 @@ async function showApplication(id) {
   const actionTarget = applicationActionTarget(destination);
   const detail = $('#application-detail');
 
-  detail.innerHTML = \`<div class="application-review-header">
-      <div><p class="eyebrow">APPLICATION REVIEW</p><h2>\${escapeHtml(draft.job_title)}</h2><p class="item-meta">\${escapeHtml(draft.company)} · \${escapeHtml(providerLabel(draft.provider_mode || draft.provider))}</p></div>
-      <span class="status-badge status-badge--\${reviewTone}">\${escapeHtml(applicationReviewLabel(draft))}</span>
+  detail.innerHTML = `<div class="application-review-header">
+      <div><p class="eyebrow">APPLICATION REVIEW</p><h2>${escapeHtml(draft.job_title)}</h2><p class="item-meta">${escapeHtml(draft.company)} · ${escapeHtml(providerLabel(draft.provider_mode || draft.provider))}</p></div>
+      <span class="status-badge status-badge--${reviewTone}">${escapeHtml(applicationReviewLabel(draft))}</span>
     </div>
     <nav class="application-review-nav" aria-label="Application review sections">
       <button type="button" data-review-target="application-review-overview" aria-current="true">Overview</button>
@@ -975,69 +975,69 @@ async function showApplication(id) {
 
     <section id="application-review-overview" class="application-review-section">
       <h3>Overview</h3>
-      \${applicationAlert('danger', 'Sending is blocked', blockers)}
-      \${applicationAlert('warning', 'Review before sending', warnings)}
+      ${applicationAlert('danger', 'Sending is blocked', blockers)}
+      ${applicationAlert('warning', 'Review before sending', warnings)}
       <div class="application-overview-grid">
-        <div class="application-status-card surface-status"><strong>Review state</strong><span>\${escapeHtml(applicationReviewLabel(draft))}</span><small>Telegram: \${escapeHtml(draft.telegram_status || 'Not configured')}\${draft.telegram_error ? \` · \${escapeHtml(draft.telegram_error)}\` : ''}</small></div>
-        <div class="application-status-card surface-status"><strong>Application action</strong><span>\${escapeHtml(applicationActionLabel(destination))}</span><small>\${escapeHtml(actionTarget)}</small></div>
+        <div class="application-status-card surface-status"><strong>Review state</strong><span>${escapeHtml(applicationReviewLabel(draft))}</span><small>Telegram: ${escapeHtml(draft.telegram_status || 'Not configured')}${draft.telegram_error ? ` · ${escapeHtml(draft.telegram_error)}` : ''}</small></div>
+        <div class="application-status-card surface-status"><strong>Application action</strong><span>${escapeHtml(applicationActionLabel(destination))}</span><small>${escapeHtml(actionTarget)}</small></div>
       </div>
       <div class="application-destination surface-editable">
         <div class="section-head"><div><h4>Destination</h4><p class="hint">The detected action comes from the posting. Change it only when you have verified a different destination.</p></div></div>
-        \${destination.provenance ? \`<p class="hint">Detected from \${escapeHtml(destination.provenance.replace(/_/g, ' '))} · \${escapeHtml(destination.confidence || 'unknown confidence')}</p>\` : ''}
+        ${destination.provenance ? `<p class="hint">Detected from ${escapeHtml(destination.provenance.replace(/_/g, ' '))} · ${escapeHtml(destination.confidence || 'unknown confidence')}</p>` : ''}
         <div class="form-grid">
-          <label>Channel<select id="draft-destination-kind" data-draft-field><option value="web" \${destination.kind === 'web' ? 'selected' : ''}>Web form</option><option value="email" \${destination.kind === 'email' ? 'selected' : ''}>Email</option><option value="manual" \${!['web','email'].includes(destination.kind) ? 'selected' : ''}>Manual review</option></select></label>
-          <label>URL or email address<input id="draft-destination" data-draft-field value="\${escapeHtml(destination.url || destination.email || '')}"></label>
+          <label>Channel<select id="draft-destination-kind" data-draft-field><option value="web" ${destination.kind === 'web' ? 'selected' : ''}>Web form</option><option value="email" ${destination.kind === 'email' ? 'selected' : ''}>Email</option><option value="manual" ${!['web','email'].includes(destination.kind) ? 'selected' : ''}>Manual review</option></select></label>
+          <label>URL or email address<input id="draft-destination" data-draft-field value="${escapeHtml(destination.url || destination.email || '')}"></label>
         </div>
       </div>
       <p class="hint">The Telegram approval button applies only to the currently saved version of this draft.</p>
     </section>
 
     <section id="application-review-resume" class="application-review-section">
-      <div class="section-head"><div><h3>Resume</h3><p class="hint">Review the generated PDF and the structured resume data used to build it.</p></div><a href="/api/applications/\${id}/resume" target="_blank" rel="noopener noreferrer">Open PDF ↗</a></div>
-      <div class="application-resume-preview"><iframe src="/api/applications/\${id}/resume#view=FitH" title="Resume PDF preview" loading="lazy"></iframe></div>
-      <div class="form-grid"><label>Name<input id="draft-name" data-draft-field value="\${escapeHtml(resume.name || '')}"></label><label>Email<input id="draft-email" data-draft-field value="\${escapeHtml(resume.email || '')}"></label><label>Phone<input id="draft-phone" data-draft-field value="\${escapeHtml(resume.phone || '')}"></label><label>Links, one per line<textarea id="draft-links" data-draft-field rows="2">\${escapeHtml((resume.links || []).join('\\n'))}</textarea></label></div>
-      <label>Professional summary<textarea id="draft-summary" data-draft-field rows="3">\${escapeHtml(resume.summary || '')}</textarea></label>
-      <h4>Experience</h4>\${(resume.experience || []).map((item, index) => \`<div class="review-subsection surface-editable"><div class="form-grid"><label>Company<input data-experience-company="\${index}" data-draft-field value="\${escapeHtml(item.company || '')}"></label><label>Role<input data-experience-role="\${index}" data-draft-field value="\${escapeHtml(item.role || '')}"></label><label>Dates<input data-experience-dates="\${index}" data-draft-field value="\${escapeHtml(item.dates || '')}"></label></div><label>Bullets, one per line<textarea data-experience-bullets="\${index}" data-draft-field rows="4">\${escapeHtml((item.bullets || []).join('\\n'))}</textarea></label></div>\`).join('') || '<p class="hint">No previous positions in this draft.</p>'}
-      <h4>Selected projects</h4>\${projects.map((project, index) => \`<div class="review-subsection surface-editable"><div class="form-grid"><label>Title<input data-project-title="\${index}" data-draft-field value="\${escapeHtml(project.title || '')}"></label><label>Repository URL<input data-project-url="\${index}" data-draft-field value="\${escapeHtml(project.repository_url || '')}"></label><label>Technologies<input data-project-stack="\${index}" data-draft-field value="\${escapeHtml((project.tech_stack || []).join(', '))}"></label></div><label>Tailored bullets, one per line<textarea data-project-bullets="\${index}" data-draft-field rows="4">\${escapeHtml((project.bullets || []).join('\\n'))}</textarea></label></div>\`).join('') || '<p class="hint">No projects selected for this draft.</p>'}
-      <h4>Education</h4>\${(resume.education || []).map((item, index) => { const entry = typeof item === 'string' ? {school:item} : item; return \`<div class="form-grid review-subsection surface-editable"><label>School<input data-education-school="\${index}" data-draft-field value="\${escapeHtml(entry.school || '')}"></label><label>Degree<input data-education-degree="\${index}" data-draft-field value="\${escapeHtml(entry.degree || '')}"></label><label>Dates<input data-education-dates="\${index}" data-draft-field value="\${escapeHtml(entry.dates || '')}"></label></div>\`; }).join('') || '<p class="hint">No education in this draft.</p>'}
-      <label>Achievements, one per line<textarea id="draft-achievements" data-draft-field rows="3">\${escapeHtml((resume.achievements || []).join('\\n'))}</textarea></label>
-      <label>Skills, one per line<textarea id="draft-skills" data-draft-field rows="3">\${escapeHtml((resume.skills || []).join('\\n'))}</textarea></label>
-      <label>Skill groups, one per line as “Group: skills”<textarea id="draft-skill-groups" data-draft-field rows="3">\${escapeHtml(Object.entries(resume.skill_groups || {}).map(([group, values]) => \`\${group}: \${Array.isArray(values) ? values.join(', ') : values}\`).join('\\n'))}</textarea></label>
+      <div class="section-head"><div><h3>Resume</h3><p class="hint">Review the generated PDF and the structured resume data used to build it.</p></div><a href="/api/applications/${id}/resume" target="_blank" rel="noopener noreferrer">Open PDF ↗</a></div>
+      <div class="application-resume-preview"><iframe src="/api/applications/${id}/resume#view=FitH" title="Resume PDF preview" loading="lazy"></iframe></div>
+      <div class="form-grid"><label>Name<input id="draft-name" data-draft-field value="${escapeHtml(resume.name || '')}"></label><label>Email<input id="draft-email" data-draft-field value="${escapeHtml(resume.email || '')}"></label><label>Phone<input id="draft-phone" data-draft-field value="${escapeHtml(resume.phone || '')}"></label><label>Links, one per line<textarea id="draft-links" data-draft-field rows="2">${escapeHtml((resume.links || []).join('\\n'))}</textarea></label></div>
+      <label>Professional summary<textarea id="draft-summary" data-draft-field rows="3">${escapeHtml(resume.summary || '')}</textarea></label>
+      <h4>Experience</h4>${(resume.experience || []).map((item, index) => `<div class="review-subsection surface-editable"><div class="form-grid"><label>Company<input data-experience-company="${index}" data-draft-field value="${escapeHtml(item.company || '')}"></label><label>Role<input data-experience-role="${index}" data-draft-field value="${escapeHtml(item.role || '')}"></label><label>Dates<input data-experience-dates="${index}" data-draft-field value="${escapeHtml(item.dates || '')}"></label></div><label>Bullets, one per line<textarea data-experience-bullets="${index}" data-draft-field rows="4">${escapeHtml((item.bullets || []).join('\\n'))}</textarea></label></div>`).join('') || '<p class="hint">No previous positions in this draft.</p>'}
+      <h4>Selected projects</h4>${projects.map((project, index) => `<div class="review-subsection surface-editable"><div class="form-grid"><label>Title<input data-project-title="${index}" data-draft-field value="${escapeHtml(project.title || '')}"></label><label>Repository URL<input data-project-url="${index}" data-draft-field value="${escapeHtml(project.repository_url || '')}"></label><label>Technologies<input data-project-stack="${index}" data-draft-field value="${escapeHtml((project.tech_stack || []).join(', '))}"></label></div><label>Tailored bullets, one per line<textarea data-project-bullets="${index}" data-draft-field rows="4">${escapeHtml((project.bullets || []).join('\\n'))}</textarea></label></div>`).join('') || '<p class="hint">No projects selected for this draft.</p>'}
+      <h4>Education</h4>${(resume.education || []).map((item, index) => { const entry = typeof item === 'string' ? {school:item} : item; return `<div class="form-grid review-subsection surface-editable"><label>School<input data-education-school="${index}" data-draft-field value="${escapeHtml(entry.school || '')}"></label><label>Degree<input data-education-degree="${index}" data-draft-field value="${escapeHtml(entry.degree || '')}"></label><label>Dates<input data-education-dates="${index}" data-draft-field value="${escapeHtml(entry.dates || '')}"></label></div>`; }).join('') || '<p class="hint">No education in this draft.</p>'}
+      <label>Achievements, one per line<textarea id="draft-achievements" data-draft-field rows="3">${escapeHtml((resume.achievements || []).join('\\n'))}</textarea></label>
+      <label>Skills, one per line<textarea id="draft-skills" data-draft-field rows="3">${escapeHtml((resume.skills || []).join('\\n'))}</textarea></label>
+      <label>Skill groups, one per line as “Group: skills”<textarea id="draft-skill-groups" data-draft-field rows="3">${escapeHtml(Object.entries(resume.skill_groups || {}).map(([group, values]) => `${group}: ${Array.isArray(values) ? values.join(', ') : values}`).join('\\n'))}</textarea></label>
     </section>
 
     <section id="application-review-message" class="application-review-section">
       <h3>Application message</h3>
-      <label>Subject<input id="draft-subject" data-draft-field value="\${escapeHtml(message.subject || '')}"></label>
-      <label>Body<textarea id="draft-body" data-draft-field rows="10">\${escapeHtml(message.body || '')}</textarea></label>
+      <label>Subject<input id="draft-subject" data-draft-field value="${escapeHtml(message.subject || '')}"></label>
+      <label>Body<textarea id="draft-body" data-draft-field rows="10">${escapeHtml(message.body || '')}</textarea></label>
     </section>
 
     <section id="application-review-form" class="application-review-section">
-      <div class="section-head"><div><h3>Form answers and attachments</h3><p class="hint">\${formData.action ? \`Form submits to \${escapeHtml(formData.action)} (\${escapeHtml(formData.method || 'GET')})\` : 'Inspect a verified web form to load its fields here.'}</p></div></div>
-      <div class="application-form-fields">\${(formData.fields || []).map((field) => renderApplicationFormField(field, draft)).join('') || '<p class="empty">No form fields inspected yet.</p>'}</div>
+      <div class="section-head"><div><h3>Form answers and attachments</h3><p class="hint">${formData.action ? `Form submits to ${escapeHtml(formData.action)} (${escapeHtml(formData.method || 'GET')})` : 'Inspect a verified web form to load its fields here.'}</p></div></div>
+      <div class="application-form-fields">${(formData.fields || []).map((field) => renderApplicationFormField(field, draft)).join('') || '<p class="empty">No form fields inspected yet.</p>'}</div>
     </section>
 
     <section id="application-review-regenerate" class="application-review-section">
       <h3>Regenerate draft</h3>
       <label>Custom instructions for regeneration<textarea id="regenerate-prompt" rows="3" placeholder="Example: emphasize production search work and shorten the opening paragraph"></textarea></label>
-      <div class="actions"><button id="regenerate-draft" class="secondary" \${draft.provider === 'template' ? 'disabled' : ''}>Regenerate draft</button></div>
-      \${draft.provider === 'template' ? '<p class="hint">This draft used the basic template. Create a new draft with an AI provider to regenerate it with instructions.</p>' : ''}
+      <div class="actions"><button id="regenerate-draft" class="secondary" ${draft.provider === 'template' ? 'disabled' : ''}>Regenerate draft</button></div>
+      ${draft.provider === 'template' ? '<p class="hint">This draft used the basic template. Create a new draft with an AI provider to regenerate it with instructions.</p>' : ''}
     </section>
 
-    <details class="application-debug"><summary>Technical details</summary><p class="hint">Package fingerprint: <span class="mono">\${escapeHtml(draft.package_hash.slice(0, 16))}</span></p></details>
+    <details class="application-debug"><summary>Technical details</summary><p class="hint">Package fingerprint: <span class="mono">${escapeHtml(draft.package_hash.slice(0, 16))}</span></p></details>
 
     <div class="application-sticky-actions">
       <div><span id="application-dirty-state" class="status-badge status-badge--neutral">Saved</span><span id="application-outcome" class="hint" role="status" aria-live="polite"></span></div>
       <div class="actions">
         <button id="save-draft" class="secondary" disabled>Save changes</button>
-        <button id="inspect-draft" class="secondary" \${canInspect ? '' : 'disabled'}>Inspect form</button>
-        <button id="send-draft" class="primary" \${canSend ? '' : 'disabled'}>Approve &amp; send</button>
+        <button id="inspect-draft" class="secondary" ${canInspect ? '' : 'disabled'}>Inspect form</button>
+        <button id="send-draft" class="primary" ${canSend ? '' : 'disabled'}>Approve &amp; send</button>
       </div>
-    </div>\`;
+    </div>`;
 
   detail.querySelectorAll('[data-review-target]').forEach((button) => button.addEventListener('click', () => {
     detail.querySelectorAll('[data-review-target]').forEach((item) => item.removeAttribute('aria-current'));
     button.setAttribute('aria-current', 'true');
-    scrollNodeIntoView(detail.querySelector(\`#\${button.dataset.reviewTarget}\`), {block:'start'});
+    scrollNodeIntoView(detail.querySelector(`#${button.dataset.reviewTarget}`), {block:'start'});
   }));
 
   const dirtyState = $('#application-dirty-state');
@@ -1056,7 +1056,7 @@ async function showApplication(id) {
   };
 
   detail.querySelectorAll('[data-attachment]').forEach((select) => {
-    const upload = detail.querySelector(\`[data-attachment-upload="\${select.dataset.attachment}"]\`);
+    const upload = detail.querySelector(`[data-attachment-upload="${select.dataset.attachment}"]`);
     const syncUpload = () => { if (upload) upload.hidden = select.value !== 'uploaded'; };
     syncUpload();
     select.addEventListener('change', syncUpload);
@@ -1072,7 +1072,7 @@ async function showApplication(id) {
     const button = $('#regenerate-draft');
     beginPending(button, 'Regenerating…');
     try {
-      await api(\`/api/applications/\${id}/regenerate\`, {method:'POST', body:JSON.stringify({prompt})});
+      await api(`/api/applications/${id}/regenerate`, {method:'POST', body:JSON.stringify({prompt})});
       await loadApplications(id);
       notice('New draft prepared for review.');
     } catch(error) {
@@ -1098,7 +1098,7 @@ async function showApplication(id) {
     const button = beginPending(event.currentTarget, 'Inspecting…');
     try {
       if (!saveButton.disabled) await saveApplication(id, draft);
-      await api(\`/api/applications/\${id}/inspect\`, {method:'POST'});
+      await api(`/api/applications/${id}/inspect`, {method:'POST'});
       await loadApplications(id);
       notice('Application form inspected.');
     } catch(error) {
@@ -1113,10 +1113,10 @@ async function showApplication(id) {
     if (!approved) return;
     const button = beginPending(event.currentTarget, 'Sending…');
     try {
-      const result = await api(\`/api/applications/\${id}/approve\`, {method:'POST', body:JSON.stringify({package_hash:draft.package_hash})});
+      const result = await api(`/api/applications/${id}/approve`, {method:'POST', body:JSON.stringify({package_hash:draft.package_hash})});
       await loadApplications(id);
-      $('#application-outcome').textContent = \`\${result.status}: \${result.receipt || result.error || ''}\`;
-      notice(\`Application outcome: \${result.status}\`);
+      $('#application-outcome').textContent = `${result.status}: ${result.receipt || result.error || ''}`;
+      notice(`Application outcome: ${result.status}`);
     } catch(error) {
       notice(error.message, true);
     } finally {
