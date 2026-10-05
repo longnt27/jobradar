@@ -1,6 +1,18 @@
 const $ = (selector) => document.querySelector(selector);
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const when = (value) => value ? new Date(value).toLocaleString() : 'Never';
+function relativeWhen(value) {
+  if (!value) return 'Unknown';
+  const date = new Date(value);
+  const seconds = Math.max(0, (Date.now() - date.getTime()) / 1000);
+  if (seconds < 60) return 'Just now';
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  if (seconds < 172800) return 'Yesterday';
+  if (seconds < 604800) return `${Math.floor(seconds / 86400)}d ago`;
+  return date.toLocaleDateString(undefined, {month:'short', day:'numeric', year:date.getFullYear() === new Date().getFullYear() ? undefined : 'numeric'});
+}
+const exactTimeTitle = (value) => value ? ` title="${escapeHtml(new Date(value).toLocaleString())}"` : '';
 function scoreBadge(job) {
   if (job.analysis_status !== 'done' || !Number.isFinite(job.score)) {
     const label = job.analysis_status === 'failed' ? 'Failed' : ['not_configured', 'dismissed'].includes(job.analysis_status) ? 'No score' : 'Analyzing';
@@ -34,7 +46,7 @@ function formatDescription(value) {
 
 function renderJobAnalysis(job, score) {
   const status = job.analysis_status;
-  const stateMessage = status === 'done' ? `Local match · ${escapeHtml(job.analysis_model || '')} · ${when(job.analyzed_at)}`
+  const stateMessage = status === 'done' ? `Local match · ${escapeHtml(job.analysis_model || '')} · ${relativeWhen(job.analyzed_at)}`
     : status === 'failed' ? `Local analysis failed: ${escapeHtml(job.analysis_error || 'Unknown error')}`
     : status === 'dismissed' ? 'Failed analysis dismissed. This job remains in your list without a match score.'
     : ['pending', 'running'].includes(status) ? 'Local model is extracting requirements and scoring this job.'
@@ -44,7 +56,7 @@ function renderJobAnalysis(job, score) {
   const completed = status === 'done';
   const facts = completed ? score?.facts : null;
   const list = (label, items) => items?.length ? `<div><strong>${label}</strong><ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul></div>` : '';
-  const factsHtml = facts ? `<div class="review-section job-facts"><h4>Job at a glance</h4><p class="hint">Extracted by the local model. Check the original posting before applying.</p>
+  const factsHtml = facts ? `<div class="job-facts"><p class="hint">Extracted by the local model. Check the original posting before applying.</p>
     ${facts.summary ? `<p>${escapeHtml(facts.summary)}</p>` : ''}
     <div class="fact-grid"><div><strong>Role</strong><p>${escapeHtml([facts.role, facts.seniority].filter(Boolean).join(' · ') || 'Not stated')}</p></div>
     <div><strong>Experience</strong><p>${facts.years_required == null ? 'Not stated' : `${escapeHtml(facts.years_required)} years required`}</p></div>
@@ -53,13 +65,17 @@ function renderJobAnalysis(job, score) {
     <div class="fact-grid">${list('Required skills', facts.required_skills)}${list('Preferred skills', facts.preferred_skills)}${list('Responsibilities', facts.responsibilities)}${list('Education', facts.education)}${list('Spoken languages', facts.languages)}</div></div>` : '';
   const labels = {role:'Role', required_skills:'Required skills', preferred_skills:'Preferred skills', experience:'Years of experience',
     responsibilities:'Responsibilities', location:'Location', work_mode:'Work mode', education:'Education', freshness:'Freshness'};
-  const criteria = completed && score?.criteria ? `<div class="review-section"><h4>Match breakdown · ${scoreBadge(job)} ${job.score}/100</h4><p>${escapeHtml(score.explanation || '')}</p>
+  const weighted = completed && score?.criteria ? Object.entries(labels).map(([key,label]) => {
+    const item = score.criteria[key];
+    if (!item) return '';
+    const weight = Number(score.weights?.[key] || 0);
+    return `<div class="criterion-row"><div class="criterion-copy"><strong>${label}</strong><small>${escapeHtml(item.reason)}</small></div><div class="criterion-score"><span>${escapeHtml(item.score)}/10</span><small>${weight}% weight</small></div><div class="criterion-weight"><span style="width:${Math.max(4, Math.min(100, weight))}%"></span></div></div>`;
+  }).join('') : '';
+  const criteria = weighted ? `<details class="detail-disclosure"><summary>Match breakdown <span>${job.score}/100</span></summary><p>${escapeHtml(score.explanation || '')}</p>
     ${score.hard_exclusions?.length ? `<div class="match-exclusions"><strong>Score is 0 because:</strong><ul>${score.hard_exclusions.map((reason) => `<li>${escapeHtml(reason)}</li>`).join('')}</ul></div>` : ''}
-    <div class="criteria-grid">${Object.entries(labels).map(([key, label]) => { const item = score.criteria[key]; return item ? `<div class="criterion"><strong>${label} <span>${escapeHtml(item.score)}/10${score.weights?.[key] ? ` · ${score.weights[key]}% weight` : ''}</span></strong><small>${escapeHtml(item.reason)}</small></div>` : ''; }).join('')}<div class="criterion"><strong>Salary range <span>Info</span></strong><small>${escapeHtml(facts?.salary_range || 'Not stated in the posting.')} Salary is not included in the match score.</small></div></div></div>` :
-    '';
-  return `<div class="review-section"><p class="hint">${stateMessage}</p>${retry}</div>${factsHtml}${criteria}`;
+    <div class="criteria-list">${weighted}<div class="criterion-row criterion-info"><div class="criterion-copy"><strong>Salary range</strong><small>${escapeHtml(facts?.salary_range || 'Not stated in the posting.')} Salary is not included in the match score.</small></div><div class="criterion-score"><span>Info</span></div></div></div></details>` : '';
+  return `<div class="review-section"><p class="hint">${stateMessage}</p>${retry}</div>${factsHtml ? `<details class="detail-disclosure" open><summary>Job at a glance</summary>${factsHtml}</details>` : ''}${criteria}`;
 }
-
 async function api(path, options = {}) {
   const response = await fetch(path, {
     headers: options.body instanceof FormData ? (options.headers || {}) : {'Content-Type': 'application/json', ...(options.headers || {})},
@@ -344,35 +360,96 @@ async function loadQueue() {
     } else if (kind === 'draft' && button.dataset.queueDraft) {
       await showTab('applications'); await showApplication(button.dataset.queueDraft);
     } else {
-      await showTab('jobs'); await showJob(id);
+      await showTab('jobs'); activeJob = id; activeJobPinned = true; syncJobsHash(); await showJob(id, true);
+      scrollNodeIntoView($('#job-detail'), {block:'start'}); $('#job-detail').focus({preventScroll:true});
     }
   }));
   if ($('#queue').classList.contains('active')) window.queuePoll = setTimeout(() => loadQueue().catch((error) => notice(error.message, true)), 5000);
 }
 
+const JOB_FILTERS = {
+  q:'#job-query', state:'#job-state', score:'#job-score', freshness:'#job-freshness',
+  mode:'#job-work-mode', location:'#job-location', source:'#job-source', seniority:'#job-seniority', sort:'#job-sort',
+};
+
+function readJobsHashState() {
+  const raw = location.hash.slice(1);
+  const [route, search = ''] = raw.split('?');
+  if (route !== 'jobs') return;
+  const params = new URLSearchParams(search);
+  for (const [key, selector] of Object.entries(JOB_FILTERS)) {
+    const node = $(selector);
+    if (node) node.value = params.get(key) || (key === 'sort' ? 'best' : '');
+  }
+  jobsPage = Math.max(1, Number(params.get('page') || 1));
+  activeJob = params.get('job') || null;
+  activeJobPinned = Boolean(activeJob);
+}
+
+function jobsHash() {
+  const params = new URLSearchParams();
+  for (const [key, selector] of Object.entries(JOB_FILTERS)) {
+    const value = $(selector)?.value?.trim();
+    if (value && !(key === 'sort' && value === 'best')) params.set(key, value);
+  }
+  if (jobsPage > 1) params.set('page', String(jobsPage));
+  if (activeJob) params.set('job', activeJob);
+  const search = params.toString();
+  return `#jobs${search ? `?${search}` : ''}`;
+}
+
+function syncJobsHash(mode = 'replace') {
+  if (!$('#jobs').classList.contains('active')) return;
+  const hash = jobsHash();
+  if (location.hash === hash) return;
+  history[mode === 'push' ? 'pushState' : 'replaceState']({tab:'jobs'}, '', hash);
+}
+
+function topMatchSignals(job) {
+  const signals = (job.match_signals || []).filter((item) => Number.isFinite(item.score));
+  const positive = signals.filter((item) => item.score >= 8).sort((a,b) => b.score - a.score).slice(0, 1);
+  const negative = signals.filter((item) => item.score <= 4).sort((a,b) => a.score - b.score).slice(0, 1);
+  return [...positive.map((item) => ({...item, tone:'good'})), ...negative.map((item) => ({...item, tone:'warn'}))];
+}
+
 async function loadJobs() {
   clearTimeout(window.jobPoll);
-  const query = new URLSearchParams({q: $('#job-query').value, state: $('#job-state').value, page: jobsPage, page_size: 25});
+  const query = new URLSearchParams({
+    q: $('#job-query').value, state: $('#job-state').value, page: jobsPage, page_size: 25,
+    min_score: $('#job-score').value, freshness: $('#job-freshness').value, work_mode: $('#job-work-mode').value,
+    location: $('#job-location').value, source: $('#job-source').value, seniority: $('#job-seniority').value,
+    sort: $('#job-sort').value,
+  });
+  [...query.entries()].forEach(([key,value]) => { if (value === '') query.delete(key); });
   const [result, analysis] = await Promise.all([api(`/api/jobs/page?${query}`), loadJobAnalysis()]);
-  if (jobsPage > result.pages) { jobsPage = result.pages; return loadJobs(); }
+  if (jobsPage > result.pages) { jobsPage = result.pages; syncJobsHash(); return loadJobs(); }
   const jobs = result.items;
   $('#jobs-page-summary').textContent = result.total ? `Page ${result.page} of ${result.pages} · ${result.total} jobs` : 'No jobs';
   $('#jobs-prev').disabled = jobsPage <= 1;
   $('#jobs-next').disabled = jobsPage >= result.pages;
-  const sourceLabel = (source) => !source ? 'Manually added' : source.kind === 'career' ? 'Company career page' : source.kind === 'linkedin' ? 'LinkedIn listing' : 'Facebook group lead';
-  $('#job-list').innerHTML = jobs.length ? jobs.map((job) =>
-    `<div class="item job-card surface-action"><button type="button" class="card-select" data-job="${job.id}" aria-label="Open ${escapeHtml(job.title)} at ${escapeHtml(job.company)}">${scoreBadge(job)}<div class="item-title">${escapeHtml(job.title)}</div><div class="item-meta">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div><div class="item-meta">${escapeHtml(sourceLabel(job.source))}${job.source ? ` · Checked ${when(job.source.last_seen_at)}` : ''}</div><div class="item-meta">${job.published_at ? `Posted ${when(job.published_at)}` : 'Posting date unavailable'} · First seen ${when(job.first_seen_at)} <span class="status-badge status-badge--neutral">${escapeHtml(job.state)}</span> · ${job.analysis_status === 'done' ? 'Local match' : job.analysis_status === 'failed' ? 'Analysis failed' : job.analysis_status === 'dismissed' ? 'Analysis dismissed' : ['pending','running'].includes(job.analysis_status) ? 'Analyzing locally' : 'Waiting for local model'}</div></button>${job.source ? `<a href="${escapeHtml(job.source.url)}" target="_blank" rel="noopener noreferrer">Original posting ↗</a>` : ''}</div>`
-  ).join('') : '<div class="empty">No jobs found. Run a scan or import a job.</div>';
+  const sourceLabel = (source) => !source ? 'Manual' : source.kind === 'career' ? 'Career page' : source.kind === 'linkedin' ? 'LinkedIn' : 'Facebook';
+  $('#job-list').innerHTML = jobs.length ? jobs.map((job) => {
+    const signals = topMatchSignals(job);
+    const tags = [job.work_mode, job.seniority, sourceLabel(job.source)].filter(Boolean);
+    const dateValue = job.published_at || job.first_seen_at;
+    return `<div class="item job-card surface-action"><button type="button" class="card-select" data-job="${job.id}" aria-label="Open ${escapeHtml(job.title)} at ${escapeHtml(job.company)}">
+      ${scoreBadge(job)}<div class="item-title">${escapeHtml(job.title)}</div>
+      <div class="job-card-company">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div>
+      <div class="job-card-tags">${tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join('')}</div>
+      <div class="job-card-signals">${signals.map((signal) => `<span class="${signal.tone}" title="${escapeHtml(signal.reason || '')}">${signal.tone === 'good' ? '✓' : '!' } ${escapeHtml(signal.label)}</span>`).join('')}</div>
+      <div class="job-card-footer"><span${exactTimeTitle(dateValue)}>${job.published_at ? 'Posted' : 'Found'} ${relativeWhen(dateValue)}</span><span class="status-badge status-badge--neutral">${escapeHtml(job.state)}</span></div>
+    </button>${job.source ? `<a href="${escapeHtml(job.source.url)}" target="_blank" rel="noopener noreferrer">Original posting ↗</a>` : ''}</div>`;
+  }).join('') : '<div class="empty">No jobs match these filters.</div>';
   document.querySelectorAll('[data-job]').forEach((node) => node.addEventListener('click', async () => {
     try {
-      await showJob(node.dataset.job);
+      activeJob = node.dataset.job; activeJobPinned = true; syncJobsHash('push');
+      await showJob(node.dataset.job, true);
       if (window.matchMedia('(max-width: 900px)').matches) scrollNodeIntoView($('#job-detail'), {block:'start'});
     } catch(error) { notice(error.message, true); }
   }));
   if (activeJob && (activeJobPinned || jobs.some((job) => job.id === activeJob))) await showJob(activeJob, activeJobPinned);
   else {
-    activeJob = null;
-    activeJobPinned = false;
+    activeJob = null; activeJobPinned = false; syncJobsHash();
     $('#job-detail').innerHTML = `<div class="empty">${jobs.length ? 'Select a job to see details.' : 'No job matches this search.'}</div>`;
   }
   if ((analysis.pending || jobs.some((job) => ['pending','running'].includes(job.analysis_status))) && $('#jobs').classList.contains('active')) {
@@ -391,25 +468,36 @@ async function showJob(id, pin = false) {
     `<a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(source.kind)}: ${escapeHtml(source.name)}</a>`
   ).join('<br>') : '';
   const score = job.score_detail ? JSON.parse(job.score_detail) : null;
-  $('#job-detail').innerHTML = `<h2>${escapeHtml(job.title)}</h2><div class="item-meta">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div>
-    <div class="item-meta">${escapeHtml(job.work_mode || '')} · ${job.published_at ? `Posted ${when(job.published_at)}` : 'Posting date unavailable'} · First seen ${when(job.first_seen_at)}</div>
-    <div class="actions"><button data-state="interesting">Interesting</button><button data-state="interview">Interview</button><button data-state="rejected" class="danger">Rejected</button><button data-state="offer">Offer</button><button data-state="ignored" class="danger">Ignore</button></div>
+  const states = ['new','interesting','prepare','ready','applied','interview','offer','rejected','ignored'];
+  $('#job-detail').setAttribute('tabindex', '-1');
+  $('#job-detail').innerHTML = `<div class="job-detail-head"><div><h2>${escapeHtml(job.title)}</h2><div class="item-meta">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div>
+    <div class="item-meta">${escapeHtml(job.work_mode || '')}${job.published_at ? ` · Posted <span${exactTimeTitle(job.published_at)}>${relativeWhen(job.published_at)}</span>` : ''} · Found <span${exactTimeTitle(job.first_seen_at)}>${relativeWhen(job.first_seen_at)}</span></div></div>
+    <label class="job-state-control">Status<select id="job-state-control">${states.map((state) => `<option value="${state}" ${job.state === state ? 'selected' : ''}>${state.replace(/^./, (x) => x.toUpperCase())}</option>`).join('')}</select></label></div>
     <div class="review-section"><p class="hint">Drafting provider: ${escapeHtml(provider || 'Choose one in Settings first')} · <button class="text-button" data-tab="settings">Change provider</button></p><div class="actions"><button data-prepare="${id}" class="primary" ${provider ? '' : 'disabled'}>Prepare application</button></div></div>
     ${job.apply_url ? `<p><a href="${escapeHtml(job.apply_url)}" target="_blank" rel="noopener noreferrer">${job.apply_url.startsWith('mailto:') ? 'Application email ↗' : 'Application page ↗'}</a></p>` : ''}
     ${!job.apply_url ? '<p class="hint">No application form has been verified for this posting. Check the original source for its application instructions before sending.</p>' : ''}
     ${links ? `<p class="item-meta">${links}</p>` : ''}
     ${renderJobAnalysis(job, score)}
-    <div class="description"><h3>Original description</h3>${formatDescription(job.description)}</div>`;
+    <details class="detail-disclosure"><summary>Original description</summary><div class="description">${formatDescription(job.description)}</div></details>`;
   $('#job-detail').querySelector('[data-tab="settings"]').addEventListener('click', () => showTab('settings'));
   $('#job-detail').querySelector('[data-analyze]')?.addEventListener('click', async () => {
     try { await api(`/api/jobs/${id}/analyze`, {method:'POST'}); notice('Local analysis queued'); await loadJobs(); }
     catch(error) { notice(error.message, true); }
   });
   $('#job-detail').querySelector('[data-dismiss-analysis]')?.addEventListener('click', () => dismissFailedAnalysis(id));
-  $('#job-detail').querySelectorAll('[data-state]').forEach((button) => button.addEventListener('click', async () => {
-    try { await api(`/api/jobs/${id}/state`, {method:'POST', body: JSON.stringify({state:button.dataset.state})}); notice('Job updated'); await loadJobs(); }
-    catch(error) { notice(error.message, true); }
-  }));
+  $('#job-state-control').addEventListener('change', async (event) => {
+    const next = event.target.value;
+    const previous = job.state;
+    if (['ignored','rejected'].includes(next) && !window.confirm(`Move this job to ${next}? You can restore it to New at any time.`)) {
+      event.target.value = previous;
+      return;
+    }
+    try {
+      await api(`/api/jobs/${id}/state`, {method:'POST', body:JSON.stringify({state:next})});
+      notice(`Job status changed to ${next}.`);
+      await loadJobs();
+    } catch(error) { event.target.value = previous; notice(error.message, true); }
+  });
   $('#job-detail').querySelector('[data-prepare]').addEventListener('click', async () => {
     const button = $('#job-detail').querySelector('[data-prepare]');
     beginPending(button, 'Preparing…');
@@ -420,8 +508,7 @@ async function showJob(id, pin = false) {
         catch(error) { notice(`Draft ready; form inspection needs attention: ${error.message}`, true); }
       }
       showTab('applications'); await loadApplications(draft.id);
-    }
-    catch(error) { notice(error.message, true); }
+    } catch(error) { notice(error.message, true); }
     finally { endPending(button); }
   });
 }
@@ -654,6 +741,7 @@ async function showTab(name, historyMode = 'push') {
   else if (historyMode === 'push' && location.hash !== desiredHash) history.pushState({tab:name}, '', desiredHash);
   window.scrollTo(0, 0);
   if (!['home', 'settings'].includes(name)) refreshSocialAuth().catch((error) => notice(error.message, true));
+  if (name === 'jobs' && (historyMode === 'none' || location.hash.startsWith('#jobs?'))) readJobsHashState();
   const loader = ({home:loadHome,queue:loadQueue,jobs:loadJobs,applications:loadApplications,personal:loadPersonalDetails,
     experience:loadPositions,projects:loadEvidence,sources:loadSources,employers:loadEmployers,profile:loadProfile,settings:loadSettings})[name];
   if (!loader) return;
@@ -973,11 +1061,20 @@ document.querySelectorAll('[data-tab]').forEach((control) => control.addEventLis
 $('#social-auth-action').addEventListener('click', openSocialSignIn);
 setInterval(() => refreshSocialAuth().catch(() => {}), 60000);
 $('#clock').textContent = new Date().toLocaleDateString(undefined, {weekday:'long', day:'numeric', month:'long'});
-$('#job-search').addEventListener('click', () => { jobsPage = 1; loadJobs().catch((error) => notice(error.message, true)); });
-$('#job-query').addEventListener('keydown', (event) => { if (event.key === 'Enter') { jobsPage = 1; loadJobs().catch((error) => notice(error.message, true)); } });
-$('#job-state').addEventListener('change', () => { jobsPage = 1; loadJobs().catch((error) => notice(error.message, true)); });
-$('#jobs-prev').addEventListener('click', () => { jobsPage = Math.max(1, jobsPage - 1); activeJob = null; loadJobs().catch((error) => notice(error.message, true)); });
-$('#jobs-next').addEventListener('click', () => { jobsPage += 1; activeJob = null; loadJobs().catch((error) => notice(error.message, true)); });
+function applyJobControls() {
+  jobsPage = 1; activeJob = null; activeJobPinned = false; syncJobsHash('push');
+  loadJobs().catch((error) => notice(error.message, true));
+}
+$('#job-search').addEventListener('click', applyJobControls);
+$('#job-query').addEventListener('keydown', (event) => { if (event.key === 'Enter') applyJobControls(); });
+for (const selector of ['#job-state','#job-score','#job-freshness','#job-work-mode','#job-source','#job-sort']) $(selector).addEventListener('change', applyJobControls);
+for (const selector of ['#job-location','#job-seniority']) $(selector).addEventListener('keydown', (event) => { if (event.key === 'Enter') applyJobControls(); });
+$('#jobs-clear-filters').addEventListener('click', () => {
+  for (const [key, selector] of Object.entries(JOB_FILTERS)) $(selector).value = key === 'sort' ? 'best' : '';
+  applyJobControls();
+});
+$('#jobs-prev').addEventListener('click', () => { jobsPage = Math.max(1, jobsPage - 1); activeJob = null; activeJobPinned = false; syncJobsHash('push'); loadJobs().catch((error) => notice(error.message, true)); });
+$('#jobs-next').addEventListener('click', () => { jobsPage += 1; activeJob = null; activeJobPinned = false; syncJobsHash('push'); loadJobs().catch((error) => notice(error.message, true)); });
 $('#source-kind').addEventListener('change', () => loadSources().catch((error) => notice(error.message, true)));
 $('#queue-refresh').addEventListener('click', () => loadQueue().catch((error) => notice(error.message, true)));
 $('#employer-search').addEventListener('click', () => loadEmployers().catch((error) => notice(error.message, true)));
