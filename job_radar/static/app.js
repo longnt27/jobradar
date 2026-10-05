@@ -677,6 +677,11 @@ function providerLabel(value) {
     agy:'Antigravity CLI',
     claude:'Claude Code',
     template:'Basic template',
+    'local template; no model inference':'Basic template',
+    'local inference through Codex OSS':'Codex OSS · local',
+    'remote inference through local Codex CLI':'Codex CLI',
+    'remote inference through local Antigravity CLI':'Antigravity CLI',
+    'remote inference through local Claude Code CLI':'Claude Code',
   })[value] || String(value || 'Unknown provider').replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
@@ -889,6 +894,12 @@ function renderApplicationFormField(field, draft) {
         <span class="hint">${uploaded && assignment.name ? `Current custom file: ${escapeHtml(assignment.name)}. Choose another PDF to replace it.` : 'Choose a PDF smaller than 10 MB.'}</span>
       </span>
     </label>`;
+  }
+
+  if (field.type === 'radio' || field.type === 'checkbox') {
+    const checked = ['yes','true','checked','1'].includes(answer.toLowerCase());
+    const group = field.type === 'radio' ? ` name="review-radio-${escapeHtml(field.name || 'group')}"` : '';
+    return `<label class="application-form-choice"><input type="${field.type}"${group} data-answer="${field.index}" data-draft-field value="yes" ${checked ? 'checked' : ''}><span>${escapeHtml(label)}${required}</span></label>`;
   }
 
   const options = Array.isArray(field.options) ? field.options.map((option) => {
@@ -1134,7 +1145,9 @@ async function showApplication(id) {
 async function saveApplication(id, draft) {
   const lines = (value) => value.split('\n').map((x) => x.trim()).filter(Boolean);
   const answers = {};
-  document.querySelectorAll('[data-answer]').forEach((field) => { answers[field.dataset.answer] = field.value; });
+  document.querySelectorAll('[data-answer]').forEach((field) => {
+    answers[field.dataset.answer] = ['radio','checkbox'].includes(field.type) && !field.checked ? '' : field.value;
+  });
   const attachments = {};
   for (const select of document.querySelectorAll('[data-attachment]')) {
     const index = select.dataset.attachment;
