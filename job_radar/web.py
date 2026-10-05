@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, HttpUrl
 
 from .db import Database, new_id, now
-from .apply import inspect_form, send_application, send_readiness, submission_record, submission_resume_path
+from .apply import inspect_form, send_application, send_readiness, submission_attachment, submission_record, submission_resume_path
 from .auto_apply import AutoApplyManager
 from .browser_login import BrowserLoginManager
 from .drafting import PROVIDERS, get_draft, prepare_draft, update_draft
@@ -1222,6 +1222,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not path:
             raise HTTPException(404, "Exact submitted resume is not available")
         return FileResponse(path, media_type="application/pdf", filename=f"submitted-resume-{submission_id[:8]}.pdf")
+
+    @app.get("/api/submissions/{submission_id}/attachments/{field_index}")
+    def submission_attachment_file(submission_id: str, field_index: str):
+        row = db.one("SELECT * FROM submissions WHERE id=?", (submission_id,))
+        if not row:
+            raise HTTPException(404, "Submission not found")
+        attachment = submission_attachment(row, field_index)
+        if not attachment:
+            raise HTTPException(404, "Exact submitted attachment is not available")
+        path, filename = attachment
+        return FileResponse(path, media_type="application/pdf" if path.suffix.lower() == ".pdf" else "application/octet-stream",
+                            filename=filename)
 
     @app.get("/api/submissions")
     def submissions():
