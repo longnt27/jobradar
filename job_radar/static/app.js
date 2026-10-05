@@ -602,8 +602,10 @@ async function ensureJobsWorkspace() {
   const hasExplicitHash = location.hash.startsWith('#jobs?');
   if (!hasExplicitHash) {
     const defaultView = savedJobViews.find((view) => view.default);
-    if (defaultView) applyJobFilterSnapshot(defaultView.filters || {});
-    else setJobsInboxMode('since_last_visit');
+    if (defaultView) {
+      applyJobFilterSnapshot(defaultView.filters || {});
+      syncJobsHash('replace');
+    } else setJobsInboxMode('since_last_visit');
   }
   if (visit) {
     $('#jobs-since-count').textContent = String(visit.since_last_visit || 0);
@@ -2075,14 +2077,79 @@ function applyJobControls() {
 }
 $('#job-search').addEventListener('click', applyJobControls);
 $('#job-query').addEventListener('keydown', (event) => { if (event.key === 'Enter') applyJobControls(); });
-for (const selector of ['#job-state','#job-score','#job-freshness','#job-work-mode','#job-source','#job-sort']) $(selector).addEventListener('change', applyJobControls);
-for (const selector of ['#job-location','#job-seniority']) $(selector).addEventListener('keydown', (event) => { if (event.key === 'Enter') applyJobControls(); });
+for (const selector of ['#job-decision','#job-application','#job-outcome','#job-score','#job-freshness','#job-work-mode','#job-source','#job-sort']) {
+  $(selector).addEventListener('change', applyJobControls);
+}
+for (const selector of ['#job-location','#job-seniority']) {
+  $(selector).addEventListener('keydown', (event) => { if (event.key === 'Enter') applyJobControls(); });
+}
+document.querySelectorAll('[data-job-inbox]').forEach((button) => button.addEventListener('click', () => {
+  setJobsInboxMode(button.dataset.jobInbox);
+  applyJobControls();
+}));
 $('#jobs-clear-filters').addEventListener('click', () => {
   for (const [key, selector] of Object.entries(JOB_FILTERS)) $(selector).value = key === 'sort' ? 'best' : '';
   applyJobControls();
 });
 $('#jobs-prev').addEventListener('click', () => { jobsPage = Math.max(1, jobsPage - 1); activeJob = null; activeJobPinned = false; syncJobsHash('push'); loadJobs().catch((error) => notice(error.message, true)); });
 $('#jobs-next').addEventListener('click', () => { jobsPage += 1; activeJob = null; activeJobPinned = false; syncJobsHash('push'); loadJobs().catch((error) => notice(error.message, true)); });
+
+$('#job-view-select').addEventListener('change', (event) => {
+  const view = savedJobViews.find((item) => item.id === event.target.value);
+  $('#job-delete-view').disabled = !view;
+  if (!view) return;
+  applyJobFilterSnapshot(view.filters || {});
+  applyJobControls();
+});
+$('#job-save-view').addEventListener('click', () => {
+  const dialog = $('#job-view-dialog');
+  $('#job-view-form').reset();
+  if (typeof dialog.showModal === 'function') dialog.showModal();
+});
+$('#job-view-cancel').addEventListener('click', () => $('#job-view-dialog').close('cancel'));
+$('#job-view-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const data = new FormData(event.target);
+  try {
+    const view = await api('/api/jobs/views', {method:'POST', body:JSON.stringify({
+      name:String(data.get('name') || '').trim(),
+      filters:currentJobFilters(),
+      set_default:data.get('set_default') === 'on',
+    })});
+    savedJobViews = await api('/api/jobs/views');
+    renderSavedJobViews();
+    $('#job-view-select').value = view.id;
+    $('#job-delete-view').disabled = false;
+    $('#job-view-dialog').close('saved');
+    notice(`Saved job view “${view.name}”.`);
+  } catch(error) { notice(error.message, true); }
+});
+$('#job-delete-view').addEventListener('click', async () => {
+  const id = $('#job-view-select').value;
+  if (!id) return;
+  const view = savedJobViews.find((item) => item.id === id);
+  try {
+    await api(`/api/jobs/views/${id}`, {method:'DELETE'});
+    savedJobViews = await api('/api/jobs/views');
+    renderSavedJobViews();
+    notice(`Deleted saved view “${view?.name || 'view'}”.`);
+  } catch(error) { notice(error.message, true); }
+});
+document.querySelectorAll('[data-ignore-reason]').forEach((button) => button.addEventListener('click', async () => {
+  if (!pendingIgnoreJobId) return;
+  try {
+    await api(`/api/jobs/${pendingIgnoreJobId}/decision`, {method:'POST', body:JSON.stringify({
+      decision:'ignored',
+      reason:button.dataset.ignoreReason,
+    })});
+    const reason = button.dataset.ignoreReason;
+    pendingIgnoreJobId = null;
+    $('#job-ignore-reason-dialog').close('reason');
+    notice(`Ignore reason saved: ${reason}.`);
+    await loadJobs();
+  } catch(error) { notice(error.message, true); }
+}));
+$('#job-ignore-reason-dialog').addEventListener('close', () => { pendingIgnoreJobId = null; });
 for (const selector of ['#source-kind', '#source-status', '#source-enabled', '#source-success', '#source-sort']) {
   $(selector).addEventListener('change', () => loadSources().catch((error) => notice(error.message, true)));
 }
