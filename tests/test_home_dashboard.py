@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -16,9 +17,21 @@ def test_status_exposes_decision_centric_home_counts(tmp_path: Path) -> None:
         "company": "Example", "title": "AI Engineer",
         "description": "Build Python AI systems in Hanoi."
     }).json()
+    detail = {
+        "facts": {"required_skills": ["Python"], "years_required": 1, "location": "Hanoi",
+                  "work_mode": "Hybrid", "education": ["Bachelor"]},
+        "criteria": {
+            "role": {"score": 9, "reason": "Direct role fit"},
+            "required_skills": {"score": 9, "reason": "Python is documented"},
+            "experience": {"score": 8, "reason": "Experience fits"},
+            "location": {"score": 10, "reason": "Location fits"},
+            "work_mode": {"score": 8, "reason": "Hybrid fits"},
+            "education": {"score": 8, "reason": "Education fits"},
+        },
+    }
     app.state.db.execute(
-        "UPDATE vacancies SET analysis_status='done',score=91,state='new' WHERE id=?",
-        (job["id"],),
+        "UPDATE vacancies SET analysis_status='done',score=91,score_detail=?,state='new' WHERE id=?",
+        (json.dumps(detail), job["id"]),
     )
     failed = client.post("/api/jobs/import", json={
         "company": "Broken Co", "title": "ML Engineer",
@@ -89,7 +102,18 @@ def test_home_uses_configured_strong_match_threshold(tmp_path: Path) -> None:
     job = client.post("/api/jobs/import", json={
         "company": "Example", "title": "AI Engineer", "description": "Build Python AI systems."
     }).json()
-    app.state.db.execute("UPDATE vacancies SET analysis_status='done',score=85,state='new' WHERE id=?", (job["id"],))
+    detail = {
+        "facts": {"required_skills": ["Python"], "years_required": 1, "location": "Hanoi",
+                  "work_mode": "Hybrid", "education": ["Bachelor"]},
+        "criteria": {"role": {"score": 9, "reason": "Direct role fit"},
+                     "required_skills": {"score": 9, "reason": "Python fits"},
+                     "experience": {"score": 8, "reason": "Experience fits"},
+                     "location": {"score": 9, "reason": "Location fits"},
+                     "work_mode": {"score": 8, "reason": "Mode fits"},
+                     "education": {"score": 8, "reason": "Education fits"}},
+    }
+    app.state.db.execute("UPDATE vacancies SET analysis_status='done',score=85,score_detail=?,state='new' WHERE id=?",
+                         (json.dumps(detail), job["id"]))
     status = client.get("/api/status").json()
     assert status["strong_match_threshold"] == 90
     assert status["counts"]["high_fit_new"] == 0
