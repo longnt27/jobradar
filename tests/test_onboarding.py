@@ -13,7 +13,7 @@ def test_employer_career_page_becomes_scan_source(tmp_path: Path) -> None:
     identifier = employer.json()["id"]
     source = next(source for source in client.get("/api/sources?kind=career").json() if source["employer_id"] == identifier)
     assert source["interval_minutes"] == 240
-    assert next(row for row in client.get("/api/employers?q=Example Robotics").json() if row["id"] == identifier)["live_coverage"] == "active_scan"
+    assert next(row for row in client.get("/api/employers?q=Example Robotics").json() if row["id"] == identifier)["live_coverage"] == "watching"
 
 
 def test_github_repository_discovery_endpoint(tmp_path: Path, monkeypatch) -> None:
