@@ -696,6 +696,39 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             (state, state, limit),
         ))
 
+    @app.get("/api/jobs/page")
+    def jobs_page(q: str = "", state: str = "", page: int = Query(1, ge=1),
+                  page_size: int = Query(25, ge=1, le=50)):
+        terms = q.strip().split()
+        conditions = ["(?='' OR v.state=?)", "NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm')"]
+        values: list[str] = [state, state]
+        for term in terms:
+            conditions.append("(v.title LIKE ? ESCAPE '\\' OR v.company LIKE ? ESCAPE '\\' OR v.description LIKE ? ESCAPE '\\')")
+            pattern = "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+            values.extend([pattern] * 3)
+        where = " AND ".join(conditions)
+        total = db.one(f"SELECT COUNT(*) AS count FROM vacancies v WHERE {where}", tuple(values))["count"]
+        rows = db.all(
+            "SELECT v.id,v.company,v.title,v.location,v.published_at,v.first_seen_at,v.state,v.score,v.analysis_status "
+            f"FROM vacancies v WHERE {where} ORDER BY v.score DESC,v.first_seen_at DESC,v.id LIMIT ? OFFSET ?",
+            (*values, page_size, (page - 1) * page_size),
+        )
+        if rows:
+            placeholders = ",".join("?" for _ in rows)
+            origins = db.all(
+                "SELECT vo.vacancy_id,o.url,o.last_seen_at,s.kind FROM vacancy_observations vo "
+                "JOIN observations o ON o.id=vo.observation_id JOIN sources s ON s.id=o.source_id "
+                f"WHERE vo.vacancy_id IN ({placeholders}) ORDER BY o.last_seen_at DESC",
+                tuple(row["id"] for row in rows),
+            )
+            by_id = {}
+            for origin in origins:
+                by_id.setdefault(origin["vacancy_id"], {key: origin[key] for key in ("url", "last_seen_at", "kind")})
+            for row in rows:
+                row["source"] = by_id.get(row["id"])
+        return {"items": rows, "page": page, "page_size": page_size, "total": total,
+                "pages": max(1, (total + page_size - 1) // page_size)}
+
     @app.get("/api/jobs/{job_id}")
     def job(job_id: str):
         row = db.one("SELECT * FROM vacancies WHERE id=?", (job_id,))

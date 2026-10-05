@@ -11,6 +11,7 @@ function scoreBadge(job) {
 }
 let activeJob = null;
 let activeJobPinned = false;
+let jobsPage = 1;
 let projectCards = [];
 let discoveredRepos = [];
 let selectedProjectId = null;
@@ -51,7 +52,7 @@ function renderJobAnalysis(job, score) {
     <div><strong>Salary range</strong><p>${escapeHtml(facts.salary_range || 'Not stated')}</p></div></div>
     <div class="fact-grid">${list('Required skills', facts.required_skills)}${list('Preferred skills', facts.preferred_skills)}${list('Responsibilities', facts.responsibilities)}${list('Education', facts.education)}${list('Spoken languages', facts.languages)}</div></div>` : '';
   const labels = {role:'Role', required_skills:'Required skills', preferred_skills:'Preferred skills', experience:'Years of experience',
-    responsibilities:'Responsibilities', research:'Research', location:'Location', work_mode:'Work mode', education:'Education', freshness:'Freshness'};
+    responsibilities:'Responsibilities', location:'Location', work_mode:'Work mode', education:'Education', freshness:'Freshness'};
   const criteria = completed && score?.criteria ? `<div class="review-section"><h4>Match breakdown · ${scoreBadge(job)} ${job.score}/100</h4><p>${escapeHtml(score.explanation || '')}</p>
     ${score.hard_exclusions?.length ? `<div class="match-exclusions"><strong>Score is 0 because:</strong><ul>${score.hard_exclusions.map((reason) => `<li>${escapeHtml(reason)}</li>`).join('')}</ul></div>` : ''}
     <div class="criteria-grid">${Object.entries(labels).map(([key, label]) => { const item = score.criteria[key]; return item ? `<div class="criterion"><strong>${label} <span>${escapeHtml(item.score)}/10${score.weights?.[key] ? ` · ${score.weights[key]}% weight` : ''}</span></strong><small>${escapeHtml(item.reason)}</small></div>` : ''; }).join('')}<div class="criterion"><strong>Salary range <span>Info</span></strong><small>${escapeHtml(facts?.salary_range || 'Not stated in the posting.')} Salary is not included in the match score.</small></div></div></div>` :
@@ -284,8 +285,13 @@ async function loadQueue() {
 
 async function loadJobs() {
   clearTimeout(window.jobPoll);
-  const query = new URLSearchParams({q: $('#job-query').value, state: $('#job-state').value});
-  const [jobs, analysis] = await Promise.all([api(`/api/jobs?${query}`), loadJobAnalysis()]);
+  const query = new URLSearchParams({q: $('#job-query').value, state: $('#job-state').value, page: jobsPage, page_size: 25});
+  const [result, analysis] = await Promise.all([api(`/api/jobs/page?${query}`), loadJobAnalysis()]);
+  if (jobsPage > result.pages) { jobsPage = result.pages; return loadJobs(); }
+  const jobs = result.items;
+  $('#jobs-page-summary').textContent = result.total ? `Page ${result.page} of ${result.pages} · ${result.total} jobs` : 'No jobs';
+  $('#jobs-prev').disabled = jobsPage <= 1;
+  $('#jobs-next').disabled = jobsPage >= result.pages;
   const sourceLabel = (source) => !source ? 'Manually added' : source.kind === 'career' ? 'Company career page' : source.kind === 'linkedin' ? 'LinkedIn listing' : 'Facebook group lead';
   $('#job-list').innerHTML = jobs.length ? jobs.map((job) =>
     `<div class="item job-card"><button type="button" class="card-select" data-job="${job.id}" aria-label="Open ${escapeHtml(job.title)} at ${escapeHtml(job.company)}">${scoreBadge(job)}<div class="item-title">${escapeHtml(job.title)}</div><div class="item-meta">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div><div class="item-meta">${escapeHtml(sourceLabel(job.source))}${job.source ? ` · Checked ${when(job.source.last_seen_at)}` : ''}</div><div class="item-meta">${job.published_at ? `Posted ${when(job.published_at)}` : 'Posting date unavailable'} · First seen ${when(job.first_seen_at)} <span class="pill muted">${escapeHtml(job.state)}</span> · ${job.analysis_status === 'done' ? 'Local match' : job.analysis_status === 'failed' ? 'Analysis failed' : job.analysis_status === 'dismissed' ? 'Analysis dismissed' : ['pending','running'].includes(job.analysis_status) ? 'Analyzing locally' : 'Waiting for local model'}</div></button>${job.source ? `<a href="${escapeHtml(job.source.url)}" target="_blank" rel="noopener noreferrer">Original posting ↗</a>` : ''}</div>`
@@ -863,9 +869,11 @@ $('#social-auth-action').addEventListener('click', openSocialSignIn);
 setInterval(() => refreshSocialAuth().catch(() => {}), 60000);
 $('#job-analysis-settings').addEventListener('click', () => openSetupPanel('matching-panel').catch((error) => notice(error.message, true)));
 $('#clock').textContent = new Date().toLocaleDateString(undefined, {weekday:'long', day:'numeric', month:'long'});
-$('#job-search').addEventListener('click', () => loadJobs().catch((error) => notice(error.message, true)));
-$('#job-query').addEventListener('keydown', (event) => { if (event.key === 'Enter') loadJobs().catch((error) => notice(error.message, true)); });
-$('#job-state').addEventListener('change', () => loadJobs().catch((error) => notice(error.message, true)));
+$('#job-search').addEventListener('click', () => { jobsPage = 1; loadJobs().catch((error) => notice(error.message, true)); });
+$('#job-query').addEventListener('keydown', (event) => { if (event.key === 'Enter') { jobsPage = 1; loadJobs().catch((error) => notice(error.message, true)); } });
+$('#job-state').addEventListener('change', () => { jobsPage = 1; loadJobs().catch((error) => notice(error.message, true)); });
+$('#jobs-prev').addEventListener('click', () => { jobsPage = Math.max(1, jobsPage - 1); activeJob = null; loadJobs().catch((error) => notice(error.message, true)); });
+$('#jobs-next').addEventListener('click', () => { jobsPage += 1; activeJob = null; loadJobs().catch((error) => notice(error.message, true)); });
 $('#source-kind').addEventListener('change', () => loadSources().catch((error) => notice(error.message, true)));
 $('#queue-refresh').addEventListener('click', () => loadQueue().catch((error) => notice(error.message, true)));
 $('#employer-search').addEventListener('click', () => loadEmployers().catch((error) => notice(error.message, true)));

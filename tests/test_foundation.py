@@ -8,6 +8,19 @@ from job_radar.ranking import score_job
 from job_radar.web import create_app
 
 
+def test_jobs_page_returns_lightweight_nonoverlapping_pages(tmp_path) -> None:
+    client = TestClient(create_app(Settings(tmp_path)))
+    for number in range(27):
+        client.post("/api/jobs/import", json={"company": "Example", "title": f"Engineer {number}",
+                     "description": "Build Python systems in Hanoi."})
+    first = client.get("/api/jobs/page", params={"page_size": 25}).json()
+    second = client.get("/api/jobs/page", params={"page": 2, "page_size": 25}).json()
+    assert first["total"] == 27 and first["pages"] == 2
+    assert len(first["items"]) == 25 and len(second["items"]) == 2
+    assert not ({job["id"] for job in first["items"]} & {job["id"] for job in second["items"]})
+    assert "description" not in first["items"][0]
+
+
 def test_first_run_seeds_employers_and_four_hour_linkedin_searches(tmp_path: Path) -> None:
     client = TestClient(create_app(Settings(tmp_path)))
     status = client.get("/api/status").json()
