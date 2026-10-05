@@ -64,7 +64,8 @@ def test_fit_summary_distinguishes_strong_stretch_uncertain_and_outside() -> Non
 
 
 def test_salary_discovery_constraint_is_separate_and_only_hard_when_configured() -> None:
-    assert salary_floor("Salary: 20–30 million VND") == 20_000_000
+    assert salary_floor("Salary: 20–30 million VND", "VND") == 20_000_000
+    assert salary_floor("Salary: $2,000 USD", "VND") is None
     criteria = {name: {"score": 7, "reason": "Reasonable fit"}
                 for name in MatchJudgment.model_fields if name != "summary"}
     job = {"company": "Example", "title": "AI Engineer", "description": "Salary: 20–30 million VND"}
@@ -88,12 +89,14 @@ def test_salary_discovery_constraint_is_separate_and_only_hard_when_configured()
 
 
 def test_search_intent_api_is_separate_from_application_salary_and_migrates_threshold(tmp_path: Path) -> None:
-    app = create_app(Settings(tmp_path))
-    db = app.state.db
-    db.set_setting("profile", {"name": "Alex", "skills": [], "salary_expectation": "45M VND"})
-    db.set_setting("auto_apply", {"enabled": False, "threshold": 86})
-    client = TestClient(app)
+    settings = Settings(tmp_path)
+    first_app = create_app(settings)
+    first_app.state.db.set_setting("profile", {"name": "Alex", "skills": [], "salary_expectation": "45M VND"})
+    first_app.state.db.set_setting("auto_apply", {"enabled": False, "threshold": 86})
+    first_app.state.db.set_setting("search_intent", {})
 
+    app = create_app(settings)
+    client = TestClient(app)
     initial = client.get("/api/search-intent").json()
     assert initial["strong_match_threshold"] == 86
     assert initial["minimum_salary"] is None
