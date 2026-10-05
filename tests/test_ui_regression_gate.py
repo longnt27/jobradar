@@ -150,11 +150,20 @@ def _new_page(browser, viewport: dict) -> Page:
     )
     page = context.new_page()
     page.set_default_timeout(6000)
+    issues = {"api": [], "page": []}
+    page.on("response", lambda response: issues["api"].append(
+        f"{response.status} {response.request.method} {response.url}"
+    ) if "/api/" in response.url and response.status >= 400 else None)
+    page.on("pageerror", lambda error: issues["page"].append(str(error)))
+    page._ui_issues = issues
     return page
 
 
 def _stabilize(page: Page, active_selector: str) -> None:
     page.locator(active_selector).wait_for()
+    page.wait_for_function("!document.querySelector('.tab.active')?.hasAttribute('aria-busy')", timeout=10_000)
+    assert not page._ui_issues["page"], "Browser page errors:\n- " + "\n- ".join(page._ui_issues["page"])
+    assert not page._ui_issues["api"], "API request failures:\n- " + "\n- ".join(page._ui_issues["api"])
     page.add_style_tag(content="""
       *,*::before,*::after {
         animation: none !important;
