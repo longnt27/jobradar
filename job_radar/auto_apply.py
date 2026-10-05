@@ -117,10 +117,21 @@ class AutoApplyManager:
     async def start(self) -> None:
         self.loop = asyncio.get_running_loop()
         self.wake_event = asyncio.Event()
+        stuck = self.db.all("SELECT id,draft_id FROM submissions WHERE status='sending'")
+        for submission in stuck:
+            detail = "Job Radar restarted while sending. The submission may have completed; verify on the employer site before retrying."
+            self.db.execute("UPDATE submissions SET status='submitted_unconfirmed',error=?,updated_at=? WHERE id=?",
+                            (detail, now(), submission["id"]))
+            self.db.execute("UPDATE application_drafts SET status='submission_uncertain',updated_at=? WHERE id=?",
+                            (now(), submission["draft_id"]))
+        self.db.execute(
+            "UPDATE auto_application_attempts SET status='submission_uncertain',telegram_status='pending',"
+            "detail='Submission status uncertain after restart; verify on the employer site before retrying',updated_at=? "
+            "WHERE status='sending'", (now(),))
         self.db.execute(
             "UPDATE auto_application_attempts SET status='needs_review',telegram_status='pending',"
-            "detail='Job Radar restarted during an application step; review its outcome before sending',updated_at=? "
-            "WHERE status IN ('preparing','regenerating','sending')", (now(),))
+            "detail='Job Radar restarted during application preparation; review before sending',updated_at=? "
+            "WHERE status IN ('preparing','regenerating')", (now(),))
         self.task = asyncio.create_task(self._loop())
         self.telegram_task = asyncio.create_task(self._telegram_loop())
 
@@ -296,8 +307,12 @@ class AutoApplyManager:
             raise
         if result["status"] in ("sent_confirmed", "submitted_confirmed"):
             self._set_status(attempt["vacancy_id"], "sent", result.get("receipt", ""), draft_id)
+        elif result.get("outcome", {}).get("key") == "submission_uncertain":
+            self._set_status(attempt["vacancy_id"], "submission_uncertain",
+                             result["outcome"]["guidance"], draft_id)
         else:
-            self._set_status(attempt["vacancy_id"], "needs_review", result.get("error") or result.get("receipt") or result["status"], draft_id)
+            self._set_status(attempt["vacancy_id"], "needs_review",
+                             result.get("error") or result.get("receipt") or result.get("outcome", {}).get("label") or result["status"], draft_id)
         return result
 
     async def handle_telegram_update(self, update: dict, client: httpx.AsyncClient) -> None:
@@ -362,7 +377,8 @@ class AutoApplyManager:
             await answer("Approval received. Sending the reviewed version.")
             try:
                 result = await self.approve(draft_id, draft["package_hash"])
-                reply = f"Application outcome: {result['status']} · {result.get('receipt') or result.get('error') or ''}"
+                outcome = result.get("outcome", {})
+                reply = f"{outcome.get('label', 'Application updated')}: {result.get('receipt') or result.get('error') or outcome.get('guidance', '')}"
             except (ValueError, KeyError) as error:
                 reply = f"Application was not sent: {error}"
             await _post(client, token, "sendMessage", json={"chat_id": chat_id, "text": reply[:4000]})
