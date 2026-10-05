@@ -478,6 +478,37 @@ async function loadEmployers() {
   }));
 }
 
+const PROVIDER_LABELS = {
+  codex:'Codex CLI',
+  codex_local:'Codex OSS + Ollama',
+  agy:'Antigravity CLI',
+  claude:'Claude Code CLI',
+};
+
+function providerLabel(provider) {
+  return PROVIDER_LABELS[provider] || provider || 'Not selected';
+}
+
+function closeSetupPanels(except = null) {
+  for (const id of ['provider-panel','social-sign-in-panel','telegram-panel','smtp-panel']) {
+    const panel = document.getElementById(id);
+    if (panel) panel.open = id === except;
+  }
+}
+
+function renderProviderAvailability(availability) {
+  const reasons = {
+    codex:'Install and sign in to Codex CLI.',
+    codex_local:'Requires both Codex CLI and Ollama on this Mac.',
+    agy:'Install and sign in to Antigravity CLI.',
+    claude:'Install and sign in to Claude Code CLI.',
+  };
+  const missing = Object.entries(availability).filter(([, ready]) => !ready);
+  $('#provider-availability').innerHTML = missing.length
+    ? \`<p class="hint">Unavailable options</p><ul>\${missing.map(([key]) => \`<li><strong>\${escapeHtml(providerLabel(key))}</strong> · \${escapeHtml(reasons[key])}</li>\`).join('')}</ul>\`
+    : '<p class="hint">All supported drafting providers are available.</p>';
+}
+
 async function loadSettings() {
   const [profile, setup] = await Promise.all([api('/api/profile'), loadSetup()]);
   await loadMatchingModels();
@@ -486,13 +517,13 @@ async function loadSettings() {
   const providerForm = $('#provider-form');
   providerForm.querySelectorAll('option[value]').forEach((option) => { if (option.value) option.disabled = !availability[option.value]; });
   providerForm.elements.provider.value = profile.drafting_provider || '';
+  renderProviderAvailability(availability);
   const modelCount = Number(Boolean(profile.drafting_provider)) + Number(Boolean(setup.matching.model));
   setStepStatus('#provider-status', modelCount === 2 ? 'Both configured' : modelCount ? '1 of 2 configured' : 'Choose models', modelCount === 2 ? '' : 'warning');
-  setStepStatus('#drafting-status', profile.drafting_provider ? `Using ${profile.drafting_provider}` : 'Choose a provider', profile.drafting_provider ? '' : 'warning');
-  $('#provider-panel').open = modelCount < 2;
+  setStepStatus('#drafting-status', profile.drafting_provider ? \`Using \${providerLabel(profile.drafting_provider)}\` : 'Choose a provider', profile.drafting_provider ? '' : 'warning');
   const hasResume = Boolean(profile.name && profile.email);
-  $('#social-sign-in-panel').open = Boolean(profile.drafting_provider && hasResume && (setup.browser.sites.length || setup.browser.connected_sites.length < 2));
-  $('#telegram-panel').open = Boolean(hasResume && setup.matching.model && !setup.telegram_configured);
+  const needsSocial = Boolean(profile.drafting_provider && hasResume && (setup.browser.sites.length || setup.browser.connected_sites.length < 2));
+  closeSetupPanels(modelCount < 2 ? 'provider-panel' : needsSocial ? 'social-sign-in-panel' : null);
   return setup;
 }
 
@@ -504,15 +535,50 @@ async function loadProfile() {
   $('#resume-panel-label').textContent = hasResume ? 'Your resume details' : 'Import your resume';
   setStepStatus('#resume-status', hasResume ? 'Details ready' : 'Needs details', hasResume ? '' : 'warning');
   $('#resume-panel').open = !hasResume;
+  $('#resume-review-actions').hidden = !hasResume;
+  $('#resume-panel-help').textContent = hasResume
+    ? 'Review the structured details below, or import a newer resume to replace them.'
+    : 'Upload a text-based PDF to seed your structured profile. You can review every extracted field afterward.';
   $('#pdf-resume-form button[type="submit"]').disabled = !profile.drafting_provider || !availability[profile.drafting_provider];
   const projectCount = cards.filter((card) => card.kind === 'project' && card.approved).length;
   $('#profile-summary').textContent = hasResume
-    ? `${profile.name} · ${profile.email}. ${(profile.experience || []).length} previous position${profile.experience?.length === 1 ? '' : 's'} and ${projectCount} selected project${projectCount === 1 ? '' : 's'}.`
+    ? \`\${profile.name} · \${profile.email}. \${(profile.experience || []).length} previous position\${profile.experience?.length === 1 ? '' : 's'} and \${projectCount} selected project\${projectCount === 1 ? '' : 's'}.\`
     : 'Import a resume PDF or enter your details manually. You can review and edit every field.';
   $('#profile-summary-status').textContent = hasResume ? 'Ready to review' : 'Needs details';
   $('#profile-summary-status').className = statusClass(hasResume ? 'success' : 'warning');
-  $('#position-count').textContent = `${(profile.experience || []).length} previous position${profile.experience?.length === 1 ? '' : 's'}`;
-  $('#project-count').textContent = `${projectCount} selected project${projectCount === 1 ? '' : 's'}`;
+  $('#position-count').textContent = \`\${(profile.experience || []).length} previous position\${profile.experience?.length === 1 ? '' : 's'}\`;
+  $('#project-count').textContent = \`\${projectCount} selected project\${projectCount === 1 ? '' : 's'}\`;
+}
+
+function removeRepeatableRow(button) {
+  button.closest('.repeatable-row')?.remove();
+}
+
+function skillRow(value = '') {
+  return \`<div class="repeatable-row repeatable-row--simple"><input data-skill value="\${escapeHtml(value)}" placeholder="Python"><button type="button" class="text-button danger" data-remove-row aria-label="Remove skill">Remove</button></div>\`;
+}
+
+function groupRow(label = '', value = '') {
+  return \`<div class="repeatable-row repeatable-row--group"><input data-skill-group-label value="\${escapeHtml(label)}" placeholder="Category, e.g. Programming"><input data-skill-group-values value="\${escapeHtml(Array.isArray(value) ? value.join(', ') : value)}" placeholder="Python, C++"><button type="button" class="text-button danger" data-remove-row aria-label="Remove skill category">Remove</button></div>\`;
+}
+
+function educationRow(item = {}) {
+  const value = typeof item === 'string' ? {school:item} : item;
+  return \`<div class="repeatable-row repeatable-row--education"><input data-education-school value="\${escapeHtml(value.school || '')}" placeholder="School"><input data-education-degree value="\${escapeHtml(value.degree || '')}" placeholder="Degree"><input data-education-dates value="\${escapeHtml(value.dates || '')}" placeholder="Dates"><button type="button" class="text-button danger" data-remove-row aria-label="Remove education">Remove</button></div>\`;
+}
+
+function simpleRow(attribute, value = '', placeholder = '') {
+  return \`<div class="repeatable-row repeatable-row--simple"><input \${attribute} value="\${escapeHtml(value)}" placeholder="\${escapeHtml(placeholder)}"><button type="button" class="text-button danger" data-remove-row>Remove</button></div>\`;
+}
+
+function bindRepeatableEditor(target) {
+  target.querySelectorAll('[data-remove-row]').forEach((button) => button.addEventListener('click', () => removeRepeatableRow(button)));
+}
+
+function appendRepeatable(target, html) {
+  target.insertAdjacentHTML('beforeend', html);
+  bindRepeatableEditor(target);
+  target.querySelector('.repeatable-row:last-child input')?.focus();
 }
 
 async function loadPersonalDetails() {
@@ -524,11 +590,12 @@ async function loadPersonalDetails() {
   try {
     const profile = await api('/api/profile');
     for (const key of ['name','given_name','family_name','email','phone','location','summary','salary_expectation','work_authorization','notice_period','relocation']) form.elements[key].value = profile[key] || '';
-    form.elements.skills.value = (profile.skills || []).join('\n');
-    form.elements.links.value = (profile.links || []).join('\n');
-    form.elements.education.value = (profile.education || []).map((item) => typeof item === 'string' ? item : [item.school || '', item.degree || '', item.dates || ''].join(' | ')).join('\n');
-    form.elements.achievements.value = (profile.achievements || []).join('\n');
-    form.elements.skill_groups.value = Object.entries(profile.skill_groups || {}).map(([label, value]) => `${label}: ${Array.isArray(value) ? value.join(', ') : value}`).join('\n');
+    $('#skills-editor').innerHTML = (profile.skills || []).map(skillRow).join('');
+    $('#skill-groups-editor').innerHTML = Object.entries(profile.skill_groups || {}).map(([label, value]) => groupRow(label, value)).join('');
+    $('#education-editor').innerHTML = (profile.education || []).map(educationRow).join('');
+    $('#achievements-editor').innerHTML = (profile.achievements || []).map((value) => simpleRow('data-achievement', value, 'Achievement')).join('');
+    $('#links-editor').innerHTML = (profile.links || []).map((value) => simpleRow('data-profile-link type="url"', value, 'https://...')).join('');
+    for (const target of [$('#skills-editor'), $('#skill-groups-editor'), $('#education-editor'), $('#achievements-editor'), $('#links-editor')]) bindRepeatableEditor(target);
     form.hidden = false;
     loading.hidden = true;
   } catch (error) {
@@ -544,24 +611,33 @@ async function loadMatchingModels() {
   const saved = data.matching.model;
   $('#matching-model-form').dataset.saved = saved || '';
   select.replaceChildren(new Option('Choose an installed model', ''));
-  for (const model of data.models) select.add(new Option(`${model.name} · ${(model.size / 1e9).toFixed(1)} GB`, model.name));
-  if (saved && !data.models.some((model) => model.name === saved)) select.add(new Option(`${saved} (unavailable)`, saved));
+  for (const model of data.models) select.add(new Option(\`\${model.name} · \${(model.size / 1e9).toFixed(1)} GB\`, model.name));
+  if (saved && !data.models.some((model) => model.name === saved)) select.add(new Option(\`\${saved} (unavailable)\`, saved));
   select.value = saved || '';
   const saveButton = $('#matching-model-form button[type="submit"]');
   saveButton.disabled = !select.value || select.value === saved;
   saveButton.textContent = select.value && select.value === saved ? 'Selected' : 'Use model';
   const state = data.matching.download_state;
-  $('#matching-download').hidden = data.models.some((model) => model.name === data.matching.recommended) && state !== 'downloading';
-  $('#matching-download').disabled = state === 'downloading';
-  $('#matching-download').textContent = state === 'downloading' ? 'Downloading model…' : `Download ${data.matching.recommended} (about 2 GB)`;
+  const downloading = state === 'downloading';
+  const installed = data.models.some((model) => model.name === data.matching.recommended);
+  $('#matching-download').hidden = installed && !downloading;
+  $('#matching-download').disabled = downloading;
+  $('#matching-download').textContent = downloading ? 'Downloading model…' : state === 'failed' || state === 'cancelled' ? 'Retry model download' : \`Download \${data.matching.recommended} (about 2 GB)\`;
+  $('#matching-download-cancel').hidden = !downloading;
+  $('#matching-download-progress').hidden = !downloading;
+  $('#matching-download-meter').value = Number(data.matching.download_progress || 0);
+  $('#matching-download-label').textContent = downloading
+    ? \`\${Number(data.matching.download_progress || 0)}% · \${data.matching.download_detail || 'Downloading about 2 GB'}\`
+    : '';
   $('#matching-model-detail').textContent = data.matching.download_error || data.matching.service_error || data.error ||
-    (state === 'downloading' ? 'Downloading in the background. Job Radar will select it when ready.' :
+    (state === 'cancelled' ? 'Download cancelled. You can retry whenever you are ready.' :
+     state === 'ready' ? 'Recommended model downloaded and selected.' :
      saved ? '' : 'Choose an installed model to analyze jobs locally.');
-  if (state === 'downloading' && $('#settings').classList.contains('active')) window.matchingPoll = setTimeout(() => loadMatchingModels().then(loadSetup).catch((error) => notice(error.message, true)), 5000);
+  if (downloading && $('#settings').classList.contains('active')) window.matchingPoll = setTimeout(() => loadMatchingModels().then(loadSetup).catch((error) => notice(error.message, true)), 1000);
   return data;
 }
 
-async function loadJobAnalysis() {
+async function loadJobAnalysis() {async function loadJobAnalysis() {
   const failures = await api('/api/matching/failures');
   $('#matching-failures').hidden = !failures.length;
   $('#matching-failures-title').textContent = `${failures.length} job${failures.length === 1 ? '' : 's'} need attention`;
