@@ -54,8 +54,8 @@ function renderJobAnalysis(job, score) {
   const stateMessage = status === 'done' ? `Match reviewed · ${relativeWhen(job.analyzed_at)}`
     : status === 'failed' ? `Match review failed: ${escapeHtml(job.analysis_error || 'Unknown error')}`
     : status === 'dismissed' ? 'Failed analysis dismissed. This job remains in your list without a match score.'
-    : ['pending', 'running'].includes(status) ? 'Local model is extracting requirements and scoring this job.'
-    : 'Basic keyword score. Choose a local matching model in Settings for a detailed assessment.';
+    : ['pending', 'running'].includes(status) ? 'Job Radar is reading the posting and checking the match.'
+    : 'Basic match only. Choose a matching model in Settings for a detailed review.';
   const retry = status === 'failed' ? `<div class="actions"><button type="button" data-analyze="${job.id}" class="secondary">Try analysis again</button><button type="button" data-dismiss-analysis="${job.id}" class="secondary">Dismiss failed analysis</button></div>`
     : status === 'dismissed' ? `<button type="button" data-analyze="${job.id}" class="secondary">Run analysis again</button>` : '';
   const completed = status === 'done';
@@ -304,7 +304,7 @@ async function loadHome() {
   const actions = [
     ...(data.attention?.drafts || []).map((item) => ({kind:'draft', id:item.id, title:item.title, company:item.company, meta:item.status === 'needs_review' ? 'Needs changes' : 'Ready for review'})),
     ...(data.attention?.jobs || []).map((item) => ({kind:'job', id:item.id, title:item.title, company:item.company, meta:`${item.score}/100 match`})),
-    ...(data.attention?.failures || []).map((item) => ({kind:'job', id:item.id, title:item.title, company:item.company, meta:'Analysis failed'})),
+    ...(data.attention?.failures || []).map((item) => ({kind:'job', id:item.id, title:item.title, company:item.company, meta:'Match review failed'})),
   ].slice(0, 8);
   $('#home-action-count').textContent = actions.length ? `${actions.length} item${actions.length === 1 ? '' : 's'} worth opening` : 'Nothing urgent right now';
   $('#home-actions').innerHTML = actions.length ? actions.map((item) =>
@@ -321,11 +321,11 @@ async function loadHomeQueue() {
   clearTimeout(window.homeQueuePoll);
   const queue = await api('/api/queue');
   const lanes = [
-    ['scan', 'Scan', queue.scans], ['analysis', 'Analyze', queue.analysis], ['draft', 'Draft', queue.drafts],
+    ['scan', 'Scan', queue.scans], ['analysis', 'Match', queue.analysis], ['draft', 'Draft', queue.drafts],
   ];
   const running = lanes.flatMap(([kind, label, lane]) => lane.active.map((item) => ({kind, label, item, status:'Running'})));
   const waiting = lanes.flatMap(([kind, label, lane]) => lane.waiting.map((item) => ({kind, label, item, status:'Waiting'})));
-  const attention = queue.analysis.failed.map((item) => ({kind:'analysis', label:'Analyze', item, status:'Needs attention'}));
+  const attention = queue.analysis.failed.map((item) => ({kind:'analysis', label:'Match', item, status:'Needs attention'}));
   const preview = [...running, ...attention, ...waiting].slice(0, 6);
   const total = running.length + waiting.length;
   $('#home-queue-count').textContent = `${total} in queue${queue.analysis.failed.length ? ` · ${queue.analysis.failed.length} need attention` : ''}`;
@@ -425,7 +425,7 @@ async function loadQueue(options = {}) {
   queueSignature = signature;
   const scans = data.scans, analysis = data.analysis, drafts = data.drafts;
   const total = [scans, analysis, drafts].reduce((sum, lane) => sum + lane.active.length + lane.waiting.length, 0);
-  $('#queue-summary').innerHTML = `<div><strong>${total}</strong><span>work items in progress or waiting</span></div><div><strong>${scans.active.length + scans.waiting.length}</strong><span>scans</span></div><div><strong>${analysis.active.length + analysis.waiting.length}</strong><span>job analyses</span></div><div><strong>${drafts.active.length + drafts.waiting.length}</strong><span>drafts</span></div>`;
+  $('#queue-summary').innerHTML = `<div><strong>${total}</strong><span>work items in progress or waiting</span></div><div><strong>${scans.active.length + scans.waiting.length}</strong><span>scans</span></div><div><strong>${analysis.active.length + analysis.waiting.length}</strong><span>match reviews</span></div><div><strong>${drafts.active.length + drafts.waiting.length}</strong><span>drafts</span></div>`;
   for (const [id, lane] of [['scan', scans], ['analysis', analysis], ['draft', drafts]]) {
     const blocked = id === 'analysis' ? analysis.failed.length : 0;
     $(`#queue-${id}-count`).textContent = `${lane.active.length} running · ${lane.waiting.length} waiting${blocked ? ` · ${blocked} needs attention` : ''}`;
@@ -435,16 +435,16 @@ async function loadQueue(options = {}) {
     : '<p class="queue-empty">No scan running.</p>';
   queueWaiting($('#queue-scan-waiting'), scans.waiting, 'scan', (item) => item.requested_by === 'you' ? 'Requested by you' : 'Scheduled');
   $('#queue-analysis-active').innerHTML = analysis.active.length
-    ? `<div class="queue-now-head">Working now</div>${analysis.active.map((item) => queueRow(item, 'analysis', item.stage === 'scoring' ? 'Scoring match' : 'Extracting details', null, true)).join('')}`
+    ? `<div class="queue-now-head">Working now</div>${analysis.active.map((item) => queueRow(item, 'analysis', item.stage === 'scoring' ? 'Checking match' : 'Reading job details', null, true)).join('')}`
     : '<p class="queue-empty">No job being analyzed.</p>';
-  queueWaiting($('#queue-analysis-waiting'), analysis.waiting, 'analysis', () => 'Extract, then score');
-  $('#queue-analysis-failed').innerHTML = analysis.failed.length ? `<div class="queue-waiting-head queue-failed-head">Needs attention <span>${analysis.failed.length}</span></div><div class="queue-scroll">${analysis.failed.map((item) => `<div class="queue-failed-row">${queueRow(item, 'analysis', 'Analysis failed', '!')}<button type="button" class="text-button" data-queue-dismiss="${item.id}" aria-label="Dismiss failed analysis for ${escapeHtml(item.title)}">Dismiss</button></div>`).join('')}</div>` : '';
+  queueWaiting($('#queue-analysis-waiting'), analysis.waiting, 'analysis', () => 'Read job, then check match');
+  $('#queue-analysis-failed').innerHTML = analysis.failed.length ? `<div class="queue-waiting-head queue-failed-head">Needs attention <span>${analysis.failed.length}</span></div><div class="queue-scroll">${analysis.failed.map((item) => `<div class="queue-failed-row">${queueRow(item, 'analysis', 'Match review failed', '!')}<button type="button" class="text-button" data-queue-dismiss="${item.id}" aria-label="Dismiss failed analysis for ${escapeHtml(item.title)}">Dismiss</button></div>`).join('')}</div>` : '';
   $('#queue-analysis-failed').querySelectorAll('[data-queue-dismiss]').forEach((button) => button.addEventListener('click', async () => {
     try { await api(`/api/jobs/${button.dataset.queueDismiss}/dismiss-analysis`, {method:'POST'}); await loadQueue({reason:'action'}); notice('Failed analysis dismissed.'); }
     catch(error) { notice(error.message, true); }
   }));
   if (analysis.service_error) $('#queue-analysis-waiting').insertAdjacentHTML('beforeend', `<p class="queue-attention">${escapeHtml(analysis.service_error)}</p>`);
-  else if (!analysis.model) $('#queue-analysis-waiting').insertAdjacentHTML('beforeend', '<p class="queue-attention">Choose a local model in Settings to start analysis.</p>');
+  else if (!analysis.model) $('#queue-analysis-waiting').insertAdjacentHTML('beforeend', '<p class="queue-attention">Choose a matching model in Settings to review job fit.</p>');
   $('#queue-draft-active').innerHTML = drafts.active.length
     ? `<div class="queue-now-head">Preparing now</div>${drafts.active.map((item) => queueRow(item, 'draft', item.stage === 'regenerating' ? 'Regenerating' : 'Preparing draft', null, true)).join('')}`
     : '<p class="queue-empty">No draft being prepared.</p>';
@@ -972,7 +972,7 @@ $('#matching-retry-all').addEventListener('click', async (event) => {
   try {
     const result = await api('/api/matching/retry-failed', {method:'POST'});
     await loadJobs();
-    notice(`${result.queued} job${result.queued === 1 ? '' : 's'} queued for analysis.`);
+    notice(`${result.queued} job${result.queued === 1 ? '' : 's'} queued for match review.`);
   } catch (error) { button.disabled = false; notice(error.message, true); }
 });
 
@@ -1242,12 +1242,12 @@ async function loadAutoApply() {
   const existingButton = $('#queue-existing-drafts');
   existingButton.disabled = !data.enabled || !(data.eligible_existing || data.waiting_existing);
   $('#existing-draft-count').textContent = !data.enabled ? 'Enable and save automatic drafts first.'
-    : (data.eligible_existing || data.waiting_existing) ? `${data.eligible_existing} scored match${data.eligible_existing === 1 ? '' : 'es'} at ${data.threshold}+ · ${data.waiting_existing} still analyzing · ${(data.counts.queued || 0)} queued.`
+    : (data.eligible_existing || data.waiting_existing) ? `${data.eligible_existing} scored match${data.eligible_existing === 1 ? '' : 'es'} at ${data.threshold}+ · ${data.waiting_existing} still being checked · ${(data.counts.queued || 0)} queued.`
     : data.highest_existing_score != null ? `No undrafted jobs score at least ${data.threshold}; the highest is ${data.highest_existing_score}. Lower the minimum and save to include them.`
     : `${data.counts.queued || 0} queued · No undrafted, scored jobs are ready.`;
   const activity = $('#auto-apply-activity');
   activity.innerHTML = data.recent.length ? `${data.recent.map((item) =>
-    `<div class="item"><div class="item-title">${escapeHtml(item.title)} · ${escapeHtml(item.company)} <span class="status-badge ${item.status === 'sent' ? 'status-badge--success' : 'status-badge--warning'}">${escapeHtml(item.status.replaceAll('_', ' '))}</span></div><div class="item-meta">${item.analysis_status === 'done' && item.score != null ? `${escapeHtml(item.score)}/100 · ` : 'Analyzing · '}${escapeHtml(item.detail || '')}</div><div class="actions">${item.draft_id ? `<button type="button" data-auto-draft="${item.draft_id}">Open application</button>` : `<button type="button" data-auto-job="${item.vacancy_id}">Open job</button>`}</div></div>`
+    `<div class="item"><div class="item-title">${escapeHtml(item.title)} · ${escapeHtml(item.company)} <span class="status-badge ${item.status === 'sent' ? 'status-badge--success' : 'status-badge--warning'}">${escapeHtml(item.status.replaceAll('_', ' '))}</span></div><div class="item-meta">${item.analysis_status === 'done' && item.score != null ? `${escapeHtml(item.score)}/100 · ` : 'Checking match · '}${escapeHtml(item.detail || '')}</div><div class="actions">${item.draft_id ? `<button type="button" data-auto-draft="${item.draft_id}">Open application</button>` : `<button type="button" data-auto-job="${item.vacancy_id}">Open job</button>`}</div></div>`
   ).join('')}` : '<p class="hint">No prepared drafts yet.</p>';
   activity.querySelectorAll('[data-auto-draft]').forEach((button) => button.addEventListener('click', () => loadApplications(button.dataset.autoDraft).catch((error) => notice(error.message, true))));
   activity.querySelectorAll('[data-auto-job]').forEach((button) => button.addEventListener('click', async () => { await showTab('jobs'); await showJob(button.dataset.autoJob); }));
@@ -1928,7 +1928,7 @@ $('#matching-model-form').addEventListener('submit', async (event) => {
   try {
     await api('/api/matching/model', {method:'PUT', body:JSON.stringify({model:event.target.elements.model.value})});
     await loadSettings();
-    notice('Local matching model saved. Existing jobs are being analyzed.');
+    notice('Matching model saved. Existing jobs are being reviewed.');
   } catch(error) { notice(error.message, true); }
   finally { endPending(pendingButton); const model = event.target.elements.model.value; pendingButton.disabled = !model || model === event.target.dataset.saved; }
 });
