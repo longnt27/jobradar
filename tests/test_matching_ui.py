@@ -57,6 +57,8 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 page.locator('#home-optional [data-setup-panel="telegram-panel"]').click()
                 page.locator("#telegram-panel[open]").wait_for()
                 assert page.get_by_role("button", name="Find my chat ID").is_visible()
+                page.get_by_role("button", name="My profile", exact=True).first.click()
+                page.locator("#profile.active").wait_for()
                 page.locator("#edit-profile-button").click()
                 page.locator("#personal.active #profile-form").wait_for()
                 assert page.url.endswith("#personal")
@@ -194,8 +196,9 @@ def test_failed_matching_jobs_are_visible_and_retryable_from_jobs(tmp_path: Path
                 page.locator("#matching-failures").wait_for(state="hidden")
                 assert db.one("SELECT COUNT(*) AS n FROM vacancies WHERE analysis_status='failed'")["n"] == 0
                 page.locator("#job-analysis-settings").click()
+                page.locator("#settings.active").wait_for()
+                page.locator("#provider-panel[open]").wait_for()
                 assert "need attention" not in page.locator("#matching-status").inner_text()
-                assert page.locator("#provider-panel").get_attribute("open") is not None
             finally:
                 browser.close()
     finally:
