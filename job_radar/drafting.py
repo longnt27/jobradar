@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field
 
+from .application_action import resolve_application_action, reviewed_application_action
 from .db import Database, new_id, now
 from .settings import Settings
 
@@ -318,9 +319,7 @@ def prepare_draft(db: Database, settings: Settings, vacancy_id: str, provider: s
     resume["evidence"] = selected  # Existing drafts and integrations retain source references.
     resume = _ensure_english_resume(provider, resume)
     message = {"subject": model.email_subject, "body": model.email_body}
-    destination = ({"kind": "email", "email": job["apply_url"].removeprefix("mailto:").split("?", 1)[0]}
-                   if job["apply_url"] and job["apply_url"].startswith("mailto:") else
-                   {"kind": "web", "url": job["apply_url"]} if job["apply_url"] else {"kind": "unknown", "url": ""})
+    destination = resolve_application_action(db, job)
     if previous:
         destination = previous["destination"]
     warnings = []
@@ -376,6 +375,8 @@ def update_draft(db: Database, settings: Settings, identifier: str, updates: dic
     for key in updates:
         if not isinstance(updates[key], dict):
             raise ValueError(f"{key} must be an object")
+    if "destination" in updates:
+        updates = {**updates, "destination": reviewed_application_action(updates["destination"], draft["destination"])}
     merged = {key: updates.get(key, draft[key]) for key in allowed}
     if not merged["resume_data"].get("name") or not merged["message_data"].get("body"):
         raise ValueError("Resume name and application message are required")
