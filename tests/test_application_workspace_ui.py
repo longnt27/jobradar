@@ -36,7 +36,7 @@ def test_application_workspace_filters_reviews_and_confirms_send(tmp_path: Path,
     })
     client.put("/api/profile", json=profile)
 
-    first = _prepare(client, "Example", "Platform Engineer", "mailto:jobs@example.org")
+    first = _prepare(client, "Example", "Platform Engineer", "https://example.org/apply")
     second = _prepare(client, "Other Co", "Research Engineer")
 
     first_form = {
@@ -119,7 +119,7 @@ def test_application_workspace_filters_reviews_and_confirms_send(tmp_path: Path,
                 first_card = page.locator(f'[data-application="{first["id"]}"]')
                 first_card.click()
                 assert first_card.get_attribute("aria-pressed") == "true"
-                assert page.locator("#application-detail").evaluate("node => document.activeElement === node")
+                page.wait_for_function("document.activeElement === document.querySelector('#application-detail')")
                 assert "is-selected" in (first_card.get_attribute("class") or "")
                 assert "Basic template" in page.locator("#application-detail").inner_text()
                 assert "local template; no model inference" not in page.locator("#application-detail").inner_text()
@@ -196,8 +196,8 @@ def test_application_workspace_static_contract() -> None:
     assert "application-review-nav" in js
     assert "application-sticky-actions" in js
     assert "application-dirty-state" in js
-    assert "application-alert--danger" in js
-    assert "application-alert--warning" in js
+    assert "applicationAlert('danger', 'Sending is blocked'" in js
+    assert "applicationAlert('warning', 'Review before sending'" in js
     assert "application-debug" in js
     assert "providerLabel(draft.provider_mode" in js
     assert "renderApplicationFormField" in js

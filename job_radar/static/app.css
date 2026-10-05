@@ -450,3 +450,14 @@ button.danger,.text-button.danger{color:#a4382d;border-color:#e7c2bd}
 
 /* Stack 06 Home dashboard */
 .hero.is-compact{padding:18px 22px;align-items:center}.hero.is-compact .eyebrow{display:none}.hero.is-compact h2{font-size:22px;margin:0 0 4px}.hero.is-compact p:last-child{margin:0}.home-optional{border-top:1px solid var(--ui-border,#d7e2db);margin-top:18px;padding-top:16px}.home-optional h4{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--ui-muted,#526a62);margin:0 0 9px}.home-optional-row,.home-action-row{width:100%;display:flex;align-items:center;justify-content:space-between;gap:12px;text-align:left;border:1px solid #e3eae6;background:#fff;border-radius:10px;padding:12px 13px;color:#18362b}.home-optional-row+ .home-optional-row,.home-action-row+ .home-action-row{margin-top:7px}.home-optional-row:hover,.home-action-row:hover{background:#f6fbf7;border-color:#86b99d}.home-optional-row strong,.home-action-row strong{display:block;font-size:13px}.home-optional-row small,.home-action-row small{display:block;margin-top:3px;color:var(--ui-muted,#526a62);font-size:12px}.home-actions{display:grid}.step-row.is-done{background:#f8fbf9}.home-activity-panel{margin-top:0}.home-activity-panel .home-queue{grid-template-columns:repeat(2,minmax(0,1fr))}@media(max-width:760px){.home-activity-panel .home-queue{grid-template-columns:1fr}.hero.is-compact{display:block}.hero.is-compact button{margin-top:12px}}
+
+
+/* Respect system motion preferences across navigation, pending states, and skeletons. */
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{
+    scroll-behavior:auto!important;
+    animation-duration:.01ms!important;
+    animation-iteration-count:1!important;
+    transition-duration:.01ms!important
+  }
+}

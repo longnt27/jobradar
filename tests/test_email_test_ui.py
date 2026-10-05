@@ -37,7 +37,10 @@ def test_email_settings_can_be_tested_from_profile(tmp_path: Path, monkeypatch) 
             try:
                 page = browser.new_page()
                 page.goto(f"http://127.0.0.1:{port}/#settings")
+                page.locator("#settings.active").wait_for()
+                page.wait_for_function("document.querySelector('#provider-availability').textContent.trim().length > 0")
                 page.locator("#smtp-panel summary").click()
+                page.locator("#smtp-panel[open] #setup-smtp-form").wait_for()
                 button = page.locator("#smtp-send-test")
                 page.wait_for_function("!document.querySelector('#smtp-send-test').disabled")
                 page.locator('#setup-smtp-form [name="from_address"]').fill("other@gmail.com")
@@ -47,11 +50,11 @@ def test_email_settings_can_be_tested_from_profile(tmp_path: Path, monkeypatch) 
                 page.locator('#setup-smtp-form button[type="submit"]').click()
                 page.wait_for_function("!document.querySelector('#smtp-send-test').disabled")
                 button.click()
-                page.wait_for_function("document.querySelector('#smtp-test-result').textContent.includes('SMTP accepted')")
+                page.wait_for_function("document.querySelector('#smtp-test-result').textContent.includes('accepted')")
                 assert "alex@gmail.com" in page.locator("#smtp-test-result").inner_text()
-                assert page.locator("#setup-smtp-status").inner_text() == "SMTP accepted"
+                assert page.locator("#setup-smtp-status").inner_text() == "Test email accepted"
                 page.reload()
-                page.wait_for_function("document.querySelector('#setup-smtp-status').textContent === 'SMTP accepted'")
+                page.wait_for_function("document.querySelector('#setup-smtp-status').textContent === 'Test email accepted'")
             finally:
                 browser.close()
     finally:

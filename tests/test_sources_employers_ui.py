@@ -6,12 +6,19 @@ from threading import Thread
 import uvicorn
 from playwright.sync_api import sync_playwright
 
+from job_radar.db import new_id, now
 from job_radar.settings import Settings
 from job_radar.web import create_app
 
 
 def test_sources_and_employers_management_ui(tmp_path: Path) -> None:
     app = create_app(Settings(tmp_path))
+    timestamp = now()
+    for number in range(60):
+        app.state.db.execute(
+            "INSERT INTO employers(id,name,category,aliases,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+            (new_id(), f"ZZ Pagination Employer {number:02d}", "test", "[]", timestamp, timestamp),
+        )
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
@@ -62,7 +69,7 @@ def test_sources_and_employers_management_ui(tmp_path: Path) -> None:
                 career_button = employer.locator("[data-employer-source]")
                 assert "GSM / Xanh SM" in career_button.get_attribute("aria-label")
 
-                page.evaluate("window.prompt = () => { throw new Error('native prompt should not be used'); }")
+                page.evaluate("() => { window.prompt = () => { throw new Error('native prompt should not be used'); }; }")
                 career_button.click()
                 assert employer.locator(".employer-career-form").is_visible()
                 employer.locator("[data-employer-cancel]").click()
@@ -70,6 +77,7 @@ def test_sources_and_employers_management_ui(tmp_path: Path) -> None:
 
                 page.locator("#employer-query").fill("")
                 page.locator("#employer-query").press("Enter")
+                page.wait_for_function("!document.querySelector('#employers-next').disabled")
                 page.locator("#employer-list .employer").first.wait_for()
                 assert not page.locator("#employers-next").is_disabled()
                 page.locator("#employers-next").click()

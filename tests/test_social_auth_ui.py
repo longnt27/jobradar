@@ -31,16 +31,18 @@ def test_social_sign_in_is_a_setup_step_and_expiry_is_visible_from_jobs(tmp_path
                 page = browser.new_page()
                 page.set_default_timeout(3000)
                 page.goto(f"http://127.0.0.1:{port}/#home")
-                page.get_by_role("button", name="Connect LinkedIn and Facebook").click()
+                page.locator('#home-steps [data-social-auth="true"]').click()
                 assert page.locator("#social-sign-in-panel").evaluate("node => node.open")
                 assert page.locator("#settings").get_attribute("class").find("active") >= 0
+                page.wait_for_function("document.querySelector('#provider-availability').textContent.trim().length > 0")
+                page.locator("#social-sign-in-panel[open]").wait_for()
                 assert page.get_by_role("button", name="Sign in to LinkedIn").is_visible()
                 assert page.get_by_role("button", name="Sign in to Facebook").is_visible()
                 assert page.locator("#setup-browser-finish").count() == 0
 
                 app.state.db.set_setting("social_login_completed_at_linkedin", "2026-10-01T12:00:00+00:00")
                 page.evaluate("window.dispatchEvent(new Event('focus'))")
-                page.locator("#linkedin-sign-in-status").get_by_text("Connected").wait_for()
+                page.wait_for_function("document.querySelector('#linkedin-sign-in-status').textContent === 'Connected'")
                 app.state.db.set_setting("social_reauth_required_linkedin", "1")
                 page.get_by_role("button", name="Jobs", exact=True).first.click()
                 banner = page.locator("#social-auth-banner")

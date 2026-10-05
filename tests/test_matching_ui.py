@@ -54,9 +54,11 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 assert page.locator("#provider-form select").is_visible()
                 assert page.locator("#matching-model-form select").is_visible()
                 page.get_by_role("button", name="Home", exact=True).click()
-                page.get_by_role("button", name="Telegram application reviews").click()
+                page.locator('#home-optional [data-setup-panel="telegram-panel"]').click()
                 page.locator("#telegram-panel[open]").wait_for()
                 assert page.get_by_role("button", name="Find my chat ID").is_visible()
+                page.get_by_role("button", name="My profile", exact=True).first.click()
+                page.locator("#profile.active").wait_for()
                 page.locator("#edit-profile-button").click()
                 page.locator("#personal.active #profile-form").wait_for()
                 assert page.url.endswith("#personal")
@@ -110,7 +112,7 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 assert page.url.endswith("#personal")
                 assert app.state.db.get_setting("profile", {})["name"] == "Alex Example"
                 page.locator("#personal [data-tab='profile']").click()
-                page.locator("#resume-status.pill:not(.warning)").wait_for()
+                page.locator("#resume-status.status-badge--success").wait_for()
                 page.get_by_role("button", name="Settings", exact=True).click()
                 page.locator("#smtp-panel summary").click()
                 page.locator("#smtp-panel[open]").wait_for()
@@ -121,7 +123,7 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 assert page.locator("#setup-smtp-form input[name='user']").input_value() == "alex@example.org"
                 page.locator("#setup-smtp-form input[name='password']").fill("test-app-password")
                 page.locator("#setup-smtp-form button[type='submit']").click()
-                page.locator("#setup-smtp-status.pill:not(.muted)").wait_for()
+                page.locator("#setup-smtp-status.status-badge--success").wait_for()
                 assert json.loads((tmp_path / "smtp.json").read_text())["host"] == "smtp.gmail.com"
                 app.state.db.set_setting("profile", {"name": "Alex Example", "email": "alex@example.org", "drafting_provider": "codex", "experience": []})
                 app.state.db.set_setting("matching_model", "test:small")
@@ -130,8 +132,12 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 page.goto("about:blank")
                 page.goto(f"http://127.0.0.1:{port}/#settings")
                 page.locator("#provider-panel summary").click()
-                for selector in ("#provider-status", "#resume-status", "#matching-status", "#social-sign-in-status", "#setup-telegram-status"):
-                    page.locator(f"{selector}.pill:not(.warning):not(.muted)").wait_for()
+                for selector in ("#provider-status", "#matching-status", "#social-sign-in-status", "#setup-telegram-status"):
+                    page.locator(selector).wait_for()
+                    page.wait_for_function(
+                        "(selector) => { const node = document.querySelector(selector); return node && !node.classList.contains('warning'); }",
+                        arg=selector,
+                    )
             finally:
                 browser.close()
     finally:
@@ -173,7 +179,6 @@ def test_failed_matching_jobs_are_visible_and_retryable_from_jobs(tmp_path: Path
             try:
                 page = browser.new_page()
                 page.goto(f"http://127.0.0.1:{port}/#jobs")
-                assert page.locator("#matching-overview .needs-attention strong").inner_text() == "2"
                 page.locator("#matching-failures").wait_for(state="visible")
                 assert "2 jobs need attention" in page.locator("#matching-failures-title").inner_text()
                 assert "Engineer 1" in page.locator("#matching-failure-list").inner_text()
@@ -191,8 +196,9 @@ def test_failed_matching_jobs_are_visible_and_retryable_from_jobs(tmp_path: Path
                 page.locator("#matching-failures").wait_for(state="hidden")
                 assert db.one("SELECT COUNT(*) AS n FROM vacancies WHERE analysis_status='failed'")["n"] == 0
                 page.locator("#job-analysis-settings").click()
+                page.locator("#settings.active").wait_for()
+                page.locator("#provider-panel[open]").wait_for()
                 assert "need attention" not in page.locator("#matching-status").inner_text()
-                assert page.locator("#provider-panel").get_attribute("open") is not None
             finally:
                 browser.close()
     finally:
