@@ -91,6 +91,20 @@ def seniority_key(value: str) -> str:
     return ""
 
 
+def salary_floor(value: str) -> float | None:
+    """Best-effort lower bound for grounded salary text; never infer currency conversion."""
+    text = str(value or "").casefold()
+    numbers = [float(item.replace(",", "")) for item in re.findall(r"\d+(?:[.,]\d+)?", text.replace(",", ""))]
+    if not numbers:
+        return None
+    floor = min(numbers)
+    if any(unit in text for unit in ("million", "triệu", " tr")) or re.search(r"\b\d+(?:\.\d+)?\s*m\b", text):
+        floor *= 1_000_000
+    elif re.search(r"\b\d+(?:\.\d+)?\s*k\b", text):
+        floor *= 1_000
+    return floor
+
+
 def fit_summary(score: int | None, detail: dict[str, Any] | None, preferences: dict[str, Any]) -> dict[str, Any]:
     detail = detail if isinstance(detail, dict) else {}
     prefs = normalize_search_intent(preferences)
