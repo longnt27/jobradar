@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from job_radar.db import new_id, now
+from job_radar.drafting import prepare_draft
 from job_radar.ingest import ObservedJob, ingest
 from job_radar.settings import Settings
 from job_radar.web import create_app
@@ -29,9 +30,9 @@ def _prepare(tmp_path: Path, kind: str, observed: ObservedJob) -> dict:
         "company": "Prior Co", "role": "Engineer", "dates": "2024-2026", "bullets": ["Built Python systems."]
     })
     vacancy_id, _ = ingest(client.app.state.db, _source(client.app.state.db, kind), observed)
-    response = client.post(f"/api/jobs/{vacancy_id}/prepare", json={"provider": "template"})
-    assert response.status_code == 200, response.text
-    return response.json()
+    draft = prepare_draft(client.app.state.db, client.app.state.settings, vacancy_id, "template")
+    client.app.state.auto_apply_manager.register_review(draft)
+    return draft
 
 
 def test_career_form_is_resolved_with_provenance(tmp_path: Path) -> None:
