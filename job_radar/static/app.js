@@ -642,8 +642,25 @@ function applicationProgressLabel(value) {
     draft_ready:'Draft ready',
     applied:'Applied',
     applied_external:'Applied elsewhere',
+    preparing:'Preparing in background',
+    needs_confirmation:'Application method needs confirmation',
     attention:'Submission needs attention',
   })[value] || value || 'Not started';
+}
+
+function confirmPreparationPreflight(preflight) {
+  const dialog = $('#job-prepare-confirm-dialog');
+  $('#job-prepare-confirm-reason').textContent = preflight.reason || 'Confirm the application method before preparing.';
+  $('#job-prepare-confirm-action').textContent = preflight.action_label || 'Manual application';
+  $('#job-prepare-confirm-evidence').textContent = preflight.action?.evidence || 'No verified application destination is available.';
+  if (typeof dialog.showModal !== 'function') {
+    return Promise.resolve(window.confirm(`${preflight.reason || 'Application method needs confirmation.'}\n\nPrepare a draft anyway?`));
+  }
+  if (dialog.open) dialog.close('cancel');
+  return new Promise((resolve) => {
+    dialog.addEventListener('close', () => resolve(dialog.returnValue === 'confirm'), {once:true});
+    dialog.showModal();
+  });
 }
 
 function recruitingOutcomeLabel(value) {
@@ -789,7 +806,8 @@ async function loadJobs() {
     activeJob = null; activeJobPinned = false; syncJobsHash();
     $('#job-detail').innerHTML = `<div class="empty">${jobs.length ? 'Select a job to see details.' : emptyCopy}</div>`;
   }
-  if ((analysis.pending || jobs.some((job) => ['pending','running'].includes(job.analysis_status))) && $('#jobs').classList.contains('active')) {
+  if ((analysis.pending || jobs.some((job) => ['pending','running'].includes(job.analysis_status))
+      || jobs.some((job) => job.application_progress === 'preparing')) && $('#jobs').classList.contains('active')) {
     window.jobPoll = setTimeout(() => loadJobs().catch((error) => notice(error.message, true)), 5000);
   }
 }
@@ -839,7 +857,11 @@ async function showJob(id, pin = false) {
         ? 'A submission may have happened, but confirmation is uncertain. Review submission history before retrying.'
         : job.application_progress === 'draft_ready'
           ? 'A prepared application exists and is waiting for review.'
-          : 'No application has been prepared or recorded yet.';
+          : job.application_progress === 'preparing'
+            ? `${job.preparation_requested_by === 'manual' ? 'Your preparation request' : 'Automatic preparation'} is running in the background. You can keep browsing.`
+            : job.application_progress === 'needs_confirmation'
+              ? (job.preparation_detail || 'Confirm the application method before drafting work continues.')
+              : 'No application has been prepared or recorded yet.';
   const detailDecisionActions = job.decision_state === 'undecided'
     ? `<button type="button" class="secondary" data-detail-decision="shortlisted">Shortlist</button><button type="button" class="secondary" data-detail-decision="later">Later · 3d</button><button type="button" class="danger" data-detail-decision="ignored">Ignore</button>`
     : `<button type="button" class="secondary" data-detail-decision="undecided">Back to inbox</button>`;
@@ -852,7 +874,9 @@ async function showJob(id, pin = false) {
     ? `<button type="button" class="primary" data-open-draft="${job.latest_draft_id}">Open prepared application</button>`
     : ['applied','applied_external','attention'].includes(job.application_progress)
       ? ''
-      : `<button data-prepare="${id}" class="primary" ${provider ? '' : 'disabled'}>Prepare application</button>`;
+      : job.application_progress === 'preparing'
+        ? '<button type="button" class="primary" disabled aria-busy="true">Preparing in background</button>'
+        : `<button data-prepare="${id}" class="primary" ${provider ? '' : 'disabled'}>${job.application_progress === 'needs_confirmation' ? 'Review application method' : 'Prepare application'}</button>`;
 
   $('#job-detail').setAttribute('tabindex', '-1');
   $('#job-detail').innerHTML = `<div class="job-detail-head"><div><h2>${escapeHtml(job.title)}</h2><div class="item-meta">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div>
@@ -945,14 +969,30 @@ async function showJob(id, pin = false) {
 
   $('#job-detail').querySelector('[data-prepare]')?.addEventListener('click', async () => {
     const button = $('#job-detail').querySelector('[data-prepare]');
-    beginPending(button, 'Preparing…');
+    beginPending(button, 'Checking application method…');
     try {
-      const draft = await api(`/api/jobs/${id}/prepare`, {method:'POST', body:'{}'});
-      if (draft.destination.kind === 'web') {
-        try { await api(`/api/applications/${draft.id}/inspect`, {method:'POST'}); }
-        catch(error) { notice(`Draft ready; form inspection needs attention: ${error.message}`, true); }
+      const preflight = await api(`/api/jobs/${id}/prepare/preflight`);
+      let prepareAnyway = false;
+      if (preflight.requires_confirmation) {
+        endPending(button);
+        prepareAnyway = await confirmPreparationPreflight(preflight);
+        if (!prepareAnyway) return;
+        beginPending(button, 'Queueing…');
       }
-      await showTab('applications'); await loadApplications(draft.id);
+      const result = await api(`/api/jobs/${id}/prepare`, {
+        method:'POST',
+        body:JSON.stringify({prepare_anyway:prepareAnyway}),
+      });
+      if (result.status === 'ready' && result.draft_id) {
+        notice('A prepared application already exists. Opening it now.');
+        await showTab('applications');
+        await loadApplications(result.draft_id);
+        return;
+      }
+      notice(result.already_queued
+        ? 'Application preparation is already running in the background.'
+        : 'Application preparation queued. You can keep browsing; it will appear in Applications when ready.');
+      await Promise.all([loadJobs(), loadHomeQueue().catch(() => {})]);
     } catch(error) { notice(error.message, true); }
     finally { if (button.isConnected) endPending(button); }
   });
@@ -1764,8 +1804,8 @@ async function loadAutoApply() {
     : `${data.counts.queued || 0} queued · No undrafted, scored jobs are ready.`;
   const activity = $('#auto-apply-activity');
   activity.innerHTML = data.recent.length ? `${data.recent.map((item) =>
-    `<div class="item"><div class="item-title">${escapeHtml(item.title)} · ${escapeHtml(item.company)} <span class="status-badge status-badge--${applicationReviewTone({review_status:item.status})}">${escapeHtml(applicationReviewLabel(item.status))}</span></div><div class="item-meta">${item.analysis_status === 'done' && item.score != null ? `${escapeHtml(item.score)}/100 · ` : 'Checking match · '}${escapeHtml(item.detail || '')}</div><div class="actions">${item.draft_id ? `<button type="button" data-auto-draft="${item.draft_id}">Open application</button>` : `<button type="button" data-auto-job="${item.vacancy_id}">Open job</button>`}</div></div>`
-  ).join('')}` : '<p class="hint">No prepared drafts yet.</p>';
+    `<div class="item"><div class="item-title">${escapeHtml(item.title)} · ${escapeHtml(item.company)} <span class="status-badge status-badge--${applicationReviewTone({review_status:item.status})}">${escapeHtml(applicationReviewLabel(item.status))}</span></div><div class="item-meta">${item.requested_by === 'manual' ? 'Requested by you' : item.analysis_status === 'done' && item.score != null ? `${escapeHtml(item.score)}/100 automatic match` : 'Automatic match'} · ${escapeHtml(item.detail || '')}</div><div class="actions">${item.draft_id ? `<button type="button" data-auto-draft="${item.draft_id}">Open application</button>` : `<button type="button" data-auto-job="${item.vacancy_id}">Open job</button>`}</div></div>`
+  ).join('')}` : '<p class="hint">No preparation activity yet.</p>';
   activity.querySelectorAll('[data-auto-draft]').forEach((button) => button.addEventListener('click', () => loadApplications(button.dataset.autoDraft).catch((error) => notice(error.message, true))));
   activity.querySelectorAll('[data-auto-job]').forEach((button) => button.addEventListener('click', async () => { await showTab('jobs'); await showJob(button.dataset.autoJob); }));
   if (data.enabled && $('#applications').classList.contains('active')) window.autoApplyPoll = setTimeout(() => loadAutoApply().catch((error) => notice(error.message, true)), 5000);
