@@ -19,7 +19,7 @@ from .automation_policy import (
     local_day_start_utc,
     normalize_automation_policy,
 )
-from .db import Database, now
+from .db import Database, new_id, now
 from .drafting import get_draft, prepare_draft, regenerate_draft
 from .notifications import telegram_config, telegram_mode_enabled, telegram_quiet_now
 from .preparation import preparation_preflight
@@ -410,8 +410,8 @@ class AutoApplyManager:
 
     def _notification_sent_today(self, vacancy_id: str, channel: str) -> bool:
         return bool(self.db.one(
-            "SELECT 1 AS sent FROM notification_attempts WHERE vacancy_id=? AND channel=? "
-            "AND status='sent' AND datetime(sent_at)>=datetime(?)",
+            "SELECT 1 AS sent FROM notification_events WHERE vacancy_id=? AND channel=? "
+            "AND status='sent' AND datetime(created_at)>=datetime(?) LIMIT 1",
             (vacancy_id, channel, local_day_start_utc()),
         ))
 
@@ -435,6 +435,11 @@ class AutoApplyManager:
             "sent_at=CASE WHEN excluded.sent_at IS NOT NULL THEN excluded.sent_at "
             "ELSE notification_attempts.sent_at END",
             (vacancy_id, channel, status, error, timestamp, timestamp if sent else None),
+        )
+        self.db.execute(
+            "INSERT INTO notification_events(id,vacancy_id,channel,status,error,created_at) "
+            "VALUES(?,?,?,?,?,?)",
+            (new_id(), vacancy_id, channel, status, error, timestamp),
         )
 
     async def notify_review(self, draft_id: str) -> None:
