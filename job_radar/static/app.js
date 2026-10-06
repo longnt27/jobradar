@@ -633,7 +633,7 @@ async function loadQueue(options = {}) {
 const JOB_FILTERS = {
   q:'#job-query', decision:'#job-decision', application:'#job-application', outcome:'#job-outcome',
   score:'#job-score', freshness:'#job-freshness', mode:'#job-work-mode', location:'#job-location',
-  source:'#job-source', seniority:'#job-seniority', sort:'#job-sort',
+  source:'#job-source', seniority:'#job-seniority', fit:'#job-fit', sort:'#job-sort',
 };
 
 function setJobsInboxMode(mode) {
@@ -856,6 +856,7 @@ async function loadJobs() {
     page: jobsPage,
     page_size: 25,
     min_score: $('#job-score').value,
+    fit: $('#job-fit').value,
     freshness: $('#job-freshness').value,
     work_mode: $('#job-work-mode').value,
     location: $('#job-location').value,
@@ -1373,6 +1374,45 @@ function syncStrongThresholdUi(intent) {
   if (auto) auto.value = threshold;
 }
 
+const SEARCH_MODE_FIELDS = ['role_families','seniority_levels','preferred_locations','max_required_experience_years','work_modes','strong_match_threshold'];
+
+function preferenceSourceText(name, intent, mode) {
+  if (mode === 'custom') return 'Custom · preserved when your profile changes.';
+  const inferred = intent.inferred || {};
+  if (name === 'role_families') return intent.role_families?.length
+    ? 'Automatic · inferred from your documented roles.'
+    : 'Automatic · no clear role family yet, so role matching stays broad.';
+  if (name === 'seniority_levels') return intent.seniority_levels?.length
+    ? 'Automatic · inferred from role titles and used as ranking guidance.'
+    : 'Automatic · no reliable seniority label, so seniority stays neutral.';
+  if (name === 'preferred_locations') return intent.preferred_locations?.length
+    ? 'Automatic · inferred from your profile. Clear remote jobs remain eligible.'
+    : 'Automatic · profile location is not set, so no location gate is applied.';
+  if (name === 'max_required_experience_years') {
+    const years = inferred.documented_experience_years;
+    return intent.max_required_experience_years == null
+      ? 'Automatic · dated work history is unavailable, so no experience gate is applied.'
+      : `Automatic · inferred from ~${years ?? 0} years of documented experience.`;
+  }
+  if (name === 'work_modes') return 'Automatic · neutral until you choose a work-mode preference.';
+  if (name === 'strong_match_threshold') return 'Automatic · product default for a strong match.';
+  return 'Automatic';
+}
+
+function syncPreferenceModeField(form, name, intent) {
+  const mode = intent.preference_modes?.[name] || 'auto';
+  const modeControl = form.elements[`mode_${name}`];
+  const valueControl = form.elements[name];
+  if (modeControl) modeControl.value = mode;
+  if (valueControl) valueControl.disabled = mode === 'auto';
+  const reset = form.querySelector(`[data-reset-preference="${name}"]`);
+  if (reset) reset.hidden = mode !== 'custom';
+  const source = form.querySelector(`[data-preference-source="${name}"]`);
+  if (source) source.textContent = preferenceSourceText(name, intent, mode);
+  const hardKey = {role_families:'role_family',seniority_levels:'seniority',preferred_locations:'location',work_modes:'work_mode'}[name];
+  if (hardKey && form.elements[`hard_${hardKey}`]) form.elements[`hard_${hardKey}`].disabled = mode === 'auto';
+}
+
 function renderSearchIntentForm(intent) {
   const form = $('#search-intent-form');
   if (!form) return;
@@ -1381,6 +1421,7 @@ function renderSearchIntentForm(intent) {
   }
   setMultiSelect(form.elements.seniority_levels, intent.seniority_levels);
   setMultiSelect(form.elements.work_modes, intent.work_modes);
+  form.elements.max_required_experience_years.value = intent.max_required_experience_years ?? '';
   form.elements.strong_match_threshold.value = intent.strong_match_threshold;
   form.elements.minimum_salary.value = intent.minimum_salary ?? '';
   form.elements.salary_currency.value = intent.salary_currency || 'VND';
@@ -1389,8 +1430,18 @@ function renderSearchIntentForm(intent) {
   for (const key of ['role_family','seniority','location','work_mode','employer','minimum_salary']) {
     form.elements[`hard_${key}`].checked = Boolean(hard[key]);
   }
-  const active = [...(intent.role_families || []), ...(intent.preferred_locations || []), ...(intent.work_modes || [])].length;
-  setStepStatus('#search-intent-status', active ? `${active} preferences · strong at ${intent.strong_match_threshold}+` : `Flexible · strong at ${intent.strong_match_threshold}+`, active ? '' : 'muted');
+  for (const name of SEARCH_MODE_FIELDS) syncPreferenceModeField(form, name, intent);
+
+  const roles = intent.role_families?.length ? intent.role_families.join(' / ') : 'Broad role match';
+  const locations = intent.preferred_locations?.length ? intent.preferred_locations.join(' + ') : 'Any location';
+  const experience = intent.max_required_experience_years == null
+    ? 'experience requirement flexible'
+    : `jobs requiring up to ${intent.max_required_experience_years} year${intent.max_required_experience_years === 1 ? '' : 's'} experience`;
+  const summary = $('#search-intent-summary');
+  if (summary) summary.innerHTML = `<strong>${escapeHtml(roles)} · ${escapeHtml(locations)} · ${escapeHtml(experience)} · ${escapeHtml(intent.strong_match_threshold)}+ = strong match</strong><p class="hint">Automatic preferences follow your profile. Outside-search jobs stay stored and can be inspected from Jobs.</p>`;
+
+  const customCount = SEARCH_MODE_FIELDS.filter((name) => intent.preference_modes?.[name] === 'custom').length;
+  setStepStatus('#search-intent-status', customCount ? `${customCount} custom override${customCount === 1 ? '' : 's'}` : 'Automatic', customCount ? '' : 'muted');
   syncStrongThresholdUi(intent);
 }
 
@@ -2553,7 +2604,7 @@ function applyJobControls() {
 }
 $('#job-search').addEventListener('click', applyJobControls);
 $('#job-query').addEventListener('keydown', (event) => { if (event.key === 'Enter') applyJobControls(); });
-for (const selector of ['#job-decision','#job-application','#job-outcome','#job-score','#job-freshness','#job-work-mode','#job-source','#job-seniority','#job-sort']) {
+for (const selector of ['#job-decision','#job-application','#job-outcome','#job-score','#job-freshness','#job-work-mode','#job-source','#job-seniority','#job-fit','#job-sort']) {
   $(selector).addEventListener('change', applyJobControls);
 }
 for (const selector of ['#job-location','#job-score']) {
@@ -2564,7 +2615,7 @@ document.querySelectorAll('[data-job-inbox]').forEach((button) => button.addEven
   applyJobControls();
 }));
 $('#jobs-clear-filters').addEventListener('click', () => {
-  for (const [key, selector] of Object.entries(JOB_FILTERS)) $(selector).value = key === 'sort' ? 'best' : '';
+  for (const [key, selector] of Object.entries(JOB_FILTERS)) $(selector).value = key === 'sort' ? 'best' : key === 'fit' ? 'eligible' : '';
   applyJobControls();
 });
 $('#jobs-prev').addEventListener('click', () => { jobsPage = Math.max(1, jobsPage - 1); activeJob = null; activeJobPinned = false; syncJobsHash('push'); loadJobs().catch((error) => notice(error.message, true)); });
@@ -2801,10 +2852,12 @@ $('#search-intent-form').addEventListener('submit', async (event) => {
     preferred_employers: commaList(form.elements.preferred_employers.value),
     excluded_employers: commaList(form.elements.excluded_employers.value),
     negative_keywords: commaList(form.elements.negative_keywords.value),
+    max_required_experience_years: form.elements.max_required_experience_years.value ? Number(form.elements.max_required_experience_years.value) : null,
     minimum_salary: form.elements.minimum_salary.value ? Number(form.elements.minimum_salary.value) : null,
     salary_currency: form.elements.salary_currency.value.trim() || 'VND',
     salary_unknown_ok: form.elements.salary_unknown_ok.checked,
     strong_match_threshold: Number(form.elements.strong_match_threshold.value),
+    preference_modes: Object.fromEntries(SEARCH_MODE_FIELDS.map((name) => [name, form.elements[`mode_${name}`].value])),
     hard_constraints: Object.fromEntries(['role_family','seniority','location','work_mode','employer','minimum_salary']
       .map((key) => [key, form.elements[`hard_${key}`].checked])),
   };
@@ -2817,6 +2870,32 @@ $('#search-intent-form').addEventListener('submit', async (event) => {
   } catch(error) { $('#search-intent-message').textContent = error.message; notice(error.message, true); }
   finally { endPending(pendingButton); }
 });
+
+for (const name of SEARCH_MODE_FIELDS) {
+  const control = $('#search-intent-form').elements[`mode_${name}`];
+  control?.addEventListener('change', () => {
+    const custom = control.value === 'custom';
+    const valueControl = $('#search-intent-form').elements[name];
+    if (valueControl) valueControl.disabled = !custom;
+    const reset = $('#search-intent-form').querySelector(`[data-reset-preference="${name}"]`);
+    if (reset) reset.hidden = !custom;
+    const hardKey = {role_families:'role_family',seniority_levels:'seniority',preferred_locations:'location',work_modes:'work_mode'}[name];
+    if (hardKey) $('#search-intent-form').elements[`hard_${hardKey}`].disabled = !custom;
+  });
+}
+
+document.querySelectorAll('[data-reset-preference]').forEach((button) => button.addEventListener('click', async () => {
+  const name = button.dataset.resetPreference;
+  const pending = beginPending(button, 'Resetting…');
+  try {
+    const intent = await api(`/api/search-intent/reset/${encodeURIComponent(name)}`, {method:'POST'});
+    renderSearchIntentForm(intent);
+    delete $('#auto-apply-form').dataset.initialized;
+    $('#search-intent-message').textContent = 'Reset to automatic. Existing jobs are being rescored.';
+    notice('Preference reset to automatic');
+  } catch(error) { notice(error.message, true); }
+  finally { if (pending.isConnected) endPending(pending); }
+}));
 
 $('#matching-model-form').addEventListener('submit', async (event) => {
   event.preventDefault();
