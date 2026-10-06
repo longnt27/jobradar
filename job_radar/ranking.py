@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .db import Database, now
-from .search_intent import normalize_search_intent, posting_salary_floor, seniority_key
+from .search_intent import extract_required_years, location_matches_preference, normalize_search_intent, posting_salary_floor, seniority_key
 import json
 
 
@@ -34,20 +34,20 @@ def score_job(job: dict[str, Any], profile: dict[str, Any], preferences: dict[st
     matched_skills = [skill for skill in skills if skill.casefold() in f"{title} {description}"]
     skill = min(25, round(25 * len(matched_skills) / max(1, min(len(skills), 5)))) if skills else 12
 
-    years = re.search(r"(?:at least|minimum|min\.?|tối thiểu)?\s*(\d{1,2})\s*\+?\s*(?:years?|năm)", description)
-    years_required = int(years.group(1)) if years else None
+    years_required = extract_required_years(f"{job.get('title') or ''}\n{job.get('description') or ''}")
     experience = 15 if years_required is None else max(8, 20 - max(0, years_required - 2) * 2)
 
     research = 15 if any(word in f"{title} {description}" for word in ("research", "nghiên cứu", "agent", "model development")) else 8
     preferred_locations = [item.casefold() for item in prefs["preferred_locations"]]
     preferred_modes = [item.casefold() for item in prefs["work_modes"]]
-    remote = any(word in f"{location} {description}" for word in ("remote", "wfh", "work from home", "làm việc từ xa"))
+    remote = any(word in f"{location} {(job.get('work_mode') or '').casefold()} {description}" for word in ("remote", "wfh", "work from home", "làm việc từ xa"))
+    location_match = location_matches_preference(location, prefs["preferred_locations"])
     if not preferred_locations:
         local = 5
     elif not location:
         local = 5
     else:
-        local = 10 if any(item in location or location in item for item in preferred_locations) else 3
+        local = 10 if location_match else 3
     if preferred_modes and remote and any(item in {"remote", "wfh", "work from home"} for item in preferred_modes):
         local = max(local, 8)
 
@@ -73,12 +73,17 @@ def score_job(job: dict[str, Any], profile: dict[str, Any], preferences: dict[st
     score = min(100, sum(components.values()))
     hard = prefs["hard_constraints"]
     exclusions = []
+    maximum_years = prefs.get("max_required_experience_years")
+    if years_required is not None and maximum_years is not None and years_required > maximum_years:
+        exclusions.append(
+            f"Experience requirement asks for {years_required} years; your search includes jobs requiring up to {maximum_years} years."
+        )
     if hard.get("role_family") and selected_families and not family_match:
         exclusions.append("Role family is outside your explicit search limits.")
     if hard.get("seniority") and selected_levels and level and level not in selected_levels:
         exclusions.append("Seniority is outside your explicit search limits.")
-    if hard.get("location") and prefs["preferred_locations"] and location and local < 5:
-        exclusions.append("Location is outside your explicit search limits.")
+    if hard.get("location") and prefs["preferred_locations"] and location and not remote and not location_match:
+        exclusions.append("Location is outside your search area.")
     company = str(job.get("company") or "")
     preferred_employers = [item.casefold() for item in prefs["preferred_employers"]]
     excluded_employers = [item.casefold() for item in prefs["excluded_employers"]]

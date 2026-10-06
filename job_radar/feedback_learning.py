@@ -7,7 +7,7 @@ from collections import Counter
 from typing import Any
 
 from .db import Database
-from .search_intent import normalize_search_intent
+from .search_intent import apply_auto_search_intent, normalize_search_intent
 
 
 MIN_PATTERN_COUNT = 3
@@ -124,17 +124,21 @@ def apply_feedback_suggestion(db: Database, suggestion_id: str) -> dict[str, Any
         existing = {item.casefold() for item in preferences["excluded_employers"]}
         if value.casefold() not in existing:
             preferences["excluded_employers"].append(value)
+        preferences["preference_modes"]["excluded_employers"] = "custom"
     elif kind == "prefer_employer":
         existing = {item.casefold() for item in preferences["preferred_employers"]}
         if value.casefold() not in existing:
             preferences["preferred_employers"].append(value)
+        preferences["preference_modes"]["preferred_employers"] = "custom"
     elif kind == "remove_preferred_location":
         preferences["preferred_locations"] = [
             item for item in preferences["preferred_locations"] if item.casefold() != value.casefold()
         ]
+        preferences["preference_modes"]["preferred_locations"] = "custom"
     else:
         raise ValueError("Unsupported preference suggestion")
 
+    preferences = apply_auto_search_intent(preferences, db.get_setting("profile", {}))
     db.set_setting("search_intent", preferences)
     dismissed = set(db.get_setting("dismissed_feedback_suggestions", []) or [])
     dismissed.add(suggestion_id)

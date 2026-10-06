@@ -42,7 +42,8 @@ from .matching import MatchManager
 from .notifications import discover_telegram_chats, save_telegram, telegram_config
 from .preparation import preparation_preflight
 from .ranking import rescore_vacancies, score_job
-from .search_intent import fit_summary, normalize_search_intent, seniority_key
+from .search_intent import (apply_auto_search_intent, fit_summary, migrate_search_intent,
+                            normalize_search_intent, reset_search_preference, seniority_key)
 from .resume_import import parse_resume_template
 from .resume_extract import extract_resume
 from .seeds import seed
@@ -60,7 +61,7 @@ JOBS_ORDER = ("CASE WHEN v.analysis_status='done' THEN 0 ELSE 1 END, "
 
 JOB_VIEW_FILTER_KEYS = {
     "q", "inbox", "decision", "application", "outcome", "score", "freshness",
-    "mode", "location", "source", "seniority", "sort",
+    "mode", "location", "source", "seniority", "fit", "sort",
 }
 
 
@@ -164,6 +165,8 @@ class SearchIntentInput(BaseModel):
     preferred_employers: list[str] = Field(default_factory=list)
     excluded_employers: list[str] = Field(default_factory=list)
     negative_keywords: list[str] = Field(default_factory=list)
+    max_required_experience_years: int | None = Field(default=None, ge=0, le=50)
+    preference_modes: dict[str, str] = Field(default_factory=dict)
     hard_constraints: dict[str, bool] = Field(default_factory=dict)
     minimum_salary: int | None = Field(default=None, ge=0)
     salary_currency: str = "VND"
@@ -222,11 +225,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings.ensure_dirs()
     db = Database(settings.database_path)
     seed(db)
-    if not db.get_setting("search_intent", {}):
-        legacy_auto_apply = db.get_setting("auto_apply", {})
-        db.set_setting("search_intent", normalize_search_intent({
-            "strong_match_threshold": legacy_auto_apply.get("threshold", 80),
-        }))
+    profile = db.get_setting("profile", {})
+    raw_intent = db.get_setting("search_intent", {})
+    legacy_auto_apply = db.get_setting("auto_apply", {})
+    migrated_intent = migrate_search_intent(
+        raw_intent, profile, legacy_threshold=legacy_auto_apply.get("threshold", 80)
+    )
+    if migrated_intent != raw_intent:
+        db.set_setting("search_intent", migrated_intent)
+        if raw_intent:
+            rescore_vacancies(db, profile, migrated_intent)
     clean_saved_analysis(db)
     scan_manager = ScanManager(db, settings)
     auto_apply_manager = AutoApplyManager(db, settings, scan_manager.browser_lock)
@@ -271,10 +279,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def save_profile(profile: dict[str, Any]) -> None:
         previous = db.get_setting("profile", {})
         db.set_setting("profile", profile)
-        matching_fields = ("skills", "location", "relocation", "experience", "education")
+        matching_fields = ("skills", "location", "relocation", "experience", "education", "summary")
         if any(previous.get(field) != profile.get(field) for field in matching_fields):
-            rescore_vacancies(db, profile, db.get_setting("search_intent", {}))
+            preferences = apply_auto_search_intent(db.get_setting("search_intent", {}), profile)
+            db.set_setting("search_intent", preferences)
+            rescore_vacancies(db, profile, preferences)
             match_manager.wake()
+            auto_apply_manager.wake()
 
     def attach_career_source(employer_id: str, name: str, url: str) -> None:
         parts = urlsplit(url)
@@ -619,17 +630,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/search-intent")
     def get_search_intent():
-        raw = db.get_setting("search_intent", {})
-        if not raw:
-            legacy = db.get_setting("auto_apply", {})
-            raw = {"strong_match_threshold": legacy.get("threshold", 80)}
-        return normalize_search_intent(raw)
+        profile = db.get_setting("profile", {})
+        preferences = apply_auto_search_intent(db.get_setting("search_intent", {}), profile)
+        if preferences != db.get_setting("search_intent", {}):
+            db.set_setting("search_intent", preferences)
+        return preferences
 
     @app.put("/api/search-intent")
     def put_search_intent(payload: SearchIntentInput):
-        preferences = normalize_search_intent(payload.model_dump())
-        db.set_setting("search_intent", preferences)
         profile = db.get_setting("profile", {})
+        preferences = apply_auto_search_intent(payload.model_dump(), profile)
+        db.set_setting("search_intent", preferences)
+        rescore_vacancies(db, profile, preferences)
+        match_manager.wake()
+        auto_apply_manager.wake()
+        return preferences
+
+    @app.post("/api/search-intent/reset/{preference}")
+    def reset_search_intent_preference(preference: str):
+        profile = db.get_setting("profile", {})
+        try:
+            preferences = reset_search_preference(db.get_setting("search_intent", {}), profile, preference)
+        except KeyError as error:
+            raise HTTPException(404, str(error)) from error
+        db.set_setting("search_intent", preferences)
         rescore_vacancies(db, profile, preferences)
         match_manager.wake()
         auto_apply_manager.wake()
@@ -1107,7 +1131,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   inbox: str = "", since: str = "", state: str = "",
                   min_score: int | None = Query(None, ge=0, le=100),
                   freshness: int | None = Query(None, ge=1, le=3650), work_mode: str = "",
-                  location: str = "", source: str = "", seniority: str = "", sort: str = "best",
+                  location: str = "", source: str = "", seniority: str = "", fit: str = "", sort: str = "best",
                   page: int = Query(1, ge=1), page_size: int = Query(25, ge=1, le=50)):
         release_due_snoozes(db)
         if state and not any((decision, application, outcome)):
@@ -1124,6 +1148,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(422, "Unsupported recruiting outcome filter")
         if inbox and inbox not in {"since_last_visit", "unseen", "all"}:
             raise HTTPException(422, "Unsupported inbox filter")
+        if fit and fit not in {"eligible", "outside", "all"}:
+            raise HTTPException(422, "Unsupported search-scope filter")
 
         terms = q.strip().split()
         conditions = [
@@ -1141,6 +1167,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 conditions.append(application_filter_sql(application))
             except ValueError as error:
                 raise HTTPException(422, str(error)) from error
+        if fit == "eligible":
+            conditions.append("COALESCE(json_array_length(json_extract(v.score_detail,'$.hard_exclusions')),0)=0")
+        elif fit == "outside":
+            conditions.append("COALESCE(json_array_length(json_extract(v.score_detail,'$.hard_exclusions')),0)>0")
         if inbox == "unseen":
             conditions.extend(["v.seen_at IS NULL", "v.decision_state='undecided'", "v.snoozed_until IS NULL"])
         elif inbox == "since_last_visit":
@@ -1216,6 +1246,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         inbox_base = (
             "v.decision_state='undecided' AND v.snoozed_until IS NULL "
+            "AND COALESCE(json_array_length(json_extract(v.score_detail,'$.hard_exclusions')),0)=0 "
             "AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm')"
         )
         unseen_count = db.one(
@@ -1225,13 +1256,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             f"SELECT COUNT(*) AS count FROM vacancies v WHERE {inbox_base} AND datetime(v.first_seen_at)>datetime(?)",
             (since,),
         )["count"]
+        outside_count = db.one(
+            "SELECT COUNT(*) AS count FROM vacancies v "
+            "WHERE COALESCE(json_array_length(json_extract(v.score_detail,'$.hard_exclusions')),0)>0 "
+            "AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm')"
+        )["count"]
         return {
             "items": rows,
             "page": page,
             "page_size": page_size,
             "total": total,
             "pages": max(1, (total + page_size - 1) // page_size),
-            "inbox": {"unseen": unseen_count, "since_last_visit": since_count, "since": since or None},
+            "inbox": {"unseen": unseen_count, "since_last_visit": since_count, "outside": outside_count, "since": since or None},
         }
 
     @app.get("/api/jobs/{job_id}")
