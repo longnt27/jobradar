@@ -125,6 +125,10 @@ def automation_eligibility(
 
     if job.get("snoozed_until"):
         reasons.append("The job is snoozed.")
+    if job.get("manual_applied_at"):
+        reasons.append("The job is already marked as applied elsewhere.")
+    if str(job.get("recruiting_outcome") or "none") != "none":
+        reasons.append("The job already has a recruiting outcome.")
 
     excluded = db.one(
         "SELECT 1 AS blocked FROM employers WHERE id=? AND coverage_status='excluded_hcm' LIMIT 1",
