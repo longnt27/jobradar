@@ -45,11 +45,12 @@ def test_application_tab_reviews_regenerates_and_deep_links_to_draft(tmp_path: P
                 page.goto(f"http://127.0.0.1:{port}/#applications/{draft['id']}")
                 page.get_by_role("heading", name="Engineer").wait_for(timeout=5000)
                 assert page.get_by_role("button", name="Approve & send").is_visible()
-                assert page.get_by_label("Custom instructions for regeneration").is_visible()
+                assert page.get_by_label("Custom instructions").is_visible()
                 page.get_by_label("Custom instructions for regeneration").fill("Emphasize production search")
-                page.get_by_role("button", name="Regenerate draft").click()
+                page.get_by_label("Section").select_option("message")
+                page.get_by_role("button", name="Regenerate selected section").click()
                 page.get_by_text("Dear team. Emphasize production search").wait_for()
-                assert page.get_by_role("button", name="Approve & send").is_disabled()
+                assert page.get_by_text("Only this section changed. Untouched sections kept their reviewed content.").is_visible()
             finally:
                 browser.close()
     finally:
