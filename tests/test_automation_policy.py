@@ -465,10 +465,12 @@ def test_application_review_mode_can_be_disabled_without_disabling_other_telegra
 
     asyncio.run(app.state.auto_apply_manager.notify_review(draft["id"]))
     attempt = db.one(
-        "SELECT telegram_status FROM auto_application_attempts WHERE vacancy_id=?",
+        "SELECT status,review_hash,telegram_status FROM auto_application_attempts WHERE vacancy_id=?",
         (job_id,),
     )
     assert attempt["telegram_status"] == "disabled"
+    assert attempt["status"] in {"awaiting_review", "needs_review"}
+    assert attempt["review_hash"] == draft["package_hash"]
     assert packets == []
 
 
