@@ -10,6 +10,7 @@ import json
 from typing import Any
 
 from .db import Database
+from .job_inbox import application_filter_sql
 from .search_intent import fit_summary
 
 
@@ -17,6 +18,7 @@ USER_PRIORITY = {
     "submission_uncertain": 120,
     "application_review": 110,
     "application_confirmation": 105,
+    "shortlisted_to_prepare": 100,
     "strong_unseen_job": 90,
     "unseen_job": 75,
     "track_application": 55,
@@ -103,6 +105,10 @@ def build_home_dashboard(
             "SELECT COUNT(*) AS count FROM auto_application_attempts "
             "WHERE status='needs_confirmation'"
         )["count"],
+        "ready_to_prepare": db.one(
+            "SELECT COUNT(*) AS count FROM vacancies v WHERE v.decision_state='shortlisted' "
+            "AND v.snoozed_until IS NULL AND " + application_filter_sql("not_started")
+        )["count"],
         "tracking": db.one(
             "SELECT COUNT(*) AS count FROM vacancies v WHERE v.recruiting_outcome='none' "
             "AND (v.manual_applied_at IS NOT NULL OR EXISTS("
@@ -164,6 +170,24 @@ def build_home_dashboard(
             priority=USER_PRIORITY["application_confirmation"],
             route=_route("jobs", job=row["id"], inbox="all"),
             tone="warning",
+            occurred_at=row["updated_at"],
+        ))
+
+    shortlisted = db.all(
+        "SELECT v.id,v.title,v.company,v.updated_at FROM vacancies v "
+        "WHERE v.decision_state='shortlisted' AND v.snoozed_until IS NULL AND "
+        + application_filter_sql("not_started")
+        + " ORDER BY v.updated_at DESC LIMIT 30"
+    )
+    for row in shortlisted:
+        items.append(_priority_item(
+            kind="shortlisted_to_prepare",
+            identifier=row["id"],
+            title=row["title"],
+            subtitle=f"{row['company']} · Shortlisted · ready to prepare",
+            priority=USER_PRIORITY["shortlisted_to_prepare"],
+            route=_route("jobs", job=row["id"], decision="shortlisted", application="not_started", inbox="all"),
+            tone="info",
             occurred_at=row["updated_at"],
         ))
 
@@ -262,12 +286,12 @@ def build_home_dashboard(
     user_action_count = sum(
         counts[key] for key in (
             "unseen_jobs", "drafts_to_review", "submission_uncertain",
-            "preparation_confirmation", "tracking",
+            "preparation_confirmation", "ready_to_prepare", "tracking",
         )
     )
     if visible:
         state = "action_needed"
-        headline = f"{len(visible)} priorities for this visit"
+        headline = f"{len(items)} priorities for this visit"
     elif health_degraded:
         state = "radar_degraded"
         headline = "No user action is queued, but the radar needs attention"
@@ -286,9 +310,9 @@ def build_home_dashboard(
         {
             "key": "prepare",
             "label": "Prepare applications",
-            "count": counts["preparation_confirmation"],
-            "detail": "Resolve application methods that need your confirmation.",
-            "route": _route("jobs", application="needs_confirmation", inbox="all"),
+            "count": counts["ready_to_prepare"],
+            "detail": "Open shortlisted jobs that do not have an application draft yet.",
+            "route": _route("jobs", decision="shortlisted", application="not_started", inbox="all"),
         },
         {
             "key": "review",
