@@ -347,6 +347,7 @@ function homePriorityLabel(kind) {
     submission_uncertain:'Check submission',
     application_review:'Review application',
     application_confirmation:'Confirm method',
+    shortlisted_to_prepare:'Prepare shortlisted job',
     strong_unseen_job:'Strong new match',
     unseen_job:'New job',
     track_application:'Track outcome',
