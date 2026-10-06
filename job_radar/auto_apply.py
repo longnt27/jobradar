@@ -16,7 +16,6 @@ from .automation_policy import (
     automation_policy,
     daily_auto_drafts_used,
     daily_review_notifications_used,
-    local_day_start_utc,
     normalize_automation_policy,
 )
 from .db import Database, new_id, now
@@ -408,13 +407,6 @@ class AutoApplyManager:
             and str(left.get("chat_id", "")) == str(right.get("chat_id", ""))
         )
 
-    def _notification_sent_today(self, vacancy_id: str, channel: str) -> bool:
-        return bool(self.db.one(
-            "SELECT 1 AS sent FROM notification_events WHERE vacancy_id=? AND channel=? "
-            "AND status='sent' AND datetime(created_at)>=datetime(?) LIMIT 1",
-            (vacancy_id, channel, local_day_start_utc()),
-        ))
-
     def _record_notification(
         self,
         vacancy_id: str,
@@ -495,10 +487,8 @@ class AutoApplyManager:
 
         policy = self.config()
         review_channel = "telegram_application_review"
-        already_counted = self._notification_sent_today(attempt["vacancy_id"], review_channel)
         if (
             attempt["requested_by"] == "automation"
-            and not already_counted
             and daily_review_notifications_used(self.db) >= policy["max_review_notifications_per_day"]
         ):
             self.db.execute(
