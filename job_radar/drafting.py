@@ -387,6 +387,10 @@ def regenerate_draft(db: Database, settings: Settings, draft_id: str, prompt: st
             updates = {"resume_data": previous["resume_data"], "message_data": candidate["message_data"],
                        "form_data": previous["form_data"], "destination": previous["destination"]}
         revised = update_draft(db, settings, draft_id, updates)
+        if section in {"summary", "message"}:
+            db.execute("UPDATE application_drafts SET evidence_ids=? WHERE id=?",
+                       (json.dumps(previous["evidence_ids"]), draft_id))
+            revised = get_draft(db, draft_id)
     revised["changes"] = _section_diff(before, _section_snapshot(revised))
     revised["regenerated_section"] = section
     return revised
