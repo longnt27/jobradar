@@ -324,9 +324,9 @@ async function loadHome() {
     {label:'Job discovery', detail:discoveryCapability.detail || discovery.label, done:Boolean(discoveryCapability.ready), attention:discoveryCapability.status === 'attention', tab:'sources'},
   ];
   const optional = [
-    {label:'Detailed local match review', done:Boolean(setup.matching.model), detail:setup.matching.model ? \`Using \${setup.matching.model}\` : 'Optional · fallback ranking still works', tab:'settings', panel:'provider-panel'},
-    {label:'Application preparation', done:Boolean(preparationCapability.ready), detail:preparationCapability.ready ? 'Ready to prepare applications' : \`Optional · needs \${(preparationCapability.missing || []).join(', ') || 'setup'}\`, tab:'profile'},
-    {label:'Automatic draft preparation', done:Boolean(automaticCapability.ready), detail:automaticCapability.ready ? 'Ready if you choose to enable it' : \`Optional · needs \${(automaticCapability.missing || []).join(', ') || 'setup'}\`, tab:'applications'},
+    {label:'Detailed local match review', done:Boolean(setup.matching.model), detail:setup.matching.model ? `Using ${setup.matching.model}` : 'Optional · fallback ranking still works', tab:'settings', panel:'provider-panel'},
+    {label:'Application preparation', done:Boolean(preparationCapability.ready), detail:preparationCapability.ready ? 'Ready to prepare applications' : `Optional · needs ${(preparationCapability.missing || []).join(', ') || 'setup'}`, tab:'profile'},
+    {label:'Automatic draft preparation', done:Boolean(automaticCapability.ready), detail:automaticCapability.ready ? 'Ready if you choose to enable it' : `Optional · needs ${(automaticCapability.missing || []).join(', ') || 'setup'}`, tab:'applications'},
     {label:'Telegram reviews', done:setup.telegram_configured, detail:setup.telegram_configured ? 'Connected' : 'Optional · not configured', tab:'settings', panel:'telegram-panel'},
     {label:'Email sending', done:setup.smtp_test?.status === 'accepted', detail:setup.smtp_test?.status === 'accepted' ? 'Connected and tested' : setup.smtp_configured ? 'Optional · configured, test pending' : 'Optional · not configured', tab:'settings', panel:'smtp-panel'},
   ];
@@ -343,11 +343,11 @@ async function loadHome() {
   $('#home-primary').dataset.setupPanel = '';
 
   $('#home-steps').innerHTML = required.map((step) =>
-    \`<button class="step-row \${step.done ? 'is-done' : ''}" data-home-step="\${step.tab}"><span class="step-check \${step.done ? 'done' : ''}">\${step.done ? (step.attention ? '!' : '✓') : '○'}</span><span><strong>\${escapeHtml(step.label)}</strong><small>\${escapeHtml(step.detail)}</small></span><span class="step-arrow">→</span></button>\`
+    `<button class="step-row ${step.done ? 'is-done' : ''}" data-home-step="${step.tab}"><span class="step-check ${step.done ? 'done' : ''}">${step.done ? (step.attention ? '!' : '✓') : '○'}</span><span><strong>${escapeHtml(step.label)}</strong><small>${escapeHtml(step.detail)}</small></span><span class="step-arrow">→</span></button>`
   ).join('');
-  $('#home-optional').innerHTML = \`<h4>Optional capabilities</h4>\${optional.map((step) =>
-    \`<button class="home-optional-row" data-home-step="\${step.tab}" data-setup-panel="\${step.panel || ''}"><span><strong>\${escapeHtml(step.label)}</strong><small>\${escapeHtml(step.detail)}</small></span><span class="status-badge \${step.done ? 'status-badge--success' : 'status-badge--neutral'}">\${step.done ? 'Ready' : 'Optional'}</span></button>\`
-  ).join('')}\`;
+  $('#home-optional').innerHTML = `<h4>Optional capabilities</h4>${optional.map((step) =>
+    `<button class="home-optional-row" data-home-step="${step.tab}" data-setup-panel="${step.panel || ''}"><span><strong>${escapeHtml(step.label)}</strong><small>${escapeHtml(step.detail)}</small></span><span class="status-badge ${step.done ? 'status-badge--success' : 'status-badge--neutral'}">${step.done ? 'Ready' : 'Optional'}</span></button>`
+  ).join('')}`;
   document.querySelectorAll('[data-home-step]').forEach((button) => button.addEventListener('click', () => button.dataset.socialAuth === 'true' ? openSocialSignIn() : button.dataset.setupPanel ? openSetupPanel(button.dataset.setupPanel) : showTab(button.dataset.homeStep)));
 
   const actions = [
