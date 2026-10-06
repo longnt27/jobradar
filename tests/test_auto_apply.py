@@ -50,13 +50,17 @@ def test_auto_apply_prepares_new_jobs_but_waits_for_approval(tmp_path: Path, mon
         new_id = _scored_job(app, "Threshold Engineer", 80)
         draft_id = _wait_for_status(app, new_id, "awaiting_review")["draft_id"]
         assert not sent
-        assert app.state.db.one("SELECT state FROM vacancies WHERE id=?", (new_id,))["state"] == "prepare"
+        prepared_job = client.get(f"/api/jobs/{new_id}").json()
+        assert prepared_job["decision_state"] == "undecided"
+        assert prepared_job["application_progress"] == "draft_ready"
         draft = client.get(f"/api/applications/{draft_id}").json()
         response = client.post(f"/api/applications/{draft_id}/approve", json={"package_hash": draft["package_hash"]})
         assert response.status_code == 200, response.text
         assert response.json()["status"] == "sent_confirmed"
         assert sent == [new_id]
-        assert app.state.db.one("SELECT state FROM vacancies WHERE id=?", (new_id,))["state"] == "applied"
+        applied_job = client.get(f"/api/jobs/{new_id}").json()
+        assert applied_job["decision_state"] == "undecided"
+        assert applied_job["application_progress"] == "applied"
         assert app.state.db.one("SELECT vacancy_id FROM auto_application_attempts WHERE vacancy_id=?", (threshold_id,)) is None
         app.state.auto_apply_manager.wake()
         time.sleep(.1)

@@ -15,13 +15,14 @@ from .drafting import get_draft, prepare_draft, regenerate_draft
 from .notifications import telegram_config
 from .review_telegram import _post, send_review_packet
 from .settings import Settings
+from .search_intent import normalize_search_intent
 
 
 log = logging.getLogger(__name__)
 
 EXISTING_MATCHES_SQL = (
     "FROM vacancies v LEFT JOIN auto_application_attempts a ON a.vacancy_id=v.id "
-    "WHERE v.state IN ('new','interesting') "
+    "WHERE v.decision_state IN ('undecided','shortlisted') "
     "AND (a.vacancy_id IS NULL OR a.status='skipped') "
     "AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm') "
     "AND NOT EXISTS(SELECT 1 FROM submissions s WHERE s.vacancy_id=v.id) "
@@ -54,7 +55,9 @@ class AutoApplyManager:
 
     def config(self) -> dict:
         saved = self.db.get_setting("auto_apply", {})
-        return {"enabled": bool(saved.get("enabled", False)), "threshold": int(saved.get("threshold", 80))}
+        intent = self.db.get_setting("search_intent", {})
+        threshold = normalize_search_intent(intent or {"strong_match_threshold": saved.get("threshold", 80)})["strong_match_threshold"]
+        return {"enabled": bool(saved.get("enabled", False)), "threshold": threshold}
 
     def status(self) -> dict:
         counts = {row["status"]: row["count"] for row in self.db.all(
@@ -71,7 +74,8 @@ class AutoApplyManager:
                 "waiting_existing": waiting_existing,
                 "highest_existing_score": highest_existing_score, "recent": recent}
 
-    def configure(self, enabled: bool, threshold: int) -> dict:
+    def configure(self, enabled: bool, threshold: int | None = None) -> dict:
+        threshold = self.config()["threshold"] if threshold is None else threshold
         if not 0 <= threshold <= 100:
             raise ValueError("Threshold must be between 0 and 100")
         previous = self.config()
@@ -83,7 +87,10 @@ class AutoApplyManager:
                     "SELECT id,'skipped','Found before automatic applications were enabled',?,? FROM vacancies",
                     (now(), now()),
                 )
-        self.db.set_setting("auto_apply", {"enabled": enabled, "threshold": threshold})
+        intent = normalize_search_intent(self.db.get_setting("search_intent", {}) or {"strong_match_threshold": threshold})
+        intent["strong_match_threshold"] = threshold
+        self.db.set_setting("search_intent", intent)
+        self.db.set_setting("auto_apply", {"enabled": enabled})
         self.wake()
         return self.status()
 
@@ -117,10 +124,21 @@ class AutoApplyManager:
     async def start(self) -> None:
         self.loop = asyncio.get_running_loop()
         self.wake_event = asyncio.Event()
+        stuck = self.db.all("SELECT id,draft_id FROM submissions WHERE status='sending'")
+        for submission in stuck:
+            detail = "Job Radar restarted while sending. The submission may have completed; verify on the employer site before retrying."
+            self.db.execute("UPDATE submissions SET status='submitted_unconfirmed',error=?,updated_at=? WHERE id=?",
+                            (detail, now(), submission["id"]))
+            self.db.execute("UPDATE application_drafts SET status='submission_uncertain',updated_at=? WHERE id=?",
+                            (now(), submission["draft_id"]))
+        self.db.execute(
+            "UPDATE auto_application_attempts SET status='submission_uncertain',telegram_status='pending',"
+            "detail='Submission status uncertain after restart; verify on the employer site before retrying',updated_at=? "
+            "WHERE status='sending'", (now(),))
         self.db.execute(
             "UPDATE auto_application_attempts SET status='needs_review',telegram_status='pending',"
-            "detail='Job Radar restarted during an application step; review its outcome before sending',updated_at=? "
-            "WHERE status IN ('preparing','regenerating','sending')", (now(),))
+            "detail='Job Radar restarted during application preparation; review before sending',updated_at=? "
+            "WHERE status IN ('preparing','regenerating')", (now(),))
         self.task = asyncio.create_task(self._loop())
         self.telegram_task = asyncio.create_task(self._telegram_loop())
 
@@ -151,10 +169,11 @@ class AutoApplyManager:
 
     def _still_eligible(self, job_id: str) -> bool:
         config = self.config()
-        job = self.db.one("SELECT score,analysis_status,state FROM vacancies WHERE id=?", (job_id,))
+        job = self.db.one("SELECT score,analysis_status,decision_state,snoozed_until FROM vacancies WHERE id=?", (job_id,))
         return bool(config["enabled"] and job and job["analysis_status"] == "done"
                     and job["score"] is not None and job["score"] >= config["threshold"]
-                    and job["state"] in ("new", "interesting", "prepare"))
+                    and job["decision_state"] in ("undecided", "shortlisted")
+                    and not job["snoozed_until"])
 
     async def _process(self, job_id: str) -> None:
         job = self.db.one("SELECT apply_url FROM vacancies WHERE id=?", (job_id,))
@@ -246,7 +265,7 @@ class AutoApplyManager:
 
     async def regenerate(self, draft_id: str, prompt: str) -> dict:
         attempt = self.db.one("SELECT vacancy_id,status FROM auto_application_attempts WHERE draft_id=?", (draft_id,))
-        if not attempt or attempt["status"] in ("sent", "sending", "skipped", "preparing", "regenerating"):
+        if not attempt or attempt["status"] in ("sent", "sending", "submission_uncertain", "skipped", "preparing", "regenerating"):
             raise ValueError("This application cannot be regenerated")
         self._set_status(attempt["vacancy_id"], "regenerating", "Generating a new draft from your instructions.", draft_id)
         try:
@@ -296,8 +315,15 @@ class AutoApplyManager:
             raise
         if result["status"] in ("sent_confirmed", "submitted_confirmed"):
             self._set_status(attempt["vacancy_id"], "sent", result.get("receipt", ""), draft_id)
+        elif result.get("outcome", {}).get("key") == "submission_uncertain":
+            self._set_status(attempt["vacancy_id"], "submission_uncertain",
+                             result["outcome"]["guidance"], draft_id)
+        elif result.get("outcome", {}).get("key") == "send_failed":
+            self._set_status(attempt["vacancy_id"], "awaiting_review",
+                             result["outcome"]["guidance"], draft_id)
         else:
-            self._set_status(attempt["vacancy_id"], "needs_review", result.get("error") or result.get("receipt") or result["status"], draft_id)
+            self._set_status(attempt["vacancy_id"], "needs_review",
+                             result.get("error") or result.get("receipt") or result.get("outcome", {}).get("label") or result["status"], draft_id)
         return result
 
     async def handle_telegram_update(self, update: dict, client: httpx.AsyncClient) -> None:
@@ -362,7 +388,8 @@ class AutoApplyManager:
             await answer("Approval received. Sending the reviewed version.")
             try:
                 result = await self.approve(draft_id, draft["package_hash"])
-                reply = f"Application outcome: {result['status']} · {result.get('receipt') or result.get('error') or ''}"
+                outcome = result.get("outcome", {})
+                reply = f"{outcome.get('label', 'Application updated')}: {result.get('receipt') or result.get('error') or outcome.get('guidance', '')}"
             except (ValueError, KeyError) as error:
                 reply = f"Application was not sent: {error}"
             await _post(client, token, "sendMessage", json={"chat_id": chat_id, "text": reply[:4000]})
@@ -430,7 +457,7 @@ class AutoApplyManager:
                 "JOIN vacancies v ON v.id=a.vacancy_id WHERE a.status='queued' AND v.analysis_status='done' "
                 "ORDER BY a.created_at ASC LIMIT 1") if config["enabled"] else None
             job = queued or (self.db.one(
-                "SELECT v.id FROM vacancies v WHERE v.analysis_status='done' AND v.score>=? AND v.state='new' "
+                "SELECT v.id FROM vacancies v WHERE v.analysis_status='done' AND v.score>=? AND v.decision_state IN ('undecided','shortlisted') AND v.snoozed_until IS NULL "
                 "AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm') "
                 "AND NOT EXISTS(SELECT 1 FROM auto_application_attempts a WHERE a.vacancy_id=v.id) "
                 "ORDER BY v.score DESC,v.first_seen_at DESC LIMIT 1", (config["threshold"],)) if config["enabled"] else None)

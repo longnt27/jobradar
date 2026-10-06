@@ -296,8 +296,12 @@ def prepare_draft(db: Database, settings: Settings, vacancy_id: str, provider: s
     if custom_prompt and provider == "template":
         raise ValueError("Choose an AI drafting provider to regenerate with custom instructions")
     previous = get_draft(db, draft_id) if draft_id else None
-    if previous and (previous["vacancy_id"] != vacancy_id or previous["status"] == "sent"):
-        raise ValueError("This application cannot be regenerated")
+    previous_submission = (db.one(
+        "SELECT status FROM submissions WHERE draft_id=? AND status IN "
+        "('sent_confirmed','submitted_confirmed','submitted_unconfirmed','sending') LIMIT 1", (draft_id,))
+        if draft_id else None)
+    if previous and (previous["vacancy_id"] != vacancy_id or previous["status"] in ("sent", "submission_uncertain") or previous_submission):
+        raise ValueError("This application cannot be regenerated after a submission attempt")
     model = (_template(job, profile, cards) if provider == "template" else
              _run_provider(provider, job, profile, cards, custom_prompt) if custom_prompt else
              _run_provider(provider, job, profile, cards))
@@ -339,7 +343,6 @@ def prepare_draft(db: Database, settings: Settings, vacancy_id: str, provider: s
                    (identifier, vacancy_id, provider, PROVIDERS[provider], json.dumps([card["id"] for card in selected]), json.dumps(resume, ensure_ascii=False),
                     json.dumps(message, ensure_ascii=False), "{}", json.dumps(destination), resume_path, resume_hash,
                     json.dumps(warnings), now(), now()))
-    db.execute("UPDATE vacancies SET state='prepare',updated_at=? WHERE id=?", (now(), vacancy_id))
     return get_draft(db, identifier)
 
 
@@ -369,6 +372,11 @@ def update_draft(db: Database, settings: Settings, identifier: str, updates: dic
     draft = get_draft(db, identifier)
     if draft["status"] == "sent":
         raise ValueError("Sent drafts cannot be changed")
+    prior_submission = db.one(
+        "SELECT status FROM submissions WHERE draft_id=? AND status IN "
+        "('sent_confirmed','submitted_confirmed','submitted_unconfirmed','sending') LIMIT 1", (identifier,))
+    if draft["status"] == "submission_uncertain" or prior_submission:
+        raise ValueError("This application may already have been submitted. Verify the employer site before changing or sending it again")
     allowed = {"resume_data", "message_data", "form_data", "destination"}
     if not updates or set(updates) - allowed:
         raise ValueError("Unsupported draft fields")
