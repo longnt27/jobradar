@@ -498,3 +498,110 @@ def test_automation_policy_ui_contract_exposes_guardrails_and_explicit_feedback(
     assert 'id="preference-suggestions"' in html
     assert "data-preference-action=\"apply\"" in js
     assert "data-preference-action=\"dismiss\"" in js
+
+
+
+def test_partial_auto_apply_update_preserves_saved_policy(tmp_path: Path) -> None:
+    app = create_app(Settings(tmp_path))
+    app.state.db.set_setting("auto_apply", {
+        "enabled": True,
+        "include_shortlisted": True,
+        "max_job_age_days": 9,
+        "require_verified_destination": False,
+        "require_preferred_location": True,
+        "max_auto_drafts_per_day": 7,
+        "max_review_notifications_per_day": 4,
+    })
+    client = TestClient(app)
+
+    response = client.put("/api/auto-apply", json={"enabled": False})
+    assert response.status_code == 200, response.text
+    saved = response.json()
+    assert saved["enabled"] is False
+    assert saved["include_shortlisted"] is True
+    assert saved["max_job_age_days"] == 9
+    assert saved["require_verified_destination"] is False
+    assert saved["require_preferred_location"] is True
+    assert saved["max_auto_drafts_per_day"] == 7
+    assert saved["max_review_notifications_per_day"] == 4
+
+
+def test_strong_job_alerts_send_without_application_review_mode(tmp_path: Path, monkeypatch) -> None:
+    app = create_app(Settings(tmp_path))
+    manager = app.state.auto_apply_manager
+    config = {
+        "token": "token",
+        "chat_id": "42",
+        "modes": {
+            "application_reviews": False,
+            "strong_job_alerts": True,
+            "daily_digest": False,
+        },
+        "digest_time": "18:00",
+        "quiet_start": "",
+        "quiet_end": "",
+    }
+    job_id = _scored_job(app, "Alert Engineer")
+    monkeypatch.setattr(manager, "_strong_jobs_for_notifications", lambda limit=10: [{
+        "id": job_id,
+        "title": "Alert Engineer",
+        "company": "Example",
+        "location": "Hanoi",
+        "score": 93,
+    }])
+    messages = []
+
+    async def fake_post(_client, _token, method, *, json):
+        messages.append((method, json))
+        return {"message_id": 1}
+
+    monkeypatch.setattr("job_radar.auto_apply._post", fake_post)
+    asyncio.run(manager._send_strong_job_alerts(config))
+    asyncio.run(manager._send_strong_job_alerts(config))
+
+    assert len(messages) == 1
+    assert messages[0][0] == "sendMessage"
+    assert "Strong match" in messages[0][1]["text"]
+    event = app.state.db.one(
+        "SELECT status FROM notification_events WHERE vacancy_id=? AND channel='telegram_strong_job'",
+        (job_id,),
+    )
+    assert event["status"] == "sent"
+
+
+def test_daily_digest_is_independent_and_sends_once_per_local_day(tmp_path: Path, monkeypatch) -> None:
+    app = create_app(Settings(tmp_path))
+    manager = app.state.auto_apply_manager
+    config = {
+        "token": "token",
+        "chat_id": "42",
+        "modes": {
+            "application_reviews": False,
+            "strong_job_alerts": False,
+            "daily_digest": True,
+        },
+        "digest_time": "00:00",
+        "quiet_start": "",
+        "quiet_end": "",
+    }
+    monkeypatch.setattr(manager, "_strong_jobs_for_notifications", lambda limit=5: [{
+        "id": "job-1",
+        "title": "Digest Engineer",
+        "company": "Example",
+        "location": "Hanoi",
+        "score": 91,
+    }])
+    monkeypatch.setattr("job_radar.auto_apply.telegram_config", lambda _settings: config)
+    messages = []
+
+    async def fake_post(_client, _token, method, *, json):
+        messages.append((method, json))
+        return {"message_id": 1}
+
+    monkeypatch.setattr("job_radar.auto_apply._post", fake_post)
+    asyncio.run(manager._send_daily_digest(config))
+    asyncio.run(manager._send_daily_digest(config))
+
+    assert len(messages) == 1
+    assert "daily digest" in messages[0][1]["text"].lower()
+    assert "Digest Engineer" in messages[0][1]["text"]
