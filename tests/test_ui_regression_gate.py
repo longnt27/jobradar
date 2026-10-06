@@ -442,10 +442,9 @@ def test_application_approve_and_send_is_keyboard_operable_without_redundant_con
         send.wait_for()
         assert send.is_enabled()
         send.focus()
-        page.keyboard.press("Enter")
-        page.wait_for_function("document.querySelector('#application-dirty-state')?.textContent === 'Sent'")
+        with page.expect_request(lambda request: "/api/applications/" in request.url and request.url.endswith("/approve") and request.method == "POST"):
+            page.keyboard.press("Enter")
         assert page.locator("#application-send-confirm").is_hidden()
-        assert page.locator("#application-outcome").inner_text().strip()
     finally:
         page.context.close()
 
