@@ -13,6 +13,7 @@ from job_radar.db import new_id, now
 from job_radar.feedback_learning import feedback_suggestions
 from job_radar.ingest import ObservedJob, ingest
 from job_radar.notifications import save_telegram, telegram_config, telegram_quiet_now
+from job_radar.mail_config import save_smtp
 from job_radar.settings import Settings
 from job_radar.web import create_app
 
@@ -206,3 +207,208 @@ def test_dismissing_feedback_suggestion_does_not_change_preferences(tmp_path: Pa
     assert dismissed.status_code == 200
     assert client.get("/api/search-intent").json() == before
     assert client.get("/api/preferences/suggestions").json()["items"] == []
+
+
+
+def _ready_automation(app) -> None:
+    app.state.db.set_setting("profile", {
+        "name": "Alex Example",
+        "email": "alex@example.org",
+        "experience": [{
+            "company": "Prior Co",
+            "role": "Engineer",
+            "dates": "2024-2026",
+            "bullets": ["Built Python systems."],
+        }],
+        "drafting_provider": "template",
+    })
+    app.state.db.set_setting("matching_model", "test:small")
+    save_smtp(app.state.settings, {
+        "host": "smtp.example.org",
+        "port": 587,
+        "user": "",
+        "password": "",
+        "from": "alex@example.org",
+    })
+
+
+def _wait_for_attempt(app, job_id: str, statuses: set[str], timeout: float = 6.0) -> dict:
+    import time
+    deadline = time.monotonic() + timeout
+    last = None
+    while time.monotonic() < deadline:
+        last = app.state.db.one(
+            "SELECT * FROM auto_application_attempts WHERE vacancy_id=?",
+            (job_id,),
+        )
+        if last and last["status"] in statuses:
+            return last
+        time.sleep(.05)
+    raise AssertionError(f"Attempt did not reach {statuses}: {last}")
+
+
+def test_daily_automatic_draft_cap_is_enforced_but_manual_prepare_bypasses_it(tmp_path: Path) -> None:
+    app = create_app(Settings(tmp_path))
+    app.state.db.execute("UPDATE sources SET enabled=0")
+    _ready_automation(app)
+
+    with TestClient(app) as client:
+        app.state.auto_apply_manager.configure(
+            True,
+            80,
+            {"max_auto_drafts_per_day": 1},
+        )
+        first = _scored_job(app, "First Automatic")
+        second = _scored_job(app, "Second Automatic")
+        app.state.auto_apply_manager.wake()
+
+        first_attempt = _wait_for_attempt(app, first, {"awaiting_review", "needs_review"})
+        assert first_attempt["draft_id"]
+        import time
+        time.sleep(.25)
+        assert app.state.db.one(
+            "SELECT draft_id FROM auto_application_attempts WHERE vacancy_id=?",
+            (second,),
+        ) is None
+        status = client.get("/api/auto-apply").json()
+        assert status["daily_auto_drafts_used"] == 1
+        assert status["daily_auto_drafts_remaining"] == 0
+
+        manual = client.post(
+            f"/api/jobs/{second}/prepare",
+            json={"provider": "template"},
+        )
+        assert manual.status_code == 202, manual.text
+        manual_attempt = _wait_for_attempt(app, second, {"awaiting_review", "needs_review"})
+        assert manual_attempt["requested_by"] == "manual"
+        assert manual_attempt["draft_id"]
+
+
+def test_automatic_review_packet_cap_defers_only_automatic_packets(tmp_path: Path, monkeypatch) -> None:
+    from job_radar.drafting import prepare_draft
+
+    app = create_app(Settings(tmp_path))
+    db = app.state.db
+    _ready_automation(app)
+    save_telegram(app.state.settings, {"token": "test-token", "chat_id": "123"})
+    app.state.auto_apply_manager.configure(
+        True,
+        80,
+        {"max_review_notifications_per_day": 1},
+    )
+
+    sent_job = _scored_job(app, "Already Notified")
+    blocked_job = _scored_job(app, "Deferred Automatic")
+    manual_job = _scored_job(app, "Manual Review")
+
+    timestamp = now()
+    db.execute(
+        "INSERT INTO auto_application_attempts(vacancy_id,status,requested_by,created_at,updated_at) "
+        "VALUES(?,'awaiting_review','automation',?,?)",
+        (sent_job, timestamp, timestamp),
+    )
+    db.execute(
+        "INSERT INTO notification_attempts(vacancy_id,channel,status,attempts,last_attempt_at,sent_at) "
+        "VALUES(?,'telegram_application_review','sent',1,?,?)",
+        (sent_job, timestamp, timestamp),
+    )
+
+    packets = []
+    async def fake_packet(_settings, draft, _blockers):
+        packets.append(draft["vacancy_id"])
+        return 77
+    monkeypatch.setattr("job_radar.auto_apply.send_review_packet", fake_packet)
+
+    for job_id, requested_by in ((blocked_job, "automation"), (manual_job, "manual")):
+        draft = prepare_draft(db, app.state.settings, job_id, "template")
+        db.execute(
+            "INSERT INTO auto_application_attempts("
+            "vacancy_id,status,draft_id,requested_by,created_at,updated_at"
+            ") VALUES(?,'awaiting_review',?,?,?,?) "
+            "ON CONFLICT(vacancy_id) DO UPDATE SET status='awaiting_review',draft_id=excluded.draft_id,"
+            "requested_by=excluded.requested_by,updated_at=excluded.updated_at",
+            (job_id, draft["id"], requested_by, timestamp, timestamp),
+        )
+        asyncio.run(app.state.auto_apply_manager.notify_review(draft["id"]))
+
+    blocked = db.one(
+        "SELECT telegram_status,telegram_error FROM auto_application_attempts WHERE vacancy_id=?",
+        (blocked_job,),
+    )
+    manual = db.one(
+        "SELECT telegram_status FROM auto_application_attempts WHERE vacancy_id=?",
+        (manual_job,),
+    )
+    assert blocked["telegram_status"] == "deferred_limit"
+    assert "limit" in blocked["telegram_error"].lower()
+    assert manual["telegram_status"] == "sent"
+    assert packets == [manual_job]
+
+
+def test_application_review_mode_can_be_disabled_without_disabling_other_telegram_modes(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from job_radar.drafting import prepare_draft
+
+    app = create_app(Settings(tmp_path))
+    db = app.state.db
+    _ready_automation(app)
+    save_telegram(app.state.settings, {
+        "token": "test-token",
+        "chat_id": "123",
+        "modes": {
+            "application_reviews": False,
+            "strong_job_alerts": True,
+            "daily_digest": False,
+        },
+    })
+    job_id = _scored_job(app, "Review Mode Off")
+    draft = prepare_draft(db, app.state.settings, job_id, "template")
+    timestamp = now()
+    db.execute(
+        "INSERT INTO auto_application_attempts("
+        "vacancy_id,status,draft_id,requested_by,created_at,updated_at"
+        ") VALUES(?,'awaiting_review',?,'manual',?,?)",
+        (job_id, draft["id"], timestamp, timestamp),
+    )
+    packets = []
+    monkeypatch.setattr(
+        "job_radar.auto_apply.send_review_packet",
+        lambda *_args: packets.append(True),
+    )
+
+    asyncio.run(app.state.auto_apply_manager.notify_review(draft["id"]))
+    attempt = db.one(
+        "SELECT telegram_status FROM auto_application_attempts WHERE vacancy_id=?",
+        (job_id,),
+    )
+    assert attempt["telegram_status"] == "disabled"
+    assert packets == []
+
+
+def test_automation_policy_ui_contract_exposes_guardrails_and_explicit_feedback() -> None:
+    static = Path(__file__).parents[1] / "job_radar" / "static"
+    html = (static / "index.html").read_text()
+    js = (static / "app.js").read_text()
+
+    for name in (
+        "include_shortlisted",
+        "max_job_age_days",
+        "require_verified_destination",
+        "require_preferred_location",
+        "max_auto_drafts_per_day",
+        "max_review_notifications_per_day",
+    ):
+        assert f'name="{name}"' in html
+    for name in (
+        "application_reviews",
+        "strong_job_alerts",
+        "daily_digest",
+        "digest_time",
+        "quiet_start",
+        "quiet_end",
+    ):
+        assert f'name="{name}"' in html
+    assert 'id="preference-suggestions"' in html
+    assert "data-preference-action=\"apply\"" in js
+    assert "data-preference-action=\"dismiss\"" in js
