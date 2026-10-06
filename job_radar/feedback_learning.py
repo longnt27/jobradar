@@ -20,9 +20,10 @@ def _suggestion_id(kind: str, value: str) -> str:
 
 def _latest_feedback(db: Database) -> list[dict[str, Any]]:
     rows = db.all(
-        "SELECT f.vacancy_id,f.state,f.reason,f.created_at,v.company,v.location,v.title "
+        "SELECT f.rowid AS feedback_rowid,f.vacancy_id,f.state,f.reason,f.created_at,"
+        "v.company,v.location,v.title "
         "FROM feedback f JOIN vacancies v ON v.id=f.vacancy_id "
-        "ORDER BY datetime(f.created_at) DESC"
+        "ORDER BY datetime(f.created_at) DESC,f.rowid DESC"
     )
     latest: dict[str, dict[str, Any]] = {}
     for row in rows:
