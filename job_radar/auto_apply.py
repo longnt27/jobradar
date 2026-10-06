@@ -679,6 +679,97 @@ class AutoApplyManager:
             self.db.execute("INSERT OR REPLACE INTO telegram_review_prompts(message_id,draft_id,review_hash,action,created_at) VALUES(?,?,?,'retry',?)",
                             (result["message_id"], draft_id, draft["package_hash"], now()))
 
+    def _strong_jobs_for_notifications(self, limit: int = 10) -> list[dict]:
+        preferences = normalize_search_intent(self.db.get_setting("search_intent", {}))
+        threshold = preferences["strong_match_threshold"]
+        rows = self.db.all(
+            "SELECT id,title,company,location,score,score_detail,first_seen_at FROM vacancies "
+            "WHERE analysis_status='done' AND score>=? AND decision_state='undecided' "
+            "AND snoozed_until IS NULL AND datetime(first_seen_at)>=datetime('now','-1 day') "
+            "ORDER BY score DESC,first_seen_at DESC LIMIT 50",
+            (threshold,),
+        )
+        strong = []
+        for row in rows:
+            try:
+                detail = json.loads(row.get("score_detail") or "{}")
+            except (TypeError, ValueError):
+                detail = {}
+            summary = fit_summary(row.get("score"), detail, preferences)
+            if summary["fit_class"] == "strong":
+                strong.append(row)
+            if len(strong) >= limit:
+                break
+        return strong
+
+    async def _send_strong_job_alerts(self, config: dict) -> None:
+        if not telegram_mode_enabled(config, "strong_job_alerts") or telegram_quiet_now(config):
+            return
+        channel = "telegram_strong_job"
+        candidates = [
+            job for job in self._strong_jobs_for_notifications(limit=10)
+            if not self.db.one(
+                "SELECT 1 AS sent FROM notification_attempts "
+                "WHERE vacancy_id=? AND channel=? AND status='sent'",
+                (job["id"], channel),
+            )
+        ][:5]
+        if not candidates:
+            return
+        async with httpx.AsyncClient(timeout=12) as client:
+            for job in candidates:
+                text = (
+                    f"Strong match: {job['title']} at {job['company']}\n"
+                    f"{job['score']}/100"
+                    + (f" · {job['location']}" if job.get("location") else "")
+                    + "\nOpen Job Radar → Jobs to review it."
+                )
+                try:
+                    await _post(
+                        client,
+                        config["token"],
+                        "sendMessage",
+                        json={"chat_id": config["chat_id"], "text": text[:4000]},
+                    )
+                    self._record_notification(job["id"], channel, status="sent", sent=True)
+                except (httpx.HTTPError, RuntimeError, ValueError) as error:
+                    self._record_notification(
+                        job["id"],
+                        channel,
+                        status="failed",
+                        error=f"Telegram delivery failed ({type(error).__name__})",
+                    )
+                    break
+
+    async def _send_daily_digest(self, config: dict) -> None:
+        if not telegram_mode_enabled(config, "daily_digest") or telegram_quiet_now(config):
+            return
+        local = datetime.now().astimezone()
+        digest_time = config.get("digest_time") or "18:00"
+        hour, minute = (int(part) for part in digest_time.split(":"))
+        if (local.hour, local.minute) < (hour, minute):
+            return
+        today = local.date().isoformat()
+        if self.db.get_setting("telegram_digest_last_date", "") == today:
+            return
+        jobs = self._strong_jobs_for_notifications(limit=5)
+        lines = [f"Job Radar daily digest · {len(jobs)} strong match{'es' if len(jobs) != 1 else ''} in the last 24h"]
+        for job in jobs:
+            lines.append(f"• {job['score']}/100 · {job['title']} · {job['company']}")
+        if not jobs:
+            lines.append("No new strong matches today.")
+        lines.append("Open Job Radar → Jobs for the full inbox.")
+        async with httpx.AsyncClient(timeout=12) as client:
+            await _post(
+                client,
+                config["token"],
+                "sendMessage",
+                json={"chat_id": config["chat_id"], "text": "\n".join(lines)[:4000]},
+            )
+        current = telegram_config(self.settings)
+        if self._same_telegram_destination(current, config):
+            self.db.set_setting("telegram_digest_last_date", today)
+
     async def _telegram_loop(self) -> None:
         next_retry = 0.0
         while True:
@@ -692,13 +783,26 @@ class AutoApplyManager:
                 current = asyncio.get_running_loop().time()
                 if current >= next_retry:
                     next_retry = current + 60
-                    undelivered = self.db.all("SELECT draft_id FROM auto_application_attempts WHERE telegram_status IN ('pending','failed','not_configured') "
-                                              "AND status IN ('awaiting_review','needs_review') AND draft_id IS NOT NULL ORDER BY updated_at DESC LIMIT 10")
-                    for item in undelivered:
-                        await self.notify_review(item["draft_id"])
+                    await self._send_strong_job_alerts(config)
+                    await self._send_daily_digest(config)
+                    if telegram_mode_enabled(config, "application_reviews"):
+                        undelivered = self.db.all(
+                            "SELECT draft_id FROM auto_application_attempts "
+                            "WHERE telegram_status IN ('pending','failed','not_configured','deferred','deferred_limit') "
+                            "AND status IN ('awaiting_review','needs_review') AND draft_id IS NOT NULL "
+                            "ORDER BY updated_at DESC LIMIT 10"
+                        )
+                        for item in undelivered:
+                            await self.notify_review(item["draft_id"])
                 async with httpx.AsyncClient(timeout=15) as client:
-                    response = await client.get(f"https://api.telegram.org/bot{token}/getUpdates",
-                        params={"offset": offset, "timeout": 5, "allowed_updates": json.dumps(["callback_query", "message"])})
+                    response = await client.get(
+                        f"https://api.telegram.org/bot{token}/getUpdates",
+                        params={
+                            "offset": offset,
+                            "timeout": 5,
+                            "allowed_updates": json.dumps(["callback_query", "message"]),
+                        },
+                    )
                     response.raise_for_status()
                     payload = response.json()
                     if not payload.get("ok"):
@@ -710,64 +814,124 @@ class AutoApplyManager:
                             log.exception("Could not process Telegram review update")
                         offset = max(offset, int(update["update_id"]) + 1)
                         current_config = telegram_config(self.settings)
-                        if (current_config.get("token") != token
-                                or str(current_config.get("chat_id", "")) != str(config.get("chat_id", ""))):
+                        if not self._same_telegram_destination(current_config, config):
                             break
                         self.db.set_setting("telegram_review_offset", offset)
             except asyncio.CancelledError:
                 raise
             except Exception as error:
-                log.warning("Telegram review polling paused: %s", type(error).__name__)
+                log.warning("Telegram polling paused: %s", type(error).__name__)
                 await asyncio.sleep(10)
+
+    def _next_automatic_candidate(self, config: dict) -> dict | None:
+        rows = self.db.all(
+            "SELECT v.id,'automation' AS requested_by FROM vacancies v "
+            "WHERE v.analysis_status='done' AND v.score>=? "
+            "AND v.decision_state IN ('undecided','shortlisted') AND v.snoozed_until IS NULL "
+            "AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm') "
+            "AND NOT EXISTS(SELECT 1 FROM auto_application_attempts a WHERE a.vacancy_id=v.id) "
+            "AND NOT EXISTS(SELECT 1 FROM submissions s WHERE s.vacancy_id=v.id) "
+            "AND NOT EXISTS(SELECT 1 FROM application_drafts d WHERE d.vacancy_id=v.id) "
+            "ORDER BY v.score DESC,v.first_seen_at DESC LIMIT 50",
+            (config["threshold"],),
+        )
+        for row in rows:
+            if automation_eligibility(
+                self.db,
+                row["id"],
+                policy=config,
+                require_analysis=True,
+                check_daily_limit=False,
+            )["eligible"]:
+                return row
+        return None
 
     async def _loop(self) -> None:
         while True:
             config = self.config()
+            daily_room = daily_auto_drafts_used(self.db) < config["max_auto_drafts_per_day"]
+
             queued = self.db.one(
                 "SELECT a.vacancy_id AS id,a.requested_by FROM auto_application_attempts a "
-                "JOIN vacancies v ON v.id=a.vacancy_id WHERE a.status='queued' "
-                "AND (a.requested_by='manual' OR v.analysis_status='done') "
-                "ORDER BY CASE WHEN a.requested_by='manual' THEN 0 ELSE 1 END,a.created_at ASC LIMIT 1"
+                "JOIN vacancies v ON v.id=a.vacancy_id "
+                "WHERE a.status='queued' AND a.requested_by='manual' "
+                "ORDER BY a.created_at ASC LIMIT 1"
             )
-            if queued and queued["requested_by"] == "automation" and not config["enabled"]:
-                queued = None
-            job = queued or (self.db.one(
-                "SELECT v.id,'automation' AS requested_by FROM vacancies v WHERE v.analysis_status='done' AND v.score>=? AND v.decision_state IN ('undecided','shortlisted') AND v.snoozed_until IS NULL "
-                "AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm') "
-                "AND NOT EXISTS(SELECT 1 FROM auto_application_attempts a WHERE a.vacancy_id=v.id) "
-                "ORDER BY v.score DESC,v.first_seen_at DESC LIMIT 1", (config["threshold"],)) if config["enabled"] else None)
+            if not queued and config["enabled"] and daily_room:
+                queued = self.db.one(
+                    "SELECT a.vacancy_id AS id,a.requested_by FROM auto_application_attempts a "
+                    "JOIN vacancies v ON v.id=a.vacancy_id "
+                    "WHERE a.status='queued' AND a.requested_by='automation' "
+                    "AND v.analysis_status='done' ORDER BY a.created_at ASC LIMIT 1"
+                )
+
+            job = queued
+            if not job and config["enabled"] and daily_room:
+                job = self._next_automatic_candidate(config)
+
             if not job:
                 self.wake_event.clear()
+                timeout = 60 if config["enabled"] and not daily_room else 5
                 try:
-                    await asyncio.wait_for(self.wake_event.wait(), timeout=5)
+                    await asyncio.wait_for(self.wake_event.wait(), timeout=timeout)
                 except asyncio.TimeoutError:
                     pass
                 continue
+
             job_id = job["id"]
             request = self.db.one(
                 "SELECT requested_by FROM auto_application_attempts WHERE vacancy_id=?",
                 (job_id,),
             )
             requested_by = (request or {}).get("requested_by") or job.get("requested_by") or "automation"
-            if queued and requested_by == "automation" and not self._still_eligible(job_id):
-                self._set_status(job_id, "skipped", "Job no longer meets the saved automatic draft rules")
-                continue
+
+            if queued and requested_by == "automation":
+                eligibility = automation_eligibility(
+                    self.db,
+                    job_id,
+                    policy=config,
+                    require_analysis=True,
+                    check_daily_limit=False,
+                )
+                if not eligibility["eligible"]:
+                    self._set_status(
+                        job_id,
+                        "skipped",
+                        "Automatic policy changed: " + "; ".join(eligibility["reasons"]),
+                    )
+                    continue
+
             if queued:
-                detail = "Preparing the application you requested" if requested_by == "manual" else "Preparing an existing match for review"
+                detail = (
+                    "Preparing the application you requested"
+                    if requested_by == "manual"
+                    else "Preparing an application allowed by your automation policy"
+                )
                 self._set_status(job_id, "preparing", detail)
             else:
                 self.db.execute(
                     "INSERT OR IGNORE INTO auto_application_attempts("
-                    "vacancy_id,status,requested_by,created_at,updated_at"
-                    ") VALUES(?,'preparing','automation',?,?)",
-                    (job_id, now(), now()))
+                    "vacancy_id,status,requested_by,detail,created_at,updated_at"
+                    ") VALUES(?,'preparing','automation','Preparing an application allowed by your automation policy',?,?)",
+                    (job_id, now(), now()),
+                )
+
             try:
                 await self._process(job_id)
             except asyncio.CancelledError:
-                self._set_status(job_id, "needs_review", "Job Radar stopped during preparation; review before sending")
+                self._set_status(
+                    job_id,
+                    "needs_review",
+                    "Job Radar stopped during preparation; review before sending",
+                )
                 raise
             except Exception as error:
                 label = "Manual" if requested_by == "manual" else "Automatic"
                 log.exception("%s application preparation failed for %s", label, job_id)
-                self._set_status(job_id, "needs_review", f"{label} preparation stopped: {str(error)[:800]}")
+                self._set_status(
+                    job_id,
+                    "needs_review",
+                    f"{label} preparation stopped: {str(error)[:800]}",
+                )
             await asyncio.sleep(0.1)
+
