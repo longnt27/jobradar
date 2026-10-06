@@ -325,7 +325,9 @@ async function openHomeRoute(route) {
   const params = new URLSearchParams(route.params || {});
   if (route.tab === 'jobs') {
     const suffix = params.toString();
-    await showTab(`jobs${suffix ? `?${suffix}` : ''}`);
+    const hash = `#jobs${suffix ? `?${suffix}` : ''}`;
+    history.pushState({tab:'jobs'}, '', hash);
+    await showTab(`jobs${suffix ? `?${suffix}` : ''}`, 'replace');
     return;
   }
   if (route.tab === 'applications') {
@@ -338,6 +340,17 @@ async function openHomeRoute(route) {
     return;
   }
   await showTab(route.tab);
+}
+
+function homePriorityLabel(kind) {
+  return ({
+    submission_uncertain:'Check submission',
+    application_review:'Review application',
+    application_confirmation:'Confirm method',
+    strong_unseen_job:'Strong new match',
+    unseen_job:'New job',
+    track_application:'Track outcome',
+  })[kind] || String(kind || '').replaceAll('_', ' ');
 }
 
 function homePriorityToneClass(tone) {
@@ -424,7 +437,7 @@ async function loadHome() {
     $('#home-actions').innerHTML = priorities.map((item, index) =>
       `<button class="home-action-row" data-home-priority="${index}">
         <span><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.subtitle)}</small></span>
-        <span class="status-badge ${homePriorityToneClass(item.tone)}">${escapeHtml(item.kind.replaceAll('_',' '))}</span>
+        <span class="status-badge ${homePriorityToneClass(item.tone)}">${escapeHtml(homePriorityLabel(item.kind))}</span>
         <span class="step-arrow">→</span>
       </button>`
     ).join('');
