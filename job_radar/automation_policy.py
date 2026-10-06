@@ -68,11 +68,11 @@ def daily_auto_drafts_used(db: Database) -> int:
 
 def daily_review_notifications_used(db: Database) -> int:
     row = db.one(
-        "SELECT COUNT(*) AS count FROM notification_attempts n "
+        "SELECT COUNT(*) AS count FROM notification_events n "
         "JOIN auto_application_attempts a ON a.vacancy_id=n.vacancy_id "
         "WHERE n.channel='telegram_application_review' AND n.status='sent' "
         "AND a.requested_by='automation' "
-        "AND datetime(n.sent_at)>=datetime(?)",
+        "AND datetime(n.created_at)>=datetime(?)",
         (local_day_start_utc(),),
     )
     return int(row["count"] if row else 0)
