@@ -1,3 +1,4 @@
+import asyncio
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
@@ -19,6 +20,7 @@ def _prepared(client: TestClient, url: str) -> dict:
     job = client.post("/api/jobs/import", json={"company": "Example", "title": "Engineer", "description": "Build Python search systems.", "apply_url": url}).json()
     draft = prepare_draft(client.app.state.db, client.app.state.settings, job["id"], "template")
     client.app.state.auto_apply_manager.register_review(draft)
+    asyncio.run(client.app.state.auto_apply_manager.notify_review(draft["id"]))
     return draft
 
 
