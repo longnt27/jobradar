@@ -328,7 +328,7 @@ def finalize_match(job: dict, facts: dict, profile: dict,
         trusted_location = bool(stated and not GENERIC_LOCATION.fullmatch(stated))
         location = stated if trusted_location else str(facts.get("location") or "").strip()
     mode = str(facts.get("work_mode") or job.get("work_mode") or "").strip()
-    remote = bool((REMOTE_MODE.search(location) or REMOTE_MODE.search(str(job.get("work_mode") or ""))
+    remote = bool((REMOTE_MODE.search(location) or REMOTE_MODE.search(mode) or REMOTE_MODE.search(str(job.get("work_mode") or ""))
                    or REMOTE_WORK.search(str(job.get("description") or "")))
                   and not REMOTE_NEGATION.search(posting))
 
