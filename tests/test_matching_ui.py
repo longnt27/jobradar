@@ -49,11 +49,13 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
             try:
                 page = browser.new_page()
                 page.goto(f"http://127.0.0.1:{port}/#home")
+                page.locator(".home-capabilities-panel").evaluate("node => node.open = true")
                 page.locator('#home-optional [data-setup-panel="provider-panel"]').click()
                 page.locator("#provider-panel[open]").wait_for()
                 assert page.locator("#provider-form select").is_visible()
                 assert page.locator("#matching-model-form select").is_visible()
                 page.get_by_role("button", name="Home", exact=True).click()
+                page.locator(".home-capabilities-panel").evaluate("node => node.open = true")
                 page.locator('#home-optional [data-setup-panel="telegram-panel"]').click()
                 page.locator("#telegram-panel[open]").wait_for()
                 assert page.get_by_role("button", name="Find my chat ID").is_visible()
