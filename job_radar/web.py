@@ -33,6 +33,7 @@ from .job_inbox import (application_filter_sql, enrich_jobs, mark_seen, release_
                         set_decision, set_manual_applied, set_recruiting_outcome)
 from .matching import MatchManager
 from .notifications import discover_telegram_chats, save_telegram, telegram_config
+from .preparation import preparation_preflight
 from .ranking import rescore_vacancies, score_job
 from .search_intent import fit_summary, normalize_search_intent, seniority_key
 from .resume_import import parse_resume_template
@@ -168,6 +169,7 @@ class RepositoryInput(BaseModel):
 
 class PrepareInput(BaseModel):
     provider: Literal["template", "codex_local", "codex", "agy", "claude"] | None = None
+    prepare_anyway: bool = False
 
 
 class SendInput(BaseModel):
@@ -1341,17 +1343,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def providers():
         return PROVIDERS
 
-    @app.post("/api/jobs/{job_id}/prepare")
-    async def prepare(job_id: str, payload: PrepareInput):
+    @app.get("/api/jobs/{job_id}/prepare/preflight")
+    def prepare_preflight(job_id: str):
         try:
-            draft = await asyncio.to_thread(prepare_draft, db, settings, job_id, payload.provider or configured_provider())
-            auto_apply_manager.register_review(draft)
-            await auto_apply_manager.notify_review(draft["id"])
-            return draft
+            return preparation_preflight(db, job_id)
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
-        except (ValueError, RuntimeError) as error:
-            raise HTTPException(422, str(error)) from error
+
+    @app.post("/api/jobs/{job_id}/prepare", status_code=202)
+    def prepare(job_id: str, payload: PrepareInput):
+        provider = payload.provider or configured_provider()
+        if payload.provider and not provider_available(payload.provider):
+            raise HTTPException(422, f"{payload.provider} is not available on this Mac")
+        try:
+            result = auto_apply_manager.queue_manual(job_id, provider, payload.prepare_anyway)
+        except KeyError as error:
+            raise HTTPException(404, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
+        if result["status"] == "confirmation_required":
+            raise HTTPException(409, detail={
+                "code": "prepare_confirmation_required",
+                "message": result["preflight"]["reason"],
+                "preflight": result["preflight"],
+            })
+        return result
 
     def application_page_data(page: int, page_size: int, q: str = "", review: str = "",
                               company: str = "", delivery: str = "") -> dict:
