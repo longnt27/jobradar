@@ -178,13 +178,16 @@ async def send_review_packet(settings: Settings, draft: dict, blockers: list[str
     review = draft.get("review_context") or {}
     risky_count = len(review.get("risky_claims") or [])
     warning_count = len(draft.get("warnings") or []) + len(blockers)
+    risk_focus = (
+        f" · {risky_count} claim{'s' if risky_count != 1 else ''} to verify"
+        if risky_count else ""
+    )
     summary = (
         f"{'Updated review · ' if updated else ''}{draft['job_title'][:180]} at {draft['company'][:180]}\n"
         f"Match: {score}\n"
         f"Action: {action}\n"
         f"{state}\n"
-        f"Review focus: {warning_count} warning{'s' if warning_count != 1 else ''}"
-        f"{f' · {risky_count} claim{\'s\' if risky_count != 1 else \'\'} to verify' if risky_count else ''}"
+        f"Review focus: {warning_count} warning{'s' if warning_count != 1 else ''}{risk_focus}"
     )
     summary_result = await _post(client, token, "sendMessage", json={
         "chat_id": chat_id, "text": summary[:4000],
