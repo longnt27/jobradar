@@ -161,7 +161,7 @@ def test_ambiguous_destination_requires_prepare_anyway_before_any_drafting(tmp_p
         assert any("destination" in warning.lower() for warning in draft["warnings"])
 
 
-def test_automatic_preparation_stops_at_preflight_when_destination_is_unknown(tmp_path: Path) -> None:
+def test_automatic_policy_rejects_unknown_destination_before_preparation(tmp_path: Path) -> None:
     app = create_app(Settings(tmp_path))
     app.state.db.execute("UPDATE sources SET enabled=0")
     _ready_profile(app)
@@ -179,9 +179,11 @@ def test_automatic_preparation_stops_at_preflight_when_destination_is_unknown(tm
             (job["id"],),
         )
         app.state.auto_apply_manager.wake()
-        attempt = _wait_attempt(app, job["id"], {"needs_confirmation"})
-        assert attempt["requested_by"] == "automation"
-        assert attempt["draft_id"] is None
+        time.sleep(.2)
+        assert app.state.db.one(
+            "SELECT vacancy_id FROM auto_application_attempts WHERE vacancy_id=?",
+            (job["id"],),
+        ) is None
         assert not app.state.db.one(
             "SELECT id FROM application_drafts WHERE vacancy_id=?",
             (job["id"],),
