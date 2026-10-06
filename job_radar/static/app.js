@@ -43,6 +43,7 @@ let applicationsPages = 1;
 let submissionHistoryPage = 1;
 let submissionHistoryPages = 1;
 let activeApplicationId = null;
+let applicationReviewChanges = {};
 let applicationWorkspaceView = 'drafts';
 let editingPositionId = null;
 
@@ -1995,6 +1996,8 @@ async function showApplication(id) {
   const formData = draft.form_data || {fields:[], answers:{}, attachments:{}};
   draft.form_data = formData;
   const projects = resume.projects || [];
+  const reviewContext = draft.review_context || {selected_evidence:[], relevant_alternatives:[], risky_claims:[]};
+  const recentChanges = applicationReviewChanges[id] || [];
   const warnings = draft.warnings || [];
   const blockers = draft.send_blockers || [];
   const sent = applicationIsSent(draft);
@@ -2010,10 +2013,10 @@ async function showApplication(id) {
       <span class="status-badge status-badge--${reviewTone}">${escapeHtml(applicationReviewLabel(draft))}</span>
     </div>
     <nav class="application-review-nav" aria-label="Application review sections">
-      <button type="button" data-review-target="application-review-overview" aria-current="true">Overview</button>
+      <button type="button" data-review-target="application-review-overview" aria-current="true">Changes & risks</button>
       <button type="button" data-review-target="application-review-resume">Resume</button>
-      <button type="button" data-review-target="application-review-message">Message</button>
-      <button type="button" data-review-target="application-review-form">Form</button>
+      ${destination.kind === 'email' ? '<button type="button" data-review-target="application-review-message">Email</button>' : ''}
+      ${destination.kind === 'web' ? '<button type="button" data-review-target="application-review-form">Form</button>' : ''}
       <button type="button" data-review-target="application-review-regenerate">Regenerate</button>
     </nav>
 
