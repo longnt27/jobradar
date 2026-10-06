@@ -230,6 +230,11 @@ def test_home_does_not_claim_clear_when_discovery_or_analysis_is_incomplete(tmp_
 def test_home_counts_and_daily_loop_route_to_canonical_filtered_workflows(tmp_path: Path) -> None:
     app = create_app(Settings(tmp_path))
     _seed_home_job(app, "Unseen Strong", 92)
+    shortlisted = _seed_home_job(app, "Shortlisted Ready", 88, seen=True)
+    app.state.db.execute(
+        "UPDATE vacancies SET decision_state='shortlisted' WHERE id=?",
+        (shortlisted,),
+    )
     dashboard = build_home_dashboard(
         app.state.db,
         {"level": "good", "label": "Discovery coverage looks normal"},
@@ -237,9 +242,12 @@ def test_home_counts_and_daily_loop_route_to_canonical_filtered_workflows(tmp_pa
     )
 
     assert dashboard["counts"]["unseen_jobs"] == 1
-    assert dashboard["counts"]["strong_matches"] == 1
+    assert dashboard["counts"]["strong_matches"] == 2
+    assert dashboard["counts"]["ready_to_prepare"] == 1
     stages = {stage["key"]: stage for stage in dashboard["stages"]}
     assert stages["triage"]["route"] == {"tab": "jobs", "params": {"inbox": "unseen"}}
+    assert stages["prepare"]["count"] == 1
+    assert stages["prepare"]["route"]["params"]["decision"] == "shortlisted"
     assert stages["review"]["route"]["tab"] == "applications"
     assert stages["track"]["route"]["params"]["application"] == "applied"
     assert dashboard["routes"]["strong_matches"]["params"]["score"] == "80"
