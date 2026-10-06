@@ -7,6 +7,7 @@ import uvicorn
 from fastapi.testclient import TestClient
 from playwright.sync_api import sync_playwright
 
+from job_radar.drafting import prepare_draft
 from job_radar.settings import Settings
 from job_radar.web import create_app
 
@@ -18,9 +19,9 @@ def _prepare(client: TestClient, company: str, title: str, apply_url: str | None
         "description": "Build reliable Python systems.",
         "apply_url": apply_url,
     }).json()
-    response = client.post(f"/api/jobs/{job['id']}/prepare", json={"provider": "template"})
-    assert response.status_code == 200, response.text
-    return response.json()
+    draft = prepare_draft(client.app.state.db, client.app.state.settings, job["id"], "template")
+    client.app.state.auto_apply_manager.register_review(draft)
+    return draft
 
 
 def test_application_workspace_filters_reviews_and_confirms_send(tmp_path: Path, monkeypatch) -> None:
