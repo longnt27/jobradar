@@ -158,7 +158,8 @@ def test_application_workspace_filters_reviews_and_confirms_send(tmp_path: Path,
                 page.evaluate("window.__applicationDetailScrolled = false; document.querySelector('#application-detail').scrollIntoView = () => { window.__applicationDetailScrolled = true; }")
                 page.locator(f'[data-application="{second["id"]}"]').click()
                 page.wait_for_function("window.__applicationDetailScrolled === true")
-                blocker = page.locator(".application-alert--danger")
+                page.get_by_role("heading", name="Research Engineer").wait_for()
+                blocker = page.locator("#application-detail .application-alert--danger")
                 blocker.wait_for()
                 assert "destination" in blocker.inner_text().lower()
             finally:
