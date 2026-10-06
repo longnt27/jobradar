@@ -148,6 +148,14 @@ def automation_eligibility(
     except (TypeError, ValueError):
         detail = {}
     preferences = normalize_search_intent(db.get_setting("search_intent", {}))
+    company = str(job.get("company") or "").casefold()
+    excluded_employers = [
+        str(item).strip().casefold()
+        for item in preferences.get("excluded_employers", [])
+        if str(item).strip()
+    ]
+    if excluded_employers and any(item in company for item in excluded_employers):
+        reasons.append("The employer is on your excluded list.")
 
     if config["require_preferred_location"] and not _location_matches(job, preferences, detail):
         reasons.append("The job is outside your preferred locations.")
