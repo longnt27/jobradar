@@ -326,6 +326,7 @@ class AutoApplyManager:
             policy=self.config(),
             require_analysis=True,
             check_daily_limit=False,
+            check_existing_artifacts=False,
         )["eligible"]
 
     async def _process(self, job_id: str) -> None:
