@@ -56,8 +56,8 @@ def test_home_ui_separates_required_optional_and_operational_work() -> None:
     js = (STATIC / "app.js").read_text()
     css = (STATIC / "app.css").read_text()
 
-    assert "Setup checklist" in html
-    assert "Optional integrations" in js
+    assert "Capabilities" in html
+    assert "Optional capabilities" in js
     assert "Needs your attention" in html
     assert "View activity" in html
 
@@ -66,10 +66,10 @@ def test_home_ui_separates_required_optional_and_operational_work() -> None:
     assert "Drafts to review" in js
     assert "Analysis failures" in js
 
-    assert "Add personal details" in js
-    assert "Add work history" in js
-    assert "Select projects" in js
-    assert "Review live jobs" not in js
+    assert "Job discovery" in js
+    assert "Application preparation" in js
+    assert "You do not need a resume, personal details, or an application provider" in js
+    assert "Optional · fallback ranking still works" in js
     assert "Optional · not configured" in js
 
     assert "data-home-queue-kind" in js

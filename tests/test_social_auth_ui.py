@@ -30,8 +30,9 @@ def test_social_sign_in_is_a_setup_step_and_expiry_is_visible_from_jobs(tmp_path
             try:
                 page = browser.new_page()
                 page.set_default_timeout(3000)
-                page.goto(f"http://127.0.0.1:{port}/#home")
-                page.locator('#home-steps [data-social-auth="true"]').click()
+                page.goto(f"http://127.0.0.1:{port}/#settings")
+                page.locator("#settings.active").wait_for()
+                page.locator("#social-sign-in-panel summary").click()
                 assert page.locator("#social-sign-in-panel").evaluate("node => node.open")
                 assert page.locator("#settings").get_attribute("class").find("active") >= 0
                 page.wait_for_function("document.querySelector('#provider-availability').textContent.trim().length > 0")

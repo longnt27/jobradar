@@ -49,7 +49,7 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
             try:
                 page = browser.new_page()
                 page.goto(f"http://127.0.0.1:{port}/#home")
-                page.locator('#home-steps [data-setup-panel="provider-panel"]').click()
+                page.locator('#home-optional [data-setup-panel="provider-panel"]').click()
                 page.locator("#provider-panel[open]").wait_for()
                 assert page.locator("#provider-form select").is_visible()
                 assert page.locator("#matching-model-form select").is_visible()
@@ -115,6 +115,8 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 page.locator("#personal [data-tab='profile']").click()
                 page.locator("#resume-status.status-badge--success").wait_for()
                 page.get_by_role("button", name="Settings", exact=True).click()
+                page.locator("#settings.active").wait_for()
+                page.wait_for_function("!document.querySelector('#settings.active')?.hasAttribute('aria-busy')")
                 page.locator("#smtp-panel summary").click()
                 page.locator("#smtp-panel[open]").wait_for()
                 page.locator("#smtp-gmail-preset").click()

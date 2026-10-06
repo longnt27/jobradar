@@ -34,6 +34,8 @@ let projectCards = [];
 let discoveredRepos = [];
 let selectedProjectId = null;
 let projectProviderReady = false;
+let projectProcessing = {};
+let projectProviderAvailability = {};
 let applicationDrafts = [];
 let applicationsTotal = 0;
 let applicationsPage = 1;
@@ -321,37 +323,36 @@ async function loadHome() {
   $('#source-summary').innerHTML = `${escapeHtml(discovery.label)} · ${discovery.counts.linkedin} LinkedIn, ${discovery.counts.facebook} Facebook, ${discovery.counts.career} company sites.${discovery.gaps.length ? ` ${escapeHtml(discovery.gaps.join(' · '))}.` : ''} ${discoveryNeedsAttention ? '<button type="button" class="text-button" id="home-review-sources">Review coverage →</button>' : ''}`;
   $('#home-review-sources')?.addEventListener('click', () => showTab('sources'));
 
-  const hasProfile = Boolean(profile.name && profile.email);
-  const experienceCount = (profile.experience || []).length;
+  const capabilities = setup.capabilities || {};
+  const discoveryCapability = capabilities.discovery || {ready:false,status:'not_configured',detail:'Add a job source.'};
+  const preparationCapability = capabilities.application_preparation || {ready:false,missing:[]};
+  const automaticCapability = capabilities.automatic_drafts || {ready:false,missing:[]};
   const required = [
-    {label:'Set up AI models', detail:!profile.drafting_provider ? 'Choose an application writing provider' : !setup.matching.model ? 'Choose a local job matching model' : 'Application writing and matching are ready', done:!!profile.drafting_provider && !!setup.matching.model, tab:'settings', panel:'provider-panel'},
-    {label:'Add personal details', detail:'Name and email are required for applications', done:hasProfile, tab:'personal'},
-    {label:'Add work history', detail:experienceCount ? `${experienceCount} position${experienceCount === 1 ? '' : 's'} saved` : 'Add experience for tailored applications', done:experienceCount > 0, tab:'experience'},
-    {label:'Select projects', detail:'Choose at least one project for tailored applications', done:setup.approved_evidence > 0, tab:'projects'},
-    {label:setup.browser.sites.length ? 'Sign in to social sites again' : 'Connect job-source accounts', detail:setup.browser.sites.length ? `${socialSiteNames(setup.browser)} session expired` : 'Required while LinkedIn or Facebook sources are enabled', done:(!setup.linkedin_searches && !setup.facebook_groups) || (setup.browser.connected_sites.length === 2 && !setup.browser.sites.length), tab:'settings', socialAuth:true},
+    {label:'Job discovery', detail:discoveryCapability.detail || discovery.label, done:Boolean(discoveryCapability.ready), attention:discoveryCapability.status === 'attention', tab:'sources'},
   ];
   const optional = [
+    {label:'Detailed local match review', done:Boolean(setup.matching.model), detail:setup.matching.model ? `Using ${setup.matching.model}` : 'Optional · fallback ranking still works', tab:'settings', panel:'provider-panel'},
+    {label:'Application preparation', done:Boolean(preparationCapability.ready), detail:preparationCapability.ready ? 'Ready to prepare applications' : `Optional · needs ${(preparationCapability.missing || []).join(', ') || 'setup'}`, tab:'profile'},
+    {label:'Automatic draft preparation', done:Boolean(automaticCapability.ready), detail:automaticCapability.ready ? 'Ready if you choose to enable it' : `Optional · needs ${(automaticCapability.missing || []).join(', ') || 'setup'}`, tab:'applications'},
     {label:'Telegram reviews', done:setup.telegram_configured, detail:setup.telegram_configured ? 'Connected' : 'Optional · not configured', tab:'settings', panel:'telegram-panel'},
     {label:'Email sending', done:setup.smtp_test?.status === 'accepted', detail:setup.smtp_test?.status === 'accepted' ? 'Connected and tested' : setup.smtp_configured ? 'Optional · configured, test pending' : 'Optional · not configured', tab:'settings', panel:'smtp-panel'},
   ];
-  const remaining = required.filter((step) => !step.done);
-  const complete = remaining.length === 0;
-  const next = remaining[0];
+  const complete = Boolean(discoveryCapability.ready);
 
-  $('#home-setup-status').textContent = complete ? 'Complete' : `${remaining.length} left`;
-  $('#home-setup-status').className = complete ? 'status-badge status-badge--success' : 'status-badge status-badge--warning';
-  $('#home-title').textContent = complete ? 'What needs your attention?' : 'Finish the essentials, then get out of setup mode.';
-  $('#home-description').textContent = complete ? 'Prioritize strong jobs, review drafts, and fix anything blocking the pipeline.' : 'Complete the required application basics. Optional integrations can stay optional, as nature intended.';
+  $('#home-setup-status').textContent = complete ? (discoveryCapability.status === 'attention' ? 'Discovery ready · check coverage' : 'Discovery ready') : 'Add a job source';
+  $('#home-setup-status').className = complete ? (discoveryCapability.status === 'attention' ? 'status-badge status-badge--warning' : 'status-badge status-badge--success') : 'status-badge status-badge--warning';
+  $('#home-title').textContent = complete ? 'What needs your attention?' : 'Start with job discovery.';
+  $('#home-description').textContent = complete ? 'Discovery is ready. Application preparation, Telegram, and sending are optional capabilities you can add when useful.' : 'Add at least one job source. You do not need a resume, personal details, or an application provider to start finding jobs.';
   $('#home-hero').classList.toggle('is-compact', complete);
-  $('#home-primary').textContent = next ? `${next.label} →` : (c.drafts_needing_review ? 'Review drafts →' : 'Review jobs →');
-  $('#home-primary').dataset.tab = next?.tab || (c.drafts_needing_review ? 'applications' : 'jobs');
-  $('#home-primary').dataset.socialAuth = next?.socialAuth ? 'true' : 'false';
-  $('#home-primary').dataset.setupPanel = next?.panel || '';
+  $('#home-primary').textContent = complete ? (c.drafts_needing_review ? 'Review drafts →' : 'Review jobs →') : 'Add a job source →';
+  $('#home-primary').dataset.tab = complete ? (c.drafts_needing_review ? 'applications' : 'jobs') : 'sources';
+  $('#home-primary').dataset.socialAuth = 'false';
+  $('#home-primary').dataset.setupPanel = '';
 
   $('#home-steps').innerHTML = required.map((step) =>
-    `<button class="step-row ${step.done ? 'is-done' : ''}" data-home-step="${step.tab}" data-social-auth="${step.socialAuth ? 'true' : 'false'}" data-setup-panel="${step.panel || ''}"><span class="step-check ${step.done ? 'done' : ''}">${step.done ? '✓' : '○'}</span><span><strong>${escapeHtml(step.label)}</strong><small>${escapeHtml(step.detail)}</small></span><span class="step-arrow">→</span></button>`
+    `<button class="step-row ${step.done ? 'is-done' : ''}" data-home-step="${step.tab}"><span class="step-check ${step.done ? 'done' : ''}">${step.done ? (step.attention ? '!' : '✓') : '○'}</span><span><strong>${escapeHtml(step.label)}</strong><small>${escapeHtml(step.detail)}</small></span><span class="step-arrow">→</span></button>`
   ).join('');
-  $('#home-optional').innerHTML = `<h4>Optional integrations</h4>${optional.map((step) =>
+  $('#home-optional').innerHTML = `<h4>Optional capabilities</h4>${optional.map((step) =>
     `<button class="home-optional-row" data-home-step="${step.tab}" data-setup-panel="${step.panel || ''}"><span><strong>${escapeHtml(step.label)}</strong><small>${escapeHtml(step.detail)}</small></span><span class="status-badge ${step.done ? 'status-badge--success' : 'status-badge--neutral'}">${step.done ? 'Ready' : 'Optional'}</span></button>`
   ).join('')}`;
   document.querySelectorAll('[data-home-step]').forEach((button) => button.addEventListener('click', () => button.dataset.socialAuth === 'true' ? openSocialSignIn() : button.dataset.setupPanel ? openSetupPanel(button.dataset.setupPanel) : showTab(button.dataset.homeStep)));
@@ -843,8 +844,9 @@ async function showJob(id, pin = false) {
     document.querySelector(`[data-job-card="${id}"]`)?.classList.remove('is-unseen');
     document.querySelector(`[data-job="${id}"] .job-unread-dot`)?.remove();
   }
-  const profile = await api('/api/profile');
+  const [profile, setup] = await Promise.all([api('/api/profile'), api('/api/setup')]);
   const provider = profile.drafting_provider || '';
+  const preparation = setup.capabilities?.application_preparation || {ready:false,missing:[]};
   const sourcePriority = {career:0, linkedin:1, facebook:2};
   const sightings = [...job.observations].sort((a,b) => (sourcePriority[a.kind] ?? 9) - (sourcePriority[b.kind] ?? 9) || a.first_seen_at.localeCompare(b.first_seen_at));
   const preferredSighting = sightings[0];
@@ -891,7 +893,7 @@ async function showJob(id, pin = false) {
       ? ''
       : job.application_progress === 'preparing'
         ? '<button type="button" class="primary" disabled aria-busy="true">Preparing in background</button>'
-        : `<button data-prepare="${id}" class="primary" ${provider ? '' : 'disabled'}>${job.application_progress === 'needs_confirmation' ? 'Review application method' : 'Prepare application'}</button>`;
+        : `<button data-prepare="${id}" class="primary" ${preparation.ready ? '' : 'disabled'}>${job.application_progress === 'needs_confirmation' ? 'Review application method' : 'Prepare application'}</button>`;
 
   $('#job-detail').setAttribute('tabindex', '-1');
   $('#job-detail').innerHTML = `<div class="job-detail-head"><div><h2>${escapeHtml(job.title)}</h2><div class="item-meta">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div>
@@ -924,7 +926,8 @@ async function showJob(id, pin = false) {
 
     <section class="job-prepare-section review-section">
       <div class="section-head"><div><h3>Application preparation</h3><p class="hint">${job.application_progress === 'not_started' ? 'Prepare only after the fit and risks above make sense to you.' : escapeHtml(applicationNote)}</p></div></div>
-      <p class="hint">Drafting provider: ${escapeHtml(provider || 'Choose one in Settings first')} · <button class="text-button" data-tab="settings">Change provider</button></p>
+      <p class="hint">Drafting provider: ${escapeHtml(provider || 'Not configured')} · <button class="text-button" data-tab="settings">Change provider</button></p>
+      <p class="processing-disclosure">${escapeHtml(provider ? processingCopy(setup, provider, 'The job posting, your profile details, and approved project evidence') : `Application preparation is optional. To enable it, add ${(preparation.missing || []).join(', ') || 'the application prerequisites'}.`)}</p>
       <div class="actions">${prepareAction}</div>
     </section>
 
@@ -1197,6 +1200,36 @@ function providerLabel(provider) {
   return PROVIDER_LABELS[provider] || provider || 'Not selected';
 }
 
+function providerAvailability(setup) {
+  return {
+    template:true,
+    codex:Boolean(setup.providers?.codex),
+    codex_local:Boolean(setup.providers?.codex && setup.providers?.ollama),
+    agy:Boolean(setup.providers?.agy),
+    claude:Boolean(setup.providers?.claude),
+  };
+}
+
+function processingCopy(setup, provider, payloadLabel) {
+  if (!provider) return 'Choose a provider to see where this data will be processed.';
+  const processing = setup.provider_processing?.[provider] || projectProcessing?.[provider];
+  if (provider === 'template') return payloadLabel + ' stays on this Mac. A deterministic local template is used; no AI model receives it.';
+  if (!processing) return payloadLabel + ' will be processed by ' + providerLabel(provider) + '.';
+  return (processing.remote ? 'Remote processing' : 'Local processing') + ' with ' + processing.label + '. ' +
+    payloadLabel + (processing.remote ? ' is sent through the selected provider.' : ' stays on this Mac.');
+}
+
+function configureProviderSelect(select, setup, preferred = '') {
+  const availability = providerAvailability(setup);
+  [...select.options].forEach((option) => {
+    if (!option.value) return;
+    option.disabled = !availability[option.value];
+  });
+  if (preferred && availability[preferred]) select.value = preferred;
+  else if (!availability[select.value]) select.value = '';
+  return availability;
+}
+
 function closeSetupPanels(except = null) {
   for (const id of ['provider-panel','social-sign-in-panel','telegram-panel','smtp-panel']) {
     const panel = document.getElementById(id);
@@ -1296,8 +1329,13 @@ async function loadProfile() {
   $('#resume-review-actions').hidden = !hasResume;
   $('#resume-panel-help').textContent = hasResume
     ? 'Review the structured details below, or import a newer resume to replace them.'
-    : 'Upload a text-based PDF to seed your structured profile. You can review every extracted field afterward.';
-  $('#pdf-resume-form button[type="submit"]').disabled = !profile.drafting_provider || !availability[profile.drafting_provider];
+    : 'Upload a text-based PDF to seed your structured profile. Choose how this import is processed here; application drafting setup is separate.';
+  const resumeForm = $('#pdf-resume-form');
+  configureProviderSelect(resumeForm.elements.provider, setup, profile.drafting_provider || '');
+  $('#resume-processing-disclosure').textContent = processingCopy(setup, resumeForm.elements.provider.value, 'Your resume text');
+  resumeForm.elements.provider.onchange = () => {
+    $('#resume-processing-disclosure').textContent = processingCopy(setup, resumeForm.elements.provider.value, 'Your resume text');
+  };
   const projectCount = cards.filter((card) => card.kind === 'project' && card.approved).length;
   $('#profile-summary').textContent = hasResume
     ? `${profile.name} · ${profile.email}. ${(profile.experience || []).length} previous position${profile.experience?.length === 1 ? '' : 's'} and ${projectCount} selected project${projectCount === 1 ? '' : 's'}.`
@@ -2243,13 +2281,18 @@ async function loadEvidence(focusId = null) {
   projectCards = allCards.filter((card) => card.kind === 'project');
   if (focusId) selectedProjectId = focusId;
   if (!projectCards.some((card) => card.id === selectedProjectId)) selectedProjectId = projectCards.find((card) => !card.approved)?.id || projectCards[0]?.id || null;
-  const availability = {codex:setup.providers.codex, codex_local:setup.providers.codex && setup.providers.ollama,
-    agy:setup.providers.agy, claude:setup.providers.claude};
-  projectProviderReady = Boolean(profile.drafting_provider && availability[profile.drafting_provider]);
-  $('#project-provider-status').textContent = projectProviderReady
-    ? `Project drafts use ${providerLabel(profile.drafting_provider)}. You can change this in Settings.`
-    : 'Choose an available AI provider in Settings before adding a project.';
-  $('#project-provider-action').hidden = projectProviderReady;
+  projectProviderAvailability = providerAvailability(setup);
+  projectProcessing = setup.provider_processing || {};
+  const providerSelect = $('#project-processing-provider');
+  configureProviderSelect(providerSelect, setup, providerSelect.value || profile.drafting_provider || 'template');
+  if (!providerSelect.value) providerSelect.value = 'template';
+  projectProviderReady = Boolean(providerSelect.value && projectProviderAvailability[providerSelect.value]);
+  $('#project-provider-status').textContent = processingCopy(setup, providerSelect.value, 'The repository snapshot used to draft project evidence');
+  providerSelect.onchange = () => {
+    projectProviderReady = Boolean(providerSelect.value && projectProviderAvailability[providerSelect.value]);
+    $('#project-provider-status').textContent = processingCopy(setup, providerSelect.value, 'The repository snapshot used to draft project evidence');
+    renderRepositoryResults($('#repo-filter')?.value || '');
+  };
   const readyCount = projectCards.filter((card) => card.approved).length;
   $('#selected-project-count').textContent = `${readyCount} ready for resumes`;
   $('#evidence-list').innerHTML = projectCards.length ? projectCards.map((card) => `<button class="project-list-row ${card.id === selectedProjectId ? 'is-selected' : ''}" data-open-project="${card.id}" type="button" aria-pressed="${card.id === selectedProjectId ? 'true' : 'false'}">
@@ -2322,7 +2365,9 @@ async function loadEvidence(focusId = null) {
     try {
       button.disabled = true;
       $('#project-review-status').textContent = 'Generating a new draft from the repository…';
-      await api(`/api/evidence/${card.id}/generate`, {method:'POST', body:'{}'});
+      const provider = $('#project-processing-provider').value;
+      if (!provider || !projectProviderReady) throw new Error('Choose an available processing option above first.');
+      await api(`/api/evidence/${card.id}/generate`, {method:'POST', body:JSON.stringify({provider})});
       await loadEvidence(card.id);
       $('#project-review-status').textContent = 'New draft ready. Review and save it before including it in resumes.';
     } catch(error) { await loadEvidence(card.id); $('#project-review-status').textContent = error.message; }
@@ -2644,7 +2689,10 @@ $('#provider-form').addEventListener('submit', async (event) => {
 $('#pdf-resume-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const button = beginPending(event.submitter || event.target.querySelector('button[type="submit"]'), 'Extracting…');
-  $('#pdf-import-status').textContent = 'Reading the PDF and asking your selected provider to extract resume details.';
+  const provider = event.target.elements.provider.value;
+  $('#pdf-import-status').textContent = provider
+    ? `Reading the PDF with ${providerLabel(provider)} using the processing choice shown above.`
+    : 'Choose how this resume should be processed.';
   try {
     const result = await api('/api/profile/resume/pdf', {method:'POST', body:new FormData(event.target)});
     event.target.reset();
@@ -2652,7 +2700,7 @@ $('#pdf-resume-form').addEventListener('submit', async (event) => {
     await showTab('personal');
     notice('Resume details extracted. Review them before applying.');
   } catch(error) { $('#pdf-import-status').textContent = error.message; notice(error.message, true); }
-  finally { endPending(button); const selected = $('#provider-form').elements.provider.selectedOptions[0]; button.disabled = !selected?.value || selected.disabled; }
+  finally { endPending(button); }
 });
 
 $('#latex-import-form').addEventListener('submit', async (event) => {
@@ -2735,14 +2783,15 @@ $('#position-form').addEventListener('submit', async (event) => {
 });
 
 async function inspectSelectedRepository(url, button = null) {
-  if (!projectProviderReady) {
-    $('#project-add-status').textContent = 'Choose an available AI provider in Settings first.';
+  const provider = $('#project-processing-provider').value;
+  if (!provider || !projectProviderReady) {
+    $('#project-add-status').textContent = 'Choose an available processing option for this project first.';
     return;
   }
   if (button) button.disabled = true;
-  $('#project-add-status').textContent = 'Reading the repository and drafting a project description. This can take a minute…';
+  $('#project-add-status').textContent = `Reading the repository and drafting project evidence with ${providerLabel(provider)}…`;
   try {
-    const result = await api('/api/repositories/inspect', {method:'POST', body:JSON.stringify({url})});
+    const result = await api('/api/repositories/inspect', {method:'POST', body:JSON.stringify({url, provider})});
     await loadEvidence(result.evidence_id);
     $('#project-add-status').textContent = result.generation_warning
       ? `Repository added, but the draft needs attention: ${result.generation_warning}`
@@ -2765,12 +2814,6 @@ function parseGitHubEntry(input) {
   if (segments.length === 2) return {repository:url.href};
   throw new Error('Use a GitHub profile or repository URL.');
 }
-
-$('#project-provider-action').addEventListener('click', () => {
-  showTab('settings');
-  $('#provider-panel').open = true;
-  scrollNodeIntoView($('#provider-panel'), {block:'start'});
-});
 
 $('#project-add-form').addEventListener('submit', async (event) => {
   event.preventDefault();

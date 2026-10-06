@@ -13,7 +13,7 @@ from typing import Any, Literal
 from urllib.parse import urlsplit
 
 import httpx
-from fastapi import Body, FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, HttpUrl
 
@@ -22,6 +22,7 @@ from .discovery import merge_reason_label, source_coverage, split_observation, s
 from .apply import inspect_form, send_application, send_readiness, submission_attachment, submission_record, submission_resume_path
 from .auto_apply import AutoApplyManager
 from .browser_login import BrowserLoginManager
+from .capabilities import capability_readiness, provider_processing
 from .drafting import PROVIDERS, get_draft, prepare_draft, update_draft
 from .evidence import generate_project_content, inspect_repository
 from .facebook_groups import group_from_url, lookup_facebook_group_name
@@ -342,27 +343,44 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if smtp_test.get("fingerprint") != smtp_config_fingerprint(mail):
             smtp_test = {}
         telegram = telegram_config(settings)
+        approved_projects = db.one("SELECT COUNT(*) AS count FROM evidence WHERE approved=1 AND kind='project'")["count"]
+        smtp_ready = bool(mail.get("host") and mail.get("from") and
+                          (mail.get("host", "").lower() != "smtp.gmail.com" or
+                           (mail.get("user") and mail.get("password"))))
+        telegram_ready = bool(telegram.get("token") and telegram.get("chat_id"))
+        provider = str(profile.get("drafting_provider") or "")
+        discovery = summarize_discovery(sources())
+        capabilities = capability_readiness(
+            profile=profile,
+            discovery=discovery,
+            provider_is_available=bool(provider and provider_available(provider)),
+            approved_projects=approved_projects,
+            matching_model=str(db.get_setting("matching_model", "")),
+            telegram_configured=telegram_ready,
+            smtp_configured=smtp_ready,
+        )
+        availability = {name: bool(shutil.which(name)) for name in ("codex", "agy", "claude", "ollama")}
         return {
             "profile_complete": bool(profile.get("name") and profile.get("email")),
-            "selected_provider": profile.get("drafting_provider", ""),
-            "approved_evidence": db.one("SELECT COUNT(*) AS count FROM evidence WHERE approved=1 AND kind='project'")["count"],
+            "selected_provider": provider,
+            "approved_evidence": approved_projects,
             "facebook_groups": db.one("SELECT COUNT(*) AS count FROM sources WHERE kind='facebook' AND enabled=1")["count"],
             "linkedin_searches": db.one("SELECT COUNT(*) AS count FROM sources WHERE kind='linkedin' AND enabled=1")["count"],
             "browser": login_manager.status(),
-            "smtp_configured": bool(mail.get("host") and mail.get("from") and
-                                    (mail.get("host", "").lower() != "smtp.gmail.com" or
-                                     (mail.get("user") and mail.get("password")))),
+            "smtp_configured": smtp_ready,
             "smtp_host": mail.get("host", ""),
             "smtp_port": mail.get("port", 587),
             "smtp_user": mail.get("user", ""),
             "smtp_from": mail.get("from", ""),
             "smtp_test": {key: smtp_test[key] for key in ("status", "recipient", "checked_at", "detail") if key in smtp_test},
-            "telegram_configured": bool(telegram.get("token") and telegram.get("chat_id")),
+            "telegram_configured": telegram_ready,
             "telegram_chat_id": telegram.get("chat_id", ""),
             "matching": match_manager.status(),
             "auto_apply": auto_apply_manager.status(),
             "service_installed": service_path().exists(),
-            "providers": {name: bool(shutil.which(name)) for name in ("codex", "agy", "claude", "ollama")},
+            "providers": availability,
+            "provider_processing": {name: provider_processing(name) for name in ("codex_local", "codex", "agy", "claude")},
+            "capabilities": capabilities,
         }
 
     @app.post("/api/setup/browser/start")
@@ -545,8 +563,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"provider": payload.provider, "mode": PROVIDERS[payload.provider]}
 
     @app.post("/api/profile/resume/pdf")
-    async def import_pdf_resume(file: UploadFile = File(...)):
-        provider = configured_provider()
+    async def import_pdf_resume(file: UploadFile = File(...), provider: str = Form("")):
+        provider = provider.strip() or str(db.get_setting("profile", {}).get("drafting_provider") or "")
+        if provider not in {"codex_local", "codex", "agy", "claude"}:
+            raise HTTPException(422, "Choose how this resume should be processed before importing it")
+        if not provider_available(provider):
+            raise HTTPException(422, f"{provider} is not available on this Mac")
         data = await file.read(10_000_001)
         try:
             extracted = await asyncio.to_thread(extract_resume, data, provider)
@@ -556,6 +578,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         save_profile(profile)
         return {"positions": len(profile["experience"]), "education": len(profile["education"]),
                 "achievements": len(profile["achievements"]), "provider": provider,
+                "processing": provider_processing(provider),
                 "review": "Review the extracted fields and positions before preparing an application"}
 
     @app.post("/api/profile/import-latex")
@@ -1305,7 +1328,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def inspect_repo(payload: RepositoryInput):
         try:
             provider = payload.provider or configured_provider()
+            if provider not in PROVIDERS:
+                raise ValueError("Unsupported provider")
             result = inspect_repository(db, settings, str(payload.url))
+            result["processing"] = provider_processing(provider)
             try:
                 result["project_content"] = generate_project_content(db, result["evidence_id"], provider)
                 if db.one("SELECT approved FROM evidence WHERE id=?", (result["evidence_id"],))["approved"]:
@@ -1319,7 +1345,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/evidence/{evidence_id}/generate")
     def generate_project(evidence_id: str, payload: ProjectGenerationInput):
         try:
-            result = generate_project_content(db, evidence_id, payload.provider or configured_provider())
+            provider = payload.provider or configured_provider()
+            result = generate_project_content(db, evidence_id, provider)
+            result["processing"] = provider_processing(provider)
             if db.one("SELECT approved FROM evidence WHERE id=?", (evidence_id,))["approved"]:
                 match_manager.invalidate_all()
             return result
@@ -1348,7 +1376,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/jobs/{job_id}/prepare/preflight")
     def prepare_preflight(job_id: str):
         try:
-            return preparation_preflight(db, job_id)
+            result = preparation_preflight(db, job_id)
+            provider = configured_provider()
+            result["processing"] = provider_processing(provider) if provider else None
+            return result
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
 
@@ -1363,13 +1394,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404, str(error)) from error
         except ValueError as error:
             raise HTTPException(409, str(error)) from error
+        processing = provider_processing(provider)
         if result["status"] == "confirmation_required":
             raise HTTPException(409, detail={
                 "code": "prepare_confirmation_required",
                 "message": result["preflight"]["reason"],
                 "preflight": result["preflight"],
+                "processing": processing,
             })
-        return result
+        return {**result, "processing": processing}
 
     def application_page_data(page: int, page_size: int, q: str = "", review: str = "",
                               company: str = "", delivery: str = "") -> dict:

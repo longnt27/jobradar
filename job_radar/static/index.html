@@ -42,7 +42,7 @@
         <div id="metrics" class="metrics"></div>
         <p id="source-summary" class="hint source-summary"></p>
         <div class="two-col home-grid">
-          <div class="panel"><div class="section-head"><div><h3>Setup checklist</h3><p class="hint">One-time requirements for useful applications.</p></div><span id="home-setup-status" class="status-badge status-badge--warning"></span></div><div id="home-steps" class="stack"></div><div id="home-optional" class="home-optional"></div></div>
+          <div class="panel"><div class="section-head"><div><h3>Capabilities</h3><p class="hint">Discovery works on its own. Application features unlock separately when you need them.</p></div><span id="home-setup-status" class="status-badge status-badge--neutral"></span></div><div id="home-steps" class="stack"></div><div id="home-optional" class="home-optional"></div></div>
           <div class="panel"><div class="section-head"><div><h3>Needs your attention</h3><p id="home-action-count" class="hint"></p></div></div><div id="home-actions" class="home-actions" aria-live="polite"></div></div>
         </div>
         <div class="panel home-activity-panel"><div class="section-head"><div><h3>Activity</h3><p id="home-queue-count" class="hint"></p></div><button class="text-button" data-tab="queue" type="button">View activity →</button></div><div id="home-queue" class="home-queue" aria-live="polite"></div></div>
@@ -296,7 +296,12 @@
           <summary><span><strong id="resume-panel-label">Import your resume</strong></span><span id="resume-status" class="pill warning">Needs details</span></summary>
           <p id="resume-panel-help" class="hint">Upload a text-based PDF to seed your structured profile. You can review every extracted field afterward.</p>
           <div id="resume-review-actions" class="actions" hidden><button data-tab="personal" class="secondary" type="button">Review personal details</button><button data-tab="experience" class="secondary" type="button">Review work history</button></div>
-          <form id="pdf-resume-form" class="form-grid"><label class="full">Resume PDF<input name="file" type="file" accept="application/pdf,.pdf" required></label><button class="primary" type="submit" disabled>Import or replace details</button></form>
+          <form id="pdf-resume-form" class="form-grid">
+            <label class="full">Resume PDF<input name="file" type="file" accept="application/pdf,.pdf" required></label>
+            <label class="full">Process this resume with<select name="provider" required><option value="">Choose for this import</option><option value="codex_local">Codex OSS + Ollama · local</option><option value="codex">Codex CLI · remote model</option><option value="agy">Antigravity CLI · remote model</option><option value="claude">Claude Code CLI · remote model</option></select></label>
+            <p id="resume-processing-disclosure" class="processing-disclosure full">Choose a provider to see where your resume text will be processed.</p>
+            <button class="primary" type="submit">Import or replace details</button>
+          </form>
           <p id="pdf-import-status" class="hint" role="status"></p>
           <details class="inline-details"><summary>Have a LaTeX resume instead?</summary><form id="latex-import-form"><label>LaTeX source<textarea name="latex" rows="8" required></textarea></label><button class="secondary" type="submit">Import details</button></form></details>
         </details>
@@ -353,7 +358,8 @@
           <h3>Add a GitHub project</h3>
           <p class="hint">Enter your GitHub username to browse public repositories, or paste a repository URL directly.</p>
           <form id="project-add-form" class="project-add-form"><label class="full">GitHub username or repository URL<input id="project-github-input" name="github" placeholder="your-username or https://github.com/you/project" autocomplete="off" required></label><button class="primary" type="submit">Continue</button></form>
-          <p id="project-provider-status" class="hint"></p><button id="project-provider-action" class="text-button" type="button" hidden>Choose a provider in Settings →</button>
+          <label class="project-provider-choice">Draft project evidence with<select id="project-processing-provider"><option value="">Choose for this project</option><option value="template">Local template · no AI</option><option value="codex_local">Codex OSS + Ollama · local</option><option value="codex">Codex CLI · remote model</option><option value="agy">Antigravity CLI · remote model</option><option value="claude">Claude Code CLI · remote model</option></select></label>
+          <p id="project-provider-status" class="processing-disclosure">Choose a provider to see what repository data is processed and where.</p>
           <p id="project-add-status" class="hint" role="status" aria-live="polite"></p><div id="github-repos"></div>
         </div>
         <div class="panel">
