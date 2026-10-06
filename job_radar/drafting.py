@@ -424,11 +424,21 @@ def _review_context(db: Database, row: dict) -> dict:
 
 
 def get_draft(db: Database, identifier: str) -> dict:
-    row = db.one("SELECT d.*,v.title AS job_title,v.company,v.description AS job_description,v.score AS job_score FROM application_drafts d JOIN vacancies v ON v.id=d.vacancy_id WHERE d.id=?", (identifier,))
+    row = db.one(
+        "SELECT d.*,v.title AS job_title,v.company,v.description AS job_description,"
+        "v.score AS job_score,v.score_detail AS job_score_detail,v.apply_url AS job_apply_url,"
+        "v.location AS job_location,v.work_mode AS job_work_mode "
+        "FROM application_drafts d JOIN vacancies v ON v.id=d.vacancy_id WHERE d.id=?",
+        (identifier,),
+    )
     if not row:
         raise KeyError("Draft not found")
     for key in ("evidence_ids", "resume_data", "message_data", "form_data", "destination", "warnings"):
         row[key] = json.loads(row[key])
+    try:
+        row["job_score_detail"] = json.loads(row.get("job_score_detail") or "{}")
+    except (TypeError, ValueError):
+        row["job_score_detail"] = {}
     row["package_hash"] = package_hash(row)
     row["review_context"] = _review_context(db, row)
     return row
