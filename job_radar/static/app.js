@@ -34,6 +34,8 @@ let projectCards = [];
 let discoveredRepos = [];
 let selectedProjectId = null;
 let projectProviderReady = false;
+let projectProcessing = {};
+let projectProviderAvailability = {};
 let applicationDrafts = [];
 let applicationsTotal = 0;
 let applicationsPage = 1;
@@ -1140,6 +1142,36 @@ const PROVIDER_LABELS = {
 
 function providerLabel(provider) {
   return PROVIDER_LABELS[provider] || provider || 'Not selected';
+}
+
+function providerAvailability(setup) {
+  return {
+    template:true,
+    codex:Boolean(setup.providers?.codex),
+    codex_local:Boolean(setup.providers?.codex && setup.providers?.ollama),
+    agy:Boolean(setup.providers?.agy),
+    claude:Boolean(setup.providers?.claude),
+  };
+}
+
+function processingCopy(setup, provider, payloadLabel) {
+  if (!provider) return 'Choose a provider to see where this data will be processed.';
+  const processing = setup.provider_processing?.[provider] || projectProcessing?.[provider];
+  if (provider === 'template') return payloadLabel + ' stays on this Mac. A deterministic local template is used; no AI model receives it.';
+  if (!processing) return payloadLabel + ' will be processed by ' + providerLabel(provider) + '.';
+  return (processing.remote ? 'Remote processing' : 'Local processing') + ' with ' + processing.label + '. ' +
+    payloadLabel + (processing.remote ? ' is sent through the selected provider.' : ' stays on this Mac.');
+}
+
+function configureProviderSelect(select, setup, preferred = '') {
+  const availability = providerAvailability(setup);
+  [...select.options].forEach((option) => {
+    if (!option.value) return;
+    option.disabled = !availability[option.value];
+  });
+  if (preferred && availability[preferred]) select.value = preferred;
+  else if (!availability[select.value]) select.value = '';
+  return availability;
 }
 
 function closeSetupPanels(except = null) {
