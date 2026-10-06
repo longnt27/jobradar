@@ -378,6 +378,8 @@ class AutoApplyManager:
         self._set_status(attempt["vacancy_id"], "regenerating", "Generating a new draft from your instructions.", draft_id)
         try:
             draft = await asyncio.to_thread(regenerate_draft, self.db, self.settings, draft_id, prompt, section)
+            regeneration_changes = draft.get("changes", [])
+            regenerated_section = draft.get("regenerated_section", section)
             if draft["destination"].get("kind") == "web":
                 try:
                     async with self.browser_lock:
@@ -391,7 +393,10 @@ class AutoApplyManager:
                     self._set_status(attempt["vacancy_id"], "needs_review", f"Form inspection needs attention: {error}", draft_id)
             self._set_status(attempt["vacancy_id"], "needs_review", "Review the revised application.", draft_id)
             await self.notify_review(draft_id)
-            return get_draft(self.db, draft_id)
+            result = get_draft(self.db, draft_id)
+            result["changes"] = regeneration_changes
+            result["regenerated_section"] = regenerated_section
+            return result
         except Exception as error:
             self._set_status(attempt["vacancy_id"], "needs_review", f"Regeneration failed: {str(error)[:500]}", draft_id)
             raise
