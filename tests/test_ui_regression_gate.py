@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError, sync_playwright
 from PIL import Image
 
+from job_radar.drafting import prepare_draft
 from job_radar.settings import Settings
 from job_radar.web import create_app
 
@@ -80,9 +81,8 @@ def ui_server(tmp_path_factory):
         "approved": True,
     }).json()["id"]
 
-    draft_response = client.post(f"/api/jobs/{job['id']}/prepare", json={"provider": "template"})
-    assert draft_response.status_code == 200, draft_response.text
-    draft = draft_response.json()
+    draft = prepare_draft(app.state.db, app.state.settings, job["id"], "template")
+    app.state.auto_apply_manager.register_review(draft)
     draft = client.patch(f"/api/applications/{draft['id']}", json={
         "destination": {
             "kind": "email",

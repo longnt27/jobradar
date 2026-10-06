@@ -6,7 +6,7 @@ from threading import Thread
 import uvicorn
 from playwright.sync_api import sync_playwright
 
-from job_radar.drafting import ModelDraft
+from job_radar.drafting import ModelDraft, prepare_draft
 from job_radar.settings import Settings
 from job_radar.web import create_app
 
@@ -24,7 +24,8 @@ def test_application_tab_reviews_regenerates_and_deep_links_to_draft(tmp_path: P
     client = TestClient(app)
     job = client.post("/api/jobs/import", json={"company": "Example", "title": "Engineer",
         "description": "Build Python systems.", "apply_url": "https://example.org/apply"}).json()
-    draft = client.post(f"/api/jobs/{job['id']}/prepare", json={"provider": "codex"}).json()
+    draft = prepare_draft(app.state.db, app.state.settings, job["id"], "codex")
+    app.state.auto_apply_manager.register_review(draft)
     client.patch(f"/api/applications/{draft['id']}", json={"destination": {"kind": "email", "email": "jobs@example.org"}})
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))

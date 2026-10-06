@@ -38,12 +38,35 @@ def test_one_queue_reports_real_worker_order_and_analysis_stage(tmp_path: Path) 
     waiting_score = job("Draft after scoring", "pending", None, "2026-10-04T08:00:00+00:00")
     failed = job("Failed analysis", "failed", None, "2026-10-04T07:30:00+00:00")
     reviewed = job("Ready for review", "done", 88, "2026-10-04T07:00:00+00:00")
-    for identifier, status in ((queued_draft, "queued"), (waiting_score, "queued"),
-                               (failed, "queued"), (reviewed, "awaiting_review")):
+    reviewed_draft = new_id()
+    db.execute(
+        "INSERT INTO application_drafts(id,vacancy_id,provider,provider_mode,evidence_ids,resume_data,"
+        "message_data,form_data,destination,warnings,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            reviewed_draft,
+            reviewed,
+            "template",
+            "local template; no model inference",
+            "[]",
+            "{}",
+            "{}",
+            "{}",
+            '{"kind":"manual","action_type":"manual"}',
+            "[]",
+            now(),
+            now(),
+        ),
+    )
+    for identifier, status in ((queued_draft, "queued"), (waiting_score, "queued"), (failed, "queued")):
         db.execute(
             "INSERT INTO auto_application_attempts(vacancy_id,status,created_at,updated_at) VALUES(?,?,?,?)",
             (identifier, status, now(), now()),
         )
+    db.execute(
+        "INSERT INTO auto_application_attempts(vacancy_id,status,draft_id,created_at,updated_at) "
+        "VALUES(?,'awaiting_review',?,?,?)",
+        (reviewed, reviewed_draft, now(), now()),
+    )
 
     response = TestClient(app).get("/api/queue")
     assert response.status_code == 200

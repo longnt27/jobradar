@@ -55,7 +55,7 @@
         <div class="queue-grid">
           <section class="panel queue-panel" aria-labelledby="queue-scan-title"><div class="queue-panel-head"><div><h3 id="queue-scan-title">Job scans</h3><p>Company pages, LinkedIn searches, and Facebook groups</p></div><span id="queue-scan-count" class="pill muted"></span></div><div id="queue-scan-active"></div><div id="queue-scan-waiting"></div></section>
           <section class="panel queue-panel" aria-labelledby="queue-analysis-title"><div class="queue-panel-head"><div><h3 id="queue-analysis-title">Review matches</h3><p>Job Radar reads each posting and checks how well it fits</p></div><span id="queue-analysis-count" class="pill muted"></span></div><div id="queue-analysis-active"></div><div id="queue-analysis-waiting"></div><div id="queue-analysis-failed"></div></section>
-          <section class="panel queue-panel" aria-labelledby="queue-draft-title"><div class="queue-panel-head"><div><h3 id="queue-draft-title">Prepare drafts</h3><p>Application details and English CVs, ready for your review</p></div><span id="queue-draft-count" class="pill muted"></span></div><div id="queue-draft-active"></div><div id="queue-draft-waiting"></div><p id="queue-draft-review" class="hint"></p></section>
+          <section class="panel queue-panel" aria-labelledby="queue-draft-title"><div class="queue-panel-head"><div><h3 id="queue-draft-title">Prepare drafts</h3><p>Application details and English CVs, ready for your review</p></div><span id="queue-draft-count" class="pill muted"></span></div><div id="queue-draft-active"></div><div id="queue-draft-waiting"></div><div id="queue-draft-attention"></div><p id="queue-draft-review" class="hint"></p></section>
         </div>
       </section>
 
@@ -87,7 +87,7 @@
           <div class="jobs-search-row"><input id="job-query" type="search" placeholder="Search jobs, skills, or companies" aria-label="Search jobs"><button id="job-search" type="button">Search</button><button id="jobs-clear-filters" class="text-button" type="button">Clear filters</button></div>
           <div class="job-filter-grid">
             <label>Decision<select id="job-decision"><option value="">Any decision</option><option value="undecided">Undecided</option><option value="shortlisted">Shortlisted</option><option value="later">Later</option><option value="ignored">Ignored</option></select></label>
-            <label>Application<select id="job-application"><option value="">Any progress</option><option value="not_started">Not started</option><option value="draft_ready">Draft ready</option><option value="applied">Applied</option><option value="attention">Needs attention</option></select></label>
+            <label>Application<select id="job-application"><option value="">Any progress</option><option value="not_started">Not started</option><option value="preparing">Preparing</option><option value="needs_confirmation">Needs confirmation</option><option value="draft_ready">Draft ready</option><option value="applied">Applied</option><option value="attention">Needs attention</option></select></label>
             <label>Recruiting outcome<select id="job-outcome"><option value="">Any outcome</option><option value="none">No outcome yet</option><option value="interview">Interview</option><option value="offer">Offer</option><option value="rejected">Rejected</option></select></label>
             <label>Minimum score<input id="job-score" type="number" min="0" max="100" placeholder="Any score"></label>
             <label>Freshness<select id="job-freshness"><option value="">Any time</option><option value="1">Past 24 hours</option><option value="3">Past 3 days</option><option value="7">Past week</option><option value="30">Past month</option></select></label>
@@ -115,6 +115,22 @@
               <button type="button" value="timing" data-ignore-reason="Timing">Timing</button>
             </div>
             <div class="actions"><button type="submit" value="close" class="secondary">No reason</button></div>
+          </form>
+        </dialog>
+
+        <dialog id="job-prepare-confirm-dialog" class="confirm-dialog" aria-labelledby="job-prepare-confirm-title">
+          <form method="dialog">
+            <h3 id="job-prepare-confirm-title">Application method needs confirmation</h3>
+            <p id="job-prepare-confirm-reason"></p>
+            <div class="confirm-summary">
+              <strong id="job-prepare-confirm-action"></strong>
+              <span id="job-prepare-confirm-evidence"></span>
+            </div>
+            <p class="hint">Preparing anyway only creates a draft. It does not authorize Job Radar to send anything.</p>
+            <div class="actions">
+              <button type="submit" value="cancel" class="secondary">Cancel</button>
+              <button type="submit" value="confirm" class="primary">Prepare anyway</button>
+            </div>
           </form>
         </dialog>
 

@@ -145,9 +145,10 @@ def test_auto_apply_missing_destination_needs_review(tmp_path: Path) -> None:
     with TestClient(app):
         app.state.auto_apply_manager.configure(True, 80)
         identifier = _scored_job(app, "Unlinked Engineer", 90, None)
-        result = _wait_for_status(app, identifier, "needs_review")
-        assert "Choose an email or web application destination" in result["detail"]
-        assert result["draft_id"]
+        result = _wait_for_status(app, identifier, "needs_confirmation")
+        assert "No safe application destination" in result["detail"]
+        assert result["draft_id"] is None
+        assert not app.state.db.one("SELECT id FROM application_drafts WHERE vacancy_id=?", (identifier,))
         assert not app.state.db.one("SELECT id FROM submissions WHERE vacancy_id=?", (identifier,))
 
 

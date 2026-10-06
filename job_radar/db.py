@@ -178,6 +178,10 @@ CREATE TABLE IF NOT EXISTS auto_application_attempts (
   telegram_error TEXT,
   telegram_message_id INTEGER,
   detail TEXT,
+  requested_by TEXT NOT NULL DEFAULT 'automation',
+  requested_provider TEXT,
+  preflight_action TEXT,
+  prepare_anyway INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -269,6 +273,10 @@ class Database:
                 ("telegram_status", "TEXT NOT NULL DEFAULT 'pending'"),
                 ("telegram_error", "TEXT"),
                 ("telegram_message_id", "INTEGER"),
+                ("requested_by", "TEXT NOT NULL DEFAULT 'automation'"),
+                ("requested_provider", "TEXT"),
+                ("preflight_action", "TEXT"),
+                ("prepare_anyway", "INTEGER NOT NULL DEFAULT 0"),
             ):
                 if name not in review_columns:
                     conn.execute(f"ALTER TABLE auto_application_attempts ADD COLUMN {name} {definition}")
