@@ -40,7 +40,7 @@ def score_job(job: dict[str, Any], profile: dict[str, Any], preferences: dict[st
     research = 15 if any(word in f"{title} {description}" for word in ("research", "nghiên cứu", "agent", "model development")) else 8
     preferred_locations = [item.casefold() for item in prefs["preferred_locations"]]
     preferred_modes = [item.casefold() for item in prefs["work_modes"]]
-    remote = any(word in f"{location} {description}" for word in ("remote", "wfh", "work from home", "làm việc từ xa"))
+    remote = any(word in f"{location} {(job.get('work_mode') or '').casefold()} {description}" for word in ("remote", "wfh", "work from home", "làm việc từ xa"))
     location_match = location_matches_preference(location, prefs["preferred_locations"])
     if not preferred_locations:
         local = 5
