@@ -1272,8 +1272,13 @@ async function loadProfile() {
   $('#resume-review-actions').hidden = !hasResume;
   $('#resume-panel-help').textContent = hasResume
     ? 'Review the structured details below, or import a newer resume to replace them.'
-    : 'Upload a text-based PDF to seed your structured profile. You can review every extracted field afterward.';
-  $('#pdf-resume-form button[type="submit"]').disabled = !profile.drafting_provider || !availability[profile.drafting_provider];
+    : 'Upload a text-based PDF to seed your structured profile. Choose how this import is processed here; application drafting setup is separate.';
+  const resumeForm = $('#pdf-resume-form');
+  configureProviderSelect(resumeForm.elements.provider, setup, profile.drafting_provider || '');
+  $('#resume-processing-disclosure').textContent = processingCopy(setup, resumeForm.elements.provider.value, 'Your resume text');
+  resumeForm.elements.provider.onchange = () => {
+    $('#resume-processing-disclosure').textContent = processingCopy(setup, resumeForm.elements.provider.value, 'Your resume text');
+  };
   const projectCount = cards.filter((card) => card.kind === 'project' && card.approved).length;
   $('#profile-summary').textContent = hasResume
     ? `${profile.name} · ${profile.email}. ${(profile.experience || []).length} previous position${profile.experience?.length === 1 ? '' : 's'} and ${projectCount} selected project${projectCount === 1 ? '' : 's'}.`
