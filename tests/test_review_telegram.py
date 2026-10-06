@@ -224,7 +224,7 @@ def test_review_notification_tracks_delivered_version(tmp_path: Path, monkeypatc
     draft = prepare_draft(db, app.state.settings, job_id, "template")
     db.execute("INSERT INTO auto_application_attempts(vacancy_id,status,draft_id,created_at,updated_at) VALUES(?,'awaiting_review',?,?,?)",
                (job_id, draft["id"], now(), now()))
-    monkeypatch.setattr("job_radar.auto_apply.send_review_packet", lambda *_args: asyncio.sleep(0, result=42))
+    monkeypatch.setattr("job_radar.auto_apply.send_review_packet", lambda *_args, **_kwargs: asyncio.sleep(0, result=42))
     asyncio.run(app.state.auto_apply_manager.notify_review(draft["id"]))
     attempt = db.one("SELECT review_hash,telegram_status,telegram_message_id FROM auto_application_attempts WHERE vacancy_id=?", (job_id,))
     assert attempt == {"review_hash": draft["package_hash"], "telegram_status": "sent", "telegram_message_id": 42}
@@ -252,7 +252,7 @@ def test_telegram_reply_edits_or_regenerates_draft(tmp_path: Path, monkeypatch, 
         return ModelDraft(summary="Python engineer", email_subject="AI Engineer application",
                           email_body=f"Dear team. {custom_prompt or 'Initial'}")
     monkeypatch.setattr("job_radar.drafting._run_provider", fake_provider)
-    monkeypatch.setattr("job_radar.auto_apply.send_review_packet", lambda *_args: asyncio.sleep(0, result=88))
+    monkeypatch.setattr("job_radar.auto_apply.send_review_packet", lambda *_args, **_kwargs: asyncio.sleep(0, result=88))
     draft = prepare_draft(db, app.state.settings, job_id, "codex")
     db.execute("INSERT INTO auto_application_attempts(vacancy_id,status,draft_id,review_hash,created_at,updated_at) VALUES(?,'awaiting_review',?,?,?,?)",
                (job_id, draft["id"], draft["package_hash"], now(), now()))
