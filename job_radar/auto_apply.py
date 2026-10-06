@@ -16,6 +16,7 @@ from .automation_policy import (
     automation_policy,
     daily_auto_drafts_used,
     daily_review_notifications_used,
+    local_day_start_utc,
     normalize_automation_policy,
 )
 from .db import Database, now
@@ -405,8 +406,8 @@ class AutoApplyManager:
     def _notification_sent_today(self, vacancy_id: str, channel: str) -> bool:
         return bool(self.db.one(
             "SELECT 1 AS sent FROM notification_attempts WHERE vacancy_id=? AND channel=? "
-            "AND status='sent' AND datetime(sent_at)>=datetime('now','start of day')",
-            (vacancy_id, channel),
+            "AND status='sent' AND datetime(sent_at)>=datetime(?)",
+            (vacancy_id, channel, local_day_start_utc()),
         ))
 
     def _record_notification(
