@@ -81,6 +81,7 @@ def test_manual_prepare_preflights_then_returns_before_background_drafting_finis
         assert preflight.status_code == 200
         assert preflight.json()["state"] == "ready"
         assert preflight.json()["action"]["action_type"] == "email"
+        assert preflight.json()["processing"]["remote"] is False
 
         started = time.monotonic()
         queued = client.post(
@@ -91,6 +92,7 @@ def test_manual_prepare_preflights_then_returns_before_background_drafting_finis
 
         assert queued.status_code == 202, queued.text
         assert queued.json()["status"] in {"queued", "preparing"}
+        assert queued.json()["processing"]["remote"] is False
         assert elapsed < .5
         attempt = app.state.db.one(
             "SELECT requested_by,requested_provider,status FROM auto_application_attempts WHERE vacancy_id=?",
@@ -134,6 +136,7 @@ def test_ambiguous_destination_requires_prepare_anyway_before_any_drafting(tmp_p
         )
         assert blocked.status_code == 409
         assert blocked.json()["detail"]["code"] == "prepare_confirmation_required"
+        assert blocked.json()["detail"]["processing"]["remote"] is False
         assert not app.state.db.one(
             "SELECT vacancy_id FROM auto_application_attempts WHERE vacancy_id=?",
             (job["id"],),
