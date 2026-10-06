@@ -502,7 +502,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "WHERE status IN ('awaiting_review','needs_review') AND draft_id IS NOT NULL",
                 (review_status, int(destination_changed)),
             )
-        return {"configured": True, "notifications": telegram_config(settings)}
+        saved = telegram_config(settings)
+        return {
+            "configured": True,
+            "notifications": {
+                "modes": saved.get("modes", {}),
+                "digest_time": saved.get("digest_time", "18:00"),
+                "quiet_start": saved.get("quiet_start", ""),
+                "quiet_end": saved.get("quiet_end", ""),
+            },
+        }
 
     @app.post("/api/setup/telegram/chats")
     async def find_telegram_chat(payload: TelegramLookupInput):
