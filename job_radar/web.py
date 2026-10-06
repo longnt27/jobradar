@@ -1241,29 +1241,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/jobs/{job_id}/decision")
     def decide_job(job_id: str, payload: DecisionInput):
         try:
-            return set_decision(
+            result = set_decision(
                 db, job_id, payload.decision, reason=payload.reason, snoozed_until=payload.snoozed_until
             )
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
+        auto_apply_manager.wake()
+        return result
 
     @app.post("/api/jobs/{job_id}/outcome")
     def set_job_outcome(job_id: str, payload: RecruitingOutcomeInput):
         try:
-            return set_recruiting_outcome(db, job_id, payload.outcome)
+            result = set_recruiting_outcome(db, job_id, payload.outcome)
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
+        auto_apply_manager.wake()
+        return result
 
     @app.post("/api/jobs/{job_id}/manual-applied")
     def manual_applied(job_id: str, payload: ManualAppliedInput):
         try:
-            return set_manual_applied(db, job_id, payload.applied)
+            result = set_manual_applied(db, job_id, payload.applied)
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
+        auto_apply_manager.wake()
+        return result
 
     @app.post("/api/jobs/{job_id}/observations/{observation_id}/split", status_code=201)
     def split_job_sighting(job_id: str, observation_id: str):
