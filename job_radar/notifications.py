@@ -75,7 +75,9 @@ def telegram_quiet_now(config: dict, current: datetime | None = None) -> bool:
     end = normalized.get("quiet_end") or ""
     if not start or not end or start == end:
         return False
-    local = (current or datetime.now().astimezone()).astimezone()
+    local = current if current is not None else datetime.now().astimezone()
+    if local.tzinfo is None:
+        local = local.astimezone()
     minute = local.hour * 60 + local.minute
     start_hour, start_minute = (int(part) for part in start.split(":"))
     end_hour, end_minute = (int(part) for part in end.split(":"))
