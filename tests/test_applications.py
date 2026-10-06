@@ -5,6 +5,7 @@ from threading import Thread
 
 from fastapi.testclient import TestClient
 
+from job_radar.drafting import prepare_draft
 from job_radar.settings import Settings
 from job_radar.apply import _default_answer
 from job_radar.web import create_app
@@ -16,9 +17,9 @@ def _prepared(client: TestClient, url: str) -> dict:
     client.put("/api/profile", json=profile)
     client.post("/api/positions", json={"company": "Example Labs", "role": "Engineer", "dates": "2024 – 2026", "bullets": ["Built Python search systems."]})
     job = client.post("/api/jobs/import", json={"company": "Example", "title": "Engineer", "description": "Build Python search systems.", "apply_url": url}).json()
-    response = client.post(f"/api/jobs/{job['id']}/prepare", json={"provider": "template"})
-    assert response.status_code == 200, response.text
-    return response.json()
+    draft = prepare_draft(client.app.state.db, client.app.state.settings, job["id"], "template")
+    client.app.state.auto_apply_manager.register_review(draft)
+    return draft
 
 
 def test_email_send_is_explicit_and_duplicate_protected(tmp_path: Path, monkeypatch) -> None:
@@ -80,7 +81,8 @@ def test_destination_warning_and_send_readiness_follow_current_draft(tmp_path: P
     client.put("/api/profile", json=profile)
     client.post("/api/positions", json={"company": "Example Labs", "role": "Engineer", "dates": "2024–2026", "bullets": ["Built Python systems."]})
     job = client.post("/api/jobs/import", json={"company": "Example", "title": "Engineer", "description": "Build Python systems."}).json()
-    draft = client.post(f"/api/jobs/{job['id']}/prepare", json={"provider": "template"}).json()
+    draft = prepare_draft(client.app.state.db, client.app.state.settings, job["id"], "template")
+    client.app.state.auto_apply_manager.register_review(draft)
     assert any("No application destination" in warning for warning in draft["warnings"])
     assert client.get(f"/api/applications/{draft['id']}").json()["send_ready"] is False
     updated = client.patch(f"/api/applications/{draft['id']}", json={"destination": {"kind": "email", "email": "jobs@example.org"}}).json()
