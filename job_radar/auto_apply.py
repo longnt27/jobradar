@@ -62,7 +62,8 @@ class AutoApplyManager:
 
     def status(self) -> dict:
         counts = {row["status"]: row["count"] for row in self.db.all(
-            "SELECT status,COUNT(*) AS count FROM auto_application_attempts GROUP BY status")}
+            "SELECT status,COUNT(*) AS count FROM auto_application_attempts "
+            "WHERE requested_by='automation' GROUP BY status")}
         threshold = self.config()["threshold"]
         eligible_existing = self.db.one("SELECT COUNT(*) AS count " + EXISTING_MATCHES_SQL + " AND v.analysis_status='done' AND v.score>=?", (threshold,))["count"]
         waiting_existing = self.db.one("SELECT COUNT(*) AS count " + EXISTING_MATCHES_SQL + " AND v.analysis_status IN ('pending','running')")["count"]
@@ -137,14 +138,42 @@ class AutoApplyManager:
             return {"status": "confirmation_required", "preflight": preflight}
 
         existing = self.db.one(
-            "SELECT status,draft_id FROM auto_application_attempts WHERE vacancy_id=?",
+            "SELECT status,draft_id,requested_by FROM auto_application_attempts WHERE vacancy_id=?",
             (job_id,),
         )
         if existing and existing["status"] in ("sent", "sending", "submission_uncertain"):
             raise ValueError("This application already has a submission in progress or an uncertain outcome")
-        if existing and existing["status"] in ("queued", "preparing"):
+        if existing and existing["status"] == "queued":
+            if existing["requested_by"] != "manual":
+                self.db.execute(
+                    "UPDATE auto_application_attempts SET requested_by='manual',requested_provider=?,"
+                    "preflight_action=?,prepare_anyway=?,detail='Queued by you for application preparation',"
+                    "updated_at=? WHERE vacancy_id=?",
+                    (
+                        provider,
+                        json.dumps(preflight["action"], ensure_ascii=False),
+                        int(prepare_anyway),
+                        now(),
+                        job_id,
+                    ),
+                )
+                self.wake()
+                return {
+                    "status": "queued",
+                    "draft_id": existing["draft_id"],
+                    "preflight": preflight,
+                    "already_queued": False,
+                    "promoted_from_automation": True,
+                }
             return {
-                "status": existing["status"],
+                "status": "queued",
+                "draft_id": existing["draft_id"],
+                "preflight": preflight,
+                "already_queued": True,
+            }
+        if existing and existing["status"] == "preparing":
+            return {
+                "status": "preparing",
                 "draft_id": existing["draft_id"],
                 "preflight": preflight,
                 "already_queued": True,
