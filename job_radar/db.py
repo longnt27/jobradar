@@ -204,6 +204,15 @@ CREATE TABLE IF NOT EXISTS notification_attempts (
   PRIMARY KEY(vacancy_id, channel)
 );
 CREATE INDEX IF NOT EXISTS idx_notification_pending ON notification_attempts(channel, status, last_attempt_at);
+CREATE TABLE IF NOT EXISTS notification_events (
+  id TEXT PRIMARY KEY,
+  vacancy_id TEXT NOT NULL REFERENCES vacancies(id),
+  channel TEXT NOT NULL,
+  status TEXT NOT NULL,
+  error TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_notification_events_day ON notification_events(channel, status, created_at);
 CREATE TABLE IF NOT EXISTS feedback (
   id TEXT PRIMARY KEY,
   vacancy_id TEXT NOT NULL REFERENCES vacancies(id),
