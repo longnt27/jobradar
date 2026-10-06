@@ -214,12 +214,12 @@ def enrich_jobs(db: Database, rows: list[dict[str, Any]]) -> list[dict[str, Any]
             progress = "attention"
         elif row.get("manual_applied_at"):
             progress = "applied_external"
-        elif draft:
-            progress = "draft_ready"
         elif attempt and attempt["status"] in ("queued", "preparing", "regenerating"):
             progress = "preparing"
         elif attempt and attempt["status"] == "needs_confirmation":
             progress = "needs_confirmation"
+        elif draft:
+            progress = "draft_ready"
         else:
             progress = "not_started"
         row["application_progress"] = progress
