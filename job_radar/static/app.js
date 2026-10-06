@@ -881,7 +881,6 @@ async function showJob(id, pin = false) {
       ${salary ? `<p class="job-detail-salary"><strong>Salary:</strong> ${escapeHtml(salary)} <span>· not included in the match score</span></p>` : ''}
       ${job.apply_url ? `<p><a href="${escapeHtml(job.apply_url)}" target="_blank" rel="noopener noreferrer">${job.apply_url.startsWith('mailto:') ? 'Application email ↗' : 'Application page ↗'}</a></p>` : ''}
       ${!job.apply_url ? '<p class="hint">No application form has been verified for this posting. Check the original source before sending.</p>' : ''}
-      ${links ? `<p class="item-meta">${links}</p>` : ''}
     </section>
 
     <section class="job-prepare-section review-section">
