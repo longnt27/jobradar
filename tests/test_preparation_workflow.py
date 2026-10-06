@@ -4,6 +4,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from job_radar.drafting import prepare_draft as real_prepare_draft
+from job_radar.ingest import ObservedJob, ingest
 from job_radar.mail_config import save_smtp
 from job_radar.settings import Settings
 from job_radar.web import create_app
@@ -62,12 +63,19 @@ def test_manual_prepare_preflights_then_returns_before_background_drafting_finis
 
     with TestClient(app) as client:
         assert client.get("/api/auto-apply").json()["enabled"] is False
-        job = client.post("/api/jobs/import", json={
-            "company": "Example",
-            "title": "Platform Engineer",
-            "description": "Build reliable Python systems.",
-            "apply_url": "mailto:jobs@example.org",
-        }).json()
+        source_id = app.state.db.one("SELECT id FROM sources LIMIT 1")["id"]
+        job_id, _ = ingest(
+            app.state.db,
+            source_id,
+            ObservedJob(
+                "https://example.org/jobs/platform-engineer",
+                "Platform Engineer",
+                "Example",
+                "Build reliable Python systems.",
+                apply_url="mailto:jobs@example.org",
+            ),
+        )
+        job = {"id": job_id}
 
         preflight = client.get(f"/api/jobs/{job['id']}/prepare/preflight")
         assert preflight.status_code == 200
