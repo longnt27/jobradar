@@ -6,17 +6,25 @@ import asyncio
 import json
 import logging
 import re
+from datetime import datetime
 
 import httpx
 
 from .apply import inspect_form, send_application, send_readiness
+from .automation_policy import (
+    automation_eligibility,
+    automation_policy,
+    daily_auto_drafts_used,
+    daily_review_notifications_used,
+    normalize_automation_policy,
+)
 from .db import Database, now
 from .drafting import get_draft, prepare_draft, regenerate_draft
-from .notifications import telegram_config
+from .notifications import telegram_config, telegram_mode_enabled, telegram_quiet_now
 from .preparation import preparation_preflight
 from .review_telegram import _post, send_review_packet
 from .settings import Settings
-from .search_intent import normalize_search_intent
+from .search_intent import fit_summary, normalize_search_intent
 
 
 log = logging.getLogger(__name__)
@@ -55,45 +63,82 @@ class AutoApplyManager:
         self.loop: asyncio.AbstractEventLoop | None = None
 
     def config(self) -> dict:
-        saved = self.db.get_setting("auto_apply", {})
-        intent = self.db.get_setting("search_intent", {})
-        threshold = normalize_search_intent(intent or {"strong_match_threshold": saved.get("threshold", 80)})["strong_match_threshold"]
-        return {"enabled": bool(saved.get("enabled", False)), "threshold": threshold}
+        return automation_policy(self.db)
 
     def status(self) -> dict:
+        config = self.config()
         counts = {row["status"]: row["count"] for row in self.db.all(
             "SELECT status,COUNT(*) AS count FROM auto_application_attempts "
             "WHERE requested_by='automation' GROUP BY status")}
-        threshold = self.config()["threshold"]
-        eligible_existing = self.db.one("SELECT COUNT(*) AS count " + EXISTING_MATCHES_SQL + " AND v.analysis_status='done' AND v.score>=?", (threshold,))["count"]
-        waiting_existing = self.db.one("SELECT COUNT(*) AS count " + EXISTING_MATCHES_SQL + " AND v.analysis_status IN ('pending','running')")["count"]
-        highest_existing_score = self.db.one("SELECT MAX(v.score) AS score " + EXISTING_MATCHES_SQL + " AND v.analysis_status='done'")["score"]
+        preview_policy = {**config, "enabled": True}
+        candidates = self.db.all(
+            "SELECT v.id,v.analysis_status,v.score " + EXISTING_MATCHES_SQL
+            + " ORDER BY v.score DESC,v.first_seen_at DESC"
+        )
+        eligible_existing = 0
+        waiting_existing = 0
+        highest_existing_score = None
+        for candidate in candidates:
+            if candidate["analysis_status"] == "done":
+                if candidate["score"] is not None:
+                    highest_existing_score = (
+                        candidate["score"] if highest_existing_score is None
+                        else max(highest_existing_score, candidate["score"])
+                    )
+                if automation_eligibility(
+                    self.db, candidate["id"], policy=preview_policy,
+                    require_analysis=True, check_daily_limit=False,
+                )["eligible"]:
+                    eligible_existing += 1
+            elif candidate["analysis_status"] in ("pending", "running"):
+                if automation_eligibility(
+                    self.db, candidate["id"], policy=preview_policy,
+                    require_analysis=False, check_daily_limit=False,
+                )["eligible"]:
+                    waiting_existing += 1
         recent = self.db.all(
             "SELECT a.vacancy_id,a.status,a.draft_id,a.detail,a.updated_at,a.requested_by,"
             "a.requested_provider,a.prepare_anyway,v.title,v.company,v.score,v.analysis_status "
             "FROM auto_application_attempts a JOIN vacancies v ON v.id=a.vacancy_id "
             "WHERE a.status!='skipped' ORDER BY a.updated_at DESC LIMIT 20")
-        return {**self.config(), "counts": counts, "eligible_existing": eligible_existing,
-                "waiting_existing": waiting_existing,
-                "highest_existing_score": highest_existing_score, "recent": recent}
+        used = daily_auto_drafts_used(self.db)
+        review_used = daily_review_notifications_used(self.db)
+        return {
+            **config,
+            "counts": counts,
+            "eligible_existing": eligible_existing,
+            "waiting_existing": waiting_existing,
+            "highest_existing_score": highest_existing_score,
+            "daily_auto_drafts_used": used,
+            "daily_auto_drafts_remaining": max(0, config["max_auto_drafts_per_day"] - used),
+            "daily_review_notifications_used": review_used,
+            "daily_review_notifications_remaining": max(
+                0, config["max_review_notifications_per_day"] - review_used
+            ),
+            "recent": recent,
+        }
 
-    def configure(self, enabled: bool, threshold: int | None = None) -> dict:
+    def configure(self, enabled: bool, threshold: int | None = None, policy: dict | None = None) -> dict:
         threshold = self.config()["threshold"] if threshold is None else threshold
         if not 0 <= threshold <= 100:
             raise ValueError("Threshold must be between 0 and 100")
         previous = self.config()
         if enabled and not previous["enabled"]:
-            # Mark every job already present, including the analysis backlog, before enabling.
+            # Existing jobs require the explicit "Include existing jobs" action.
             with self.db.connection() as conn:
                 conn.execute(
                     "INSERT OR IGNORE INTO auto_application_attempts(vacancy_id,status,detail,created_at,updated_at) "
-                    "SELECT id,'skipped','Found before automatic applications were enabled',?,? FROM vacancies",
+                    "SELECT id,'skipped','Found before automatic draft preparation was enabled',?,? FROM vacancies",
                     (now(), now()),
                 )
-        intent = normalize_search_intent(self.db.get_setting("search_intent", {}) or {"strong_match_threshold": threshold})
+        intent = normalize_search_intent(
+            self.db.get_setting("search_intent", {}) or {"strong_match_threshold": threshold}
+        )
         intent["strong_match_threshold"] = threshold
         self.db.set_setting("search_intent", intent)
-        self.db.set_setting("auto_apply", {"enabled": enabled})
+        merged = {**self.db.get_setting("auto_apply", {}), **(policy or {}), "enabled": enabled}
+        normalized = normalize_automation_policy(merged, threshold=threshold)
+        self.db.set_setting("auto_apply", {key: value for key, value in normalized.items() if key != "threshold"})
         self.wake()
         return self.status()
 
@@ -101,24 +146,41 @@ class AutoApplyManager:
         config = self.config()
         if not config["enabled"]:
             raise ValueError("Enable automatic draft preparation first")
+        jobs = self.db.all(
+            "SELECT v.id,v.analysis_status " + EXISTING_MATCHES_SQL
+            + " AND v.analysis_status IN ('done','pending','running') "
+            "ORDER BY v.score DESC,v.first_seen_at DESC"
+        )
+        eligible = []
+        for job in jobs:
+            result = automation_eligibility(
+                self.db,
+                job["id"],
+                policy=config,
+                require_analysis=job["analysis_status"] == "done",
+                check_daily_limit=False,
+            )
+            if result["eligible"]:
+                eligible.append(job)
+        timestamp = now()
         with self.db.connection() as conn:
-            jobs = conn.execute(
-                "SELECT v.id,v.analysis_status " + EXISTING_MATCHES_SQL + " AND ((v.analysis_status='done' AND v.score>=?) "
-                "OR v.analysis_status IN ('pending','running')) ORDER BY v.score DESC,v.first_seen_at DESC",
-                (config["threshold"],)).fetchall()
-            timestamp = now()
-            for job in jobs:
-                detail = ("Waiting for local job analysis before draft preparation"
-                          if job["analysis_status"] != "done" else "Queued for draft preparation")
+            for job in eligible:
+                detail = (
+                    "Waiting for local match review before draft preparation"
+                    if job["analysis_status"] != "done"
+                    else "Queued by the saved automation policy"
+                )
                 conn.execute(
-                    "INSERT INTO auto_application_attempts(vacancy_id,status,detail,created_at,updated_at) "
-                    "VALUES(?,'queued',?,?,?) "
-                    "ON CONFLICT(vacancy_id) DO UPDATE SET status='queued',detail=excluded.detail,updated_at=excluded.updated_at "
+                    "INSERT INTO auto_application_attempts("
+                    "vacancy_id,status,detail,requested_by,created_at,updated_at"
+                    ") VALUES(?,'queued',?,'automation',?,?) "
+                    "ON CONFLICT(vacancy_id) DO UPDATE SET status='queued',detail=excluded.detail,"
+                    "requested_by='automation',updated_at=excluded.updated_at "
                     "WHERE auto_application_attempts.status='skipped'",
                     (job["id"], detail, timestamp, timestamp),
                 )
         self.wake()
-        return {"queued": len(jobs)}
+        return {"queued": len(eligible)}
 
     def queue_manual(self, job_id: str, provider: str, prepare_anyway: bool = False) -> dict:
         job = self.db.one("SELECT id,title,company FROM vacancies WHERE id=?", (job_id,))
@@ -258,12 +320,13 @@ class AutoApplyManager:
         )
 
     def _still_eligible(self, job_id: str) -> bool:
-        config = self.config()
-        job = self.db.one("SELECT score,analysis_status,decision_state,snoozed_until FROM vacancies WHERE id=?", (job_id,))
-        return bool(config["enabled"] and job and job["analysis_status"] == "done"
-                    and job["score"] is not None and job["score"] >= config["threshold"]
-                    and job["decision_state"] in ("undecided", "shortlisted")
-                    and not job["snoozed_until"])
+        return automation_eligibility(
+            self.db,
+            job_id,
+            policy=self.config(),
+            require_analysis=True,
+            check_daily_limit=False,
+        )["eligible"]
 
     async def _process(self, job_id: str) -> None:
         job = self.db.one("SELECT * FROM vacancies WHERE id=?", (job_id,))
