@@ -5,7 +5,7 @@
     "mobile": {"width": 390, "height": 844}
   },
   "surfaces": {
-    "home": {"hash": "#home", "active": "#home.active", "anchors": ["#home-hero", "#home-steps", "#home-actions"]},
+    "home": {"hash": "#home", "active": "#home.active", "anchors": ["#home-hero", "#home-loop", "#home-actions", "#home-health-status"]},
     "queue": {"hash": "#queue", "active": "#queue.active", "anchors": ["#queue-summary", ".queue-grid"]},
     "jobs": {"hash": "#jobs?inbox=all", "active": "#jobs.active", "anchors": [".jobs-controls", "#job-list"]},
     "applications": {"hash": "#applications/{draft_id}", "active": "#applications.active", "anchors": [".applications-view-tabs", ".applications-workspace", "#application-detail"]},
