@@ -50,7 +50,7 @@ def test_application_preparation_accepts_work_history_or_project() -> None:
 
 def test_provider_processing_contract_distinguishes_local_and_remote() -> None:
     assert provider_processing("codex_local")["remote"] is False
-    assert "stays on this Mac" in provider_processing("codex_local")["destination"]
+    assert "stay on this Mac" in provider_processing("codex_local")["destination"]
     assert provider_processing("codex")["remote"] is True
     assert "leaves this Mac" in provider_processing("codex")["destination"]
     assert provider_processing("template")["remote"] is False
