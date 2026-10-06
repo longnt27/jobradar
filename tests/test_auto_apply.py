@@ -136,7 +136,7 @@ def test_existing_job_waits_for_score_before_telegram_review(tmp_path: Path, mon
         assert Path(packets[0]["resume_path"]).is_file()
 
 
-def test_auto_apply_missing_destination_needs_review(tmp_path: Path) -> None:
+def test_auto_apply_requires_verified_destination_before_provider_work(tmp_path: Path) -> None:
     app = create_app(Settings(tmp_path))
     app.state.db.execute("UPDATE sources SET enabled=0")
     app.state.db.set_setting("profile", {"name": "Alex Example", "email": "alex@example.org",
@@ -145,9 +145,10 @@ def test_auto_apply_missing_destination_needs_review(tmp_path: Path) -> None:
     with TestClient(app):
         app.state.auto_apply_manager.configure(True, 80)
         identifier = _scored_job(app, "Unlinked Engineer", 90, None)
-        result = _wait_for_status(app, identifier, "needs_confirmation")
-        assert "No safe application destination" in result["detail"]
-        assert result["draft_id"] is None
+        time.sleep(.2)
+        assert app.state.db.one(
+            "SELECT vacancy_id FROM auto_application_attempts WHERE vacancy_id=?", (identifier,)
+        ) is None
         assert not app.state.db.one("SELECT id FROM application_drafts WHERE vacancy_id=?", (identifier,))
         assert not app.state.db.one("SELECT id FROM submissions WHERE vacancy_id=?", (identifier,))
 
