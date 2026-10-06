@@ -51,11 +51,17 @@ def automation_policy(db: Database) -> dict[str, Any]:
     return normalize_automation_policy(saved, threshold=intent["strong_match_threshold"])
 
 
+def local_day_start_utc() -> str:
+    local_start = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
+    return local_start.astimezone(timezone.utc).isoformat(timespec="seconds")
+
+
 def daily_auto_drafts_used(db: Database) -> int:
     row = db.one(
         "SELECT COUNT(DISTINCT d.vacancy_id) AS count "
         "FROM application_drafts d JOIN auto_application_attempts a ON a.vacancy_id=d.vacancy_id "
-        "WHERE a.requested_by='automation' AND datetime(d.created_at)>=datetime('now','start of day')"
+        "WHERE a.requested_by='automation' AND datetime(d.created_at)>=datetime(?)",
+        (local_day_start_utc(),),
     )
     return int(row["count"] if row else 0)
 
@@ -66,7 +72,8 @@ def daily_review_notifications_used(db: Database) -> int:
         "JOIN auto_application_attempts a ON a.vacancy_id=n.vacancy_id "
         "WHERE n.channel='telegram_application_review' AND n.status='sent' "
         "AND a.requested_by='automation' "
-        "AND datetime(n.sent_at)>=datetime('now','start of day')"
+        "AND datetime(n.sent_at)>=datetime(?)",
+        (local_day_start_utc(),),
     )
     return int(row["count"] if row else 0)
 
