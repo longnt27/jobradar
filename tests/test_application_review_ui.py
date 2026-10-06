@@ -50,7 +50,9 @@ def test_application_tab_reviews_regenerates_and_deep_links_to_draft(tmp_path: P
                 page.locator("#regenerate-section").select_option("message")
                 page.get_by_role("button", name="Regenerate selected section").click()
                 page.get_by_text("Dear team. Emphasize production search").wait_for()
-                assert page.get_by_text("Only this section changed. Untouched sections kept their reviewed content.").is_visible()
+                change_note = page.get_by_text("Only this section changed. Untouched sections kept their reviewed content.")
+                change_note.wait_for(state="visible")
+                assert change_note.is_visible()
             finally:
                 browser.close()
     finally:
