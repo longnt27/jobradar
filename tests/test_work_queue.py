@@ -24,9 +24,9 @@ def test_one_queue_reports_real_worker_order_and_analysis_stage(tmp_path: Path) 
     def job(title: str, status: str, score: int | None, first_seen: str, stage: str | None = None) -> str:
         identifier = new_id()
         db.execute(
-            "INSERT INTO vacancies(id,company,title,description,first_seen_at,last_seen_at,created_at,updated_at,"
-            "analysis_status,analysis_stage,score) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-            (identifier, "Example", title, "Build AI systems with Python.", first_seen,
+            "INSERT INTO vacancies(id,company,title,description,apply_url,first_seen_at,last_seen_at,created_at,updated_at,"
+            "analysis_status,analysis_stage,score) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (identifier, "Example", title, "Build AI systems with Python.", "mailto:jobs@example.org", first_seen,
              first_seen, now(), now(), status, stage, score),
         )
         return identifier

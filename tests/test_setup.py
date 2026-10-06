@@ -105,6 +105,36 @@ def test_email_connection_test_sends_to_saved_address_and_tracks_result(tmp_path
     assert client.get("/api/setup").json()["smtp_test"] == {}
 
 
+def test_telegram_partial_update_preserves_notification_modes(tmp_path: Path) -> None:
+    client = TestClient(create_app(Settings(tmp_path)))
+    first = client.post("/api/setup/telegram", json={
+        "token": "1234567890:secret",
+        "chat_id": "42",
+        "application_reviews": False,
+        "strong_job_alerts": True,
+        "daily_digest": True,
+        "digest_time": "19:30",
+        "quiet_start": "23:00",
+        "quiet_end": "06:30",
+    })
+    assert first.status_code == 200, first.text
+
+    legacy_style = client.post("/api/setup/telegram", json={
+        "token": "",
+        "chat_id": "42",
+    })
+    assert legacy_style.status_code == 200, legacy_style.text
+    setup = client.get("/api/setup").json()["telegram_notifications"]
+    assert setup["modes"] == {
+        "application_reviews": False,
+        "strong_job_alerts": True,
+        "daily_digest": True,
+    }
+    assert setup["digest_time"] == "19:30"
+    assert setup["quiet_start"] == "23:00"
+    assert setup["quiet_end"] == "06:30"
+
+
 def test_telegram_first_time_blank_token_returns_validation_error(tmp_path: Path) -> None:
     client = TestClient(create_app(Settings(tmp_path)))
     response = client.post("/api/setup/telegram", json={"token": "", "chat_id": "42"})

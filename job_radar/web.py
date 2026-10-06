@@ -25,6 +25,11 @@ from .browser_login import BrowserLoginManager
 from .capabilities import capability_readiness, provider_processing
 from .drafting import PROVIDERS, get_draft, prepare_draft, update_draft
 from .evidence import generate_project_content, inspect_repository
+from .feedback_learning import (
+    apply_feedback_suggestion,
+    dismiss_feedback_suggestion,
+    feedback_suggestions,
+)
 from .facebook_groups import group_from_url, lookup_facebook_group_name
 from .linkedin_searches import search_from_url
 from .github import list_public_repositories
@@ -142,6 +147,12 @@ class MatchingModelInput(BaseModel):
 class AutoApplyInput(BaseModel):
     enabled: bool = False
     threshold: int | None = Field(default=None, ge=0, le=100)
+    include_shortlisted: bool | None = None
+    max_job_age_days: int | None = Field(default=None, ge=1, le=30)
+    require_verified_destination: bool | None = None
+    require_preferred_location: bool | None = None
+    max_auto_drafts_per_day: int | None = Field(default=None, ge=1, le=50)
+    max_review_notifications_per_day: int | None = Field(default=None, ge=1, le=50)
 
 
 class SearchIntentInput(BaseModel):
@@ -193,6 +204,12 @@ class SmtpInput(BaseModel):
 class TelegramInput(BaseModel):
     token: str = ""
     chat_id: str = Field(min_length=1)
+    application_reviews: bool | None = None
+    strong_job_alerts: bool | None = None
+    daily_digest: bool | None = None
+    digest_time: str | None = None
+    quiet_start: str | None = None
+    quiet_end: str | None = None
 
 
 class TelegramLookupInput(BaseModel):
@@ -376,6 +393,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "smtp_test": {key: smtp_test[key] for key in ("status", "recipient", "checked_at", "detail") if key in smtp_test},
             "telegram_configured": telegram_ready,
             "telegram_chat_id": telegram.get("chat_id", ""),
+            "telegram_notifications": {
+                "modes": telegram.get("modes", {}),
+                "digest_time": telegram.get("digest_time", "18:00"),
+                "quiet_start": telegram.get("quiet_start", ""),
+                "quiet_end": telegram.get("quiet_end", ""),
+            },
             "matching": match_manager.status(),
             "auto_apply": auto_apply_manager.status(),
             "service_installed": service_path().exists(),
@@ -444,15 +467,71 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         previous = telegram_config(settings)
         token = payload.token.strip() or previous.get("token", "")
         if not token:
-            raise HTTPException(422, "Enter a bot token to configure Telegram reviews")
-        save_telegram(settings, {"token": token, "chat_id": payload.chat_id})
-        if token != previous.get("token") or str(payload.chat_id) != str(previous.get("chat_id", "")):
+            raise HTTPException(422, "Enter a bot token to configure Telegram notifications")
+        previous_modes = previous.get("modes", {})
+        config = {
+            "token": token,
+            "chat_id": payload.chat_id,
+            "modes": {
+                "application_reviews": (
+                    previous_modes.get("application_reviews", True)
+                    if payload.application_reviews is None else payload.application_reviews
+                ),
+                "strong_job_alerts": (
+                    previous_modes.get("strong_job_alerts", False)
+                    if payload.strong_job_alerts is None else payload.strong_job_alerts
+                ),
+                "daily_digest": (
+                    previous_modes.get("daily_digest", False)
+                    if payload.daily_digest is None else payload.daily_digest
+                ),
+            },
+            "digest_time": (
+                previous.get("digest_time", "18:00")
+                if payload.digest_time is None else payload.digest_time
+            ),
+            "quiet_start": (
+                previous.get("quiet_start", "")
+                if payload.quiet_start is None else payload.quiet_start
+            ),
+            "quiet_end": (
+                previous.get("quiet_end", "")
+                if payload.quiet_end is None else payload.quiet_end
+            ),
+        }
+        try:
+            save_telegram(settings, config)
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+        destination_changed = (
+            token != previous.get("token")
+            or str(payload.chat_id) != str(previous.get("chat_id", ""))
+        )
+        review_mode_changed = (
+            bool(previous.get("modes", {}).get("application_reviews", True))
+            != bool(config["modes"]["application_reviews"])
+        )
+        if destination_changed:
             db.set_setting("telegram_review_offset", 0)
+            db.set_setting("telegram_digest_last_date", "")
+        if destination_changed or review_mode_changed:
+            review_status = "pending" if config["modes"]["application_reviews"] else "disabled"
             db.execute(
-                "UPDATE auto_application_attempts SET telegram_status='pending',telegram_error=NULL,"
-                "telegram_message_id=NULL WHERE status IN ('awaiting_review','needs_review') AND draft_id IS NOT NULL"
+                "UPDATE auto_application_attempts SET telegram_status=?,telegram_error=NULL,"
+                "telegram_message_id=CASE WHEN ? THEN NULL ELSE telegram_message_id END "
+                "WHERE status IN ('awaiting_review','needs_review') AND draft_id IS NOT NULL",
+                (review_status, int(destination_changed)),
             )
-        return {"configured": True}
+        saved = telegram_config(settings)
+        return {
+            "configured": True,
+            "notifications": {
+                "modes": saved.get("modes", {}),
+                "digest_time": saved.get("digest_time", "18:00"),
+                "quiet_start": saved.get("quiet_start", ""),
+                "quiet_end": saved.get("quiet_end", ""),
+            },
+        }
 
     @app.post("/api/setup/telegram/chats")
     async def find_telegram_chat(payload: TelegramLookupInput):
@@ -543,6 +622,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         match_manager.wake()
         auto_apply_manager.wake()
         return preferences
+
+    @app.get("/api/preferences/suggestions")
+    def get_preference_suggestions():
+        return {"items": feedback_suggestions(db)}
+
+    @app.post("/api/preferences/suggestions/{suggestion_id}/apply")
+    def apply_preference_suggestion(suggestion_id: str):
+        try:
+            preferences = apply_feedback_suggestion(db, suggestion_id)
+        except KeyError as error:
+            raise HTTPException(404, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+        profile = db.get_setting("profile", {})
+        rescore_vacancies(db, profile, preferences)
+        match_manager.wake()
+        auto_apply_manager.wake()
+        return {"preferences": preferences, "items": feedback_suggestions(db)}
+
+    @app.post("/api/preferences/suggestions/{suggestion_id}/dismiss")
+    def dismiss_preference_suggestion(suggestion_id: str):
+        try:
+            dismiss_feedback_suggestion(db, suggestion_id)
+        except KeyError as error:
+            raise HTTPException(404, str(error)) from error
+        return {"dismissed": True, "items": feedback_suggestions(db)}
 
 
     @app.put("/api/profile")
@@ -1156,29 +1261,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/jobs/{job_id}/decision")
     def decide_job(job_id: str, payload: DecisionInput):
         try:
-            return set_decision(
+            result = set_decision(
                 db, job_id, payload.decision, reason=payload.reason, snoozed_until=payload.snoozed_until
             )
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
+        auto_apply_manager.wake()
+        return result
 
     @app.post("/api/jobs/{job_id}/outcome")
     def set_job_outcome(job_id: str, payload: RecruitingOutcomeInput):
         try:
-            return set_recruiting_outcome(db, job_id, payload.outcome)
+            result = set_recruiting_outcome(db, job_id, payload.outcome)
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
+        auto_apply_manager.wake()
+        return result
 
     @app.post("/api/jobs/{job_id}/manual-applied")
     def manual_applied(job_id: str, payload: ManualAppliedInput):
         try:
-            return set_manual_applied(db, job_id, payload.applied)
+            result = set_manual_applied(db, job_id, payload.applied)
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
+        auto_apply_manager.wake()
+        return result
 
     @app.post("/api/jobs/{job_id}/observations/{observation_id}/split", status_code=201)
     def split_job_sighting(job_id: str, observation_id: str):
@@ -1239,7 +1350,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 raise HTTPException(409, "Add your name and email in My profile first")
             if not profile.get("experience") and not db.one("SELECT id FROM evidence WHERE approved=1 AND kind='project' LIMIT 1"):
                 raise HTTPException(409, "Add work history or approve a GitHub project first")
-        return auto_apply_manager.configure(payload.enabled, payload.threshold)
+        policy = {
+            key: value
+            for key, value in payload.model_dump().items()
+            if key not in {"enabled", "threshold"} and value is not None
+        }
+        return auto_apply_manager.configure(
+            payload.enabled,
+            payload.threshold,
+            policy,
+        )
 
     @app.post("/api/auto-apply/queue-existing")
     def queue_existing_auto_apply():

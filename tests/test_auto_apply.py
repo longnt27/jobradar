@@ -33,6 +33,15 @@ def _wait_for_status(app, identifier: str, expected: str) -> dict:
     raise AssertionError(f"Automatic application did not reach {expected}: {row}")
 
 
+def _wait_for_telegram_status(app, identifier: str, expected: str) -> dict:
+    for _ in range(150):
+        row = app.state.db.one("SELECT * FROM auto_application_attempts WHERE vacancy_id=?", (identifier,))
+        if row and row["telegram_status"] == expected:
+            return row
+        time.sleep(.05)
+    raise AssertionError(f"Telegram review did not reach {expected}: {row}")
+
+
 def test_auto_apply_prepares_new_jobs_but_waits_for_approval(tmp_path: Path, monkeypatch) -> None:
     app = create_app(Settings(tmp_path))
     app.state.db.execute("UPDATE sources SET enabled=0")
@@ -123,20 +132,20 @@ def test_existing_job_waits_for_score_before_telegram_review(tmp_path: Path, mon
         assert client.post("/api/auto-apply/queue-existing").json() == {"queued": 1}
         waiting = db.one("SELECT status,detail FROM auto_application_attempts WHERE vacancy_id=?", (job_id,))
         assert waiting["status"] == "queued"
-        assert "Waiting for local job analysis" in waiting["detail"]
+        assert "Waiting for local match review" in waiting["detail"]
         assert client.get("/api/auto-apply").json()["recent"][0]["analysis_status"] == "pending"
         assert packets == []
         db.execute("UPDATE vacancies SET score=80,analysis_status='done' WHERE id=?", (job_id,))
         app.state.auto_apply_manager.wake()
-        attempt = _wait_for_status(app, job_id, "awaiting_review")
-        assert attempt["telegram_status"] == "sent"
+        _wait_for_status(app, job_id, "awaiting_review")
+        attempt = _wait_for_telegram_status(app, job_id, "sent")
         assert len(packets) == 1
         assert packets[0]["id"] == attempt["draft_id"]
         assert packets[0]["job_score"] == 80
         assert Path(packets[0]["resume_path"]).is_file()
 
 
-def test_auto_apply_missing_destination_needs_review(tmp_path: Path) -> None:
+def test_auto_apply_requires_verified_destination_before_provider_work(tmp_path: Path) -> None:
     app = create_app(Settings(tmp_path))
     app.state.db.execute("UPDATE sources SET enabled=0")
     app.state.db.set_setting("profile", {"name": "Alex Example", "email": "alex@example.org",
@@ -145,9 +154,10 @@ def test_auto_apply_missing_destination_needs_review(tmp_path: Path) -> None:
     with TestClient(app):
         app.state.auto_apply_manager.configure(True, 80)
         identifier = _scored_job(app, "Unlinked Engineer", 90, None)
-        result = _wait_for_status(app, identifier, "needs_confirmation")
-        assert "No safe application destination" in result["detail"]
-        assert result["draft_id"] is None
+        time.sleep(.2)
+        assert app.state.db.one(
+            "SELECT vacancy_id FROM auto_application_attempts WHERE vacancy_id=?", (identifier,)
+        ) is None
         assert not app.state.db.one("SELECT id FROM application_drafts WHERE vacancy_id=?", (identifier,))
         assert not app.state.db.one("SELECT id FROM submissions WHERE vacancy_id=?", (identifier,))
 
