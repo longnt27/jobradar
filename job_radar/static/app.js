@@ -316,39 +316,38 @@ async function loadHome() {
   $('#source-summary').innerHTML = `${escapeHtml(discovery.label)} · ${discovery.counts.linkedin} LinkedIn, ${discovery.counts.facebook} Facebook, ${discovery.counts.career} company sites.${discovery.gaps.length ? ` ${escapeHtml(discovery.gaps.join(' · '))}.` : ''} ${discoveryNeedsAttention ? '<button type="button" class="text-button" id="home-review-sources">Review coverage →</button>' : ''}`;
   $('#home-review-sources')?.addEventListener('click', () => showTab('sources'));
 
-  const hasProfile = Boolean(profile.name && profile.email);
-  const experienceCount = (profile.experience || []).length;
+  const capabilities = setup.capabilities || {};
+  const discoveryCapability = capabilities.discovery || {ready:false,status:'not_configured',detail:'Add a job source.'};
+  const preparationCapability = capabilities.application_preparation || {ready:false,missing:[]};
+  const automaticCapability = capabilities.automatic_drafts || {ready:false,missing:[]};
   const required = [
-    {label:'Set up AI models', detail:!profile.drafting_provider ? 'Choose an application writing provider' : !setup.matching.model ? 'Choose a local job matching model' : 'Application writing and matching are ready', done:!!profile.drafting_provider && !!setup.matching.model, tab:'settings', panel:'provider-panel'},
-    {label:'Add personal details', detail:'Name and email are required for applications', done:hasProfile, tab:'personal'},
-    {label:'Add work history', detail:experienceCount ? `${experienceCount} position${experienceCount === 1 ? '' : 's'} saved` : 'Add experience for tailored applications', done:experienceCount > 0, tab:'experience'},
-    {label:'Select projects', detail:'Choose at least one project for tailored applications', done:setup.approved_evidence > 0, tab:'projects'},
-    {label:setup.browser.sites.length ? 'Sign in to social sites again' : 'Connect job-source accounts', detail:setup.browser.sites.length ? `${socialSiteNames(setup.browser)} session expired` : 'Required while LinkedIn or Facebook sources are enabled', done:(!setup.linkedin_searches && !setup.facebook_groups) || (setup.browser.connected_sites.length === 2 && !setup.browser.sites.length), tab:'settings', socialAuth:true},
+    {label:'Job discovery', detail:discoveryCapability.detail || discovery.label, done:Boolean(discoveryCapability.ready), attention:discoveryCapability.status === 'attention', tab:'sources'},
   ];
   const optional = [
+    {label:'Detailed local match review', done:Boolean(setup.matching.model), detail:setup.matching.model ? \`Using \${setup.matching.model}\` : 'Optional · fallback ranking still works', tab:'settings', panel:'provider-panel'},
+    {label:'Application preparation', done:Boolean(preparationCapability.ready), detail:preparationCapability.ready ? 'Ready to prepare applications' : \`Optional · needs \${(preparationCapability.missing || []).join(', ') || 'setup'}\`, tab:'profile'},
+    {label:'Automatic draft preparation', done:Boolean(automaticCapability.ready), detail:automaticCapability.ready ? 'Ready if you choose to enable it' : \`Optional · needs \${(automaticCapability.missing || []).join(', ') || 'setup'}\`, tab:'applications'},
     {label:'Telegram reviews', done:setup.telegram_configured, detail:setup.telegram_configured ? 'Connected' : 'Optional · not configured', tab:'settings', panel:'telegram-panel'},
     {label:'Email sending', done:setup.smtp_test?.status === 'accepted', detail:setup.smtp_test?.status === 'accepted' ? 'Connected and tested' : setup.smtp_configured ? 'Optional · configured, test pending' : 'Optional · not configured', tab:'settings', panel:'smtp-panel'},
   ];
-  const remaining = required.filter((step) => !step.done);
-  const complete = remaining.length === 0;
-  const next = remaining[0];
+  const complete = Boolean(discoveryCapability.ready);
 
-  $('#home-setup-status').textContent = complete ? 'Complete' : `${remaining.length} left`;
-  $('#home-setup-status').className = complete ? 'status-badge status-badge--success' : 'status-badge status-badge--warning';
-  $('#home-title').textContent = complete ? 'What needs your attention?' : 'Finish the essentials, then get out of setup mode.';
-  $('#home-description').textContent = complete ? 'Prioritize strong jobs, review drafts, and fix anything blocking the pipeline.' : 'Complete the required application basics. Optional integrations can stay optional, as nature intended.';
+  $('#home-setup-status').textContent = complete ? (discoveryCapability.status === 'attention' ? 'Discovery ready · check coverage' : 'Discovery ready') : 'Add a job source';
+  $('#home-setup-status').className = complete ? (discoveryCapability.status === 'attention' ? 'status-badge status-badge--warning' : 'status-badge status-badge--success') : 'status-badge status-badge--warning';
+  $('#home-title').textContent = complete ? 'What needs your attention?' : 'Start with job discovery.';
+  $('#home-description').textContent = complete ? 'Discovery is ready. Application preparation, Telegram, and sending are optional capabilities you can add when useful.' : 'Add at least one job source. You do not need a resume, personal details, or an application provider to start finding jobs.';
   $('#home-hero').classList.toggle('is-compact', complete);
-  $('#home-primary').textContent = next ? `${next.label} →` : (c.drafts_needing_review ? 'Review drafts →' : 'Review jobs →');
-  $('#home-primary').dataset.tab = next?.tab || (c.drafts_needing_review ? 'applications' : 'jobs');
-  $('#home-primary').dataset.socialAuth = next?.socialAuth ? 'true' : 'false';
-  $('#home-primary').dataset.setupPanel = next?.panel || '';
+  $('#home-primary').textContent = complete ? (c.drafts_needing_review ? 'Review drafts →' : 'Review jobs →') : 'Add a job source →';
+  $('#home-primary').dataset.tab = complete ? (c.drafts_needing_review ? 'applications' : 'jobs') : 'sources';
+  $('#home-primary').dataset.socialAuth = 'false';
+  $('#home-primary').dataset.setupPanel = '';
 
   $('#home-steps').innerHTML = required.map((step) =>
-    `<button class="step-row ${step.done ? 'is-done' : ''}" data-home-step="${step.tab}" data-social-auth="${step.socialAuth ? 'true' : 'false'}" data-setup-panel="${step.panel || ''}"><span class="step-check ${step.done ? 'done' : ''}">${step.done ? '✓' : '○'}</span><span><strong>${escapeHtml(step.label)}</strong><small>${escapeHtml(step.detail)}</small></span><span class="step-arrow">→</span></button>`
+    \`<button class="step-row \${step.done ? 'is-done' : ''}" data-home-step="\${step.tab}"><span class="step-check \${step.done ? 'done' : ''}">\${step.done ? (step.attention ? '!' : '✓') : '○'}</span><span><strong>\${escapeHtml(step.label)}</strong><small>\${escapeHtml(step.detail)}</small></span><span class="step-arrow">→</span></button>\`
   ).join('');
-  $('#home-optional').innerHTML = `<h4>Optional integrations</h4>${optional.map((step) =>
-    `<button class="home-optional-row" data-home-step="${step.tab}" data-setup-panel="${step.panel || ''}"><span><strong>${escapeHtml(step.label)}</strong><small>${escapeHtml(step.detail)}</small></span><span class="status-badge ${step.done ? 'status-badge--success' : 'status-badge--neutral'}">${step.done ? 'Ready' : 'Optional'}</span></button>`
-  ).join('')}`;
+  $('#home-optional').innerHTML = \`<h4>Optional capabilities</h4>\${optional.map((step) =>
+    \`<button class="home-optional-row" data-home-step="\${step.tab}" data-setup-panel="\${step.panel || ''}"><span><strong>\${escapeHtml(step.label)}</strong><small>\${escapeHtml(step.detail)}</small></span><span class="status-badge \${step.done ? 'status-badge--success' : 'status-badge--neutral'}">\${step.done ? 'Ready' : 'Optional'}</span></button>\`
+  ).join('')}\`;
   document.querySelectorAll('[data-home-step]').forEach((button) => button.addEventListener('click', () => button.dataset.socialAuth === 'true' ? openSocialSignIn() : button.dataset.setupPanel ? openSetupPanel(button.dataset.setupPanel) : showTab(button.dataset.homeStep)));
 
   const actions = [
