@@ -156,9 +156,8 @@ def test_automatic_preparation_stops_at_preflight_when_destination_is_unknown(tm
     _ready_profile(app)
     app.state.db.set_setting("matching_model", "test:small")
 
-    with TestClient(app):
+    with TestClient(app) as client:
         app.state.auto_apply_manager.configure(True, 80)
-        client = TestClient(app)
         job = client.post("/api/jobs/import", json={
             "company": "Example",
             "title": "Unknown Destination Engineer",
