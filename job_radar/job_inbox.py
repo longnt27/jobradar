@@ -172,6 +172,15 @@ def enrich_jobs(db: Database, rows: list[dict[str, Any]]) -> list[dict[str, Any]
     for item in draft_rows:
         drafts.setdefault(item["vacancy_id"], item)
 
+    attempt_rows = db.all(
+        "SELECT vacancy_id,status,draft_id,detail,requested_by,updated_at FROM auto_application_attempts "
+        f"WHERE vacancy_id IN ({placeholders}) ORDER BY updated_at DESC",
+        tuple(identifiers),
+    )
+    attempts: dict[str, dict[str, Any]] = {}
+    for item in attempt_rows:
+        attempts.setdefault(item["vacancy_id"], item)
+
     submission_rows = db.all(
         "SELECT vacancy_id,status,sent_at,updated_at FROM submissions "
         f"WHERE vacancy_id IN ({placeholders}) ORDER BY sent_at DESC,updated_at DESC",
@@ -184,6 +193,7 @@ def enrich_jobs(db: Database, rows: list[dict[str, Any]]) -> list[dict[str, Any]
     for row in rows:
         submission = submissions.get(row["id"])
         draft = drafts.get(row["id"])
+        attempt = attempts.get(row["id"])
         status = submission["status"] if submission else None
         if status in CONFIRMED_SUBMISSIONS:
             progress = "applied"
@@ -193,6 +203,10 @@ def enrich_jobs(db: Database, rows: list[dict[str, Any]]) -> list[dict[str, Any]
             progress = "applied_external"
         elif draft:
             progress = "draft_ready"
+        elif attempt and attempt["status"] in ("queued", "preparing", "regenerating"):
+            progress = "preparing"
+        elif attempt and attempt["status"] == "needs_confirmation":
+            progress = "needs_confirmation"
         else:
             progress = "not_started"
         row["application_progress"] = progress
@@ -200,5 +214,8 @@ def enrich_jobs(db: Database, rows: list[dict[str, Any]]) -> list[dict[str, Any]
         row["latest_submission_at"] = submission["sent_at"] if submission else None
         row["latest_draft_status"] = draft["status"] if draft else None
         row["latest_draft_id"] = draft["id"] if draft else None
+        row["preparation_status"] = attempt["status"] if attempt else None
+        row["preparation_detail"] = attempt["detail"] if attempt else None
+        row["preparation_requested_by"] = attempt["requested_by"] if attempt else None
         row["read_state"] = "seen" if row.get("seen_at") else "unseen"
     return rows
