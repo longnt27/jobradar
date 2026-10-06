@@ -136,7 +136,9 @@ def application_filter_sql(progress: str) -> str:
         return (
             "v.manual_applied_at IS NULL "
             "AND NOT EXISTS(SELECT 1 FROM application_drafts d WHERE d.vacancy_id=v.id) "
-            "AND NOT EXISTS(SELECT 1 FROM submissions s WHERE s.vacancy_id=v.id)"
+            "AND NOT EXISTS(SELECT 1 FROM submissions s WHERE s.vacancy_id=v.id) "
+            "AND NOT EXISTS(SELECT 1 FROM auto_application_attempts a WHERE a.vacancy_id=v.id "
+            "AND a.status IN ('queued','preparing','regenerating','needs_confirmation'))"
         )
     if progress == "draft_ready":
         return (
@@ -153,6 +155,17 @@ def application_filter_sql(progress: str) -> str:
         return (
             f"EXISTS(SELECT 1 FROM submissions s WHERE s.vacancy_id=v.id "
             f"AND s.status IN ({uncertain}))"
+        )
+    if progress == "preparing":
+        return (
+            "EXISTS(SELECT 1 FROM auto_application_attempts a WHERE a.vacancy_id=v.id "
+            "AND a.status IN ('queued','preparing','regenerating')) "
+            "AND NOT EXISTS(SELECT 1 FROM application_drafts d WHERE d.vacancy_id=v.id)"
+        )
+    if progress == "needs_confirmation":
+        return (
+            "EXISTS(SELECT 1 FROM auto_application_attempts a WHERE a.vacancy_id=v.id "
+            "AND a.status='needs_confirmation' AND a.draft_id IS NULL)"
         )
     raise ValueError(f"Unsupported application progress filter: {progress}")
 
