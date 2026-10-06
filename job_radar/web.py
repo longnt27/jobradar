@@ -235,6 +235,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.login_manager = login_manager
 
     def provider_available(provider: str) -> bool:
+        if provider == "template":
+            return True
         command = "codex" if provider.startswith("codex") else provider
         return bool(shutil.which(command)) and (provider != "codex_local" or bool(shutil.which("ollama")))
 
