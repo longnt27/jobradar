@@ -118,6 +118,22 @@
           </form>
         </dialog>
 
+        <dialog id="job-prepare-confirm-dialog" class="confirm-dialog" aria-labelledby="job-prepare-confirm-title">
+          <form method="dialog">
+            <h3 id="job-prepare-confirm-title">Application method needs confirmation</h3>
+            <p id="job-prepare-confirm-reason"></p>
+            <div class="confirm-summary">
+              <strong id="job-prepare-confirm-action"></strong>
+              <span id="job-prepare-confirm-evidence"></span>
+            </div>
+            <p class="hint">Preparing anyway only creates a draft. It does not authorize Job Radar to send anything.</p>
+            <div class="actions">
+              <button type="submit" value="cancel" class="secondary">Cancel</button>
+              <button type="submit" value="confirm" class="primary">Prepare anyway</button>
+            </div>
+          </form>
+        </dialog>
+
         <dialog id="job-view-dialog" class="confirm-dialog" aria-labelledby="job-view-title">
           <form id="job-view-form" method="dialog">
             <h3 id="job-view-title">Save this Jobs view</h3>
