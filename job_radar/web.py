@@ -18,6 +18,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, HttpUrl
 
 from .db import Database, new_id, now
+from .discovery import merge_reason_label, source_coverage, split_observation, summarize_discovery
 from .apply import inspect_form, send_application, send_readiness, submission_attachment, submission_record, submission_resume_path
 from .auto_apply import AutoApplyManager
 from .browser_login import BrowserLoginManager
@@ -635,7 +636,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "auto_off" if not row["enabled"] else
                 row["last_status"] or "not_scanned"
             )
+            recent_runs = db.all(
+                "SELECT status,observed_count,new_count,detail,started_at,finished_at FROM scan_runs "
+                "WHERE source_id=? ORDER BY started_at DESC,rowid DESC LIMIT 5",
+                (row["id"],),
+            )
+            row["coverage"] = source_coverage(row, recent_runs)
         return rows
+
+    @app.get("/api/discovery/coverage")
+    def discovery_coverage():
+        snapshot = sources()
+        summary = summarize_discovery(snapshot)
+        intent = db.get_setting("search_intent", {})
+        summary["intent"] = {
+            key: intent.get(key) for key in ("roles", "locations", "work_modes")
+            if intent.get(key)
+        }
+        summary["sources"] = [
+            {"id": source["id"], "name": source["name"], "kind": source["kind"],
+             "coverage": source["coverage"]}
+            for source in snapshot if source["enabled"]
+        ]
+        return summary
 
     @app.post("/api/sources", status_code=201)
     async def add_source(source: SourceInput):
@@ -727,6 +750,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"status": "queued" if queued else "already_queued",
                 "position": scan_manager.queue_position(source_id)}
 
+    @app.post("/api/scan/now")
+    async def scan_now():
+        rows = db.all(
+            "SELECT id,kind FROM sources WHERE enabled=1 "
+            "AND COALESCE(json_extract(config,'$.retired'),0)=0 "
+            "AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=sources.employer_id AND e.coverage_status='excluded_hcm')"
+        )
+        source_ids = [row["id"] for row in rows]
+        queued = scan_manager.queue_sources(source_ids, manual=True)
+        blocked = [
+            row["kind"] for row in rows if row["kind"] in ("linkedin", "facebook") and (
+                not social_login_at(db, row["kind"]) or db.get_setting(f"social_reauth_required_{row['kind']}")
+            )
+        ]
+        return {
+            "queued": queued,
+            "already_running_or_queued": sum(
+                1 for source_id in source_ids
+                if source_id in scan_manager.active or scan_manager.queue_position(source_id) is not None
+            ) - queued,
+            "sign_in_needed": sorted(set(blocked)),
+            "total_sources": len(source_ids),
+        }
+
     @app.post("/api/scan/due")
     async def scan_due():
         return {"queued": scan_manager.queue_due()}
@@ -739,7 +786,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/employers")
     def employers(q: str = "", category: str = "", limit: int = Query(300, ge=1, le=2000)):
         return db.all(
-            "SELECT e.*,CASE WHEN EXISTS(SELECT 1 FROM sources s WHERE s.employer_id=e.id AND s.enabled=1) THEN 'active_scan' ELSE 'source_discovery' END AS live_coverage FROM employers e WHERE e.coverage_status!='excluded_hcm' AND name LIKE ? AND (?='' OR category=?) ORDER BY name LIMIT ?",
+            "SELECT e.*,CASE "
+            "WHEN EXISTS(SELECT 1 FROM sources s WHERE s.employer_id=e.id AND s.enabled=1 AND s.last_status IN ('failed','auth_required')) THEN 'temporarily_unavailable' "
+            "WHEN EXISTS(SELECT 1 FROM sources s WHERE s.employer_id=e.id AND s.enabled=1) THEN 'watching' "
+            "WHEN e.career_url IS NULL OR e.career_url='' THEN 'career_page_needed' "
+            "ELSE 'manual_only' END AS live_coverage "
+            "FROM employers e WHERE e.coverage_status!='excluded_hcm' AND name LIKE ? AND (?='' OR category=?) ORDER BY name LIMIT ?",
             (f"%{q}%", category, category, limit),
         )
 
@@ -750,8 +802,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         values = (f"%{q}%", category, category)
         total = db.one(f"SELECT COUNT(*) AS count FROM employers e WHERE {where}", values)["count"]
         rows = db.all(
-            "SELECT e.*,CASE WHEN EXISTS(SELECT 1 FROM sources s WHERE s.employer_id=e.id AND s.enabled=1) "
-            "THEN 'active_scan' ELSE 'source_discovery' END AS live_coverage "
+            "SELECT e.*,CASE "
+            "WHEN EXISTS(SELECT 1 FROM sources s WHERE s.employer_id=e.id AND s.enabled=1 AND s.last_status IN ('failed','auth_required')) THEN 'temporarily_unavailable' "
+            "WHEN EXISTS(SELECT 1 FROM sources s WHERE s.employer_id=e.id AND s.enabled=1) THEN 'watching' "
+            "WHEN e.career_url IS NULL OR e.career_url='' THEN 'career_page_needed' "
+            "ELSE 'manual_only' END AS live_coverage "
             f"FROM employers e WHERE {where} ORDER BY e.name LIMIT ? OFFSET ?",
             (*values, page_size, (page - 1) * page_size),
         )
@@ -1042,9 +1097,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404, "Job not found")
         enrich_jobs(db, [row])
         row["observations"] = db.all(
-            "SELECT o.url,o.first_seen_at,o.published_at,s.kind,s.name FROM vacancy_observations vo "
-            "JOIN observations o ON o.id=vo.observation_id JOIN sources s ON s.id=o.source_id "
-            "WHERE vo.vacancy_id=?",
+            "SELECT o.id,o.url,o.first_seen_at,o.last_seen_at,o.published_at,s.id AS source_id,s.kind,s.name,vo.merge_reason "
+            "FROM vacancy_observations vo JOIN observations o ON o.id=vo.observation_id "
+            "JOIN sources s ON s.id=o.source_id WHERE vo.vacancy_id=? ORDER BY o.first_seen_at,o.id",
             (job_id,),
         )
         try:
@@ -1058,6 +1113,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             (job_id, row["decision_state"]),
         )
         row["decision_reason"] = feedback["reason"] if feedback else None
+        for observation in row["observations"]:
+            observation["merge_reason_label"] = merge_reason_label(observation["merge_reason"])
+        row["sighting_count"] = len(row["observations"])
         return row
 
     @app.post("/api/jobs/{job_id}/seen")
@@ -1093,6 +1151,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return set_manual_applied(db, job_id, payload.applied)
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
+
+    @app.post("/api/jobs/{job_id}/observations/{observation_id}/split", status_code=201)
+    def split_job_sighting(job_id: str, observation_id: str):
+        try:
+            new_job_id = split_observation(db, job_id, observation_id)
+        except KeyError as error:
+            raise HTTPException(404, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
+        match_manager.wake()
+        return {"id": new_job_id, "split_from": job_id, "observation_id": observation_id}
 
     @app.post("/api/jobs/import", status_code=201)
     def import_job(payload: JobInput):

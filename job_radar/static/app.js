@@ -302,7 +302,7 @@ async function loadSetup() {
 }
 
 async function loadHome() {
-  const [data, profile, setup] = await Promise.all([api('/api/status'), api('/api/profile'), api('/api/setup')]);
+  const [data, profile, setup, discovery] = await Promise.all([api('/api/status'), api('/api/profile'), api('/api/setup'), api('/api/discovery/coverage')]);
   renderSocialAuth(setup.browser);
   const c = data.counts;
   $('#metrics').innerHTML = [
@@ -310,13 +310,9 @@ async function loadHome() {
     ['Drafts to review', c.drafts_needing_review], ['Analysis failures', c.analysis_failures],
   ].map(([label, value]) => `<div class="metric"><strong>${value}</strong><span>${label}</span></div>`).join('');
 
-  const socialSources = [
-    setup.linkedin_searches ? `${setup.linkedin_searches} LinkedIn searches` : '',
-    setup.facebook_groups ? `${setup.facebook_groups} Facebook groups` : '',
-  ].filter(Boolean);
-  $('#source-summary').textContent = socialSources.length
-    ? `${socialSources.join(' and ')} ${setup.browser.sites.length ? `need ${socialSiteNames(setup.browser)} sign-in again.` : setup.browser.connected_sites.length ? 'are connected.' : 'are waiting for browser sign-in.'}`
-    : 'Company career feeds continue scanning without social sign-in.';
+  const discoveryNeedsAttention = ['degraded','limited','unknown'].includes(discovery.level);
+  $('#source-summary').innerHTML = `${escapeHtml(discovery.label)} · ${discovery.counts.linkedin} LinkedIn, ${discovery.counts.facebook} Facebook, ${discovery.counts.career} company sites.${discovery.gaps.length ? ` ${escapeHtml(discovery.gaps.join(' · '))}.` : ''} ${discoveryNeedsAttention ? '<button type="button" class="text-button" id="home-review-sources">Review coverage →</button>' : ''}`;
+  $('#home-review-sources')?.addEventListener('click', () => showTab('sources'));
 
   const hasProfile = Boolean(profile.name && profile.email);
   const experienceCount = (profile.experience || []).length;
@@ -816,9 +812,12 @@ async function showJob(id, pin = false) {
   }
   const profile = await api('/api/profile');
   const provider = profile.drafting_provider || '';
-  const links = job.observations.length ? job.observations.map((source) =>
-    `<a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(source.kind)}: ${escapeHtml(source.name)}</a>`
-  ).join('<br>') : '';
+  const sourcePriority = {career:0, linkedin:1, facebook:2};
+  const sightings = [...job.observations].sort((a,b) => (sourcePriority[a.kind] ?? 9) - (sourcePriority[b.kind] ?? 9) || a.first_seen_at.localeCompare(b.first_seen_at));
+  const preferredSighting = sightings[0];
+  const links = sightings.length ? sightings.map((source) =>
+    `<div class="job-sighting" data-sighting-id="${source.id}"><div><a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(source.name)}</a> <span class="pill muted">${escapeHtml(source.kind)}</span> ${preferredSighting?.id === source.id ? '<span class="status-badge status-badge--success">Preferred source</span>' : ''}<small>${escapeHtml(source.merge_reason_label)} · first seen ${relativeWhen(source.first_seen_at)}</small></div>${sightings.length > 1 ? `<button type="button" class="text-button" data-split-sighting="${source.id}">Mark as a different job</button>` : ''}</div>`
+  ).join('') : '';
   const score = job.score_detail ? JSON.parse(job.score_detail) : null;
   const facts = score?.facts || {};
   const salary = facts.salary_range || '';
@@ -873,6 +872,7 @@ async function showJob(id, pin = false) {
       <p><strong>Evidence confidence:</strong> ${Math.max(0, 100 - Number(job.uncertainty || 0))}%</p>
       ${job.missing_evidence?.length ? `<p><strong>Missing evidence:</strong> ${escapeHtml(job.missing_evidence.join(', '))}</p>` : '<p class="hint">No major evidence gaps detected.</p>'}
     </div>
+    ${links ? `<div class="job-sightings"><div class="job-sightings-head"><strong>Seen on ${job.sighting_count} source${job.sighting_count === 1 ? '' : 's'}</strong><span class="hint">${job.sighting_count > 1 ? `Job Radar combined ${job.sighting_count} sightings so you only review this role once.` : 'One source has reported this role so far.'}</span></div>${links}</div>` : ''}
     ${renderJobAnalysis(job, score)}
 
     <section class="job-application-method review-section">
@@ -881,7 +881,6 @@ async function showJob(id, pin = false) {
       ${salary ? `<p class="job-detail-salary"><strong>Salary:</strong> ${escapeHtml(salary)} <span>· not included in the match score</span></p>` : ''}
       ${job.apply_url ? `<p><a href="${escapeHtml(job.apply_url)}" target="_blank" rel="noopener noreferrer">${job.apply_url.startsWith('mailto:') ? 'Application email ↗' : 'Application page ↗'}</a></p>` : ''}
       ${!job.apply_url ? '<p class="hint">No application form has been verified for this posting. Check the original source before sending.</p>' : ''}
-      ${links ? `<p class="item-meta">${links}</p>` : ''}
     </section>
 
     <section class="job-prepare-section review-section">
@@ -893,6 +892,17 @@ async function showJob(id, pin = false) {
     <details class="detail-disclosure"><summary>Original description</summary><div class="description">${formatDescription(job.description)}</div></details>`;
 
   $('#job-detail').querySelector('[data-tab="settings"]').addEventListener('click', () => showTab('settings'));
+  $('#job-detail').querySelectorAll('[data-split-sighting]').forEach((button) => button.addEventListener('click', async () => {
+    if (!window.confirm('Mark this sighting as a different job? The original source evidence will be preserved.')) return;
+    try {
+      beginPending(button, 'Splitting…');
+      const result = await api(`/api/jobs/${id}/observations/${button.dataset.splitSighting}/split`, {method:'POST'});
+      notice('Sighting split into a separate job.');
+      await loadJobs();
+      activeJob = result.id; activeJobPinned = true; syncJobsHash('push'); await showJob(result.id, true);
+    } catch(error) { notice(error.message, true); }
+    finally { endPending(button); }
+  }));
   $('#job-detail').querySelector('[data-analyze]')?.addEventListener('click', async () => {
     try { await api(`/api/jobs/${id}/analyze`, {method:'POST'}); notice('Match review queued'); await loadJobs(); }
     catch(error) { notice(error.message, true); }
@@ -948,20 +958,27 @@ async function showJob(id, pin = false) {
   });
 }
 
-function sourceStatusLabel(source) {
+function sourceScanStatusLabel(source) {
   const state = source.scan_state;
   return state === 'queued' ? `Queued · #${source.queue_position}` : ({
-    scanning:'Scanning', auto_off:'Automatic scans off', needs_refresh:'Needs refresh',
-    not_scanned:'Never scanned', success:'Healthy', empty:'Healthy · no jobs',
-    failed:'Scan failed', auth_required:'Sign-in needed', interrupted:'Retry queued soon',
+    scanning:'Scanning', auto_off:'Automatic checks off', needs_refresh:'Needs refresh',
+    not_scanned:'Never checked', success:'Last check completed', empty:'Last check found no jobs',
+    failed:'Last check failed', auth_required:'Sign-in needed', interrupted:'Interrupted',
   })[state] || state;
 }
 
-function sourceStatusTone(state) {
-  if (['scanning', 'success', 'empty', 'queued'].includes(state)) return 'status-badge--success';
-  if (['failed', 'auth_required'].includes(state)) return 'status-badge--danger';
+function sourceStatusLabel(source) {
+  return source.coverage?.label || sourceScanStatusLabel(source);
+}
+
+function sourceStatusTone(source) {
+  const level = source.coverage?.level;
+  if (level === 'good') return 'status-badge--success';
+  if (level === 'degraded') return 'status-badge--danger';
+  if (level === 'moderate') return 'status-badge--info';
   return 'status-badge--warning';
 }
+
 
 function filterSources(sources) {
   const query = $('#source-query').value.trim().toLowerCase();
@@ -977,10 +994,12 @@ function filterSources(sources) {
     if (enabled === 'paused' && source.enabled) return false;
     if (success === 'has_success' && !source.last_success_at) return false;
     if (success === 'never' && source.last_success_at) return false;
-    if (status === 'attention' && !['failed', 'auth_required', 'needs_refresh', 'interrupted'].includes(source.scan_state)) return false;
-    if (status === 'healthy' && !['success', 'empty'].includes(source.scan_state)) return false;
-    if (status === 'unscanned' && source.scan_state !== 'not_scanned') return false;
-    if (status && !['attention', 'healthy', 'unscanned'].includes(status) && source.scan_state !== status) return false;
+    const coverageLevel = source.coverage?.level || 'unknown';
+    if (status === 'attention' && coverageLevel !== 'degraded') return false;
+    if (status === 'limited' && !['limited','moderate'].includes(coverageLevel)) return false;
+    if (status === 'healthy' && coverageLevel !== 'good') return false;
+    if (status === 'unknown' && coverageLevel !== 'unknown') return false;
+    if (status === 'auto_off' && coverageLevel !== 'paused') return false;
     return true;
   });
   const sort = $('#source-sort').value;
@@ -995,12 +1014,23 @@ function filterSources(sources) {
 
 async function loadSources() {
   clearTimeout(window.sourcePoll);
-  const sources = await api('/api/sources');
+  const [sources, coverage] = await Promise.all([api('/api/sources'), api('/api/discovery/coverage')]);
   const visible = filterSources(sources);
   const running = sources.filter((source) => source.scan_state === 'scanning').length;
   const waiting = sources.filter((source) => source.scan_state === 'queued').length;
   const unscanned = sources.filter((source) => source.enabled && !source.last_success_at && !['queued', 'scanning'].includes(source.scan_state)).length;
-  $('#source-queue-summary').textContent = `${running} scanning · ${waiting} queued · ${unscanned} never successfully scanned. LinkedIn and Facebook share one browser, so queued scans run in order.`;
+  $('#source-queue-summary').textContent = `${running} scanning · ${waiting} queued · ${unscanned} never successfully checked. LinkedIn and Facebook share one browser and run serially.`;
+  $('#source-coverage-summary').textContent = coverage.label;
+  $('#source-coverage-status').textContent = coverage.level === 'good' ? 'Looks normal' : coverage.level === 'degraded' ? 'Needs attention' : 'Some uncertainty';
+  $('#source-coverage-status').className = `status-badge ${coverage.level === 'good' ? 'status-badge--success' : coverage.level === 'degraded' ? 'status-badge--danger' : 'status-badge--warning'}`;
+  $('#source-coverage-grid').innerHTML = [
+    ['LinkedIn searches', coverage.counts.linkedin],
+    ['Facebook groups', coverage.counts.facebook],
+    ['Company sites', coverage.counts.career],
+  ].map(([label,value]) => `<div><strong>${value}</strong><span>${label}</span></div>`).join('');
+  const linkedinNames = (coverage.channels?.linkedin || []).slice(0, 8);
+  const channelDetail = linkedinNames.length ? ` LinkedIn searches: ${linkedinNames.join(', ')}${coverage.channels.linkedin.length > linkedinNames.length ? ` +${coverage.channels.linkedin.length - linkedinNames.length} more` : ''}.` : '';
+  $('#source-coverage-gaps').textContent = (coverage.gaps.length ? `Obvious gaps: ${coverage.gaps.join(' · ')}.` : 'No obvious channel gap in the configured sources.') + channelDetail;
   $('#source-result-summary').textContent = `Showing ${visible.length} of ${sources.length} configured sources`;
   $('#source-list').innerHTML = visible.length ? visible.map((source) => {
     const total = Number(source.job_count) || 0;
@@ -1009,12 +1039,13 @@ async function loadSources() {
     const status = sourceStatusLabel(source);
     const latest = source.latest_observed_count;
     const cap = Number(source.config?.max_results || source.config?.max_posts || 0);
-    const latestText = latest == null ? 'No completed scan' : `${latest} postings checked${cap && latest >= cap ? ` · collection limit ${cap} reached` : ''}`;
+    const latestText = latest == null ? 'No completed check' : `${latest} postings checked${cap && latest >= cap ? ` · collection limit ${cap} reached` : ''}`;
     return `<div class="item source-card" data-source-id="${source.id}">
-      <div class="source-card-head"><div><div class="item-title">${escapeHtml(source.name)} <span class="pill muted">${escapeHtml(source.kind)}</span></div><div class="item-meta">Last successful scan: ${when(source.last_success_at)}</div></div><span class="status-badge ${sourceStatusTone(state)}">${escapeHtml(status)}</span></div>
-      <div class="source-health"><span><strong>${recent}</strong> new in latest scan</span></div>
-      <div class="actions"><button data-scan="${source.id}" ${['scanning','queued'].includes(state) ? 'disabled' : ''}>${state === 'scanning' ? 'Scanning…' : state === 'queued' ? 'Queued' : 'Scan now'}</button><a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer" aria-label="Open source ${escapeHtml(source.name)}">Open source ↗</a><label class="source-auto"><input type="checkbox" data-toggle="${source.id}" ${source.enabled ? 'checked' : ''}><span>Automatic every ${source.interval_minutes / 60} hours</span><span class="source-auto-status" aria-live="polite"></span></label></div>
-      <details class="source-diagnostics"><summary>Diagnostics</summary><div class="item-meta">${total} jobs attributed · ${escapeHtml(latestText)} · Interval ${source.interval_minutes} minutes</div><div class="item-meta mono">${escapeHtml(source.url)}</div></details>
+      <div class="source-card-head"><div><div class="item-title">${escapeHtml(source.name)} <span class="pill muted">${escapeHtml(source.kind)}</span></div><div class="item-meta">Last successful check: ${when(source.last_success_at)}</div></div><span class="status-badge ${sourceStatusTone(source)}">${escapeHtml(status)}</span></div>
+      <p class="source-coverage-detail">${escapeHtml(source.coverage?.detail || '')}</p>
+      <div class="source-health"><span><strong>${recent}</strong> new in latest check</span></div>
+      <div class="actions"><button data-scan="${source.id}" ${['scanning','queued'].includes(state) ? 'disabled' : ''}>${state === 'scanning' ? 'Checking…' : state === 'queued' ? 'Queued' : 'Check now'}</button><a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer" aria-label="Open source ${escapeHtml(source.name)}">Open source ↗</a><label class="source-auto"><input type="checkbox" data-toggle="${source.id}" ${source.enabled ? 'checked' : ''}><span>Automatic every ${source.interval_minutes / 60} hours</span><span class="source-auto-status" aria-live="polite"></span></label></div>
+      <details class="source-diagnostics"><summary>Diagnostics</summary><div class="item-meta">Collector state: ${escapeHtml(sourceScanStatusLabel(source))} · ${total} jobs attributed · ${escapeHtml(latestText)} · Interval ${source.interval_minutes} minutes</div><div class="item-meta mono">${escapeHtml(source.url)}</div></details>
     </div>`;
   }).join('') : '<div class="empty">No sources match these filters.</div>';
   document.querySelectorAll('[data-toggle]').forEach((input) => input.addEventListener('change', async () => {
@@ -1061,8 +1092,9 @@ async function loadEmployers() {
   $('#employer-page-summary').textContent = result.total ? `Page ${result.page} of ${result.pages}` : 'No pages';
   $('#employers-prev').disabled = employerPage <= 1;
   $('#employers-next').disabled = employerPage >= result.pages;
+  const coverageLabel = (state) => ({watching:'Watching', career_page_needed:'Career page needed', temporarily_unavailable:'Temporarily unavailable', manual_only:'Manual only'})[state] || state;
   $('#employer-list').innerHTML = employers.length ? employers.map((employer) =>
-    `<div class="employer surface-readonly" data-employer-id="${employer.id}"><strong>${escapeHtml(employer.name)}</strong><small>${escapeHtml(employer.category)} · ${escapeHtml(employer.live_coverage)}</small>${employer.career_url ? `<small><a href="${escapeHtml(employer.career_url)}" target="_blank" rel="noopener noreferrer">Career page ↗</a></small>` : '<small>No career page configured</small>'}<button type="button" data-employer-source="${employer.id}" aria-label="${employer.career_url ? 'Edit' : 'Add'} career page for ${escapeHtml(employer.name)}">${employer.career_url ? 'Edit career page' : 'Add career page'}</button><form class="employer-career-form" data-employer-form="${employer.id}" hidden><label>Career page URL<input name="career_url" type="url" required placeholder="https://company.example/careers" value="${escapeHtml(employer.career_url || '')}"></label><p class="field-message employer-career-error" role="alert"></p><div class="actions"><button class="primary" type="submit">Save career page</button><button class="secondary" type="button" data-employer-cancel="${employer.id}">Cancel</button></div></form></div>`
+    `<div class="employer surface-readonly" data-employer-id="${employer.id}"><strong>${escapeHtml(employer.name)}</strong><small>${escapeHtml(employer.category)} · ${escapeHtml(coverageLabel(employer.live_coverage))}</small>${employer.career_url ? `<small><a href="${escapeHtml(employer.career_url)}" target="_blank" rel="noopener noreferrer">Career page ↗</a></small>` : '<small>No career page configured</small>'}<button type="button" data-employer-source="${employer.id}" aria-label="${employer.career_url ? 'Edit' : 'Add'} career page for ${escapeHtml(employer.name)}">${employer.career_url ? 'Edit career page' : 'Add career page'}</button><form class="employer-career-form" data-employer-form="${employer.id}" hidden><label>Career page URL<input name="career_url" type="url" required placeholder="https://company.example/careers" value="${escapeHtml(employer.career_url || '')}"></label><p class="field-message employer-career-error" role="alert"></p><div class="actions"><button class="primary" type="submit">Save career page</button><button class="secondary" type="button" data-employer-cancel="${employer.id}">Cancel</button></div></form></div>`
   ).join('') : '<div class="empty">No employers match this search.</div>';
   document.querySelectorAll('[data-employer-source]').forEach((button) => button.addEventListener('click', () => {
     const card = button.closest('.employer');
@@ -2706,6 +2738,18 @@ $('#project-add-form').addEventListener('submit', async (event) => {
     $('#github-repos').innerHTML = discoveredRepos.length ? '' : '<div class="empty">No public repositories found.</div>';
     renderRepositoryResults();
   } catch(error) { $('#project-add-status').textContent = error.message; notice(error.message, true); }
+  finally { endPending(button); }
+});
+
+$('#scan-now').addEventListener('click', async () => {
+  const button = $('#scan-now');
+  try {
+    beginPending(button, 'Checking…');
+    const result = await api('/api/scan/now', {method:'POST'});
+    await Promise.all([loadSources(), loadHome()]);
+    const blocked = result.sign_in_needed?.length ? ` ${result.sign_in_needed.join(' and ')} need sign-in.` : '';
+    notice(result.queued ? `Checking ${result.queued} source${result.queued === 1 ? '' : 's'} now.${blocked}` : `All available sources are already checking or queued.${blocked}`);
+  } catch(error) { notice(error.message, true); }
   finally { endPending(button); }
 });
 

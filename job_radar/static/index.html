@@ -347,18 +347,23 @@
       </section>
 
       <section id="sources" class="tab">
-        <div class="section-head"><div><h3>Job sources</h3><p>Manage the feeds, searches, and pages Job Radar checks for new roles.</p></div></div>
-        <div class="panel source-operations">
-          <div class="section-head"><div><h3>Scan operations</h3><p>Run scans outside the automatic schedule without changing source settings.</p></div><div class="actions"><button class="primary" id="scan-unscanned">Scan never-checked sources</button><button class="secondary" id="scan-due">Scan sources due now</button></div></div>
-          <p id="source-queue-summary" class="hint"></p>
-          <div class="source-scan-help"><span><strong>Never checked</strong> gets first-time sources through an initial successful scan.</span><span><strong>Due now</strong> runs only sources whose normal schedule is ready.</span></div>
+        <div class="section-head"><div><h3>Job sources</h3><p>See where Job Radar is looking and whether any gap could hide relevant jobs.</p></div><button class="primary" id="scan-now">Check for jobs now</button></div>
+        <div class="panel source-coverage-panel source-operations">
+          <div class="section-head"><div><h3>Discovery coverage</h3><p id="source-coverage-summary">Checking source coverage…</p></div><span id="source-coverage-status" class="status-badge status-badge--neutral">Checking</span></div>
+          <div id="source-coverage-grid" class="source-coverage-grid"></div>
+          <div id="source-coverage-gaps" class="hint"></div>
+          <details class="source-diagnostics source-operations-diagnostics"><summary>Scan diagnostics and advanced controls</summary>
+            <p id="source-queue-summary" class="hint"></p>
+            <div class="actions"><button class="secondary" id="scan-unscanned">Prioritize never-checked sources</button><button class="secondary" id="scan-due">Check sources due by schedule</button></div>
+            <p class="hint">These controls expose scheduler mechanics. Most of the time, use “Check for jobs now” above.</p>
+          </details>
         </div>
         <details class="panel"><summary>Add a source</summary><form id="source-form" class="form-grid"><label>Type<select name="kind"><option value="facebook">Facebook group</option><option value="career">Career page</option><option value="linkedin">LinkedIn search</option></select></label><label id="source-name-label">Name<input name="name"></label><label class="full">URL<input name="url" type="url" placeholder="https://www.facebook.com/groups/..." required></label><p id="source-url-hint" class="full hint">Paste a Facebook group link. Job Radar names it from the page or link.</p><button class="primary" type="submit">Add source</button></form></details>
         <div class="panel"><div class="section-head"><div><h3>Configured sources</h3><p>Search, filter, and sort without digging through scan diagnostics.</p></div></div>
           <div class="source-controls">
             <input id="source-query" type="search" placeholder="Search name or URL" aria-label="Search configured sources">
             <select id="source-kind" aria-label="Filter source type"><option value="">All types</option><option value="linkedin">LinkedIn</option><option value="facebook">Facebook</option><option value="career">Career</option></select>
-            <select id="source-status" aria-label="Filter scan status"><option value="">All scan states</option><option value="attention">Needs attention</option><option value="healthy">Healthy</option><option value="queued">Queued</option><option value="scanning">Scanning</option><option value="unscanned">Never scanned</option><option value="auto_off">Automatic off</option></select>
+            <select id="source-status" aria-label="Filter discovery coverage"><option value="">All coverage states</option><option value="attention">Needs attention</option><option value="limited">Limited or uncertain</option><option value="healthy">Looks normal</option><option value="unknown">Not checked yet</option><option value="auto_off">Not watching</option></select>
             <select id="source-enabled" aria-label="Filter automatic scan setting"><option value="">Automatic: all</option><option value="enabled">Automatic on</option><option value="paused">Automatic off</option></select>
             <select id="source-success" aria-label="Filter last successful scan"><option value="">Last success: all</option><option value="has_success">Has succeeded</option><option value="never">Never succeeded</option></select>
             <select id="source-sort" aria-label="Sort configured sources"><option value="name">Sort: name</option><option value="last_success">Sort: last success</option><option value="jobs">Sort: new jobs</option><option value="status">Sort: status</option></select>

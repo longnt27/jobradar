@@ -48,8 +48,11 @@ def test_sources_and_employers_management_ui(tmp_path: Path) -> None:
                 assert page.locator("#source-enabled").is_visible()
                 assert page.locator("#source-success").is_visible()
                 assert page.locator("#source-sort").is_visible()
-                assert page.get_by_role("button", name="Scan never-checked sources").is_visible()
-                assert page.get_by_role("button", name="Scan sources due now").is_visible()
+                assert page.get_by_role("button", name="Check for jobs now").is_visible()
+                assert page.get_by_text("Discovery coverage", exact=True).is_visible()
+                page.get_by_text("Scan diagnostics and advanced controls", exact=True).click()
+                assert page.get_by_role("button", name="Prioritize never-checked sources").is_visible()
+                assert page.get_by_role("button", name="Check sources due by schedule").is_visible()
 
                 page.locator("#source-query").fill("__definitely_no_source__")
                 page.get_by_text("No sources match these filters.").wait_for()
