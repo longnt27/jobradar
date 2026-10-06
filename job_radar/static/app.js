@@ -2069,13 +2069,14 @@ async function showApplication(id) {
     </section>
 
     <section id="application-review-regenerate" class="application-review-section">
-      <h3>Regenerate draft</h3>
-      <label>Custom instructions for regeneration<textarea id="regenerate-prompt" rows="3" placeholder="Example: emphasize production search work and shorten the opening paragraph"></textarea></label>
-      <div class="actions"><button id="regenerate-draft" class="secondary" ${draft.provider === 'template' ? 'disabled' : ''}>Regenerate draft</button></div>
+      <h3>Regenerate only what needs work</h3>
+      <label>Section<select id="regenerate-section"><option value="summary">Professional summary</option><option value="projects">Selected projects and bullets</option>${destination.kind === 'email' ? '<option value="message">Application email</option>' : ''}<option value="all">Full draft</option></select></label>
+      <label>Custom instructions<textarea id="regenerate-prompt" rows="3" placeholder="Example: make the summary shorter and emphasize production search work"></textarea></label>
+      <div class="actions"><button id="regenerate-draft" class="secondary" ${draft.provider === 'template' ? 'disabled' : ''}>Regenerate selected section</button></div>
       ${draft.provider === 'template' ? '<p class="hint">This draft used the basic template. Create a new draft with an AI provider to regenerate it with instructions.</p>' : ''}
     </section>
 
-    <details class="application-debug"><summary>Technical details</summary><p class="hint">Package fingerprint: <span class="mono">${escapeHtml(draft.package_hash.slice(0, 16))}</span></p></details>
+    <details class="application-debug"><summary>Activity and technical details</summary><p class="hint">Telegram review delivery: ${escapeHtml(draft.telegram_status || 'Not configured')}${draft.telegram_error ? ` · ${escapeHtml(draft.telegram_error)}` : ''}</p><p class="hint">Package fingerprint: <span class="mono">${escapeHtml(draft.package_hash.slice(0, 16))}</span></p></details>
 
     <div class="application-sticky-actions">
       <div><span id="application-dirty-state" class="status-badge status-badge--neutral">Saved</span><span id="application-outcome" class="hint" role="status" aria-live="polite"></span></div>
@@ -2124,9 +2125,11 @@ async function showApplication(id) {
     const button = $('#regenerate-draft');
     beginPending(button, 'Regenerating…');
     try {
-      await api(`/api/applications/${id}/regenerate`, {method:'POST', body:JSON.stringify({prompt})});
+      const section = $('#regenerate-section').value;
+      const result = await api(`/api/applications/${id}/regenerate`, {method:'POST', body:JSON.stringify({prompt, section})});
+      applicationReviewChanges[id] = result.changes || [];
       await loadApplications(id);
-      notice('New draft prepared for review.');
+      notice(section === 'all' ? 'New draft prepared for review.' : 'Selected section regenerated. Untouched content was preserved.');
     } catch(error) {
       notice(error.message, true);
     } finally {
@@ -2161,8 +2164,6 @@ async function showApplication(id) {
   });
 
   $('#send-draft').addEventListener('click', async (event) => {
-    const approved = await confirmApplicationSend(draft);
-    if (!approved) return;
     const button = beginPending(event.currentTarget, 'Sending…');
     try {
       const result = await api(`/api/applications/${id}/approve`, {method:'POST', body:JSON.stringify({package_hash:draft.package_hash})});
