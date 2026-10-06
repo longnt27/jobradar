@@ -341,7 +341,12 @@ class AutoApplyManager:
         ) or {"requested_by": "automation", "requested_provider": None, "prepare_anyway": 0}
         manual = attempt["requested_by"] == "manual"
         preflight = preparation_preflight(self.db, job_id)
-        if preflight["requires_confirmation"] and not bool(attempt["prepare_anyway"]):
+        unverified_opt_in = (
+            bool(attempt["prepare_anyway"])
+            if manual
+            else not self.config()["require_verified_destination"]
+        )
+        if preflight["requires_confirmation"] and not unverified_opt_in:
             self.db.execute(
                 "UPDATE auto_application_attempts SET status='needs_confirmation',detail=?,preflight_action=?,updated_at=? "
                 "WHERE vacancy_id=?",
