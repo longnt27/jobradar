@@ -649,14 +649,14 @@ function currentJobFilters() {
   const filters = {inbox: jobsInboxMode};
   for (const [key, selector] of Object.entries(JOB_FILTERS)) {
     const value = $(selector)?.value?.trim();
-    if (value && !(key === 'sort' && value === 'best')) filters[key] = value;
+    if (value && !(key === 'sort' && value === 'best') && !(key === 'fit' && value === 'eligible')) filters[key] = value;
   }
   return filters;
 }
 
 function applyJobFilterSnapshot(filters = {}) {
   for (const [key, selector] of Object.entries(JOB_FILTERS)) {
-    $(selector).value = filters[key] || (key === 'sort' ? 'best' : '');
+    $(selector).value = filters[key] || (key === 'sort' ? 'best' : key === 'fit' ? 'eligible' : '');
   }
   setJobsInboxMode(filters.inbox || 'all');
 }
@@ -668,7 +668,7 @@ function readJobsHashState() {
   const params = new URLSearchParams(search);
   for (const [key, selector] of Object.entries(JOB_FILTERS)) {
     const node = $(selector);
-    if (node) node.value = params.get(key) || (key === 'sort' ? 'best' : '');
+    if (node) node.value = params.get(key) || (key === 'sort' ? 'best' : key === 'fit' ? 'eligible' : '');
   }
   setJobsInboxMode(params.get('inbox') || 'since_last_visit');
   jobsPage = Math.max(1, Number(params.get('page') || 1));
@@ -680,7 +680,7 @@ function jobsHash() {
   const params = new URLSearchParams();
   for (const [key, selector] of Object.entries(JOB_FILTERS)) {
     const value = $(selector)?.value?.trim();
-    if (value && !(key === 'sort' && value === 'best')) params.set(key, value);
+    if (value && !(key === 'sort' && value === 'best') && !(key === 'fit' && value === 'eligible')) params.set(key, value);
   }
   if (jobsInboxMode !== 'since_last_visit') params.set('inbox', jobsInboxMode);
   if (jobsPage > 1) params.set('page', String(jobsPage));
