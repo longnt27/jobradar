@@ -600,3 +600,10 @@ button.danger,.text-button.danger{color:#a4382d;border-color:#e7c2bd}
   .source-coverage-grid{grid-template-columns:1fr}
   .job-sighting{align-items:flex-start;flex-direction:column}
 }
+
+/* Product Stack 04: capability readiness and point-of-use privacy */
+.processing-disclosure{margin:8px 0 12px;padding:10px 12px;border:1px solid #dce8e1;border-radius:9px;background:#f7faf8;color:#405f53;font-size:12px;line-height:1.45}
+.project-provider-choice{display:grid;gap:6px;margin-top:14px;max-width:520px}
+.project-provider-choice select{width:100%}
+#home-steps .step-row.is-done .step-check{font-weight:800}
+@media(max-width:700px){.processing-disclosure{padding:9px 10px}}
