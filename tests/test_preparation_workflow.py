@@ -63,7 +63,7 @@ def test_manual_prepare_preflights_then_returns_before_background_drafting_finis
 
     with TestClient(app) as client:
         assert client.get("/api/auto-apply").json()["enabled"] is False
-        source_id = app.state.db.one("SELECT id FROM sources LIMIT 1")["id"]
+        source_id = app.state.db.one("SELECT id FROM sources WHERE kind='career' LIMIT 1")["id"]
         job_id, _ = ingest(
             app.state.db,
             source_id,
