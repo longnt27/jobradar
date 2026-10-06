@@ -16,7 +16,23 @@ from job_radar.notifications import save_telegram
 
 def _draft(pdf: Path) -> dict:
     return {"id": "a" * 32, "package_hash": "b" * 64, "job_title": "AI Engineer", "job_score": 80,
-            "company": "Example", "resume_path": str(pdf), "job_description": "Build reliable search services.",
+            "company": "Example", "resume_path": str(pdf),
+            "job_description": "Build reliable search services. " + ("Full job description filler. " * 80),
+            "job_apply_url": "https://example.org/jobs/ai-engineer", "job_location": "Hanoi",
+            "job_work_mode": "Hybrid",
+            "job_score_detail": {
+                "facts": {"required_skills": ["Python", "Search"], "years_required": 2,
+                          "location": "Hanoi", "work_mode": "Hybrid"},
+                "criteria": {
+                    "role": {"score": 9, "reason": "Direct role fit"},
+                    "experience": {"score": 6, "reason": "One year below the stated preference"},
+                },
+            },
+            "review_context": {
+                "selected_evidence": [{"title": "Search Platform", "reason": "Matches Python, search"}],
+                "risky_claims": [{"text": "Improved search latency by 30%"}],
+                "relevant_alternatives": [],
+            },
             "resume_data": {"name": "Alex Example", "email": "alex@example.org", "phone": "123",
                 "summary": "Python engineer", "experience": [{"company": "Prior Co", "role": "ML Engineer",
                     "dates": "2023–2025", "bullets": ["Built search"]}],
@@ -30,13 +46,21 @@ def _draft(pdf: Path) -> dict:
             "warnings": ["Review claims"]}
 
 
-def test_review_details_include_every_application_section(tmp_path: Path) -> None:
+def test_review_details_are_human_first_and_omit_machine_only_detail(tmp_path: Path) -> None:
     draft = _draft(tmp_path / "resume.pdf")
     text = format_review_details(draft, ["Check the form"])
-    for expected in ("AI Engineer", "80/100", "jobs@example.org", "Build reliable search services.",
-                     "Application for AI Engineer", "Dear team", "Why join?", "To build useful products",
-                     "Review claims", "Check the form"):
+    for expected in (
+        "AI Engineer", "80/100", "jobs@example.org", "https://example.org/jobs/ai-engineer",
+        "Skills: Python, Search", "Experience: 2 years",
+        "Main gap to check: One year below the stated preference",
+        "Search Platform", "Improved search latency by 30%",
+        "Application for AI Engineer", "Dear team", "Why join?", "To build useful products",
+        "Review claims", "Check the form",
+    ):
         assert expected in text
+    assert "Version:" not in text
+    assert draft["package_hash"][:12] not in text
+    assert "Full job description filler." not in text
 
 
 def _resume_pdf(path: Path) -> None:
@@ -74,17 +98,55 @@ def test_review_packet_sends_summary_before_pdf_with_actions(tmp_path: Path) -> 
     assert "Match: 80/100" in payload["text"]
     assert "Action: Email -> jobs@example.org" in payload["text"]
     assert "Ready to send" in payload["text"]
+    assert "Version:" not in payload["text"]
+    assert ("b" * 12) not in payload["text"]
+    assert "Review focus:" in payload["text"]
     buttons = payload["reply_markup"]["inline_keyboard"]
     assert [button["text"] for row in buttons for button in row] == ["Approve & send", "Edit", "Regenerate"]
     assert buttons[1][0]["callback_data"] == f"review:edit:{'a' * 32}:{'b' * 12}"
     assert all(len(button["callback_data"].encode()) <= 64 for row in buttons for button in row if "callback_data" in button)
     document = seen[document_index]
-    assert b"Full review packet" in document.content
+    assert b"Review packet" in document.content
+    assert b"version" not in document.content.lower()
     assert b"reply_parameters" in document.content
     review = PdfReader(str(build_review_pdf(settings, _draft(pdf), [])))
     full_text = "\n".join(page.extract_text() for page in review.pages)
-    for expected in ("Build reliable search services", "Dear team", "Why join?", "Alex Example - English CV"):
+    for expected in ("QUICK REVIEW", "Python", "Search Platform", "Dear team", "Why join?", "Alex Example - English CV"):
         assert expected in full_text
+    assert "Full job description filler." not in full_text
+    assert ("b" * 12) not in full_text
+
+
+
+def test_updated_review_uses_human_indicator_but_keeps_hash_only_in_callbacks(tmp_path: Path) -> None:
+    settings = Settings(tmp_path)
+    save_telegram(settings, {"token": "test-token", "chat_id": "123"})
+    pdf = tmp_path / "resume.pdf"
+    _resume_pdf(pdf)
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.path.endswith("/getChat"):
+            return httpx.Response(200, json={"ok": True, "result": {"id": 123, "type": "private"}})
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": len(seen)}})
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            await send_review_packet(settings, _draft(pdf), [], client=client, updated=True)
+
+    asyncio.run(run())
+    summary = next(request for request in seen if request.url.path.endswith("/sendMessage"))
+    payload = json.loads(summary.content)
+    assert payload["text"].startswith("Updated review · AI Engineer at Example")
+    assert ("b" * 12) not in payload["text"]
+    callback_data = [
+        button["callback_data"]
+        for row in payload["reply_markup"]["inline_keyboard"]
+        for button in row
+        if "callback_data" in button
+    ]
+    assert any(("b" * 12) in value for value in callback_data)
 
 
 def test_review_packet_refuses_group_chat_before_sending_resume(tmp_path: Path) -> None:
@@ -162,7 +224,7 @@ def test_review_notification_tracks_delivered_version(tmp_path: Path, monkeypatc
     draft = prepare_draft(db, app.state.settings, job_id, "template")
     db.execute("INSERT INTO auto_application_attempts(vacancy_id,status,draft_id,created_at,updated_at) VALUES(?,'awaiting_review',?,?,?)",
                (job_id, draft["id"], now(), now()))
-    monkeypatch.setattr("job_radar.auto_apply.send_review_packet", lambda *_args: asyncio.sleep(0, result=42))
+    monkeypatch.setattr("job_radar.auto_apply.send_review_packet", lambda *_args, **_kwargs: asyncio.sleep(0, result=42))
     asyncio.run(app.state.auto_apply_manager.notify_review(draft["id"]))
     attempt = db.one("SELECT review_hash,telegram_status,telegram_message_id FROM auto_application_attempts WHERE vacancy_id=?", (job_id,))
     assert attempt == {"review_hash": draft["package_hash"], "telegram_status": "sent", "telegram_message_id": 42}
@@ -190,7 +252,7 @@ def test_telegram_reply_edits_or_regenerates_draft(tmp_path: Path, monkeypatch, 
         return ModelDraft(summary="Python engineer", email_subject="AI Engineer application",
                           email_body=f"Dear team. {custom_prompt or 'Initial'}")
     monkeypatch.setattr("job_radar.drafting._run_provider", fake_provider)
-    monkeypatch.setattr("job_radar.auto_apply.send_review_packet", lambda *_args: asyncio.sleep(0, result=88))
+    monkeypatch.setattr("job_radar.auto_apply.send_review_packet", lambda *_args, **_kwargs: asyncio.sleep(0, result=88))
     draft = prepare_draft(db, app.state.settings, job_id, "codex")
     db.execute("INSERT INTO auto_application_attempts(vacancy_id,status,draft_id,review_hash,created_at,updated_at) VALUES(?,'awaiting_review',?,?,?,?)",
                (job_id, draft["id"], draft["package_hash"], now(), now()))
