@@ -371,13 +371,13 @@ class AutoApplyManager:
                 self.db.execute("UPDATE auto_application_attempts SET telegram_status='failed',telegram_error=? WHERE draft_id=? AND review_hash=?",
                                 (f"Telegram delivery failed ({type(error).__name__})", draft_id, draft["package_hash"]))
 
-    async def regenerate(self, draft_id: str, prompt: str) -> dict:
+    async def regenerate(self, draft_id: str, prompt: str, section: str = "all") -> dict:
         attempt = self.db.one("SELECT vacancy_id,status FROM auto_application_attempts WHERE draft_id=?", (draft_id,))
         if not attempt or attempt["status"] in ("sent", "sending", "submission_uncertain", "skipped", "preparing", "regenerating"):
             raise ValueError("This application cannot be regenerated")
         self._set_status(attempt["vacancy_id"], "regenerating", "Generating a new draft from your instructions.", draft_id)
         try:
-            draft = await asyncio.to_thread(regenerate_draft, self.db, self.settings, draft_id, prompt)
+            draft = await asyncio.to_thread(regenerate_draft, self.db, self.settings, draft_id, prompt, section)
             if draft["destination"].get("kind") == "web":
                 try:
                     async with self.browser_lock:
