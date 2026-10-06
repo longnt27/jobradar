@@ -58,15 +58,16 @@ def test_home_ui_separates_required_optional_and_operational_work() -> None:
     js = (STATIC / "app.js").read_text()
     css = (STATIC / "app.css").read_text()
 
-    assert "Capabilities" in html
+    assert "Capabilities and optional setup" in html
     assert "Optional capabilities" in js
-    assert "Needs your attention" in html
+    assert "What deserves attention" in html
+    assert "Daily loop" in html
     assert "View activity" in html
 
     assert "Strong matches" in js
-    assert "New in 24h" in js
-    assert "Drafts to review" in js
-    assert "Analysis failures" in js
+    assert "Unseen jobs" in js
+    assert "Applications to review" in js
+    assert "Applied to track" in js
 
     assert "Job discovery" in js
     assert "Application preparation" in js
