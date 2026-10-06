@@ -12,7 +12,7 @@ import httpx
 from pydantic import BaseModel, Field
 
 from .db import Database
-from .search_intent import normalize_search_intent, salary_floor, seniority_key
+from .search_intent import extract_required_years, location_matches_preference, normalize_search_intent, salary_floor, seniority_key
 
 
 OLLAMA_URL = "http://127.0.0.1:11434"
@@ -135,7 +135,6 @@ def freshness_criterion(job: dict) -> dict[str, Any]:
     return {"score": score, "reason": f"Job posted {age} day{'s' if age != 1 else ''} ago."}
 
 
-YEARS_REQUIRED = re.compile(r"(?<!\d)(\d{1,2})\s*(?:\+|[-–]\s*\d{1,2})?\s*(?:years?|yrs?|yoe|năm)\b", re.I)
 MONTH_NAMES = {name: number for number, names in enumerate((
     ("jan", "january"), ("feb", "february"), ("mar", "march"), ("apr", "april"),
     ("may",), ("jun", "june"), ("jul", "july"), ("aug", "august"),
@@ -150,16 +149,7 @@ DATE_TOKEN = re.compile(
 
 
 def extract_years_required(text: str) -> int | None:
-    unrelated = re.compile(r"^\s*(?:ago\b|old\b|in\s+business\b|of\s+(?:history|operation|innovation|service)\b|anniversary\b|"
-                           r"(?:hình\s+thành|thành\s+lập|hoạt\s+động|phát\s+triển|đồng\s+hành|kinh\s+doanh)\b)", re.I)
-    years = [int(match.group(1)) for match in YEARS_REQUIRED.finditer(text)
-             if not unrelated.search(text[match.end():match.end() + 50])]
-    words = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
-             "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
-    years.extend(words[match.group(1).casefold()] for match in re.finditer(
-        r"\b(" + "|".join(words) + r")\s+(?:years?|yrs?)\b", text, re.I)
-                 if not unrelated.search(text[match.end():match.end() + 50]))
-    return max(years) if years else None
+    return extract_required_years(text)
 
 
 def _month_index(token: str, *, end: bool, current: datetime) -> int | None:
@@ -344,9 +334,7 @@ def finalize_match(job: dict, facts: dict, profile: dict,
 
     preferred_locations = [item.casefold() for item in prefs["preferred_locations"]]
     preferred_modes = [item.casefold().replace("-", "").replace(" ", "") for item in prefs["work_modes"]]
-    location_match = bool(location and any(item in location.casefold() or location.casefold() in item for item in preferred_locations))
-    if location and any(item in {"hanoi", "ha noi", "hà nội"} for item in preferred_locations) and HANOI_LOCATION.search(location):
-        location_match = True
+    location_match = location_matches_preference(location, prefs["preferred_locations"])
     normalized_mode = mode.casefold().replace("-", "").replace(" ", "")
     mode_match = bool(normalized_mode and any(item in normalized_mode or normalized_mode in item for item in preferred_modes))
     if remote and any(item in {"remote", "wfh", "workfromhome"} for item in preferred_modes):
@@ -386,13 +374,18 @@ def finalize_match(job: dict, facts: dict, profile: dict,
             graded["experience"]["reason"] += " Seniority is outside your preferred levels."
 
     exclusions = []
+    maximum_years = prefs.get("max_required_experience_years")
+    if years is not None and maximum_years is not None and years > maximum_years:
+        exclusions.append(
+            f"Experience requirement asks for {years} years; your search includes jobs requiring up to {maximum_years} years."
+        )
     company = str(job.get("company") or "").strip()
     if hard.get("role_family") and selected_families and not role_matches_preference:
         exclusions.append("Role family is outside your explicit search limits.")
     if hard.get("seniority") and selected_levels and level and level not in selected_levels:
         exclusions.append("Seniority is outside your explicit search limits.")
-    if hard.get("location") and preferred_locations and location and not location_match:
-        exclusions.append("Location is outside your explicit search limits.")
+    if hard.get("location") and preferred_locations and trusted_location and not remote and not location_match:
+        exclusions.append("Location is outside your search area.")
     if hard.get("work_mode") and preferred_modes and (mode or remote) and not mode_match:
         exclusions.append("Work mode is outside your explicit search limits.")
     if hard.get("employer") and prefs["excluded_employers"] and any(
