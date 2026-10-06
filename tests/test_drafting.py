@@ -8,7 +8,7 @@ from job_radar.settings import Settings
 from job_radar.web import create_app
 from job_radar.drafting import (ApplicationMessage, EnglishTranslations, ModelDraft, ProjectBullets,
                                  TranslationItem, _ensure_english_resume, _job_language,
-                                 _message_in_job_language, _run_provider, _template)
+                                 _message_in_job_language, _run_provider, _template, prepare_draft)
 from job_radar.ingest import ObservedJob, ingest
 
 
@@ -23,9 +23,7 @@ def test_draft_uses_approved_evidence_and_renders_resume(tmp_path: Path) -> None
     client.post("/api/evidence", json={"kind": "project", "title": "Search pipeline", "claim": "Built a Python search pipeline.", "approved": True})
     client.post("/api/evidence", json={"kind": "project", "title": "Secret project", "claim": "Built secret models.", "approved": False})
     job = client.post("/api/jobs/import", json={"company": "Example AI", "title": "ML Engineer", "description": "Build Python machine learning search systems.", "apply_url": "https://example.org/apply"}).json()
-    response = client.post(f"/api/jobs/{job['id']}/prepare", json={"provider": "template"})
-    assert response.status_code == 200, response.text
-    draft = response.json()
+    draft = prepare_draft(client.app.state.db, client.app.state.settings, job["id"], "template")
     assert draft["provider_mode"] == "local template; no model inference"
     assert len(draft["resume_data"]["projects"]) == 1
     assert len(draft["resume_data"]["experience"]) == 1
@@ -84,9 +82,7 @@ def test_job_specific_project_bullets_are_used_in_resume(tmp_path: Path, monkeyp
         selected_evidence_ids=[project["id"]], project_bullets=[ProjectBullets(evidence_id=project["id"], bullets=["Built a Python document index for search."])],
         summary="Python search engineer", email_subject="Search Engineer application", email_body="I built a Python index."
     ))
-    response = client.post(f"/api/jobs/{job['id']}/prepare", json={"provider": "codex"})
-    assert response.status_code == 200, response.text
-    draft = response.json()
+    draft = prepare_draft(client.app.state.db, client.app.state.settings, job["id"], "codex")
     assert draft["resume_data"]["projects"][0]["bullets"] == ["Built a Python document index for search."]
     assert "Built a Python document index for search." in PdfReader(Path(draft["resume_path"])).pages[0].extract_text()
 
@@ -100,7 +96,7 @@ def test_career_email_destination_prepares_email_application(tmp_path: Path) -> 
     db = client.app.state.db
     source = db.one("SELECT id FROM sources WHERE kind='career' LIMIT 1")["id"]
     identifier, _ = ingest(db, source, ObservedJob("https://example.org/jobs/42", "AI Engineer", "Example", "Build AI systems with Python.", apply_url="mailto:careers@example.org"))
-    draft = client.post(f"/api/jobs/{identifier}/prepare", json={"provider": "template"}).json()
+    draft = prepare_draft(client.app.state.db, client.app.state.settings, identifier, "template")
     assert draft["destination"]["kind"] == "email"
     assert draft["destination"]["action_type"] == "email"
     assert draft["destination"]["email"] == "careers@example.org"
