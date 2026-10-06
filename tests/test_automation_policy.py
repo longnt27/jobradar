@@ -90,6 +90,21 @@ def test_automation_policy_combines_freshness_destination_and_location(tmp_path:
     assert any("verified application destination" in reason for reason in destination["reasons"])
 
 
+def test_search_excluded_employer_is_never_automation_eligible(tmp_path: Path) -> None:
+    app = create_app(Settings(tmp_path))
+    app.state.db.set_setting("search_intent", {
+        "excluded_employers": ["Blocked Corp"],
+        "hard_constraints": {"employer": False},
+        "strong_match_threshold": 80,
+    })
+    job_id = _scored_job(app, "Blocked Employer Engineer", company="Blocked Corp AI")
+    policy = normalize_automation_policy({"enabled": True}, threshold=80)
+
+    result = automation_eligibility(app.state.db, job_id, policy=policy)
+    assert result["eligible"] is False
+    assert any("excluded list" in reason for reason in result["reasons"])
+
+
 def test_applied_and_recruiting_outcome_jobs_are_never_automation_eligible(tmp_path: Path) -> None:
     app = create_app(Settings(tmp_path))
     base = normalize_automation_policy({"enabled": True}, threshold=80)
