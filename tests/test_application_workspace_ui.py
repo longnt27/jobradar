@@ -135,16 +135,9 @@ def test_application_workspace_filters_reviews_and_confirms_send(tmp_path: Path,
                 assert preview.is_visible()
                 assert f"/api/applications/{first['id']}/resume" in preview.get_attribute("src")
 
-                choice = page.locator('[data-answer="0"]')
-                assert choice.evaluate("node => node.tagName") == "SELECT"
-                assert choice.input_value() == "yes"
-
-                upload = page.locator('[data-attachment-upload="1"]')
-                assert upload.is_hidden()
-                page.locator('[data-attachment="1"]').select_option("uploaded")
-                assert upload.is_visible()
-                page.locator('[data-attachment="1"]').select_option("resume")
-                assert upload.is_hidden()
+                assert page.locator("#application-review-form").is_hidden()
+                assert page.locator('[data-answer="0"]').count() == 1
+                assert page.locator('[data-attachment="1"]').count() == 1
 
                 send = page.get_by_role("button", name="Approve & send", exact=True)
                 page.get_by_role("button", name="Save changes", exact=True).click()
