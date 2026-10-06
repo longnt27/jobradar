@@ -346,11 +346,75 @@ def prepare_draft(db: Database, settings: Settings, vacancy_id: str, provider: s
     return get_draft(db, identifier)
 
 
-def regenerate_draft(db: Database, settings: Settings, draft_id: str, prompt: str) -> dict:
+def _section_snapshot(draft: dict) -> dict:
+    return {
+        "summary": draft["resume_data"].get("summary", ""),
+        "projects": draft["resume_data"].get("projects", []),
+        "message": draft["message_data"],
+        "form": draft["form_data"],
+    }
+
+
+def _section_diff(before: dict, after: dict) -> list[dict]:
+    changes = []
+    for key in ("summary", "projects", "message", "form"):
+        if before.get(key) != after.get(key):
+            changes.append({"section": key, "before": before.get(key), "after": after.get(key)})
+    return changes
+
+
+def regenerate_draft(db: Database, settings: Settings, draft_id: str, prompt: str, section: str = "all") -> dict:
     if not prompt.strip() or len(prompt) > 2000:
         raise ValueError("Enter custom instructions under 2000 characters")
+    if section not in {"all", "summary", "projects", "message"}:
+        raise ValueError("Choose summary, projects, message, or the full draft")
     previous = get_draft(db, draft_id)
-    return prepare_draft(db, settings, previous["vacancy_id"], previous["provider"], draft_id, prompt.strip())
+    before = _section_snapshot(previous)
+    if section == "all":
+        revised = prepare_draft(db, settings, previous["vacancy_id"], previous["provider"], draft_id, prompt.strip())
+    else:
+        candidate = prepare_draft(db, settings, previous["vacancy_id"], previous["provider"], None, prompt.strip())
+        updates = {}
+        if section == "summary":
+            resume = {**previous["resume_data"], "summary": candidate["resume_data"].get("summary", "")}
+            updates["resume_data"] = resume
+        elif section == "projects":
+            resume = {**previous["resume_data"], "projects": candidate["resume_data"].get("projects", []),
+                      "evidence": candidate["resume_data"].get("evidence", [])}
+            updates["resume_data"] = resume
+        elif section == "message":
+            updates["message_data"] = candidate["message_data"]
+        revised = update_draft(db, settings, draft_id, updates)
+    revised["changes"] = _section_diff(before, _section_snapshot(revised))
+    revised["regenerated_section"] = section
+    return revised
+
+
+def _review_context(db: Database, row: dict) -> dict:
+    job_terms = _tokens(f"{row.get('job_title', '')} {row.get('job_description', '')}")
+    selected_ids = set(row.get("evidence_ids", []))
+    cards = db.all("SELECT id,title,claim,details FROM evidence WHERE approved=1 AND kind='project' ORDER BY created_at DESC")
+    selected, alternatives = [], []
+    for card in cards:
+        details = json.loads(card.get("details") or "{}")
+        overlap = sorted(job_terms & _tokens(f"{card['title']} {card['claim']} {details}"))
+        entry = {
+            "id": card["id"], "title": card["title"], "claim": card["claim"],
+            "matched_terms": overlap[:8],
+            "reason": ("Matches " + ", ".join(overlap[:5])) if overlap else "Selected from approved evidence",
+            "source_claims": [card["claim"], *(details.get("bullets") or [])],
+        }
+        (selected if card["id"] in selected_ids else alternatives).append(entry)
+    alternatives.sort(key=lambda item: len(item["matched_terms"]), reverse=True)
+    risky = []
+    resume = row.get("resume_data", {})
+    for project in resume.get("projects", []):
+        source = next((item for item in selected if item["id"] == project.get("id")), None)
+        for bullet in project.get("bullets", []):
+            if re.search(r"\b\d+(?:\.\d+)?%|\b\d{2,}\b|led|owned|increased|reduced|improved|built|designed|deployed", bullet, re.I):
+                risky.append({"text": bullet, "evidence_id": project.get("id"),
+                              "source": source["source_claims"] if source else []})
+    return {"selected_evidence": selected, "relevant_alternatives": alternatives[:3], "risky_claims": risky}
 
 
 def get_draft(db: Database, identifier: str) -> dict:
@@ -360,6 +424,7 @@ def get_draft(db: Database, identifier: str) -> dict:
     for key in ("evidence_ids", "resume_data", "message_data", "form_data", "destination", "warnings"):
         row[key] = json.loads(row[key])
     row["package_hash"] = package_hash(row)
+    row["review_context"] = _review_context(db, row)
     return row
 
 
