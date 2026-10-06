@@ -36,16 +36,36 @@
 
       <section id="home" class="tab active">
         <div class="hero" id="home-hero">
-          <div><p class="eyebrow">YOUR WORKSPACE</p><h2 id="home-title">Find the next good opportunity.</h2><p id="home-description">Your jobs, resume, and applications in one place.</p></div>
-          <button id="home-primary" class="primary" data-tab="jobs">Browse jobs →</button>
+          <div><p class="eyebrow">TODAY</p><h2 id="home-title">Work the next best thing.</h2><p id="home-description">Triage what is new, prepare the jobs you want, review applications, then track outcomes.</p></div>
+          <button id="home-primary" class="primary" type="button">Start with new jobs →</button>
         </div>
-        <div id="metrics" class="metrics"></div>
-        <p id="source-summary" class="hint source-summary"></p>
+
+        <div id="metrics" class="metrics home-metrics" aria-label="Daily job search counts"></div>
+
+        <section class="panel home-loop-panel" aria-labelledby="home-loop-title">
+          <div class="section-head"><div><h3 id="home-loop-title">Daily loop</h3><p class="hint">Each step opens the exact filtered workflow behind the count.</p></div></div>
+          <div id="home-loop" class="home-loop"></div>
+        </section>
+
         <div class="two-col home-grid">
-          <div class="panel"><div class="section-head"><div><h3>Capabilities</h3><p class="hint">Discovery works on its own. Application features unlock separately when you need them.</p></div><span id="home-setup-status" class="status-badge status-badge--neutral"></span></div><div id="home-steps" class="stack"></div><div id="home-optional" class="home-optional"></div></div>
-          <div class="panel"><div class="section-head"><div><h3>Needs your attention</h3><p id="home-action-count" class="hint"></p></div></div><div id="home-actions" class="home-actions" aria-live="polite"></div></div>
+          <section class="panel home-priority-panel" aria-labelledby="home-priority-title">
+            <div class="section-head"><div><h3 id="home-priority-title">What deserves attention</h3><p id="home-action-count" class="hint"></p></div><button id="home-show-all-priorities" class="text-button" type="button">Open workflow →</button></div>
+            <div id="home-actions" class="home-actions" aria-live="polite"></div>
+          </section>
+          <section class="panel home-health-panel" aria-labelledby="home-health-title">
+            <div class="section-head"><div><h3 id="home-health-title">Radar confidence</h3><p id="source-summary" class="hint"></p></div><span id="home-health-status" class="status-badge status-badge--neutral"></span></div>
+            <p id="home-health-message" class="hint"></p>
+            <button id="home-health-action" class="text-button" type="button">Review radar health →</button>
+          </section>
         </div>
-        <div class="panel home-activity-panel"><div class="section-head"><div><h3>Activity</h3><p id="home-queue-count" class="hint"></p></div><button class="text-button" data-tab="queue" type="button">View activity →</button></div><div id="home-queue" class="home-queue" aria-live="polite"></div></div>
+
+        <details class="panel home-capabilities-panel">
+          <summary>Capabilities and optional setup</summary>
+          <div class="section-head"><div><p class="hint">Discovery works on its own. Application features unlock separately when you need them.</p></div><span id="home-setup-status" class="status-badge status-badge--neutral"></span></div>
+          <div id="home-steps" class="stack"></div><div id="home-optional" class="home-optional"></div>
+        </details>
+
+        <div class="panel home-activity-panel"><div class="section-head"><div><h3>Background activity</h3><p id="home-queue-count" class="hint"></p></div><button class="text-button" data-tab="queue" type="button">View activity →</button></div><div id="home-queue" class="home-queue" aria-live="polite"></div></div>
       </section>
 
       <section id="queue" class="tab">

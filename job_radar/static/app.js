@@ -320,23 +320,96 @@ async function loadSetup() {
   return data;
 }
 
+async function openHomeRoute(route) {
+  if (!route?.tab) return;
+  const params = new URLSearchParams(route.params || {});
+  if (route.tab === 'jobs') {
+    const suffix = params.toString();
+    const hash = `#jobs${suffix ? `?${suffix}` : ''}`;
+    history.pushState({tab:'jobs'}, '', hash);
+    await showTab(`jobs${suffix ? `?${suffix}` : ''}`, 'replace');
+    return;
+  }
+  if (route.tab === 'applications') {
+    const view = params.get('view') || 'drafts';
+    const draft = params.get('draft');
+    await showTab(draft ? `applications/${draft}` : 'applications');
+    setApplicationWorkspaceView(view);
+    if (draft) await loadApplications(draft);
+    else if (view === 'history') await loadSubmissionHistory();
+    return;
+  }
+  await showTab(route.tab);
+}
+
+function homePriorityLabel(kind) {
+  return ({
+    submission_uncertain:'Check submission',
+    application_review:'Review application',
+    application_confirmation:'Confirm method',
+    shortlisted_to_prepare:'Prepare shortlisted job',
+    strong_unseen_job:'Strong new match',
+    unseen_job:'New job',
+    track_application:'Track outcome',
+  })[kind] || String(kind || '').replaceAll('_', ' ');
+}
+
+function homePriorityToneClass(tone) {
+  return ({
+    danger:'status-badge--danger',
+    warning:'status-badge--warning',
+    success:'status-badge--success',
+    info:'status-badge--info',
+  })[tone] || 'status-badge--neutral';
+}
+
 async function loadHome() {
-  const [data, profile, setup, discovery] = await Promise.all([api('/api/status'), api('/api/profile'), api('/api/setup'), api('/api/discovery/coverage')]);
+  const [data, profile, setup, discovery] = await Promise.all([
+    api('/api/status'), api('/api/profile'), api('/api/setup'), api('/api/discovery/coverage')
+  ]);
   renderSocialAuth(setup.browser);
-  const c = data.counts;
-  $('#metrics').innerHTML = [
-    [`Strong matches (${data.strong_match_threshold}+)`, c.high_fit_new], ['New in 24h', c.recent_jobs],
-    ['Drafts to review', c.drafts_needing_review], ['Analysis failures', c.analysis_failures],
-  ].map(([label, value]) => `<div class="metric"><strong>${value}</strong><span>${label}</span></div>`).join('');
-
-  const discoveryNeedsAttention = ['degraded','limited','unknown'].includes(discovery.level);
-  $('#source-summary').innerHTML = `${escapeHtml(discovery.label)} · ${discovery.counts.linkedin} LinkedIn, ${discovery.counts.facebook} Facebook, ${discovery.counts.career} company sites.${discovery.gaps.length ? ` ${escapeHtml(discovery.gaps.join(' · '))}.` : ''} ${discoveryNeedsAttention ? '<button type="button" class="text-button" id="home-review-sources">Review coverage →</button>' : ''}`;
-  $('#home-review-sources')?.addEventListener('click', () => showTab('sources'));
-
+  const home = data.home || {};
+  const counts = home.counts || {};
   const capabilities = setup.capabilities || {};
   const discoveryCapability = capabilities.discovery || {ready:false,status:'not_configured',detail:'Add a job source.'};
   const preparationCapability = capabilities.application_preparation || {ready:false,missing:[]};
   const automaticCapability = capabilities.automatic_drafts || {ready:false,missing:[]};
+  const complete = Boolean(discoveryCapability.ready);
+
+  const metrics = [
+    {label:'Unseen jobs', value:counts.unseen_jobs || 0, route:{tab:'jobs',params:{inbox:'unseen'}}},
+    {label:`Strong matches (${data.strong_match_threshold}+)`, value:counts.strong_matches || 0, route:home.routes?.strong_matches},
+    {label:'Applications to review', value:(counts.drafts_to_review || 0) + (counts.submission_uncertain || 0), route:home.routes?.applications},
+    {label:'Applied to track', value:counts.tracking || 0, route:{tab:'jobs',params:{application:'applied',outcome:'none',inbox:'all'}}},
+  ];
+  $('#metrics').innerHTML = metrics.map((item, index) =>
+    `<button type="button" class="metric home-metric" data-home-metric="${index}"><strong>${item.value}</strong><span>${escapeHtml(item.label)}</span><small>Open →</small></button>`
+  ).join('');
+  $('#metrics').querySelectorAll('[data-home-metric]').forEach((button) => button.addEventListener('click', () =>
+    openHomeRoute(metrics[Number(button.dataset.homeMetric)].route).catch((error) => notice(error.message, true))
+  ));
+
+  $('#home-loop').innerHTML = (home.stages || []).map((stage, index) =>
+    `<button type="button" class="home-loop-step ${stage.count ? 'has-work' : ''}" data-home-stage="${index}">
+      <span class="home-loop-index">${index + 1}</span>
+      <span class="home-loop-copy"><strong>${escapeHtml(stage.label)}</strong><small>${escapeHtml(stage.detail)}</small></span>
+      <span class="home-loop-count">${stage.count}</span>
+      <span class="step-arrow">→</span>
+    </button>`
+  ).join('');
+  $('#home-loop').querySelectorAll('[data-home-stage]').forEach((button) => button.addEventListener('click', () =>
+    openHomeRoute(home.stages[Number(button.dataset.homeStage)].route).catch((error) => notice(error.message, true))
+  ));
+
+  const health = home.health || {};
+  const discoveryNeedsAttention = ['degraded','limited','unknown'].includes(discovery.level);
+  $('#source-summary').textContent = `${discovery.label} · ${discovery.counts.linkedin} LinkedIn, ${discovery.counts.facebook} Facebook, ${discovery.counts.career} company sites.`;
+  $('#home-health-message').textContent = health.message || '';
+  $('#home-health-status').textContent = health.degraded ? 'Needs attention' : 'Healthy';
+  $('#home-health-status').className = `status-badge ${health.degraded ? 'status-badge--warning' : 'status-badge--success'}`;
+  $('#home-health-action').hidden = !health.degraded;
+  $('#home-health-action').onclick = () => openHomeRoute(health.route).catch((error) => notice(error.message, true));
+
   const required = [
     {label:'Job discovery', detail:discoveryCapability.detail || discovery.label, done:Boolean(discoveryCapability.ready), attention:discoveryCapability.status === 'attention', tab:'sources'},
   ];
@@ -347,39 +420,51 @@ async function loadHome() {
     {label:'Telegram reviews', done:setup.telegram_configured, detail:setup.telegram_configured ? 'Connected' : 'Optional · not configured', tab:'settings', panel:'telegram-panel'},
     {label:'Email sending', done:setup.smtp_test?.status === 'accepted', detail:setup.smtp_test?.status === 'accepted' ? 'Connected and tested' : setup.smtp_configured ? 'Optional · configured, test pending' : 'Optional · not configured', tab:'settings', panel:'smtp-panel'},
   ];
-  const complete = Boolean(discoveryCapability.ready);
-
   $('#home-setup-status').textContent = complete ? (discoveryCapability.status === 'attention' ? 'Discovery ready · check coverage' : 'Discovery ready') : 'Add a job source';
   $('#home-setup-status').className = complete ? (discoveryCapability.status === 'attention' ? 'status-badge status-badge--warning' : 'status-badge status-badge--success') : 'status-badge status-badge--warning';
-  $('#home-title').textContent = complete ? 'What needs your attention?' : 'Start with job discovery.';
-  $('#home-description').textContent = complete ? 'Discovery is ready. Application preparation, Telegram, and sending are optional capabilities you can add when useful.' : 'Add at least one job source. You do not need a resume, personal details, or an application provider to start finding jobs.';
-  $('#home-hero').classList.toggle('is-compact', complete);
-  $('#home-primary').textContent = complete ? (c.drafts_needing_review ? 'Review drafts →' : 'Review jobs →') : 'Add a job source →';
-  $('#home-primary').dataset.tab = complete ? (c.drafts_needing_review ? 'applications' : 'jobs') : 'sources';
-  $('#home-primary').dataset.socialAuth = 'false';
-  $('#home-primary').dataset.setupPanel = '';
-
   $('#home-steps').innerHTML = required.map((step) =>
     `<button class="step-row ${step.done ? 'is-done' : ''}" data-home-step="${step.tab}"><span class="step-check ${step.done ? 'done' : ''}">${step.done ? (step.attention ? '!' : '✓') : '○'}</span><span><strong>${escapeHtml(step.label)}</strong><small>${escapeHtml(step.detail)}</small></span><span class="step-arrow">→</span></button>`
   ).join('');
   $('#home-optional').innerHTML = `<h4>Optional capabilities</h4>${optional.map((step) =>
     `<button class="home-optional-row" data-home-step="${step.tab}" data-setup-panel="${step.panel || ''}"><span><strong>${escapeHtml(step.label)}</strong><small>${escapeHtml(step.detail)}</small></span><span class="status-badge ${step.done ? 'status-badge--success' : 'status-badge--neutral'}">${step.done ? 'Ready' : 'Optional'}</span></button>`
   ).join('')}`;
-  document.querySelectorAll('[data-home-step]').forEach((button) => button.addEventListener('click', () => button.dataset.socialAuth === 'true' ? openSocialSignIn() : button.dataset.setupPanel ? openSetupPanel(button.dataset.setupPanel) : showTab(button.dataset.homeStep)));
+  document.querySelectorAll('[data-home-step]').forEach((button) => button.addEventListener('click', () =>
+    button.dataset.setupPanel ? openSetupPanel(button.dataset.setupPanel) : showTab(button.dataset.homeStep)
+  ));
 
-  const actions = [
-    ...(data.attention?.drafts || []).map((item) => ({kind:'draft', id:item.id, title:item.title, company:item.company, meta:item.status === 'needs_review' ? 'Needs changes' : 'Ready for review'})),
-    ...(data.attention?.jobs || []).map((item) => ({kind:'job', id:item.id, title:item.title, company:item.company, meta:`${fitClassLabel(item.fit_class)} · ${item.score}/100`})),
-    ...(data.attention?.failures || []).map((item) => ({kind:'job', id:item.id, title:item.title, company:item.company, meta:'Match review failed'})),
-  ].slice(0, 8);
-  $('#home-action-count').textContent = actions.length ? `${actions.length} item${actions.length === 1 ? '' : 's'} worth opening` : 'Nothing urgent right now';
-  $('#home-actions').innerHTML = actions.length ? actions.map((item) =>
-    `<button class="home-action-row" data-home-action="${item.kind}" data-home-id="${item.id}"><span><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.company)} · ${escapeHtml(item.meta)}</small></span><span class="step-arrow">→</span></button>`
-  ).join('') : '<p class="queue-empty">No drafts, strong new matches, or failed analyses need attention.</p>';
-  $('#home-actions').querySelectorAll('[data-home-action]').forEach((button) => button.addEventListener('click', async () => {
-    if (button.dataset.homeAction === 'draft') { await showTab('applications'); await showApplication(button.dataset.homeId); }
-    else { await showTab('jobs'); await showJob(button.dataset.homeId); }
-  }));
+  const priorities = home.priority_items || [];
+  $('#home-action-count').textContent = home.headline || '';
+  if (priorities.length) {
+    $('#home-actions').innerHTML = priorities.map((item, index) =>
+      `<button class="home-action-row" data-home-priority="${index}">
+        <span><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.subtitle)}</small></span>
+        <span class="status-badge ${homePriorityToneClass(item.tone)}">${escapeHtml(homePriorityLabel(item.kind))}</span>
+        <span class="step-arrow">→</span>
+      </button>`
+    ).join('');
+  } else if (home.state === 'radar_degraded') {
+    $('#home-actions').innerHTML = '<div class="home-empty-warning"><strong>No user action is queued.</strong><p>That does not mean the search is clear: discovery or match review is degraded. Check radar confidence before trusting an empty inbox.</p></div>';
+  } else {
+    $('#home-actions').innerHTML = '<div class="home-empty-clear"><strong>You’re caught up.</strong><p>No new jobs need triage and no applications need review right now.</p></div>';
+  }
+  $('#home-actions').querySelectorAll('[data-home-priority]').forEach((button) => button.addEventListener('click', () =>
+    openHomeRoute(priorities[Number(button.dataset.homePriority)].route).catch((error) => notice(error.message, true))
+  ));
+
+  const firstRoute = priorities[0]?.route || (health.degraded ? health.route : {tab:'jobs',params:{inbox:'unseen'}});
+  $('#home-show-all-priorities').hidden = !priorities.length;
+  $('#home-show-all-priorities').onclick = () => openHomeRoute(firstRoute).catch((error) => notice(error.message, true));
+
+  $('#home-title').textContent = !complete ? 'Start with job discovery.' : home.headline || 'Work the next best thing.';
+  $('#home-description').textContent = !complete
+    ? 'Add at least one job source. Discovery is useful on its own; application features stay optional.'
+    : home.state === 'radar_degraded'
+      ? 'You are caught up on user actions, but discovery or match review needs attention before the radar can be trusted.'
+      : 'Triage what is new, prepare the jobs you want, review applications, then track outcomes.';
+  $('#home-hero').classList.toggle('is-compact', complete);
+  $('#home-primary').textContent = !complete ? 'Add a job source →' : priorities.length ? 'Open top priority →' : health.degraded ? 'Review radar health →' : 'Check unseen jobs →';
+  $('#home-primary').onclick = () => openHomeRoute(!complete ? {tab:'sources'} : firstRoute).catch((error) => notice(error.message, true));
+
   await loadHomeQueue();
 }
 
