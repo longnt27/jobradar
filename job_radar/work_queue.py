@@ -40,15 +40,17 @@ def work_queue(db: Database, scans: ScanManager, matching: MatchManager,
 
     draft_config = drafts.config()
     draft_active = db.all(
-        "SELECT a.vacancy_id AS id,a.draft_id,v.title,v.company,v.score,a.status AS stage,a.updated_at "
-        "FROM auto_application_attempts a JOIN vacancies v ON v.id=a.vacancy_id "
+        "SELECT a.vacancy_id AS id,a.draft_id,v.title,v.company,v.score,a.status AS stage,"
+        "a.requested_by,a.updated_at FROM auto_application_attempts a JOIN vacancies v ON v.id=a.vacancy_id "
         "WHERE a.status IN ('preparing','regenerating') ORDER BY a.updated_at")
     explicit_ready = db.all(
-        "SELECT a.vacancy_id AS id,a.draft_id,v.title,v.company,v.score,a.created_at,'queued' AS stage "
-        "FROM auto_application_attempts a JOIN vacancies v ON v.id=a.vacancy_id "
-        "WHERE a.status='queued' AND v.analysis_status='done' ORDER BY a.created_at")
+        "SELECT a.vacancy_id AS id,a.draft_id,v.title,v.company,v.score,a.created_at,'queued' AS stage,"
+        "a.requested_by FROM auto_application_attempts a JOIN vacancies v ON v.id=a.vacancy_id "
+        "WHERE a.status='queued' AND (a.requested_by='manual' OR v.analysis_status='done') ORDER BY "
+        "CASE WHEN a.requested_by='manual' THEN 0 ELSE 1 END,a.created_at")
     implicit_ready = db.all(
-        "SELECT v.id,NULL AS draft_id,v.title,v.company,v.score,v.first_seen_at AS created_at,'queued' AS stage "
+        "SELECT v.id,NULL AS draft_id,v.title,v.company,v.score,v.first_seen_at AS created_at,"
+        "'queued' AS stage,'automation' AS requested_by "
         "FROM vacancies v WHERE v.analysis_status='done' AND v.score>=? AND v.decision_state IN ('undecided','shortlisted') AND v.snoozed_until IS NULL "
         "AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm') "
         "AND NOT EXISTS(SELECT 1 FROM auto_application_attempts a WHERE a.vacancy_id=v.id) "
@@ -58,13 +60,18 @@ def work_queue(db: Database, scans: ScanManager, matching: MatchManager,
         row["position"] = position
     review_ready = db.one(
         "SELECT COUNT(*) AS count FROM auto_application_attempts "
-        "WHERE status IN ('awaiting_review','needs_review')")["count"]
+        "WHERE status IN ('awaiting_review','needs_review') AND draft_id IS NOT NULL")["count"]
+    needs_confirmation = db.all(
+        "SELECT a.vacancy_id AS id,v.title,v.company,a.detail,a.requested_by,a.updated_at "
+        "FROM auto_application_attempts a JOIN vacancies v ON v.id=a.vacancy_id "
+        "WHERE a.status='needs_confirmation' ORDER BY a.updated_at DESC")
 
     return {
         "scans": {"active": scan_active, "waiting": scan_waiting},
         "analysis": {"active": analysis_active, "waiting": analysis_waiting, "failed": analysis_failed,
                      "model": db.get_setting("matching_model", ""), "service_error": matching.service_error},
         "drafts": {"active": draft_active, "waiting": draft_waiting,
+                   "attention": needs_confirmation,
                    "enabled": draft_config["enabled"], "threshold": draft_config["threshold"],
                    "review_ready": review_ready},
     }
