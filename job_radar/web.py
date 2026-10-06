@@ -147,12 +147,12 @@ class MatchingModelInput(BaseModel):
 class AutoApplyInput(BaseModel):
     enabled: bool = False
     threshold: int | None = Field(default=None, ge=0, le=100)
-    include_shortlisted: bool = False
-    max_job_age_days: int = Field(default=3, ge=1, le=30)
-    require_verified_destination: bool = True
-    require_preferred_location: bool = False
-    max_auto_drafts_per_day: int = Field(default=5, ge=1, le=50)
-    max_review_notifications_per_day: int = Field(default=5, ge=1, le=50)
+    include_shortlisted: bool | None = None
+    max_job_age_days: int | None = Field(default=None, ge=1, le=30)
+    require_verified_destination: bool | None = None
+    require_preferred_location: bool | None = None
+    max_auto_drafts_per_day: int | None = Field(default=None, ge=1, le=50)
+    max_review_notifications_per_day: int | None = Field(default=None, ge=1, le=50)
 
 
 class SearchIntentInput(BaseModel):
@@ -203,12 +203,12 @@ class SmtpInput(BaseModel):
 class TelegramInput(BaseModel):
     token: str = ""
     chat_id: str = Field(min_length=1)
-    application_reviews: bool = True
-    strong_job_alerts: bool = False
-    daily_digest: bool = False
-    digest_time: str = "18:00"
-    quiet_start: str = ""
-    quiet_end: str = ""
+    application_reviews: bool | None = None
+    strong_job_alerts: bool | None = None
+    daily_digest: bool | None = None
+    digest_time: str | None = None
+    quiet_start: str | None = None
+    quiet_end: str | None = None
 
 
 class TelegramLookupInput(BaseModel):
@@ -467,17 +467,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         token = payload.token.strip() or previous.get("token", "")
         if not token:
             raise HTTPException(422, "Enter a bot token to configure Telegram notifications")
+        previous_modes = previous.get("modes", {})
         config = {
             "token": token,
             "chat_id": payload.chat_id,
             "modes": {
-                "application_reviews": payload.application_reviews,
-                "strong_job_alerts": payload.strong_job_alerts,
-                "daily_digest": payload.daily_digest,
+                "application_reviews": (
+                    previous_modes.get("application_reviews", True)
+                    if payload.application_reviews is None else payload.application_reviews
+                ),
+                "strong_job_alerts": (
+                    previous_modes.get("strong_job_alerts", False)
+                    if payload.strong_job_alerts is None else payload.strong_job_alerts
+                ),
+                "daily_digest": (
+                    previous_modes.get("daily_digest", False)
+                    if payload.daily_digest is None else payload.daily_digest
+                ),
             },
-            "digest_time": payload.digest_time,
-            "quiet_start": payload.quiet_start,
-            "quiet_end": payload.quiet_end,
+            "digest_time": (
+                previous.get("digest_time", "18:00")
+                if payload.digest_time is None else payload.digest_time
+            ),
+            "quiet_start": (
+                previous.get("quiet_start", "")
+                if payload.quiet_start is None else payload.quiet_start
+            ),
+            "quiet_end": (
+                previous.get("quiet_end", "")
+                if payload.quiet_end is None else payload.quiet_end
+            ),
         }
         try:
             save_telegram(settings, config)
@@ -489,13 +508,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         review_mode_changed = (
             bool(previous.get("modes", {}).get("application_reviews", True))
-            != payload.application_reviews
+            != bool(config["modes"]["application_reviews"])
         )
         if destination_changed:
             db.set_setting("telegram_review_offset", 0)
             db.set_setting("telegram_digest_last_date", "")
         if destination_changed or review_mode_changed:
-            review_status = "pending" if payload.application_reviews else "disabled"
+            review_status = "pending" if config["modes"]["application_reviews"] else "disabled"
             db.execute(
                 "UPDATE auto_application_attempts SET telegram_status=?,telegram_error=NULL,"
                 "telegram_message_id=CASE WHEN ? THEN NULL ELSE telegram_message_id END "
@@ -1330,17 +1349,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 raise HTTPException(409, "Add your name and email in My profile first")
             if not profile.get("experience") and not db.one("SELECT id FROM evidence WHERE approved=1 AND kind='project' LIMIT 1"):
                 raise HTTPException(409, "Add work history or approve a GitHub project first")
+        policy = {
+            key: value
+            for key, value in payload.model_dump().items()
+            if key not in {"enabled", "threshold"} and value is not None
+        }
         return auto_apply_manager.configure(
             payload.enabled,
             payload.threshold,
-            {
-                "include_shortlisted": payload.include_shortlisted,
-                "max_job_age_days": payload.max_job_age_days,
-                "require_verified_destination": payload.require_verified_destination,
-                "require_preferred_location": payload.require_preferred_location,
-                "max_auto_drafts_per_day": payload.max_auto_drafts_per_day,
-                "max_review_notifications_per_day": payload.max_review_notifications_per_day,
-            },
+            policy,
         )
 
     @app.post("/api/auto-apply/queue-existing")
