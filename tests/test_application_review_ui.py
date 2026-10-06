@@ -46,7 +46,7 @@ def test_application_tab_reviews_regenerates_and_deep_links_to_draft(tmp_path: P
                 page.get_by_role("heading", name="Engineer").wait_for(timeout=5000)
                 assert page.get_by_role("button", name="Approve & send").is_visible()
                 assert page.get_by_label("Custom instructions").is_visible()
-                page.get_by_label("Custom instructions for regeneration").fill("Emphasize production search")
+                page.get_by_label("Custom instructions").fill("Emphasize production search")
                 page.get_by_label("Section").select_option("message")
                 page.get_by_role("button", name="Regenerate selected section").click()
                 page.get_by_text("Dear team. Emphasize production search").wait_for()
