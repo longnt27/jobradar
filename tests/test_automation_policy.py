@@ -90,6 +90,72 @@ def test_automation_policy_combines_freshness_destination_and_location(tmp_path:
     assert any("verified application destination" in reason for reason in destination["reasons"])
 
 
+def test_applied_and_recruiting_outcome_jobs_are_never_automation_eligible(tmp_path: Path) -> None:
+    app = create_app(Settings(tmp_path))
+    base = normalize_automation_policy({"enabled": True}, threshold=80)
+
+    applied = _scored_job(app, "Already Applied")
+    app.state.db.execute(
+        "UPDATE vacancies SET manual_applied_at=?,manual_applied_source='user_external' WHERE id=?",
+        (now(), applied),
+    )
+    applied_result = automation_eligibility(app.state.db, applied, policy=base)
+    assert applied_result["eligible"] is False
+    assert any("applied elsewhere" in reason for reason in applied_result["reasons"])
+
+    interviewing = _scored_job(app, "Already Interviewing")
+    app.state.db.execute(
+        "UPDATE vacancies SET recruiting_outcome='interview' WHERE id=?",
+        (interviewing,),
+    )
+    outcome_result = automation_eligibility(app.state.db, interviewing, policy=base)
+    assert outcome_result["eligible"] is False
+    assert any("recruiting outcome" in reason for reason in outcome_result["reasons"])
+
+
+def test_unverified_destination_can_be_explicitly_opted_into_for_draft_only(tmp_path: Path) -> None:
+    app = create_app(Settings(tmp_path))
+    app.state.db.execute("UPDATE sources SET enabled=0")
+    _ready_automation(app)
+
+    with TestClient(app):
+        app.state.auto_apply_manager.configure(
+            True,
+            80,
+            {"require_verified_destination": False},
+        )
+        job_id = _scored_job(app, "Unverified But Draftable", apply_url=None)
+        app.state.auto_apply_manager.wake()
+        attempt = _wait_for_attempt(app, job_id, {"needs_review"})
+        assert attempt["requested_by"] == "automation"
+        assert attempt["draft_id"]
+        draft = app.state.db.one(
+            "SELECT destination FROM application_drafts WHERE id=?",
+            (attempt["draft_id"],),
+        )
+        assert '"kind": "manual"' in draft["destination"]
+
+
+def test_latest_feedback_reason_wins_when_updates_share_the_same_second(tmp_path: Path) -> None:
+    app = create_app(Settings(tmp_path))
+    client = TestClient(app)
+    for index in range(3):
+        job_id = _scored_job(app, f"Fast Ignore {index}", company="Rapid Corp")
+        assert client.post(
+            f"/api/jobs/{job_id}/decision",
+            json={"decision": "ignored"},
+        ).status_code == 200
+        assert client.post(
+            f"/api/jobs/{job_id}/decision",
+            json={"decision": "ignored", "reason": "Company"},
+        ).status_code == 200
+
+    items = client.get("/api/preferences/suggestions").json()["items"]
+    assert len(items) == 1
+    assert items[0]["kind"] == "exclude_employer"
+    assert items[0]["value"] == "Rapid Corp"
+
+
 def test_daily_draft_limit_counts_only_automatic_work(tmp_path: Path) -> None:
     app = create_app(Settings(tmp_path))
     db = app.state.db
