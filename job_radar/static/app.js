@@ -811,8 +811,9 @@ async function showJob(id, pin = false) {
     document.querySelector(`[data-job-card="${id}"]`)?.classList.remove('is-unseen');
     document.querySelector(`[data-job="${id}"] .job-unread-dot`)?.remove();
   }
-  const profile = await api('/api/profile');
+  const [profile, setup] = await Promise.all([api('/api/profile'), api('/api/setup')]);
   const provider = profile.drafting_provider || '';
+  const preparation = setup.capabilities?.application_preparation || {ready:false,missing:[]};
   const sourcePriority = {career:0, linkedin:1, facebook:2};
   const sightings = [...job.observations].sort((a,b) => (sourcePriority[a.kind] ?? 9) - (sourcePriority[b.kind] ?? 9) || a.first_seen_at.localeCompare(b.first_seen_at));
   const preferredSighting = sightings[0];
@@ -853,7 +854,7 @@ async function showJob(id, pin = false) {
     ? `<button type="button" class="primary" data-open-draft="${job.latest_draft_id}">Open prepared application</button>`
     : ['applied','applied_external','attention'].includes(job.application_progress)
       ? ''
-      : `<button data-prepare="${id}" class="primary" ${provider ? '' : 'disabled'}>Prepare application</button>`;
+      : `<button data-prepare="${id}" class="primary" ${preparation.ready ? '' : 'disabled'}>Prepare application</button>`;
 
   $('#job-detail').setAttribute('tabindex', '-1');
   $('#job-detail').innerHTML = `<div class="job-detail-head"><div><h2>${escapeHtml(job.title)}</h2><div class="item-meta">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div>
@@ -886,7 +887,8 @@ async function showJob(id, pin = false) {
 
     <section class="job-prepare-section review-section">
       <div class="section-head"><div><h3>Application preparation</h3><p class="hint">${job.application_progress === 'not_started' ? 'Prepare only after the fit and risks above make sense to you.' : escapeHtml(applicationNote)}</p></div></div>
-      <p class="hint">Drafting provider: ${escapeHtml(provider || 'Choose one in Settings first')} · <button class="text-button" data-tab="settings">Change provider</button></p>
+      <p class="hint">Drafting provider: ${escapeHtml(provider || 'Not configured')} · <button class="text-button" data-tab="settings">Change provider</button></p>
+      <p class="processing-disclosure">${escapeHtml(provider ? processingCopy(setup, provider, 'The job posting, your profile details, and approved project evidence') : `Application preparation is optional. To enable it, add ${(preparation.missing || []).join(', ') || 'the application prerequisites'}.`)}</p>
       <div class="actions">${prepareAction}</div>
     </section>
 
