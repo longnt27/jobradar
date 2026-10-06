@@ -126,7 +126,14 @@ async function api(path, options = {}) {
   const raw = await response.text();
   let body;
   try { body = raw ? JSON.parse(raw) : null; } catch { body = raw; }
-  if (!response.ok) throw new Error(typeof body?.detail === 'string' ? body.detail : `${response.status} ${response.statusText}`);
+  if (!response.ok) {
+    const detail = body?.detail;
+    const message = typeof detail === 'string' ? detail : detail?.message || `${response.status} ${response.statusText}`;
+    const error = new Error(message);
+    error.detail = detail;
+    error.status = response.status;
+    throw error;
+  }
   return body;
 }
 
@@ -373,10 +380,13 @@ async function loadHomeQueue() {
   ];
   const running = lanes.flatMap(([kind, label, lane]) => lane.active.map((item) => ({kind, label, item, status:'Running'})));
   const waiting = lanes.flatMap(([kind, label, lane]) => lane.waiting.map((item) => ({kind, label, item, status:'Waiting'})));
-  const attention = queue.analysis.failed.map((item) => ({kind:'analysis', label:'Match', item, status:'Needs attention'}));
+  const attention = [
+    ...queue.analysis.failed.map((item) => ({kind:'analysis', label:'Match', item, status:'Needs attention'})),
+    ...(queue.drafts.attention || []).map((item) => ({kind:'draft', label:'Draft', item, status:'Confirm application method'})),
+  ];
   const preview = [...running, ...attention, ...waiting].slice(0, 6);
   const total = running.length + waiting.length;
-  $('#home-queue-count').textContent = `${total} in queue${queue.analysis.failed.length ? ` · ${queue.analysis.failed.length} need attention` : ''}`;
+  $('#home-queue-count').textContent = `${total} in queue${attention.length ? ` · ${attention.length} need attention` : ''}`;
   $('#home-queue').innerHTML = preview.length ? preview.map(({kind, label, item, status}) =>
     `<button type="button" class="home-queue-row" data-home-queue-kind="${kind}" data-home-queue-id="${item.id}" ${item.draft_id ? `data-home-queue-draft="${item.draft_id}"` : ''}><span class="home-queue-kind">${label}</span><span class="home-queue-title">${escapeHtml(kind === 'scan' ? item.name : item.title)}</span><small>${status}</small></button>`
   ).join('') : '<p class="queue-empty">Nothing running or waiting.</p>';
@@ -444,7 +454,8 @@ function queueFingerprint(data) {
   return JSON.stringify({
     scans:[...lane(data.scans.active, 'active'), ...lane(data.scans.waiting, 'waiting')],
     analysis:[...lane(data.analysis.active, 'active'), ...lane(data.analysis.waiting, 'waiting'), ...lane(data.analysis.failed, 'failed')],
-    drafts:[...lane(data.drafts.active, 'active'), ...lane(data.drafts.waiting, 'waiting')],
+    drafts:[...lane(data.drafts.active, 'active'), ...lane(data.drafts.waiting, 'waiting'),
+      ...lane(data.drafts.attention || [], 'attention')],
     reviewReady:data.drafts.review_ready,
   });
 }
@@ -475,7 +486,7 @@ async function loadQueue(options = {}) {
   const total = [scans, analysis, drafts].reduce((sum, lane) => sum + lane.active.length + lane.waiting.length, 0);
   $('#queue-summary').innerHTML = `<div><strong>${total}</strong><span>work items in progress or waiting</span></div><div><strong>${scans.active.length + scans.waiting.length}</strong><span>scans</span></div><div><strong>${analysis.active.length + analysis.waiting.length}</strong><span>match reviews</span></div><div><strong>${drafts.active.length + drafts.waiting.length}</strong><span>drafts</span></div>`;
   for (const [id, lane] of [['scan', scans], ['analysis', analysis], ['draft', drafts]]) {
-    const blocked = id === 'analysis' ? analysis.failed.length : 0;
+    const blocked = id === 'analysis' ? analysis.failed.length : id === 'draft' ? (drafts.attention || []).length : 0;
     $(`#queue-${id}-count`).textContent = `${lane.active.length} running · ${lane.waiting.length} waiting${blocked ? ` · ${blocked} needs attention` : ''}`;
   }
   $('#queue-scan-active').innerHTML = scans.active.length
@@ -496,7 +507,11 @@ async function loadQueue(options = {}) {
   $('#queue-draft-active').innerHTML = drafts.active.length
     ? `<div class="queue-now-head">Preparing now</div>${drafts.active.map((item) => queueRow(item, 'draft', item.stage === 'regenerating' ? 'Regenerating' : 'Preparing draft', null, true)).join('')}`
     : '<p class="queue-empty">No draft being prepared.</p>';
-  queueWaiting($('#queue-draft-waiting'), drafts.waiting, 'draft', () => drafts.enabled ? 'Ready to draft' : 'Automation off');
+  queueWaiting($('#queue-draft-waiting'), drafts.waiting, 'draft', (item) =>
+    item.requested_by === 'manual' ? 'Requested by you' : drafts.enabled ? 'Automatic draft' : 'Automation off');
+  $('#queue-draft-attention').innerHTML = (drafts.attention || []).length
+    ? `<div class="queue-waiting-head queue-failed-head">Needs confirmation <span>${drafts.attention.length}</span></div><div class="queue-scroll">${drafts.attention.map((item) => queueRow(item, 'draft', 'Confirm application method', '!')).join('')}</div>`
+    : '';
   $('#queue-draft-review').innerHTML = drafts.review_ready ? `<button type="button" class="text-button" id="queue-open-reviews">${drafts.review_ready} draft${drafts.review_ready === 1 ? '' : 's'} ready for review →</button>` : '';
   $('#queue-open-reviews')?.addEventListener('click', () => showTab('applications'));
   document.querySelectorAll('#queue [data-queue-kind]').forEach((button) => button.addEventListener('click', async () => {
@@ -1571,6 +1586,8 @@ function applicationReviewLabel(draft) {
     sending:'Sending',
     regenerating:'Regenerating',
     queued:'Queued',
+    preparing:'Preparing',
+    needs_confirmation:'Application method needs confirmation',
     failed:'Needs attention',
     draft:'Draft',
   })[key] || String(key || 'Draft').replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -1579,8 +1596,8 @@ function applicationReviewLabel(draft) {
 function applicationReviewTone(draft) {
   const key = applicationReviewKey(draft);
   if (key === 'sent') return 'success';
-  if (key === 'awaiting_review' || key === 'sending') return 'info';
-  if (['needs_review','queued','regenerating','submission_uncertain'].includes(key)) return 'warning';
+  if (key === 'awaiting_review' || key === 'sending' || key === 'preparing') return 'info';
+  if (['needs_review','needs_confirmation','queued','regenerating','submission_uncertain'].includes(key)) return 'warning';
   if (key === 'failed') return 'danger';
   return 'neutral';
 }
@@ -1808,7 +1825,10 @@ async function loadAutoApply() {
   ).join('')}` : '<p class="hint">No preparation activity yet.</p>';
   activity.querySelectorAll('[data-auto-draft]').forEach((button) => button.addEventListener('click', () => loadApplications(button.dataset.autoDraft).catch((error) => notice(error.message, true))));
   activity.querySelectorAll('[data-auto-job]').forEach((button) => button.addEventListener('click', async () => { await showTab('jobs'); await showJob(button.dataset.autoJob); }));
-  if (data.enabled && $('#applications').classList.contains('active')) window.autoApplyPoll = setTimeout(() => loadAutoApply().catch((error) => notice(error.message, true)), 5000);
+  const preparationRunning = data.recent.some((item) => ['queued','preparing','needs_confirmation'].includes(item.status));
+  if ((data.enabled || preparationRunning) && $('#applications').classList.contains('active')) {
+    window.autoApplyPoll = setTimeout(() => loadAutoApply().catch((error) => notice(error.message, true)), 5000);
+  }
 }
 
 $('#auto-apply-form').addEventListener('submit', async (event) => {
