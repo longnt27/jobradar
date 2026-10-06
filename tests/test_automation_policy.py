@@ -258,8 +258,8 @@ def test_daily_automatic_draft_cap_is_enforced_but_manual_prepare_bypasses_it(tm
             80,
             {"max_auto_drafts_per_day": 1},
         )
-        first = _scored_job(app, "First Automatic")
-        second = _scored_job(app, "Second Automatic")
+        first = _scored_job(app, "First Automatic", score=95)
+        second = _scored_job(app, "Second Automatic", score=90)
         app.state.auto_apply_manager.wake()
 
         first_attempt = _wait_for_attempt(app, first, {"awaiting_review", "needs_review"})
