@@ -285,7 +285,10 @@ async function loadSetup() {
   const smtpTest = data.smtp_test || {};
   setStepStatus('#setup-smtp-status', !data.smtp_configured ? 'Optional' : smtpTest.status === 'accepted' ? 'Test email accepted' : smtpTest.status === 'failed' ? 'Test failed' : 'Configured',
     !data.smtp_configured ? 'muted' : smtpTest.status === 'failed' ? 'warning' : '');
-  setStepStatus('#setup-telegram-status', data.telegram_configured ? 'Configured' : 'Optional', data.telegram_configured ? '' : 'muted');
+  const telegramNotifications = data.telegram_notifications || {};
+  const telegramModes = telegramNotifications.modes || {};
+  const activeTelegramModes = ['application_reviews','strong_job_alerts','daily_digest'].filter((key) => telegramModes[key]).length;
+  setStepStatus('#setup-telegram-status', data.telegram_configured ? `Configured · ${activeTelegramModes} mode${activeTelegramModes === 1 ? '' : 's'}` : 'Optional', data.telegram_configured ? '' : 'muted');
   setStepStatus('#matching-status', data.matching.model ? `Configured · ${data.matching.model}` : 'Choose a model', data.matching.model ? '' : 'warning');
   renderSocialAuth(data.browser);
   $('#setup-browser-detail').textContent = data.browser.error || (data.browser.state === 'opening' ? 'Opening Chrome…' : data.browser.state === 'open' ? `Waiting for ${data.browser.active_site === 'linkedin' ? 'LinkedIn' : 'Facebook'} sign-in in Chrome. The window closes automatically when the account page loads.` : data.browser.state === 'reauth_required' ? `${socialSiteNames(data.browser)} needs a new sign-in. Other sources keep scanning.` : data.browser.last_saved_at ? `Saved session last updated ${when(data.browser.last_saved_at)}. Upcoming scans will verify site access.` : 'Choose a site to begin. Google sign-in opens in regular Chrome.');
@@ -304,6 +307,12 @@ async function loadSetup() {
   const alertForm = $('#setup-telegram-form');
   if (!alertForm.dataset.initialized) {
     alertForm.elements.chat_id.value = data.telegram_chat_id || '';
+    alertForm.elements.application_reviews.checked = telegramModes.application_reviews !== false;
+    alertForm.elements.strong_job_alerts.checked = Boolean(telegramModes.strong_job_alerts);
+    alertForm.elements.daily_digest.checked = Boolean(telegramModes.daily_digest);
+    alertForm.elements.digest_time.value = telegramNotifications.digest_time || '18:00';
+    alertForm.elements.quiet_start.value = telegramNotifications.quiet_start || '';
+    alertForm.elements.quiet_end.value = telegramNotifications.quiet_end || '';
     alertForm.dataset.initialized = 'true';
   }
   if ((['opening', 'open'].includes(data.browser.state) || data.matching.download_state === 'downloading') && $('#settings').classList.contains('active')) window.setupPoll = setTimeout(() => loadSetup().catch((error) => notice(error.message, true)), 2000);
@@ -1299,10 +1308,48 @@ function renderSearchIntentForm(intent) {
   syncStrongThresholdUi(intent);
 }
 
+function renderPreferenceSuggestions(result) {
+  const node = $('#preference-suggestions');
+  if (!node) return;
+  const items = result?.items || [];
+  node.innerHTML = items.length ? items.map((item) => `
+    <div class="item">
+      <div class="item-title">${escapeHtml(item.title)}</div>
+      <div class="item-meta">${escapeHtml(item.description)} · based on ${escapeHtml(item.evidence_count)} decisions</div>
+      <div class="actions">
+        <button type="button" class="primary" data-preference-suggestion="${escapeHtml(item.id)}" data-preference-action="apply">${escapeHtml(item.action_label)}</button>
+        <button type="button" class="secondary" data-preference-suggestion="${escapeHtml(item.id)}" data-preference-action="dismiss">Dismiss</button>
+      </div>
+    </div>`).join('') : '<p class="hint">No repeated preference pattern yet.</p>';
+  node.querySelectorAll('[data-preference-suggestion]').forEach((button) => button.addEventListener('click', async () => {
+    const id = encodeURIComponent(button.dataset.preferenceSuggestion);
+    const action = button.dataset.preferenceAction;
+    const pendingButton = beginPending(button, action === 'apply' ? 'Applying…' : 'Dismissing…');
+    try {
+      const result = await api(`/api/preferences/suggestions/${id}/${action}`, {method:'POST'});
+      if (result.preferences) {
+        renderSearchIntentForm(result.preferences);
+        delete $('#auto-apply-form').dataset.initialized;
+        notice('Preference updated from your repeated decisions.');
+      } else {
+        notice('Suggestion dismissed.');
+      }
+      renderPreferenceSuggestions(result);
+    } catch(error) { notice(error.message, true); }
+    finally { if (pendingButton.isConnected) endPending(pendingButton); }
+  }));
+}
+
 async function loadSettings() {
-  const [profile, setup, intent] = await Promise.all([api('/api/profile'), loadSetup(), api('/api/search-intent')]);
+  const [profile, setup, intent, suggestions] = await Promise.all([
+    api('/api/profile'),
+    loadSetup(),
+    api('/api/search-intent'),
+    api('/api/preferences/suggestions'),
+  ]);
   await loadMatchingModels();
   renderSearchIntentForm(intent);
+  renderPreferenceSuggestions(suggestions);
   const availability = {codex:setup.providers.codex, codex_local:setup.providers.codex && setup.providers.ollama,
     agy:setup.providers.agy, claude:setup.providers.claude};
   const providerForm = $('#provider-form');
@@ -1847,16 +1894,26 @@ async function loadAutoApply() {
   if (!form.dataset.initialized) {
     form.elements.enabled.checked = data.enabled;
     form.elements.threshold.value = data.threshold;
+    form.elements.include_shortlisted.checked = Boolean(data.include_shortlisted);
+    form.elements.max_job_age_days.value = data.max_job_age_days;
+    form.elements.require_verified_destination.checked = data.require_verified_destination !== false;
+    form.elements.require_preferred_location.checked = Boolean(data.require_preferred_location);
+    form.elements.max_auto_drafts_per_day.value = data.max_auto_drafts_per_day;
+    form.elements.max_review_notifications_per_day.value = data.max_review_notifications_per_day;
     form.dataset.initialized = 'true';
   }
-  $('#auto-apply-status').textContent = data.enabled ? `On · ${data.threshold}+` : 'Off';
+  $('#auto-apply-status').textContent = data.enabled
+    ? `On · ${data.threshold}+ · ${data.daily_auto_drafts_used}/${data.max_auto_drafts_per_day} drafts today`
+    : 'Off';
   $('#auto-apply-status').className = statusClass(data.enabled ? 'success' : 'neutral');
   const existingButton = $('#queue-existing-drafts');
   existingButton.disabled = !data.enabled || !(data.eligible_existing || data.waiting_existing);
   $('#existing-draft-count').textContent = !data.enabled ? 'Enable and save automatic drafts first.'
-    : (data.eligible_existing || data.waiting_existing) ? `${data.eligible_existing} scored match${data.eligible_existing === 1 ? '' : 'es'} at ${data.threshold}+ · ${data.waiting_existing} still being checked · ${(data.counts.queued || 0)} queued.`
-    : data.highest_existing_score != null ? `No undrafted jobs score at least ${data.threshold}; the highest is ${data.highest_existing_score}. Change the strong-match threshold in Settings to include more jobs.`
-    : `${data.counts.queued || 0} queued · No undrafted, scored jobs are ready.`;
+    : (data.eligible_existing || data.waiting_existing)
+      ? `${data.eligible_existing} policy-eligible scored job${data.eligible_existing === 1 ? '' : 's'} · ${data.waiting_existing} still being checked · ${data.daily_auto_drafts_remaining} automatic draft slot${data.daily_auto_drafts_remaining === 1 ? '' : 's'} left today.`
+      : data.highest_existing_score != null
+        ? `No existing job currently passes the saved automation policy. Highest undrafted score: ${data.highest_existing_score}.`
+        : `${data.counts.queued || 0} queued · No undrafted jobs pass the saved automation policy.`;
   const activity = $('#auto-apply-activity');
   activity.innerHTML = data.recent.length ? `${data.recent.map((item) =>
     `<div class="item"><div class="item-title">${escapeHtml(item.title)} · ${escapeHtml(item.company)} <span class="status-badge status-badge--${applicationReviewTone({review_status:item.status})}">${escapeHtml(applicationReviewLabel(item.status))}</span></div><div class="item-meta">${item.requested_by === 'manual' ? 'Requested by you' : item.analysis_status === 'done' && item.score != null ? `${escapeHtml(item.score)}/100 automatic match` : 'Automatic match'} · ${escapeHtml(item.detail || '')}</div><div class="actions">${item.draft_id ? `<button type="button" data-auto-draft="${item.draft_id}">Open application</button>` : `<button type="button" data-auto-job="${item.vacancy_id}">Open job</button>`}</div></div>`
@@ -1874,10 +1931,22 @@ $('#auto-apply-form').addEventListener('submit', async (event) => {
   const pendingButton = beginPending(event.submitter || event.target.querySelector('button[type="submit"]'), 'Saving…');
   const form = event.target;
   try {
-    const result = await api('/api/auto-apply', {method:'PUT', body:JSON.stringify({enabled:form.elements.enabled.checked})});
+    const payload = {
+      enabled: form.elements.enabled.checked,
+      threshold: Number(form.elements.threshold.value),
+      include_shortlisted: form.elements.include_shortlisted.checked,
+      max_job_age_days: Number(form.elements.max_job_age_days.value),
+      require_verified_destination: form.elements.require_verified_destination.checked,
+      require_preferred_location: form.elements.require_preferred_location.checked,
+      max_auto_drafts_per_day: Number(form.elements.max_auto_drafts_per_day.value),
+      max_review_notifications_per_day: Number(form.elements.max_review_notifications_per_day.value),
+    };
+    const result = await api('/api/auto-apply', {method:'PUT', body:JSON.stringify(payload)});
     delete form.dataset.initialized;
     await loadAutoApply();
-    notice(result.enabled ? `Automatic drafts enabled for jobs scoring ${result.threshold} or higher. Every application waits for your approval.` : 'Automatic draft preparation paused.');
+    notice(result.enabled
+      ? `Automatic drafts enabled with the saved policy. Up to ${result.max_auto_drafts_per_day} drafts per day; every application still waits for approval.`
+      : 'Automatic draft preparation paused.');
   } catch (error) { notice(error.message, true); }
   finally { endPending(pendingButton); }
 });
@@ -1888,7 +1957,7 @@ $('#queue-existing-drafts').addEventListener('click', async (event) => {
   try {
     const result = await api('/api/auto-apply/queue-existing', {method:'POST'});
     await loadAutoApply();
-    notice(result.queued ? `${result.queued} existing job${result.queued === 1 ? '' : 's'} queued. Drafts will be prepared only for scores at or above the saved minimum, then sent to you for review.` : 'No existing jobs are ready to queue.');
+    notice(result.queued ? `${result.queued} existing job${result.queued === 1 ? '' : 's'} queued under the saved automation policy.` : 'No existing jobs currently pass the saved automation policy.');
   } catch (error) { notice(error.message, true); button.disabled = false; }
 });
 
@@ -2553,11 +2622,22 @@ $('#setup-telegram-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const pendingButton = beginPending(event.submitter || event.target.querySelector('button[type="submit"]'), 'Saving…');
   try {
-    const data = Object.fromEntries(new FormData(event.target));
+    const form = event.target;
+    const data = {
+      token: form.elements.token.value,
+      chat_id: form.elements.chat_id.value,
+      application_reviews: form.elements.application_reviews.checked,
+      strong_job_alerts: form.elements.strong_job_alerts.checked,
+      daily_digest: form.elements.daily_digest.checked,
+      digest_time: form.elements.digest_time.value || '18:00',
+      quiet_start: form.elements.quiet_start.value,
+      quiet_end: form.elements.quiet_end.value,
+    };
     await api('/api/setup/telegram', {method:'POST', body:JSON.stringify(data)});
-    event.target.elements.token.value = '';
-    $('#setup-telegram-message').textContent = 'Telegram reviews configured.';
-    await loadSetup(); notice('Telegram reviews configured');
+    form.elements.token.value = '';
+    delete form.dataset.initialized;
+    $('#setup-telegram-message').textContent = 'Telegram notification preferences saved.';
+    await loadSetup(); notice('Telegram notification preferences saved');
   } catch(error) { $('#setup-telegram-message').textContent = error.message; notice(error.message, true); }
   finally { endPending(pendingButton); }
 });
@@ -2578,8 +2658,8 @@ $('#telegram-find-chat').addEventListener('click', async () => {
 });
 
 $('#setup-telegram-remove').addEventListener('click', async () => {
-  if (!window.confirm('Remove Telegram review settings? You will need the bot token and chat configuration to reconnect it.')) return;
-  try { await api('/api/setup/telegram', {method:'DELETE'}); $('#setup-telegram-form').reset(); delete $('#setup-telegram-form').dataset.initialized; await loadSetup(); notice('Telegram reviews removed'); }
+  if (!window.confirm('Remove Telegram notification settings? You will need the bot token and chat configuration to reconnect it.')) return;
+  try { await api('/api/setup/telegram', {method:'DELETE'}); $('#setup-telegram-form').reset(); delete $('#setup-telegram-form').dataset.initialized; await loadSetup(); notice('Telegram notifications removed'); }
   catch(error) { notice(error.message, true); }
 });
 
