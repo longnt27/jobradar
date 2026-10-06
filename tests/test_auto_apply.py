@@ -33,6 +33,15 @@ def _wait_for_status(app, identifier: str, expected: str) -> dict:
     raise AssertionError(f"Automatic application did not reach {expected}: {row}")
 
 
+def _wait_for_telegram_status(app, identifier: str, expected: str) -> dict:
+    for _ in range(150):
+        row = app.state.db.one("SELECT * FROM auto_application_attempts WHERE vacancy_id=?", (identifier,))
+        if row and row["telegram_status"] == expected:
+            return row
+        time.sleep(.05)
+    raise AssertionError(f"Telegram review did not reach {expected}: {row}")
+
+
 def test_auto_apply_prepares_new_jobs_but_waits_for_approval(tmp_path: Path, monkeypatch) -> None:
     app = create_app(Settings(tmp_path))
     app.state.db.execute("UPDATE sources SET enabled=0")
@@ -128,8 +137,8 @@ def test_existing_job_waits_for_score_before_telegram_review(tmp_path: Path, mon
         assert packets == []
         db.execute("UPDATE vacancies SET score=80,analysis_status='done' WHERE id=?", (job_id,))
         app.state.auto_apply_manager.wake()
-        attempt = _wait_for_status(app, job_id, "awaiting_review")
-        assert attempt["telegram_status"] == "sent"
+        _wait_for_status(app, job_id, "awaiting_review")
+        attempt = _wait_for_telegram_status(app, job_id, "sent")
         assert len(packets) == 1
         assert packets[0]["id"] == attempt["draft_id"]
         assert packets[0]["job_score"] == 80
