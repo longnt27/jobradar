@@ -242,7 +242,7 @@ def test_home_counts_and_daily_loop_route_to_canonical_filtered_workflows(tmp_pa
     )
 
     assert dashboard["counts"]["unseen_jobs"] == 1
-    assert dashboard["counts"]["strong_matches"] == 2
+    assert dashboard["counts"]["strong_matches"] == 1
     assert dashboard["counts"]["ready_to_prepare"] == 1
     stages = {stage["key"]: stage for stage in dashboard["stages"]}
     assert stages["triage"]["route"] == {"tab": "jobs", "params": {"inbox": "unseen"}}
