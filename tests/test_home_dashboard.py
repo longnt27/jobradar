@@ -1,5 +1,11 @@
 import json
+import socket
+import time
 from pathlib import Path
+from threading import Thread
+
+import uvicorn
+from playwright.sync_api import sync_playwright
 
 from fastapi.testclient import TestClient
 
@@ -255,3 +261,39 @@ def test_home_static_contract_uses_backend_priorities_and_routed_counts() -> Non
     assert "home.state === 'radar_degraded'" in js
     assert ".home-loop-step" in css
     assert ".home-empty-warning" in css
+
+
+
+def test_home_metric_opens_the_matching_filtered_workflow(tmp_path: Path) -> None:
+    app = create_app(Settings(tmp_path))
+    app.state.db.execute("UPDATE sources SET enabled=0")
+    job_id = _seed_home_job(app, "Inbox Route Engineer", 91)
+
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
+    thread = Thread(target=server.run, daemon=True)
+    thread.start()
+    try:
+        for _ in range(100):
+            if server.started:
+                break
+            time.sleep(.05)
+        assert server.started
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            try:
+                page = browser.new_page(viewport={"width": 1280, "height": 900})
+                page.set_default_timeout(8000)
+                page.goto(f"http://127.0.0.1:{port}/#home")
+                page.locator('[data-home-metric="0"]').wait_for()
+                page.locator('[data-home-metric="0"]').click()
+                page.locator("#jobs.active").wait_for()
+                page.locator(f'[data-job="{job_id}"]').wait_for()
+                assert "inbox=unseen" in page.url
+            finally:
+                browser.close()
+    finally:
+        server.should_exit = True
+        thread.join(timeout=5)
