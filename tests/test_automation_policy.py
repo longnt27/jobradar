@@ -393,6 +393,11 @@ def test_automatic_review_packet_cap_defers_only_automatic_packets(tmp_path: Pat
         "VALUES(?,'telegram_application_review','sent',1,?,?)",
         (sent_job, timestamp, timestamp),
     )
+    db.execute(
+        "INSERT INTO notification_events(id,vacancy_id,channel,status,created_at) "
+        "VALUES(? ,?,'telegram_application_review','sent',?)",
+        (new_id(), sent_job, timestamp),
+    )
 
     packets = []
     async def fake_packet(_settings, draft, _blockers):
