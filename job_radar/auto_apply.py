@@ -394,29 +394,120 @@ class AutoApplyManager:
         self._set_status(job_id, "awaiting_review", "Review the complete application before approving.", draft["id"])
         await self.notify_review(draft["id"])
 
+    @staticmethod
+    def _same_telegram_destination(left: dict, right: dict) -> bool:
+        return (
+            left.get("token") == right.get("token")
+            and str(left.get("chat_id", "")) == str(right.get("chat_id", ""))
+        )
+
+    def _notification_sent_today(self, vacancy_id: str, channel: str) -> bool:
+        return bool(self.db.one(
+            "SELECT 1 AS sent FROM notification_attempts WHERE vacancy_id=? AND channel=? "
+            "AND status='sent' AND datetime(sent_at)>=datetime('now','start of day')",
+            (vacancy_id, channel),
+        ))
+
+    def _record_notification(
+        self,
+        vacancy_id: str,
+        channel: str,
+        *,
+        status: str,
+        error: str | None = None,
+        sent: bool = False,
+    ) -> None:
+        timestamp = now()
+        self.db.execute(
+            "INSERT INTO notification_attempts("
+            "vacancy_id,channel,status,attempts,last_error,last_attempt_at,sent_at"
+            ") VALUES(?,?,?,1,?,?,?) "
+            "ON CONFLICT(vacancy_id,channel) DO UPDATE SET status=excluded.status,"
+            "attempts=notification_attempts.attempts+1,last_error=excluded.last_error,"
+            "last_attempt_at=excluded.last_attempt_at,"
+            "sent_at=CASE WHEN excluded.sent_at IS NOT NULL THEN excluded.sent_at "
+            "ELSE notification_attempts.sent_at END",
+            (vacancy_id, channel, status, error, timestamp, timestamp if sent else None),
+        )
+
     async def notify_review(self, draft_id: str) -> None:
-        attempt = self.db.one("SELECT vacancy_id,status,review_hash,telegram_status,telegram_message_id "
-                              "FROM auto_application_attempts WHERE draft_id=?", (draft_id,))
+        attempt = self.db.one(
+            "SELECT vacancy_id,status,review_hash,telegram_status,telegram_message_id,requested_by "
+            "FROM auto_application_attempts WHERE draft_id=?",
+            (draft_id,),
+        )
         if not attempt or attempt["status"] in ("sent", "sending", "skipped", "preparing", "regenerating"):
             return
         draft = get_draft(self.db, draft_id)
         blockers = send_readiness(self.db, self.settings, draft)
         status = "needs_review" if blockers else "awaiting_review"
-        if (attempt["review_hash"] == draft["package_hash"] and attempt["status"] == status
-                and attempt["telegram_status"] == "sent" and attempt["telegram_message_id"]):
+        if (
+            attempt["review_hash"] == draft["package_hash"]
+            and attempt["status"] == status
+            and attempt["telegram_status"] == "sent"
+            and attempt["telegram_message_id"]
+        ):
             return
         previous_message_id = attempt["telegram_message_id"]
-        self.db.execute("UPDATE auto_application_attempts SET review_hash=?,status=?,detail=?,telegram_status='pending',telegram_error=NULL,updated_at=? WHERE draft_id=?",
-                        (draft["package_hash"], status, "; ".join(blockers) if blockers else "Review the complete application before approving.", now(), draft_id))
+        self.db.execute(
+            "UPDATE auto_application_attempts SET review_hash=?,status=?,detail=?,"
+            "telegram_status='pending',telegram_error=NULL,updated_at=? WHERE draft_id=?",
+            (
+                draft["package_hash"],
+                status,
+                "; ".join(blockers) if blockers else "Review the complete application before approving.",
+                now(),
+                draft_id,
+            ),
+        )
         config = telegram_config(self.settings)
         if not config.get("token") or not config.get("chat_id"):
-            self.db.execute("UPDATE auto_application_attempts SET telegram_status='not_configured' WHERE draft_id=?", (draft_id,))
+            self.db.execute(
+                "UPDATE auto_application_attempts SET telegram_status='not_configured' WHERE draft_id=?",
+                (draft_id,),
+            )
             return
+        if not telegram_mode_enabled(config, "application_reviews"):
+            self.db.execute(
+                "UPDATE auto_application_attempts SET telegram_status='disabled',telegram_error=NULL WHERE draft_id=?",
+                (draft_id,),
+            )
+            return
+        if telegram_quiet_now(config):
+            self.db.execute(
+                "UPDATE auto_application_attempts SET telegram_status='deferred',"
+                "telegram_error='Deferred during Telegram quiet hours' WHERE draft_id=?",
+                (draft_id,),
+            )
+            return
+
+        policy = self.config()
+        review_channel = "telegram_application_review"
+        already_counted = self._notification_sent_today(attempt["vacancy_id"], review_channel)
+        if (
+            attempt["requested_by"] == "automation"
+            and not already_counted
+            and daily_review_notifications_used(self.db) >= policy["max_review_notifications_per_day"]
+        ):
+            self.db.execute(
+                "UPDATE auto_application_attempts SET telegram_status='deferred_limit',"
+                "telegram_error='Daily Telegram review limit reached' WHERE draft_id=?",
+                (draft_id,),
+            )
+            return
+
         try:
             message_id = await send_review_packet(self.settings, draft, blockers)
-            if telegram_config(self.settings) == config:
-                self.db.execute("UPDATE auto_application_attempts SET telegram_status='sent',telegram_message_id=?,telegram_error=NULL WHERE draft_id=? AND review_hash=?",
-                                (message_id, draft_id, draft["package_hash"]))
+            current = telegram_config(self.settings)
+            if self._same_telegram_destination(current, config):
+                self.db.execute(
+                    "UPDATE auto_application_attempts SET telegram_status='sent',telegram_message_id=?,"
+                    "telegram_error=NULL WHERE draft_id=? AND review_hash=?",
+                    (message_id, draft_id, draft["package_hash"]),
+                )
+                self._record_notification(
+                    attempt["vacancy_id"], review_channel, status="sent", sent=True
+                )
                 if previous_message_id and previous_message_id != message_id:
                     try:
                         async with httpx.AsyncClient(timeout=10) as client:
@@ -430,9 +521,17 @@ class AutoApplyManager:
                         log.info("Could not invalidate superseded Telegram review %s", previous_message_id)
         except (httpx.HTTPError, OSError, ValueError, RuntimeError) as error:
             log.warning("Could not deliver application review %s: %s", draft_id, type(error).__name__)
-            if telegram_config(self.settings) == config:
-                self.db.execute("UPDATE auto_application_attempts SET telegram_status='failed',telegram_error=? WHERE draft_id=? AND review_hash=?",
-                                (f"Telegram delivery failed ({type(error).__name__})", draft_id, draft["package_hash"]))
+            current = telegram_config(self.settings)
+            if self._same_telegram_destination(current, config):
+                message = f"Telegram delivery failed ({type(error).__name__})"
+                self.db.execute(
+                    "UPDATE auto_application_attempts SET telegram_status='failed',telegram_error=? "
+                    "WHERE draft_id=? AND review_hash=?",
+                    (message, draft_id, draft["package_hash"]),
+                )
+                self._record_notification(
+                    attempt["vacancy_id"], review_channel, status="failed", error=message
+                )
 
     async def regenerate(self, draft_id: str, prompt: str) -> dict:
         attempt = self.db.one("SELECT vacancy_id,status FROM auto_application_attempts WHERE draft_id=?", (draft_id,))
