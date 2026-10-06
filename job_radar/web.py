@@ -37,6 +37,7 @@ from .mail_config import save_smtp, send_test_email, smtp_config, smtp_config_fi
 from .local_analysis import clean_saved_analysis, list_local_models, validate_local_model
 from .job_inbox import (application_filter_sql, enrich_jobs, mark_seen, release_due_snoozes,
                         set_decision, set_manual_applied, set_recruiting_outcome)
+from .home_dashboard import build_home_dashboard
 from .matching import MatchManager
 from .notifications import discover_telegram_chats, save_telegram, telegram_config
 from .preparation import preparation_preflight
@@ -346,8 +347,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "drafts": db.all("SELECT a.draft_id AS id,v.title,v.company,a.status FROM auto_application_attempts a JOIN vacancies v ON v.id=a.vacancy_id WHERE a.status IN ('awaiting_review','needs_review') AND a.draft_id IS NOT NULL ORDER BY a.updated_at DESC LIMIT 4"),
             "failures": db.all("SELECT id,title,company,analysis_error AS detail FROM vacancies WHERE analysis_status='failed' ORDER BY updated_at DESC LIMIT 4"),
         }
-        return {"counts": counts, "attention": attention, "recent_runs": recent, "data_dir": str(settings.data_dir),
-                "strong_match_threshold": threshold}
+        discovery = summarize_discovery(sources())
+        home = build_home_dashboard(db, discovery, threshold)
+        counts["unseen_jobs"] = home["counts"]["unseen_jobs"]
+        counts["high_fit_new"] = home["counts"]["strong_matches"]
+        counts["drafts_needing_review"] = home["counts"]["drafts_to_review"]
+        return {
+            "counts": counts,
+            "attention": attention,
+            "recent_runs": recent,
+            "data_dir": str(settings.data_dir),
+            "strong_match_threshold": threshold,
+            "home": home,
+        }
 
     @app.get("/api/queue")
     async def queue():
