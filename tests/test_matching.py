@@ -182,8 +182,8 @@ def test_saved_match_replaces_role_similarity_with_years_of_experience(tmp_path:
     result = json.loads(updated["score_detail"])
     assert result["criteria"]["experience"]["score"] < 5
     assert "3 years" in result["criteria"]["experience"]["reason"]
-    assert result["hard_exclusions"] == []
-    assert updated["score"] > 0
+    assert any("Experience requirement" in reason for reason in result["hard_exclusions"])
+    assert updated["score"] == 0
 
 
 def test_new_match_does_not_call_short_role_history_three_years_of_experience(monkeypatch) -> None:
