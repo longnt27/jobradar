@@ -2021,12 +2021,14 @@ async function showApplication(id) {
     </nav>
 
     <section id="application-review-overview" class="application-review-section">
-      <h3>Overview</h3>
+      <h3>What changed and what needs attention</h3>
       ${applicationAlert('danger', 'Sending is blocked', blockers)}
       ${applicationAlert('warning', 'Review before sending', warnings)}
+      ${recentChanges.length ? `<div class="application-change-list"><strong>Changed by your last regeneration</strong>${recentChanges.map((change) => `<div class="application-change-item"><span class="status-badge status-badge--warning">${escapeHtml(change.section)}</span><small>Only this section changed. Untouched sections kept their reviewed content.</small></div>`).join('')}</div>` : '<p class="hint">No regeneration changes in this review session. Focus on tailored content and risky claims below.</p>'}
+      ${reviewContext.risky_claims.length ? `<div class="application-risk-list"><strong>Claims worth verifying</strong>${reviewContext.risky_claims.map((claim) => `<details><summary>${escapeHtml(claim.text)}</summary><p class="hint">Backed by: ${escapeHtml((claim.source || []).join(' · ') || 'approved project evidence')}</p></details>`).join('')}</div>` : ''}
       <div class="application-overview-grid">
-        <div class="application-status-card surface-status"><strong>Review state</strong><span>${escapeHtml(applicationReviewLabel(draft))}</span><small>Telegram: ${escapeHtml(draft.telegram_status || 'Not configured')}${draft.telegram_error ? ` · ${escapeHtml(draft.telegram_error)}` : ''}</small></div>
-        <div class="application-status-card surface-status"><strong>Application action</strong><span>${escapeHtml(applicationActionLabel(destination))}</span><small>${escapeHtml(actionTarget)}</small></div>
+        <div class="application-status-card surface-status"><strong>Package</strong><span>${escapeHtml(applicationReviewLabel(draft))}</span><small>${escapeHtml(destination.kind === 'email' ? 'Email + resume PDF' : destination.kind === 'web' ? 'Web form answers + reviewed attachments' : 'Manual handoff package')}</small></div>
+        <div class="application-status-card surface-status"><strong>Destination</strong><span>${escapeHtml(applicationActionLabel(destination))}</span><small>${escapeHtml(actionTarget)}</small></div>
       </div>
       ${renderSubmissionProof(draft.latest_submission, true)}
       <div class="application-destination surface-editable">
@@ -2037,7 +2039,9 @@ async function showApplication(id) {
           <label>URL or email address<input id="draft-destination" data-draft-field value="${escapeHtml(destination.url || destination.email || '')}"></label>
         </div>
       </div>
-      <p class="hint">The Telegram approval button applies only to the currently saved version of this draft.</p>
+      <h4>Why these projects were selected</h4>
+      ${reviewContext.selected_evidence.map((item) => `<div class="review-evidence-row"><strong>${escapeHtml(item.title)}</strong><p class="hint">${escapeHtml(item.reason)}</p></div>`).join('') || '<p class="hint">No project evidence selected.</p>'}
+      ${reviewContext.relevant_alternatives.length ? `<details><summary>Relevant approved projects not used</summary>${reviewContext.relevant_alternatives.map((item) => `<p><strong>${escapeHtml(item.title)}</strong><br><span class="hint">${escapeHtml(item.reason)}</span></p>`).join('')}</details>` : ''}
     </section>
 
     <section id="application-review-resume" class="application-review-section">
@@ -2053,13 +2057,13 @@ async function showApplication(id) {
       <label>Skill groups, one per line as “Group: skills”<textarea id="draft-skill-groups" data-draft-field rows="3">${escapeHtml(Object.entries(resume.skill_groups || {}).map(([group, values]) => `${group}: ${Array.isArray(values) ? values.join(', ') : values}`).join('\n'))}</textarea></label>
     </section>
 
-    <section id="application-review-message" class="application-review-section">
+    <section id="application-review-message" class="application-review-section" ${destination.kind === 'email' ? '' : 'hidden'}>
       <h3>Application message</h3>
       <label>Subject<input id="draft-subject" data-draft-field value="${escapeHtml(message.subject || '')}"></label>
       <label>Body<textarea id="draft-body" data-draft-field rows="10">${escapeHtml(message.body || '')}</textarea></label>
     </section>
 
-    <section id="application-review-form" class="application-review-section">
+    <section id="application-review-form" class="application-review-section" ${destination.kind === 'web' ? '' : 'hidden'}>
       <div class="section-head"><div><h3>Form answers and attachments</h3><p class="hint">${formData.action ? `Form submits to ${escapeHtml(formData.action)} (${escapeHtml(formData.method || 'GET')})` : 'Inspect a verified web form to load its fields here.'}</p></div></div>
       <div class="application-form-fields">${(formData.fields || []).map((field) => renderApplicationFormField(field, draft)).join('') || '<p class="empty">No form fields inspected yet.</p>'}</div>
     </section>
