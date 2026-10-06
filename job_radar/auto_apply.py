@@ -222,9 +222,13 @@ class AutoApplyManager:
             "detail='Submission status uncertain after restart; verify on the employer site before retrying',updated_at=? "
             "WHERE status='sending'", (now(),))
         self.db.execute(
+            "UPDATE auto_application_attempts SET status='queued',"
+            "detail='Application preparation will resume after restart',updated_at=? "
+            "WHERE status='preparing' AND draft_id IS NULL", (now(),))
+        self.db.execute(
             "UPDATE auto_application_attempts SET status='needs_review',telegram_status='pending',"
-            "detail='Job Radar restarted during application preparation; review before sending',updated_at=? "
-            "WHERE status IN ('preparing','regenerating')", (now(),))
+            "detail='Job Radar restarted after draft work began; review the saved draft before sending',updated_at=? "
+            "WHERE status='regenerating' OR (status='preparing' AND draft_id IS NOT NULL)", (now(),))
         self.task = asyncio.create_task(self._loop())
         self.telegram_task = asyncio.create_task(self._telegram_loop())
 
@@ -577,7 +581,11 @@ class AutoApplyManager:
                     pass
                 continue
             job_id = job["id"]
-            requested_by = job.get("requested_by") or "automation"
+            request = self.db.one(
+                "SELECT requested_by FROM auto_application_attempts WHERE vacancy_id=?",
+                (job_id,),
+            )
+            requested_by = (request or {}).get("requested_by") or job.get("requested_by") or "automation"
             if queued and requested_by == "automation" and not self._still_eligible(job_id):
                 self._set_status(job_id, "skipped", "Job no longer meets the saved automatic draft rules")
                 continue
