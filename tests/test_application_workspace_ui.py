@@ -128,50 +128,38 @@ def test_application_workspace_filters_reviews_and_confirms_send(tmp_path: Path,
                 assert "Basic template" in page.locator("#application-detail").inner_text()
                 assert "local template; no model inference" not in page.locator("#application-detail").inner_text()
 
-                for section in ("Overview", "Resume", "Message", "Form", "Regenerate"):
+                for section in ("Changes & risks", "Resume", "Email", "Regenerate"):
                     assert page.get_by_role("button", name=section, exact=True).is_visible()
+                assert page.get_by_role("button", name="Form", exact=True).count() == 0
                 preview = page.locator('#application-review-resume iframe[title="Resume PDF preview"]')
                 assert preview.is_visible()
                 assert f"/api/applications/{first['id']}/resume" in preview.get_attribute("src")
 
-                choice = page.locator('[data-answer="0"]')
-                assert choice.evaluate("node => node.tagName") == "SELECT"
-                assert choice.input_value() == "yes"
-
-                upload = page.locator('[data-attachment-upload="1"]')
-                assert upload.is_hidden()
-                page.locator('[data-attachment="1"]').select_option("uploaded")
-                assert upload.is_visible()
-                page.locator('[data-attachment="1"]').select_option("resume")
-                assert upload.is_hidden()
+                assert page.locator("#application-review-form").is_hidden()
+                assert page.locator('[data-answer="0"]').count() == 1
+                assert page.locator('[data-attachment="1"]').count() == 1
 
                 send = page.get_by_role("button", name="Approve & send", exact=True)
-                page.get_by_role("button", name="Save changes", exact=True).click()
-                page.wait_for_function("document.querySelector('#application-dirty-state')?.textContent === 'Saved'")
                 assert send.is_enabled()
-
-                send.click()
-                dialog = page.locator("#application-send-confirm")
-                dialog.wait_for(state="visible")
-                assert "jobs@example.org" in page.locator("#application-send-confirm-target").inner_text()
-                assert "Basic template" in page.locator("#application-send-confirm-summary").inner_text()
-                dialog.get_by_role("button", name="Cancel", exact=True).click()
-                assert sent == []
 
                 subject = page.locator("#draft-subject")
                 subject.fill("Updated application subject")
                 assert page.locator("#application-dirty-state").inner_text() == "Unsaved changes"
                 assert "is-dirty" in (subject.locator("xpath=..").get_attribute("class") or "")
-                assert page.get_by_role("button", name="Save changes", exact=True).is_enabled()
                 assert page.get_by_role("button", name="Approve & send", exact=True).is_disabled()
                 page.get_by_role("button", name="Save changes", exact=True).click()
                 page.wait_for_function("document.querySelector('#application-dirty-state')?.textContent === 'Saved'")
+                send = page.get_by_role("button", name="Approve & send", exact=True)
+                send.click()
+                page.wait_for_function("document.querySelector('#application-dirty-state')?.textContent === 'Sent'")
+                assert sent == [first["id"]]
 
                 page.set_viewport_size({"width": 390, "height": 844})
                 page.evaluate("window.__applicationDetailScrolled = false; document.querySelector('#application-detail').scrollIntoView = () => { window.__applicationDetailScrolled = true; }")
                 page.locator(f'[data-application="{second["id"]}"]').click()
                 page.wait_for_function("window.__applicationDetailScrolled === true")
-                blocker = page.locator(".application-alert--danger")
+                page.get_by_role("heading", name="Research Engineer").wait_for()
+                blocker = page.locator("#application-detail .application-alert--danger")
                 blocker.wait_for()
                 assert "destination" in blocker.inner_text().lower()
             finally:
@@ -207,7 +195,10 @@ def test_application_workspace_static_contract() -> None:
     assert "renderApplicationFormField" in js
     assert "application-attachment-upload" in js
     assert "Resume PDF preview" in js
-    assert "confirmApplicationSend(draft)" in js
+    assert "const approved = await confirmApplicationSend(draft)" not in js
+    assert "What changed and what needs attention" in js
+    assert "Telegram review delivery" in js
+    assert "Regenerate selected section" in js
     assert 'id="edit-draft"' not in js
 
     assert ".application-card.is-selected" in css

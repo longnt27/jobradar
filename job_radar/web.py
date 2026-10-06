@@ -190,6 +190,7 @@ class SendInput(BaseModel):
 
 class RegenerateInput(BaseModel):
     prompt: str = Field(min_length=1, max_length=2000)
+    section: Literal["all", "summary", "projects", "message"] = "all"
 
 
 class SmtpInput(BaseModel):
@@ -1710,7 +1711,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/applications/{draft_id}/regenerate")
     async def regenerate_application(draft_id: str, payload: RegenerateInput):
         try:
-            return await auto_apply_manager.regenerate(draft_id, payload.prompt)
+            return await auto_apply_manager.regenerate(draft_id, payload.prompt, payload.section)
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
         except (ValueError, RuntimeError) as error:

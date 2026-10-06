@@ -607,3 +607,11 @@ button.danger,.text-button.danger{color:#a4382d;border-color:#e7c2bd}
 .project-provider-choice select{width:100%}
 #home-steps .step-row.is-done .step-check{font-weight:800}
 @media(max-width:700px){.processing-disclosure{padding:9px 10px}}
+
+/* Product Stack 06: diff-first application review */
+.application-change-list,.application-risk-list{display:grid;gap:8px;margin:12px 0;padding:12px;border:1px solid #dfe7e2;border-radius:10px;background:#fafcfb}
+.application-change-item{display:flex;gap:10px;align-items:center;justify-content:space-between}
+.application-risk-list details{padding:8px 0;border-top:1px solid #e7ece9}
+.application-risk-list details:first-of-type{border-top:0}
+.review-evidence-row{padding:10px 0;border-bottom:1px solid #e7ece9}
+.review-evidence-row:last-child{border-bottom:0}

@@ -433,7 +433,7 @@ def test_mobile_navigation_is_keyboard_reachable_without_page_overflow(ui_server
         page.context.close()
 
 
-def test_application_send_confirmation_is_keyboard_operable(ui_server, browser) -> None:
+def test_application_approve_and_send_is_keyboard_operable_without_redundant_confirmation(ui_server, browser) -> None:
     page = _new_page(browser, MANIFEST["viewports"]["desktop"])
     try:
         page.goto(_surface_url(ui_server, "applications"))
@@ -442,13 +442,9 @@ def test_application_send_confirmation_is_keyboard_operable(ui_server, browser) 
         send.wait_for()
         assert send.is_enabled()
         send.focus()
-        page.keyboard.press("Enter")
-        dialog = page.locator("#application-send-confirm")
-        dialog.wait_for(state="visible")
-        assert "jobs@example.org" in page.locator("#application-send-confirm-target").inner_text()
-        page.keyboard.press("Escape")
-        dialog.wait_for(state="hidden")
-        assert page.locator("#send-draft").is_visible()
+        with page.expect_request(lambda request: "/api/applications/" in request.url and request.url.endswith("/approve") and request.method == "POST"):
+            page.keyboard.press("Enter")
+        assert page.locator("#application-send-confirm").is_hidden()
     finally:
         page.context.close()
 

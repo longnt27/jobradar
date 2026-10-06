@@ -43,6 +43,7 @@ let applicationsPages = 1;
 let submissionHistoryPage = 1;
 let submissionHistoryPages = 1;
 let activeApplicationId = null;
+let applicationReviewChanges = {};
 let applicationWorkspaceView = 'drafts';
 let editingPositionId = null;
 
@@ -2064,6 +2065,8 @@ async function showApplication(id) {
   const formData = draft.form_data || {fields:[], answers:{}, attachments:{}};
   draft.form_data = formData;
   const projects = resume.projects || [];
+  const reviewContext = draft.review_context || {selected_evidence:[], relevant_alternatives:[], risky_claims:[]};
+  const recentChanges = applicationReviewChanges[id] || [];
   const warnings = draft.warnings || [];
   const blockers = draft.send_blockers || [];
   const sent = applicationIsSent(draft);
@@ -2079,20 +2082,22 @@ async function showApplication(id) {
       <span class="status-badge status-badge--${reviewTone}">${escapeHtml(applicationReviewLabel(draft))}</span>
     </div>
     <nav class="application-review-nav" aria-label="Application review sections">
-      <button type="button" data-review-target="application-review-overview" aria-current="true">Overview</button>
+      <button type="button" data-review-target="application-review-overview" aria-current="true">Changes & risks</button>
       <button type="button" data-review-target="application-review-resume">Resume</button>
-      <button type="button" data-review-target="application-review-message">Message</button>
-      <button type="button" data-review-target="application-review-form">Form</button>
+      ${destination.kind === 'email' ? '<button type="button" data-review-target="application-review-message">Email</button>' : ''}
+      ${destination.kind === 'web' ? '<button type="button" data-review-target="application-review-form">Form</button>' : ''}
       <button type="button" data-review-target="application-review-regenerate">Regenerate</button>
     </nav>
 
     <section id="application-review-overview" class="application-review-section">
-      <h3>Overview</h3>
+      <h3>What changed and what needs attention</h3>
       ${applicationAlert('danger', 'Sending is blocked', blockers)}
       ${applicationAlert('warning', 'Review before sending', warnings)}
+      ${recentChanges.length ? `<div class="application-change-list"><strong>Changed by your last regeneration</strong>${recentChanges.map((change) => `<div class="application-change-item"><span class="status-badge status-badge--warning">${escapeHtml(change.section)}</span><small>Only this section changed. Untouched sections kept their reviewed content.</small></div>`).join('')}</div>` : '<p class="hint">No regeneration changes in this review session. Focus on tailored content and risky claims below.</p>'}
+      ${reviewContext.risky_claims.length ? `<div class="application-risk-list"><strong>Claims worth verifying</strong>${reviewContext.risky_claims.map((claim) => `<details><summary>${escapeHtml(claim.text)}</summary><p class="hint">Backed by: ${escapeHtml((claim.source || []).join(' · ') || 'approved project evidence')}</p></details>`).join('')}</div>` : ''}
       <div class="application-overview-grid">
-        <div class="application-status-card surface-status"><strong>Review state</strong><span>${escapeHtml(applicationReviewLabel(draft))}</span><small>Telegram: ${escapeHtml(draft.telegram_status || 'Not configured')}${draft.telegram_error ? ` · ${escapeHtml(draft.telegram_error)}` : ''}</small></div>
-        <div class="application-status-card surface-status"><strong>Application action</strong><span>${escapeHtml(applicationActionLabel(destination))}</span><small>${escapeHtml(actionTarget)}</small></div>
+        <div class="application-status-card surface-status"><strong>Package</strong><span>${escapeHtml(applicationReviewLabel(draft))}</span><small>${escapeHtml(destination.kind === 'email' ? 'Email + resume PDF' : destination.kind === 'web' ? 'Web form answers + reviewed attachments' : 'Manual handoff package')}</small></div>
+        <div class="application-status-card surface-status"><strong>Destination</strong><span>${escapeHtml(applicationActionLabel(destination))}</span><small>${escapeHtml(actionTarget)}</small></div>
       </div>
       ${renderSubmissionProof(draft.latest_submission, true)}
       <div class="application-destination surface-editable">
@@ -2103,7 +2108,9 @@ async function showApplication(id) {
           <label>URL or email address<input id="draft-destination" data-draft-field value="${escapeHtml(destination.url || destination.email || '')}"></label>
         </div>
       </div>
-      <p class="hint">The Telegram approval button applies only to the currently saved version of this draft.</p>
+      <h4>Why these projects were selected</h4>
+      ${reviewContext.selected_evidence.map((item) => `<div class="review-evidence-row"><strong>${escapeHtml(item.title)}</strong><p class="hint">${escapeHtml(item.reason)}</p></div>`).join('') || '<p class="hint">No project evidence selected.</p>'}
+      ${reviewContext.relevant_alternatives.length ? `<details><summary>Relevant approved projects not used</summary>${reviewContext.relevant_alternatives.map((item) => `<p><strong>${escapeHtml(item.title)}</strong><br><span class="hint">${escapeHtml(item.reason)}</span></p>`).join('')}</details>` : ''}
     </section>
 
     <section id="application-review-resume" class="application-review-section">
@@ -2119,25 +2126,26 @@ async function showApplication(id) {
       <label>Skill groups, one per line as “Group: skills”<textarea id="draft-skill-groups" data-draft-field rows="3">${escapeHtml(Object.entries(resume.skill_groups || {}).map(([group, values]) => `${group}: ${Array.isArray(values) ? values.join(', ') : values}`).join('\n'))}</textarea></label>
     </section>
 
-    <section id="application-review-message" class="application-review-section">
+    <section id="application-review-message" class="application-review-section" ${destination.kind === 'email' ? '' : 'hidden'}>
       <h3>Application message</h3>
       <label>Subject<input id="draft-subject" data-draft-field value="${escapeHtml(message.subject || '')}"></label>
       <label>Body<textarea id="draft-body" data-draft-field rows="10">${escapeHtml(message.body || '')}</textarea></label>
     </section>
 
-    <section id="application-review-form" class="application-review-section">
+    <section id="application-review-form" class="application-review-section" ${destination.kind === 'web' ? '' : 'hidden'}>
       <div class="section-head"><div><h3>Form answers and attachments</h3><p class="hint">${formData.action ? `Form submits to ${escapeHtml(formData.action)} (${escapeHtml(formData.method || 'GET')})` : 'Inspect a verified web form to load its fields here.'}</p></div></div>
       <div class="application-form-fields">${(formData.fields || []).map((field) => renderApplicationFormField(field, draft)).join('') || '<p class="empty">No form fields inspected yet.</p>'}</div>
     </section>
 
     <section id="application-review-regenerate" class="application-review-section">
-      <h3>Regenerate draft</h3>
-      <label>Custom instructions for regeneration<textarea id="regenerate-prompt" rows="3" placeholder="Example: emphasize production search work and shorten the opening paragraph"></textarea></label>
-      <div class="actions"><button id="regenerate-draft" class="secondary" ${draft.provider === 'template' ? 'disabled' : ''}>Regenerate draft</button></div>
+      <h3>Regenerate only what needs work</h3>
+      <label>Section<select id="regenerate-section"><option value="summary">Professional summary</option><option value="projects">Selected projects and bullets</option>${destination.kind === 'email' ? '<option value="message">Application email</option>' : ''}<option value="all">Full draft</option></select></label>
+      <label>Custom instructions<textarea id="regenerate-prompt" rows="3" placeholder="Example: make the summary shorter and emphasize production search work"></textarea></label>
+      <div class="actions"><button id="regenerate-draft" class="secondary" ${draft.provider === 'template' ? 'disabled' : ''}>Regenerate selected section</button></div>
       ${draft.provider === 'template' ? '<p class="hint">This draft used the basic template. Create a new draft with an AI provider to regenerate it with instructions.</p>' : ''}
     </section>
 
-    <details class="application-debug"><summary>Technical details</summary><p class="hint">Package fingerprint: <span class="mono">${escapeHtml(draft.package_hash.slice(0, 16))}</span></p></details>
+    <details class="application-debug"><summary>Activity and technical details</summary><p class="hint">Telegram review delivery: ${escapeHtml(draft.telegram_status || 'Not configured')}${draft.telegram_error ? ` · ${escapeHtml(draft.telegram_error)}` : ''}</p><p class="hint">Package fingerprint: <span class="mono">${escapeHtml(draft.package_hash.slice(0, 16))}</span></p></details>
 
     <div class="application-sticky-actions">
       <div><span id="application-dirty-state" class="status-badge status-badge--neutral">Saved</span><span id="application-outcome" class="hint" role="status" aria-live="polite"></span></div>
@@ -2186,9 +2194,11 @@ async function showApplication(id) {
     const button = $('#regenerate-draft');
     beginPending(button, 'Regenerating…');
     try {
-      await api(`/api/applications/${id}/regenerate`, {method:'POST', body:JSON.stringify({prompt})});
+      const section = $('#regenerate-section').value;
+      const result = await api(`/api/applications/${id}/regenerate`, {method:'POST', body:JSON.stringify({prompt, section})});
+      applicationReviewChanges[id] = result.changes || [];
       await loadApplications(id);
-      notice('New draft prepared for review.');
+      notice(section === 'all' ? 'New draft prepared for review.' : 'Selected section regenerated. Untouched content was preserved.');
     } catch(error) {
       notice(error.message, true);
     } finally {
@@ -2223,8 +2233,6 @@ async function showApplication(id) {
   });
 
   $('#send-draft').addEventListener('click', async (event) => {
-    const approved = await confirmApplicationSend(draft);
-    if (!approved) return;
     const button = beginPending(event.currentTarget, 'Sending…');
     try {
       const result = await api(`/api/applications/${id}/approve`, {method:'POST', body:JSON.stringify({package_hash:draft.package_hash})});
