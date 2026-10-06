@@ -373,17 +373,19 @@ def regenerate_draft(db: Database, settings: Settings, draft_id: str, prompt: st
     if section == "all":
         revised = prepare_draft(db, settings, previous["vacancy_id"], previous["provider"], draft_id, prompt.strip())
     else:
-        candidate = prepare_draft(db, settings, previous["vacancy_id"], previous["provider"], None, prompt.strip())
-        updates = {}
+        candidate = prepare_draft(db, settings, previous["vacancy_id"], previous["provider"], draft_id, prompt.strip())
         if section == "summary":
             resume = {**previous["resume_data"], "summary": candidate["resume_data"].get("summary", "")}
-            updates["resume_data"] = resume
+            updates = {"resume_data": resume, "message_data": previous["message_data"],
+                       "form_data": previous["form_data"], "destination": previous["destination"]}
         elif section == "projects":
             resume = {**previous["resume_data"], "projects": candidate["resume_data"].get("projects", []),
                       "evidence": candidate["resume_data"].get("evidence", [])}
-            updates["resume_data"] = resume
-        elif section == "message":
-            updates["message_data"] = candidate["message_data"]
+            updates = {"resume_data": resume, "message_data": previous["message_data"],
+                       "form_data": previous["form_data"], "destination": previous["destination"]}
+        else:
+            updates = {"resume_data": previous["resume_data"], "message_data": candidate["message_data"],
+                       "form_data": previous["form_data"], "destination": previous["destination"]}
         revised = update_draft(db, settings, draft_id, updates)
     revised["changes"] = _section_diff(before, _section_snapshot(revised))
     revised["regenerated_section"] = section
