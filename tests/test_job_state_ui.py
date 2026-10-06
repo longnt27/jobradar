@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from playwright.sync_api import sync_playwright
 
 from job_radar.db import Database
+from job_radar.drafting import prepare_draft
 from job_radar.settings import Settings
 from job_radar.web import create_app
 
@@ -123,12 +124,11 @@ def test_job_read_decision_application_and_outcome_are_independent(tmp_path: Pat
     assert client.post(f"/api/jobs/{job['id']}/state", json={"state": "ready"}).status_code == 409
     assert client.post(f"/api/jobs/{job['id']}/state", json={"state": "applied"}).status_code == 409
 
-    draft = client.post(f"/api/jobs/{job['id']}/prepare", json={"provider": "template"})
-    assert draft.status_code == 200, draft.text
+    draft = prepare_draft(app.state.db, app.state.settings, job["id"], "template")
     prepared = client.get(f"/api/jobs/{job['id']}").json()
     assert prepared["decision_state"] == "shortlisted"
     assert prepared["application_progress"] == "draft_ready"
-    assert prepared["latest_draft_id"] == draft.json()["id"]
+    assert prepared["latest_draft_id"] == draft["id"]
 
     outcome = client.post(f"/api/jobs/{job['id']}/outcome", json={"outcome": "interview"})
     assert outcome.status_code == 200

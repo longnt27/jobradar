@@ -13,6 +13,7 @@ from .apply import inspect_form, send_application, send_readiness
 from .db import Database, now
 from .drafting import get_draft, prepare_draft, regenerate_draft
 from .notifications import telegram_config
+from .preparation import preparation_preflight
 from .review_telegram import _post, send_review_packet
 from .settings import Settings
 from .search_intent import normalize_search_intent
@@ -61,13 +62,15 @@ class AutoApplyManager:
 
     def status(self) -> dict:
         counts = {row["status"]: row["count"] for row in self.db.all(
-            "SELECT status,COUNT(*) AS count FROM auto_application_attempts GROUP BY status")}
+            "SELECT status,COUNT(*) AS count FROM auto_application_attempts "
+            "WHERE requested_by='automation' GROUP BY status")}
         threshold = self.config()["threshold"]
         eligible_existing = self.db.one("SELECT COUNT(*) AS count " + EXISTING_MATCHES_SQL + " AND v.analysis_status='done' AND v.score>=?", (threshold,))["count"]
         waiting_existing = self.db.one("SELECT COUNT(*) AS count " + EXISTING_MATCHES_SQL + " AND v.analysis_status IN ('pending','running')")["count"]
         highest_existing_score = self.db.one("SELECT MAX(v.score) AS score " + EXISTING_MATCHES_SQL + " AND v.analysis_status='done'")["score"]
         recent = self.db.all(
-            "SELECT a.vacancy_id,a.status,a.draft_id,a.detail,a.updated_at,v.title,v.company,v.score,v.analysis_status "
+            "SELECT a.vacancy_id,a.status,a.draft_id,a.detail,a.updated_at,a.requested_by,"
+            "a.requested_provider,a.prepare_anyway,v.title,v.company,v.score,v.analysis_status "
             "FROM auto_application_attempts a JOIN vacancies v ON v.id=a.vacancy_id "
             "WHERE a.status!='skipped' ORDER BY a.updated_at DESC LIMIT 20")
         return {**self.config(), "counts": counts, "eligible_existing": eligible_existing,
@@ -117,6 +120,89 @@ class AutoApplyManager:
         self.wake()
         return {"queued": len(jobs)}
 
+    def queue_manual(self, job_id: str, provider: str, prepare_anyway: bool = False) -> dict:
+        job = self.db.one("SELECT id,title,company FROM vacancies WHERE id=?", (job_id,))
+        if not job:
+            raise KeyError("Job not found")
+        if self.db.one("SELECT id FROM submissions WHERE vacancy_id=? LIMIT 1", (job_id,)):
+            raise ValueError("An application submission already exists for this job")
+        existing_draft = self.db.one(
+            "SELECT id FROM application_drafts WHERE vacancy_id=? ORDER BY updated_at DESC LIMIT 1",
+            (job_id,),
+        )
+        if existing_draft:
+            return {"status": "ready", "draft_id": existing_draft["id"], "already_prepared": True}
+
+        preflight = preparation_preflight(self.db, job_id)
+        if preflight["requires_confirmation"] and not prepare_anyway:
+            return {"status": "confirmation_required", "preflight": preflight}
+
+        existing = self.db.one(
+            "SELECT status,draft_id,requested_by FROM auto_application_attempts WHERE vacancy_id=?",
+            (job_id,),
+        )
+        if existing and existing["status"] in ("sent", "sending", "submission_uncertain"):
+            raise ValueError("This application already has a submission in progress or an uncertain outcome")
+        if existing and existing["status"] == "queued":
+            if existing["requested_by"] != "manual":
+                self.db.execute(
+                    "UPDATE auto_application_attempts SET requested_by='manual',requested_provider=?,"
+                    "preflight_action=?,prepare_anyway=?,detail='Queued by you for application preparation',"
+                    "updated_at=? WHERE vacancy_id=?",
+                    (
+                        provider,
+                        json.dumps(preflight["action"], ensure_ascii=False),
+                        int(prepare_anyway),
+                        now(),
+                        job_id,
+                    ),
+                )
+                self.wake()
+                return {
+                    "status": "queued",
+                    "draft_id": existing["draft_id"],
+                    "preflight": preflight,
+                    "already_queued": False,
+                    "promoted_from_automation": True,
+                }
+            return {
+                "status": "queued",
+                "draft_id": existing["draft_id"],
+                "preflight": preflight,
+                "already_queued": True,
+            }
+        if existing and existing["status"] == "preparing":
+            return {
+                "status": "preparing",
+                "draft_id": existing["draft_id"],
+                "preflight": preflight,
+                "already_queued": True,
+            }
+
+        timestamp = now()
+        self.db.execute(
+            "INSERT INTO auto_application_attempts("
+            "vacancy_id,status,draft_id,review_hash,telegram_status,detail,requested_by,"
+            "requested_provider,preflight_action,prepare_anyway,created_at,updated_at"
+            ") VALUES(?,'queued',NULL,NULL,'pending',?,'manual',?,?,?, ?,?) "
+            "ON CONFLICT(vacancy_id) DO UPDATE SET status='queued',draft_id=NULL,review_hash=NULL,"
+            "telegram_status='pending',telegram_error=NULL,telegram_message_id=NULL,detail=excluded.detail,"
+            "requested_by='manual',requested_provider=excluded.requested_provider,"
+            "preflight_action=excluded.preflight_action,prepare_anyway=excluded.prepare_anyway,"
+            "updated_at=excluded.updated_at",
+            (
+                job_id,
+                "Queued by you for application preparation",
+                provider,
+                json.dumps(preflight["action"], ensure_ascii=False),
+                int(prepare_anyway),
+                timestamp,
+                timestamp,
+            ),
+        )
+        self.wake()
+        return {"status": "queued", "preflight": preflight, "already_queued": False}
+
     def wake(self) -> None:
         if self.loop and self.loop.is_running():
             self.loop.call_soon_threadsafe(self.wake_event.set)
@@ -136,9 +222,13 @@ class AutoApplyManager:
             "detail='Submission status uncertain after restart; verify on the employer site before retrying',updated_at=? "
             "WHERE status='sending'", (now(),))
         self.db.execute(
+            "UPDATE auto_application_attempts SET status='queued',"
+            "detail='Application preparation will resume after restart',updated_at=? "
+            "WHERE status='preparing' AND draft_id IS NULL", (now(),))
+        self.db.execute(
             "UPDATE auto_application_attempts SET status='needs_review',telegram_status='pending',"
-            "detail='Job Radar restarted during application preparation; review before sending',updated_at=? "
-            "WHERE status IN ('preparing','regenerating')", (now(),))
+            "detail='Job Radar restarted after draft work began; review the saved draft before sending',updated_at=? "
+            "WHERE status='regenerating' OR (status='preparing' AND draft_id IS NOT NULL)", (now(),))
         self.task = asyncio.create_task(self._loop())
         self.telegram_task = asyncio.create_task(self._telegram_loop())
 
@@ -176,9 +266,27 @@ class AutoApplyManager:
                     and not job["snoozed_until"])
 
     async def _process(self, job_id: str) -> None:
-        job = self.db.one("SELECT apply_url FROM vacancies WHERE id=?", (job_id,))
+        job = self.db.one("SELECT * FROM vacancies WHERE id=?", (job_id,))
         if not job:
             self._set_status(job_id, "needs_review", "Job no longer exists.")
+            return
+        attempt = self.db.one(
+            "SELECT requested_by,requested_provider,prepare_anyway FROM auto_application_attempts WHERE vacancy_id=?",
+            (job_id,),
+        ) or {"requested_by": "automation", "requested_provider": None, "prepare_anyway": 0}
+        manual = attempt["requested_by"] == "manual"
+        preflight = preparation_preflight(self.db, job_id)
+        if preflight["requires_confirmation"] and not bool(attempt["prepare_anyway"]):
+            self.db.execute(
+                "UPDATE auto_application_attempts SET status='needs_confirmation',detail=?,preflight_action=?,updated_at=? "
+                "WHERE vacancy_id=?",
+                (
+                    preflight["reason"][:1000],
+                    json.dumps(preflight["action"], ensure_ascii=False),
+                    now(),
+                    job_id,
+                ),
+            )
             return
         prior = self.db.one("SELECT id FROM submissions WHERE vacancy_id=? LIMIT 1", (job_id,))
         if prior:
@@ -188,14 +296,14 @@ class AutoApplyManager:
         if existing:
             self._set_status(job_id, "needs_review", "An application draft already exists. Review it before sending.", existing["id"])
             return
-        provider = self.db.get_setting("profile", {}).get("drafting_provider", "")
+        provider = attempt["requested_provider"] if manual else self.db.get_setting("profile", {}).get("drafting_provider", "")
         if not provider:
             self._set_status(job_id, "needs_review", "Choose an application drafting provider in My profile.")
             return
         draft = await asyncio.to_thread(prepare_draft, self.db, self.settings, job_id, provider)
-        self._set_status(job_id, "preparing", "Draft prepared", draft["id"])
-        if not self._still_eligible(job_id):
-            self._set_status(job_id, "needs_review", "Automatic applications paused or job score changed.")
+        self._set_status(job_id, "preparing", "Draft prepared; checking application details", draft["id"])
+        if not manual and not self._still_eligible(job_id):
+            self._set_status(job_id, "needs_review", "Automatic preparation paused or job score changed.")
             return
         if draft["destination"].get("kind") == "web":
             try:
@@ -217,8 +325,8 @@ class AutoApplyManager:
             self._set_status(job_id, "needs_review", "; ".join(blockers), draft["id"])
             await self.notify_review(draft["id"])
             return
-        if not self._still_eligible(job_id):
-            self._set_status(job_id, "needs_review", "Automatic applications paused or job score changed.", draft["id"])
+        if not manual and not self._still_eligible(job_id):
+            self._set_status(job_id, "needs_review", "Automatic preparation paused or job score changed.", draft["id"])
             return
         self._set_status(job_id, "awaiting_review", "Review the complete application before approving.", draft["id"])
         await self.notify_review(draft["id"])
@@ -453,11 +561,15 @@ class AutoApplyManager:
         while True:
             config = self.config()
             queued = self.db.one(
-                "SELECT a.vacancy_id AS id FROM auto_application_attempts a "
-                "JOIN vacancies v ON v.id=a.vacancy_id WHERE a.status='queued' AND v.analysis_status='done' "
-                "ORDER BY a.created_at ASC LIMIT 1") if config["enabled"] else None
+                "SELECT a.vacancy_id AS id,a.requested_by FROM auto_application_attempts a "
+                "JOIN vacancies v ON v.id=a.vacancy_id WHERE a.status='queued' "
+                "AND (a.requested_by='manual' OR v.analysis_status='done') "
+                "ORDER BY CASE WHEN a.requested_by='manual' THEN 0 ELSE 1 END,a.created_at ASC LIMIT 1"
+            )
+            if queued and queued["requested_by"] == "automation" and not config["enabled"]:
+                queued = None
             job = queued or (self.db.one(
-                "SELECT v.id FROM vacancies v WHERE v.analysis_status='done' AND v.score>=? AND v.decision_state IN ('undecided','shortlisted') AND v.snoozed_until IS NULL "
+                "SELECT v.id,'automation' AS requested_by FROM vacancies v WHERE v.analysis_status='done' AND v.score>=? AND v.decision_state IN ('undecided','shortlisted') AND v.snoozed_until IS NULL "
                 "AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm') "
                 "AND NOT EXISTS(SELECT 1 FROM auto_application_attempts a WHERE a.vacancy_id=v.id) "
                 "ORDER BY v.score DESC,v.first_seen_at DESC LIMIT 1", (config["threshold"],)) if config["enabled"] else None)
@@ -469,14 +581,22 @@ class AutoApplyManager:
                     pass
                 continue
             job_id = job["id"]
-            if queued and not self._still_eligible(job_id):
+            request = self.db.one(
+                "SELECT requested_by FROM auto_application_attempts WHERE vacancy_id=?",
+                (job_id,),
+            )
+            requested_by = (request or {}).get("requested_by") or job.get("requested_by") or "automation"
+            if queued and requested_by == "automation" and not self._still_eligible(job_id):
                 self._set_status(job_id, "skipped", "Job no longer meets the saved automatic draft rules")
                 continue
             if queued:
-                self._set_status(job_id, "preparing", "Preparing an existing match for review")
+                detail = "Preparing the application you requested" if requested_by == "manual" else "Preparing an existing match for review"
+                self._set_status(job_id, "preparing", detail)
             else:
                 self.db.execute(
-                    "INSERT OR IGNORE INTO auto_application_attempts(vacancy_id,status,created_at,updated_at) VALUES(?,'preparing',?,?)",
+                    "INSERT OR IGNORE INTO auto_application_attempts("
+                    "vacancy_id,status,requested_by,created_at,updated_at"
+                    ") VALUES(?,'preparing','automation',?,?)",
                     (job_id, now(), now()))
             try:
                 await self._process(job_id)
@@ -484,6 +604,7 @@ class AutoApplyManager:
                 self._set_status(job_id, "needs_review", "Job Radar stopped during preparation; review before sending")
                 raise
             except Exception as error:
-                log.exception("Automatic application failed for %s", job_id)
-                self._set_status(job_id, "needs_review", f"Automatic application stopped: {str(error)[:800]}")
+                label = "Manual" if requested_by == "manual" else "Automatic"
+                log.exception("%s application preparation failed for %s", label, job_id)
+                self._set_status(job_id, "needs_review", f"{label} preparation stopped: {str(error)[:800]}")
             await asyncio.sleep(0.1)
