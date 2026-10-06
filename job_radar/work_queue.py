@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .auto_apply import AutoApplyManager
+from .automation_policy import automation_eligibility, daily_auto_drafts_used
 from .db import Database
 from .matching import MatchManager
 from .scanner import ScanManager
@@ -48,13 +49,31 @@ def work_queue(db: Database, scans: ScanManager, matching: MatchManager,
         "a.requested_by FROM auto_application_attempts a JOIN vacancies v ON v.id=a.vacancy_id "
         "WHERE a.status='queued' AND (a.requested_by='manual' OR v.analysis_status='done') ORDER BY "
         "CASE WHEN a.requested_by='manual' THEN 0 ELSE 1 END,a.created_at")
-    implicit_ready = db.all(
-        "SELECT v.id,NULL AS draft_id,v.title,v.company,v.score,v.first_seen_at AS created_at,"
-        "'queued' AS stage,'automation' AS requested_by "
-        "FROM vacancies v WHERE v.analysis_status='done' AND v.score>=? AND v.decision_state IN ('undecided','shortlisted') AND v.snoozed_until IS NULL "
-        "AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm') "
-        "AND NOT EXISTS(SELECT 1 FROM auto_application_attempts a WHERE a.vacancy_id=v.id) "
-        "ORDER BY v.score DESC,v.first_seen_at DESC", (draft_config["threshold"],)) if draft_config["enabled"] else []
+    implicit_ready = []
+    daily_used = daily_auto_drafts_used(db)
+    if draft_config["enabled"] and daily_used < draft_config["max_auto_drafts_per_day"]:
+        implicit_candidates = db.all(
+            "SELECT v.id,NULL AS draft_id,v.title,v.company,v.score,v.first_seen_at AS created_at,"
+            "'queued' AS stage,'automation' AS requested_by "
+            "FROM vacancies v WHERE v.analysis_status='done' AND v.score>=? "
+            "AND v.decision_state IN ('undecided','shortlisted') AND v.snoozed_until IS NULL "
+            "AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=v.employer_id AND e.coverage_status='excluded_hcm') "
+            "AND NOT EXISTS(SELECT 1 FROM auto_application_attempts a WHERE a.vacancy_id=v.id) "
+            "AND NOT EXISTS(SELECT 1 FROM submissions s WHERE s.vacancy_id=v.id) "
+            "AND NOT EXISTS(SELECT 1 FROM application_drafts d WHERE d.vacancy_id=v.id) "
+            "ORDER BY v.score DESC,v.first_seen_at DESC LIMIT 50",
+            (draft_config["threshold"],),
+        )
+        implicit_ready = [
+            row for row in implicit_candidates
+            if automation_eligibility(
+                db,
+                row["id"],
+                policy=draft_config,
+                require_analysis=True,
+                check_daily_limit=False,
+            )["eligible"]
+        ]
     draft_waiting = explicit_ready + implicit_ready
     for position, row in enumerate(draft_waiting, 1):
         row["position"] = position
@@ -73,5 +92,6 @@ def work_queue(db: Database, scans: ScanManager, matching: MatchManager,
         "drafts": {"active": draft_active, "waiting": draft_waiting,
                    "attention": needs_confirmation,
                    "enabled": draft_config["enabled"], "threshold": draft_config["threshold"],
+                   "daily_remaining": max(0, draft_config["max_auto_drafts_per_day"] - daily_used),
                    "review_ready": review_ready},
     }
