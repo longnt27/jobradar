@@ -2303,7 +2303,9 @@ async function loadEvidence(focusId = null) {
     try {
       button.disabled = true;
       $('#project-review-status').textContent = 'Generating a new draft from the repository…';
-      await api(`/api/evidence/${card.id}/generate`, {method:'POST', body:'{}'});
+      const provider = $('#project-processing-provider').value;
+      if (!provider || !projectProviderReady) throw new Error('Choose an available processing option above first.');
+      await api(`/api/evidence/${card.id}/generate`, {method:'POST', body:JSON.stringify({provider})});
       await loadEvidence(card.id);
       $('#project-review-status').textContent = 'New draft ready. Review and save it before including it in resumes.';
     } catch(error) { await loadEvidence(card.id); $('#project-review-status').textContent = error.message; }
@@ -2716,14 +2718,15 @@ $('#position-form').addEventListener('submit', async (event) => {
 });
 
 async function inspectSelectedRepository(url, button = null) {
-  if (!projectProviderReady) {
-    $('#project-add-status').textContent = 'Choose an available AI provider in Settings first.';
+  const provider = $('#project-processing-provider').value;
+  if (!provider || !projectProviderReady) {
+    $('#project-add-status').textContent = 'Choose an available processing option for this project first.';
     return;
   }
   if (button) button.disabled = true;
-  $('#project-add-status').textContent = 'Reading the repository and drafting a project description. This can take a minute…';
+  $('#project-add-status').textContent = `Reading the repository and drafting project evidence with ${providerLabel(provider)}…`;
   try {
-    const result = await api('/api/repositories/inspect', {method:'POST', body:JSON.stringify({url})});
+    const result = await api('/api/repositories/inspect', {method:'POST', body:JSON.stringify({url, provider})});
     await loadEvidence(result.evidence_id);
     $('#project-add-status').textContent = result.generation_warning
       ? `Repository added, but the draft needs attention: ${result.generation_warning}`
@@ -2746,12 +2749,6 @@ function parseGitHubEntry(input) {
   if (segments.length === 2) return {repository:url.href};
   throw new Error('Use a GitHub profile or repository URL.');
 }
-
-$('#project-provider-action').addEventListener('click', () => {
-  showTab('settings');
-  $('#provider-panel').open = true;
-  scrollNodeIntoView($('#provider-panel'), {block:'start'});
-});
 
 $('#project-add-form').addEventListener('submit', async (event) => {
   event.preventDefault();
