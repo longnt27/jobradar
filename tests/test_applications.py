@@ -6,7 +6,7 @@ from threading import Thread
 
 from fastapi.testclient import TestClient
 
-from job_radar.drafting import prepare_draft
+from job_radar.drafting import ModelDraft, prepare_draft, regenerate_draft
 from job_radar.settings import Settings
 from job_radar.apply import _default_answer
 from job_radar.web import create_app
@@ -282,3 +282,63 @@ def test_each_file_field_uses_its_reviewed_attachment(tmp_path: Path) -> None:
     finally:
         server.shutdown()
         server.server_close()
+
+
+
+def test_review_context_explains_selected_evidence_and_risky_claims(tmp_path: Path) -> None:
+    client = TestClient(create_app(Settings(tmp_path)))
+    profile = client.get("/api/profile").json()
+    profile.update({"name": "Alex Example", "email": "alex@example.org"})
+    client.put("/api/profile", json=profile)
+    selected = client.post("/api/evidence", json={
+        "kind": "project", "title": "Search Platform",
+        "claim": "Built a Python search platform used by 120 users",
+        "support": ["Python", "search"], "approved": True,
+    }).json()["id"]
+    client.post("/api/evidence", json={
+        "kind": "project", "title": "Vision Demo",
+        "claim": "Built a computer vision demo",
+        "support": ["vision"], "approved": True,
+    })
+    job = client.post("/api/jobs/import", json={
+        "company": "Example", "title": "Search Engineer",
+        "description": "Build Python search systems.",
+    }).json()
+    draft = prepare_draft(client.app.state.db, client.app.state.settings, job["id"], "template")
+    detail = client.get(f"/api/applications/{draft['id']}").json()
+    chosen = {item["id"]: item for item in detail["review_context"]["selected_evidence"]}
+    assert selected in chosen
+    assert "search" in chosen[selected]["matched_terms"]
+    assert detail["review_context"]["risky_claims"]
+
+
+def test_targeted_message_regeneration_preserves_resume_and_reports_diff(tmp_path: Path, monkeypatch) -> None:
+    client = TestClient(create_app(Settings(tmp_path)))
+    profile = client.get("/api/profile").json()
+    profile.update({
+        "name": "Alex Example", "email": "alex@example.org",
+        "experience": [{"company": "Prior", "role": "Engineer", "dates": "2024-2026",
+                        "bullets": ["Built Python systems."]}],
+    })
+    client.put("/api/profile", json=profile)
+    job = client.post("/api/jobs/import", json={
+        "company": "Example", "title": "Engineer",
+        "description": "Build Python systems.",
+    }).json()
+    calls = {"count": 0}
+    def fake_run(*_args, **_kwargs):
+        calls["count"] += 1
+        return ModelDraft(
+            selected_evidence_ids=[], project_bullets=[],
+            summary=f"Summary {calls['count']}",
+            email_subject=f"Subject {calls['count']}",
+            email_body=f"Body {calls['count']}",
+        )
+    monkeypatch.setattr("job_radar.drafting._run_provider", fake_run)
+    draft = prepare_draft(client.app.state.db, client.app.state.settings, job["id"], "codex")
+    before_resume = draft["resume_data"]
+    revised = regenerate_draft(client.app.state.db, client.app.state.settings, draft["id"],
+                               "Shorter email", "message")
+    assert revised["resume_data"] == before_resume
+    assert revised["message_data"]["body"] == "Body 2"
+    assert [change["section"] for change in revised["changes"]] == ["message"]
