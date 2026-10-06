@@ -2219,13 +2219,18 @@ async function loadEvidence(focusId = null) {
   projectCards = allCards.filter((card) => card.kind === 'project');
   if (focusId) selectedProjectId = focusId;
   if (!projectCards.some((card) => card.id === selectedProjectId)) selectedProjectId = projectCards.find((card) => !card.approved)?.id || projectCards[0]?.id || null;
-  const availability = {codex:setup.providers.codex, codex_local:setup.providers.codex && setup.providers.ollama,
-    agy:setup.providers.agy, claude:setup.providers.claude};
-  projectProviderReady = Boolean(profile.drafting_provider && availability[profile.drafting_provider]);
-  $('#project-provider-status').textContent = projectProviderReady
-    ? `Project drafts use ${providerLabel(profile.drafting_provider)}. You can change this in Settings.`
-    : 'Choose an available AI provider in Settings before adding a project.';
-  $('#project-provider-action').hidden = projectProviderReady;
+  projectProviderAvailability = providerAvailability(setup);
+  projectProcessing = setup.provider_processing || {};
+  const providerSelect = $('#project-processing-provider');
+  configureProviderSelect(providerSelect, setup, providerSelect.value || profile.drafting_provider || 'template');
+  if (!providerSelect.value) providerSelect.value = 'template';
+  projectProviderReady = Boolean(providerSelect.value && projectProviderAvailability[providerSelect.value]);
+  $('#project-provider-status').textContent = processingCopy(setup, providerSelect.value, 'The repository snapshot used to draft project evidence');
+  providerSelect.onchange = () => {
+    projectProviderReady = Boolean(providerSelect.value && projectProviderAvailability[providerSelect.value]);
+    $('#project-provider-status').textContent = processingCopy(setup, providerSelect.value, 'The repository snapshot used to draft project evidence');
+    renderRepositoryResults($('#repo-filter')?.value || '');
+  };
   const readyCount = projectCards.filter((card) => card.approved).length;
   $('#selected-project-count').textContent = `${readyCount} ready for resumes`;
   $('#evidence-list').innerHTML = projectCards.length ? projectCards.map((card) => `<button class="project-list-row ${card.id === selectedProjectId ? 'is-selected' : ''}" data-open-project="${card.id}" type="button" aria-pressed="${card.id === selectedProjectId ? 'true' : 'false'}">
