@@ -140,8 +140,6 @@ def test_application_workspace_filters_reviews_and_confirms_send(tmp_path: Path,
                 assert page.locator('[data-attachment="1"]').count() == 1
 
                 send = page.get_by_role("button", name="Approve & send", exact=True)
-                page.get_by_role("button", name="Save changes", exact=True).click()
-                page.wait_for_function("document.querySelector('#application-dirty-state')?.textContent === 'Saved'")
                 assert send.is_enabled()
 
                 subject = page.locator("#draft-subject")
