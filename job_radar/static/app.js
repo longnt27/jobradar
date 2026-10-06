@@ -2627,7 +2627,10 @@ $('#provider-form').addEventListener('submit', async (event) => {
 $('#pdf-resume-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const button = beginPending(event.submitter || event.target.querySelector('button[type="submit"]'), 'Extracting…');
-  $('#pdf-import-status').textContent = 'Reading the PDF and asking your selected provider to extract resume details.';
+  const provider = event.target.elements.provider.value;
+  $('#pdf-import-status').textContent = provider
+    ? `Reading the PDF with ${providerLabel(provider)} using the processing choice shown above.`
+    : 'Choose how this resume should be processed.';
   try {
     const result = await api('/api/profile/resume/pdf', {method:'POST', body:new FormData(event.target)});
     event.target.reset();
@@ -2635,7 +2638,7 @@ $('#pdf-resume-form').addEventListener('submit', async (event) => {
     await showTab('personal');
     notice('Resume details extracted. Review them before applying.');
   } catch(error) { $('#pdf-import-status').textContent = error.message; notice(error.message, true); }
-  finally { endPending(button); const selected = $('#provider-form').elements.provider.selectedOptions[0]; button.disabled = !selected?.value || selected.disabled; }
+  finally { endPending(button); }
 });
 
 $('#latex-import-form').addEventListener('submit', async (event) => {
