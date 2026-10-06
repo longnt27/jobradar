@@ -99,6 +99,7 @@ def automation_eligibility(
     policy: dict[str, Any] | None = None,
     require_analysis: bool = True,
     check_daily_limit: bool = False,
+    check_existing_artifacts: bool = True,
 ) -> dict[str, Any]:
     config = policy or automation_policy(db)
     job = db.one("SELECT * FROM vacancies WHERE id=?", (job_id,))
@@ -155,10 +156,11 @@ def automation_eligibility(
         if not preflight["ready"]:
             reasons.append("No verified application destination is available.")
 
-    if db.one("SELECT id FROM submissions WHERE vacancy_id=? LIMIT 1", (job_id,)):
-        reasons.append("An application submission already exists.")
-    if db.one("SELECT id FROM application_drafts WHERE vacancy_id=? LIMIT 1", (job_id,)):
-        reasons.append("An application draft already exists.")
+    if check_existing_artifacts:
+        if db.one("SELECT id FROM submissions WHERE vacancy_id=? LIMIT 1", (job_id,)):
+            reasons.append("An application submission already exists.")
+        if db.one("SELECT id FROM application_drafts WHERE vacancy_id=? LIMIT 1", (job_id,)):
+            reasons.append("An application draft already exists.")
 
     if check_daily_limit and daily_auto_drafts_used(db) >= config["max_auto_drafts_per_day"]:
         reasons.append("The daily automatic draft limit has been reached.")
