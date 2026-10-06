@@ -238,7 +238,7 @@ def build_home_dashboard(
         )["count"],
     }
     discovery_degraded = discovery.get("level") in {"degraded", "limited", "unknown"}
-    analysis_degraded = bool(analysis["failed"])
+    analysis_degraded = bool(analysis["failed"] or analysis["pending"])
     health_degraded = discovery_degraded or analysis_degraded
 
     health = {
@@ -248,7 +248,11 @@ def build_home_dashboard(
         "analysis": analysis,
         "message": (
             "Your radar needs attention before an empty inbox can be trusted."
-            if health_degraded else
+            if health_degraded and analysis["failed"] else
+            "Some jobs are still being reviewed, so the current empty inbox is not final."
+            if analysis["pending"] else
+            "Discovery coverage needs attention before an empty inbox can be trusted."
+            if discovery_degraded else
             "Discovery and match review look healthy."
         ),
         "route": _route("sources") if discovery_degraded else _route("queue"),
