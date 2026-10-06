@@ -77,7 +77,7 @@ def test_home_ui_separates_required_optional_and_operational_work() -> None:
 
     assert "Job discovery" in js
     assert "Application preparation" in js
-    assert "You do not need a resume, personal details, or an application provider" in js
+    assert "Discovery is useful on its own; application features stay optional." in js
     assert "Optional · fallback ranking still works" in js
     assert "Optional · not configured" in js
 
