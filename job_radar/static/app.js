@@ -2450,14 +2450,14 @@ async function showApplication(id) {
   const linkedinManual = draft.job_source_kind === 'linkedin' && !['web','email','linkedin_easy_apply'].includes(destination.kind);
   const linkedinPaused = linkedinManual && draft.linkedin_automation_paused;
   const linkedinEasyApply = destination.kind === 'linkedin_easy_apply' || destination.action_type === 'linkedin_easy_apply';
-  const warnings = (draft.warnings || []).filter((warning) =>
+  const sent = applicationIsSent(draft);
+  const uncertain = applicationIsUncertain(draft);
+  const warnings = sent || uncertain ? [] : (draft.warnings || []).filter((warning) =>
     !linkedinManual || !warning.startsWith('No application destination is known.') && !warning.startsWith('No verified application method was found.'));
-  const blockers = (draft.send_blockers || []).map((blocker) =>
+  const blockers = sent ? [] : (draft.send_blockers || []).map((blocker) =>
     linkedinManual && blocker === 'Choose an email or web application destination'
       ? linkedinEasyApply ? 'Complete this Easy Apply application on LinkedIn.' : 'No verified way to apply was found. Check the LinkedIn posting’s Apply button.'
       : blocker);
-  const sent = applicationIsSent(draft);
-  const uncertain = applicationIsUncertain(draft);
   const reviewTone = applicationReviewTone(draft);
   const canSend = !sent && !uncertain && draft.send_ready && draft.review_status === 'awaiting_review';
   const canInspect = !sent && !uncertain && (destination.kind === 'linkedin_easy_apply' ||
@@ -2475,24 +2475,24 @@ async function showApplication(id) {
     </div>
     <nav class="application-review-nav" aria-label="Application review sections">
       <button type="button" data-review-target="application-review-resume" aria-label="Resume" aria-current="true"><strong>Resume</strong><small>Review PDF</small></button>
-      <button type="button" data-review-target="application-review-overview" aria-label="Changes &amp; risks"><strong>Changes &amp; risks</strong><small>What needs attention</small></button>
+      <button type="button" data-review-target="application-review-overview" aria-label="${sent ? 'Submission' : 'Changes &amp; risks'}"><strong>${sent ? 'Submission' : 'Changes &amp; risks'}</strong><small>${sent ? 'Send receipt' : 'What needs attention'}</small></button>
       ${destination.kind === 'email' ? '<button type="button" data-review-target="application-review-message" aria-label="Email"><strong>Email</strong><small>Review message</small></button>' : ''}
       ${['web','linkedin_easy_apply'].includes(destination.kind) ? '<button type="button" data-review-target="application-review-form" aria-label="Form"><strong>Form</strong><small>Review answers</small></button>' : ''}
       <button type="button" data-review-target="application-review-regenerate" aria-label="Regenerate"><strong>Regenerate</strong><small>Revise draft</small></button>
     </nav>
 
     <section id="application-review-overview" class="application-review-section">
-      <h3>What changed and what needs attention</h3>
-      <div class="application-preparation-reason surface-status"><strong>Why this application was prepared</strong><p>${escapeHtml(applicationPreparationExplanation(draft))}</p><button type="button" class="secondary" id="view-application-job">View job in Jobs</button></div>
-      ${linkedinManual || destination.kind === 'linkedin_easy_apply' ? `<div class="application-method-guidance surface-status"><strong>${destination.kind === 'linkedin_easy_apply' ? 'LinkedIn Easy Apply' : 'Check how to apply on LinkedIn'}</strong><p>${destination.kind === 'linkedin_easy_apply' ? 'Review every form answer below. Inspect form reads the current LinkedIn steps without submitting. Approve &amp; send opens the same posting and sends only if those steps still match.' : linkedinPaused ? 'Scheduled LinkedIn checks are paused after an account activity warning. You can inspect this saved posting now that you have signed in.' : 'Check what the posting’s application button opens, then review the discovered form.'}</p>${draft.job_posting_url && /^https?:\/\//i.test(draft.job_posting_url) ? `<a class="button-link" href="${escapeHtml(draft.job_posting_url)}" target="_blank" rel="noopener noreferrer">Open LinkedIn posting ↗</a>` : ''}${linkedinManual ? '<button type="button" class="secondary" id="discover-linkedin-apply">Check application button</button>' : ''}<p class="hint">Some forms have several pages and ask for details that are not in your profile. Add any missing answers here, save, then inspect again. Nothing is sent until you choose Approve &amp; send.</p></div>` : ''}
+      <h3>${sent ? 'Application sent' : 'What changed and what needs attention'}</h3>
+      ${sent ? renderSubmissionProof(draft.latest_submission, true) : `<div class="application-preparation-reason surface-status"><strong>Why this application was prepared</strong><p>${escapeHtml(applicationPreparationExplanation(draft))}</p><button type="button" class="secondary" id="view-application-job">View job in Jobs</button></div>`}
+      ${!sent && (linkedinManual || destination.kind === 'linkedin_easy_apply') ? `<div class="application-method-guidance surface-status"><strong>${destination.kind === 'linkedin_easy_apply' ? 'LinkedIn Easy Apply' : 'Check how to apply on LinkedIn'}</strong><p>${destination.kind === 'linkedin_easy_apply' ? 'Review every form answer below. Inspect form reads the current LinkedIn steps without submitting. Approve &amp; send opens the same posting and sends only if those steps still match.' : linkedinPaused ? 'Scheduled LinkedIn checks are paused after an account activity warning. You can inspect this saved posting now that you have signed in.' : 'Check what the posting’s application button opens, then review the discovered form.'}</p>${draft.job_posting_url && /^https?:\/\//i.test(draft.job_posting_url) ? `<a class="button-link" href="${escapeHtml(draft.job_posting_url)}" target="_blank" rel="noopener noreferrer">Open LinkedIn posting ↗</a>` : ''}${linkedinManual ? '<button type="button" class="secondary" id="discover-linkedin-apply">Check application button</button>' : ''}<p class="hint">Some forms have several pages and ask for details that are not in your profile. Add any missing answers here, save, then inspect again. Nothing is sent until you choose Approve &amp; send.</p></div>` : ''}
       ${applicationAlert('danger', 'Sending is blocked', blockers)}
       ${applicationAlert('warning', 'Review before sending', warnings)}
-      ${recentChanges.length ? `<div class="application-change-list"><strong>Changed by your last regeneration</strong>${recentChanges.map((change) => `<div class="application-change-item"><span class="status-badge status-badge--warning">${escapeHtml(change.section)}</span><small>Only this section changed. Untouched sections kept their reviewed content.</small></div>`).join('')}</div>` : ''}
+      ${!sent && recentChanges.length ? `<div class="application-change-list"><strong>Changed by your last regeneration</strong>${recentChanges.map((change) => `<div class="application-change-item"><span class="status-badge status-badge--warning">${escapeHtml(change.section)}</span><small>Only this section changed. Untouched sections kept their reviewed content.</small></div>`).join('')}</div>` : ''}
       <div class="application-overview-grid">
         <div class="application-status-card surface-status"><strong>Package</strong><span>${escapeHtml(applicationReviewLabel(draft))}</span><small>${escapeHtml(destination.kind === 'email' ? 'Email + resume PDF' : ['web','linkedin_easy_apply'].includes(destination.kind) ? 'Form answers + reviewed attachments' : 'Manual handoff package')}</small></div>
         <div class="application-status-card surface-status"><strong>Destination</strong><span>${escapeHtml(applicationActionLabel(destination))}</span><small>${escapeHtml(actionTarget)}</small></div>
       </div>
-      ${renderSubmissionProof(draft.latest_submission, true)}
+      ${!sent ? renderSubmissionProof(draft.latest_submission, true) : ''}
       <div class="application-destination surface-editable">
         <div class="section-head"><div><h4>Where to apply</h4><p class="hint">Use an email address from the posting or the actual employer application form opened by Apply. A job listing URL alone is not an application form.</p></div></div>
         ${destination.provenance ? `<p class="hint">Detected from ${escapeHtml(destination.provenance.replace(/_/g, ' '))} · ${escapeHtml(destination.confidence || 'unknown confidence')}</p>` : ''}
@@ -2537,7 +2537,8 @@ async function showApplication(id) {
       <p class="hint">Choose one section to use a smaller model request. Resume changes update the PDF. For the application email, AI rewrites only the experience and project fit paragraph.</p>
       <label>Section<select id="regenerate-section"><option value="summary">Professional summary</option><option value="experience">Experience bullets</option><option value="projects">Selected projects and bullets</option><option value="education">Education wording</option><option value="achievements">Achievements</option><option value="skills">Skills</option>${destination.kind === 'email' ? '<option value="message">Application experience and project fit</option>' : ''}<option value="all">Full draft · uses more quota</option></select></label>
       <label>Custom instructions<textarea id="regenerate-prompt" rows="3" placeholder="Example: make the summary shorter and emphasize production search work"></textarea></label>
-      <div class="actions"><button id="regenerate-draft" class="secondary" ${draft.provider === 'template' ? 'disabled' : ''}>Regenerate selected section</button></div>
+      <div class="actions"><button id="regenerate-draft" class="secondary" ${draft.provider === 'template' || sent || uncertain ? 'disabled' : ''}>Regenerate selected section</button></div>
+      ${sent ? '<p class="hint">This application has been sent. Its reviewed message and resume are preserved in the submission receipt above.</p>' : ''}
       ${draft.provider === 'template' ? '<p class="hint">This draft used the basic template. Create a new draft with an AI provider to regenerate it with instructions.</p>' : ''}
     </section>
 
@@ -2548,7 +2549,7 @@ async function showApplication(id) {
       <div class="actions">
         <button id="save-draft" class="secondary" disabled>Save changes</button>
         <button id="inspect-draft" class="secondary" ${canInspect ? '' : 'disabled'}>${destination.kind === 'linkedin_easy_apply' && !formData.complete ? 'Inspect remaining steps' : 'Inspect form'}</button>
-        <button id="send-draft" class="primary" ${canSend ? '' : 'disabled'}>Approve &amp; send</button>
+        <button id="send-draft" class="primary" ${canSend ? '' : 'disabled'}>${sent ? escapeHtml(draft.latest_submission?.outcome?.label || 'Sent') : 'Approve &amp; send'}</button>
       </div>
     </div>`;
 

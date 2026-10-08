@@ -11,7 +11,7 @@ from job_radar.settings import Settings
 from job_radar.web import create_app
 
 
-def test_application_tab_reviews_regenerates_and_deep_links_to_draft(tmp_path: Path, monkeypatch) -> None:
+def test_application_tab_reviews_regenerates_sends_and_shows_receipt(tmp_path: Path, monkeypatch) -> None:
     app = create_app(Settings(tmp_path))
     app.state.db.execute("UPDATE sources SET enabled=0")
     app.state.db.set_setting("profile", {"name": "Alex Example", "email": "alex@example.org",
@@ -36,6 +36,11 @@ def test_application_tab_reviews_regenerates_and_deep_links_to_draft(tmp_path: P
     monkeypatch.setattr("job_radar.drafting._provider_json", regenerate_message)
     app.state.auto_apply_manager.register_review(draft)
     client.patch(f"/api/applications/{draft['id']}", json={"destination": {"kind": "email", "email": "jobs@example.org"}})
+    assert client.post("/api/setup/smtp", json={"host": "smtp.example.org", "port": 587,
+        "user": "alex", "password": "secret", "from_address": "alex@example.org"}).status_code == 200
+    sent = []
+    monkeypatch.setattr("job_radar.apply._send_email", lambda item, _settings:
+        sent.append(item["id"]) or "SMTP accepted message")
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
@@ -66,6 +71,21 @@ def test_application_tab_reviews_regenerates_and_deep_links_to_draft(tmp_path: P
                 change_note = page.get_by_text("Only this section changed. Untouched sections kept their reviewed content.")
                 change_note.wait_for(state="visible")
                 assert change_note.is_visible()
+                page.get_by_role("button", name="Approve & send").click()
+                page.locator("#application-review-overview").get_by_role("heading", name="Application sent").wait_for()
+                assert sent == [draft["id"]]
+                assert page.locator("#application-review-overview").get_by_text("SMTP accepted message").is_visible()
+                overview = page.locator("#application-review-overview")
+                assert overview.get_by_text("Review before sending").count() == 0
+                assert overview.get_by_text("Sending is blocked").count() == 0
+                assert overview.get_by_text("This application has already been sent").count() == 0
+                assert page.locator("#send-draft").is_disabled()
+                assert page.locator("#send-draft").inner_text() == "Email sent"
+                page.reload()
+                page.locator("#application-review-overview").get_by_role("heading", name="Application sent").wait_for()
+                assert overview.get_by_text("Review before sending").count() == 0
+                assert overview.get_by_text("Sending is blocked").count() == 0
+                assert sent == [draft["id"]]
             finally:
                 browser.close()
     finally:
