@@ -73,7 +73,8 @@ def test_codex_provider_uses_scoped_cli_and_schema(monkeypatch) -> None:
         return type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})()
 
     monkeypatch.setattr("job_radar.drafting.subprocess.run", fake_run)
-    result = _run_provider("codex_local", {"company": "Example", "title": "Engineer", "description": "Search " + "x" * 35_000, "location": "Hanoi"},
+    result = _run_provider("codex_local", {"company": "Example", "title": "Engineer", "description": "Search " + "x" * 35_000, "location": "Hanoi",
+                                            "posting_source": {"kind": "facebook", "url": "https://www.facebook.com/groups/1/posts/2"}},
                            {"name": "Alex", "skills": ["Python"]}, [{"id": "one", "kind": "project", "title": "Search", "claim": "Built a search system."}])
     assert result.selected_evidence_ids == ["one"]
     assert "--oss" in captured and "--local-provider" in captured
@@ -96,6 +97,9 @@ def test_codex_provider_uses_scoped_cli_and_schema(monkeypatch) -> None:
     assert "three short sentences" in prompts[0]
     assert "attached resume" in prompts[0]
     assert "Do not repeat resume bullets" in prompts[0]
+    assert '"posting_source": {"kind": "facebook"' in prompts[0]
+    assert "Match one or two concrete job requirements to supported candidate evidence" in prompts[0]
+    assert "Do not use vague phrases such as related personal projects or projects related to AI" in prompts[0]
 
 
 def test_explicitly_selected_approved_results_survive_area_filtering() -> None:

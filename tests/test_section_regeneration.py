@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from job_radar.drafting import get_draft, prepare_draft, regenerate_draft
+from job_radar.ingest import ObservedJob, ingest
 from job_radar.settings import Settings
 from job_radar.web import create_app
 
@@ -134,6 +135,48 @@ def test_invalid_project_or_stale_section_response_does_not_replace_draft(tmp_pa
     with pytest.raises(ValueError, match="changed while"):
         regenerate_draft(db, client.app.state.settings, before["id"], "Shorten summary", "summary")
     assert get_draft(db, before["id"])["resume_data"]["summary"] == "Edited while the model was working."
+
+
+def test_message_regeneration_uses_verified_facebook_source_and_specific_job_evidence(
+    tmp_path: Path, monkeypatch
+) -> None:
+    client = TestClient(create_app(Settings(tmp_path)))
+    db = client.app.state.db
+    db.set_setting("profile", {"name": "Nguyen Trung Long", "application_name": "Nguyễn Trung Long",
+                               "email": "long@example.org", "skills": ["Python", "PyTorch"],
+                               "experience": [{"company": "VinSmart Future", "role": "AI Engineering Intern",
+                                               "dates": "2025-2026", "bullets": ["Built an end-to-end 3D reconstruction pipeline."]}]})
+    source_id = db.one("SELECT id FROM sources LIMIT 1")["id"]
+    db.execute("UPDATE sources SET kind='facebook',name='AI Jobs',url=? WHERE id=?",
+               ("https://www.facebook.com/groups/1", source_id))
+    job_id, _ = ingest(db, source_id, ObservedJob(
+        url="https://www.facebook.com/groups/1/posts/2", company="Facebook post",
+        title="[SETA] TUYỂN DỤNG AI ENGINEER", description=(
+            "Tuyển dụng AI Engineer. Yêu cầu Python, PyTorch và một dự án AI end-to-end. "
+            "Có kinh nghiệm Computer Vision và LLM.")))
+    before = prepare_draft(db, client.app.state.settings, job_id, "template")
+    db.execute("UPDATE application_drafts SET provider='codex' WHERE id=?", (before["id"],))
+    captured = []
+
+    def fake_provider(_provider, prompt, response_type):
+        captured.append(prompt)
+        return response_type.model_validate({
+            "subject": "Ứng tuyển AI Engineer — Nguyễn Trung Long",
+            "body": ("Kính gửi SETA,\n\nTôi thấy tin tuyển AI Engineer của công ty trên Facebook. "
+                     "Kinh nghiệm xây dựng pipeline tái dựng 3D từ đầu đến cuối tại VinSmart Future "
+                     "phù hợp với yêu cầu Computer Vision và Python. Mong anh/chị xem CV đính kèm.\n\n"
+                     "Trân trọng,\nNguyễn Trung Long"),
+        })
+
+    monkeypatch.setattr("job_radar.drafting._provider_json", fake_provider)
+    revised = regenerate_draft(db, client.app.state.settings, before["id"], "Match the posting", "message")
+
+    assert '"posting_source": {"kind": "facebook"' in captured[0]
+    assert "Python, PyTorch" in captured[0]
+    assert "Built an end-to-end 3D reconstruction pipeline" in captured[0]
+    assert "Do not use vague phrases such as related personal projects or projects related to AI" in captured[0]
+    assert revised["resume_data"] == before["resume_data"]
+    assert [change["section"] for change in revised["changes"]] == ["message"]
 
 
 def test_long_message_revision_keeps_current_draft(tmp_path: Path, monkeypatch) -> None:
