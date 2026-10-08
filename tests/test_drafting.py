@@ -6,9 +6,9 @@ from pypdf import PdfReader
 
 from job_radar.settings import Settings
 from job_radar.web import create_app
-from job_radar.drafting import (ApplicationMessage, EnglishTranslations, ModelDraft, ProjectBullets,
+from job_radar.drafting import (ApplicationFit, EnglishTranslations, ModelDraft, ProjectBullets,
                                  TranslationItem, _ensure_english_resume, _job_language, _relevant_results,
-                                 _message_in_job_language, _run_provider, _selected_resume_projects,
+                                 _compose_application_message, _fit_in_job_language, _run_provider, _selected_resume_projects,
                                  _template, prepare_draft,
                                  get_draft, refresh_draft_content)
 from job_radar.ingest import ObservedJob, ingest
@@ -69,7 +69,7 @@ def test_codex_provider_uses_scoped_cli_and_schema(monkeypatch) -> None:
         prompts.append(kwargs["input"])
         import json
         schemas.append(json.loads(Path(args[args.index("--output-schema") + 1]).read_text()))
-        Path(args[args.index("-o") + 1]).write_text('{"selected_evidence_ids":["one"],"summary":"Engineer","email_subject":"Application","email_body":"I built a search system."}')
+        Path(args[args.index("-o") + 1]).write_text('{"selected_evidence_ids":["one"],"summary":"Engineer","fit_text":"I built a search system."}')
         return type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})()
 
     monkeypatch.setattr("job_radar.drafting.subprocess.run", fake_run)
@@ -81,6 +81,7 @@ def test_codex_provider_uses_scoped_cli_and_schema(monkeypatch) -> None:
     assert "--output-schema" in captured and "read-only" in captured and "--ignore-user-config" in captured
     assert schemas[0]["additionalProperties"] is False
     assert set(schemas[0]["required"]) == set(schemas[0]["properties"])
+    assert "email_subject" not in schemas[0]["properties"]
     assert "bold_phrases" in schemas[0]["properties"]
     assert "Select exactly three approved project IDs" in prompts[0]
     assert "Bullet 1 explains the problem, what the project does, and how it works" in prompts[0]
@@ -90,22 +91,15 @@ def test_codex_provider_uses_scoped_cli_and_schema(monkeypatch) -> None:
     assert "Every metric in bullet 2 must be supported by a result ID in project_focus" in prompts[0]
     assert "Keep internal logs and trace artifacts out of result bullets" in prompts[0]
     assert "three to five short, appealing skill categories" in prompts[0]
-    assert "including Vietnamese diacritics" in prompts[0]
-    assert "application_name" in prompts[0]
+    assert "app builds the email subject and boilerplate" in prompts[0]
     assert "Do not copy repository caveat notes into resume bullets" in prompts[0]
     assert '"claim": "Built a search system."' in prompts[0]
-    assert "five or six plain sentences" in prompts[0]
-    assert "attached resume" in prompts[0]
-    assert "do not repeat resume bullets" in prompts[0]
-    assert "Tôi thấy bài đăng tuyển [vị trí] của [công ty]" in prompts[0]
-    assert "phù hợp với kinh nghiệm và kỹ năng của mình" in prompts[0]
-    assert "briefly state the candidate's Computer Science education before experience" in prompts[0]
-    assert "name a relevant internship or job role and one real contribution" in prompts[0]
+    assert "Write only the candidate-fit text" in prompts[0]
+    assert "Do not write a greeting, posting source, education, call to action, sign-off, or email subject" in prompts[0]
+    assert "Briefly name a relevant internship or job role" in prompts[0]
     assert "3D reconstruction pipeline for robot data generation" in prompts[0]
-    assert "summarize several personal projects with up to three supported job-relevant areas" in prompts[0]
-    assert "Rất mong có cơ hội trao đổi" in prompts[0]
+    assert "summarize up to three supported job-relevant personal-project areas" in prompts[0]
     assert '"posting_source": {"kind": "facebook"' in prompts[0]
-    assert "Do not put a list of technical categories in the opening sentence" in prompts[0]
 
 
 def test_explicitly_selected_approved_results_survive_area_filtering() -> None:
@@ -121,12 +115,35 @@ def test_template_application_note_is_brief_and_points_to_resume() -> None:
                "bullets": ["Improved model accuracy by 18% on 10,000 examples."]}]}
     card = {"id": "project", "title": "Machine learning search project", "claim": "Reached 93% accuracy on 2,000 samples.",
             "details": {"results": []}}
-    body = _template(job, profile, [card]).email_body
+    fit = _template(job, profile, [card]).fit_text
+    body = _compose_application_message(job, profile, fit)["body"]
     assert len(body.split()) <= 90
     assert "AI Engineer Intern" in body and "Example Labs" in body
-    assert "related personal projects" in body.lower()
+    assert "personal projects" in body.lower()
     assert "attached resume" in body.lower()
     assert "18%" not in body and "93%" not in body
+
+
+def test_application_note_assembles_verified_source_and_profile_around_fit() -> None:
+    job = {"company": "Example AI", "title": "Search Engineer", "description": "Build search systems.",
+           "posting_source": {"kind": "linkedin"}}
+    profile = {"name": "Alex Example", "education": [{"school": "Example University",
+               "degree": "BSc Computer Science", "dates": "2022–2099"}]}
+    first = _compose_application_message(job, profile, "I built Python search systems at Prior Co.")
+    second = _compose_application_message(job, profile, "I built retrieval systems at Prior Co.")
+    assert first["subject"] == second["subject"] == "Application for Search Engineer – Alex Example"
+    assert "on LinkedIn and feel the role fits my experience and skills" in first["body"]
+    assert "I studied Computer Science at Example University. I built Python search systems" in first["body"]
+    assert "Please see my attached resume for details." in first["body"]
+    assert first["body"].replace("Python search", "retrieval") == second["body"]
+    assert "on LinkedIn" not in _compose_application_message({**job, "posting_source": None}, profile,
+                                                   "I built Python search systems at Prior Co.")["body"]
+    generic = _compose_application_message({**job, "company": "Facebook post",
+                                             "posting_source": {"kind": "facebook"}}, profile,
+                                            "I built Python search systems at Prior Co.")
+    assert "Facebook post" not in generic["body"]
+    with pytest.raises(ValueError, match="candidate-fit paragraph"):
+        _compose_application_message(job, profile, "Please check my attached resume.")
 
 
 def test_resume_and_application_email_use_separate_identity(tmp_path: Path) -> None:
@@ -152,7 +169,7 @@ def test_resume_selects_only_three_projects_in_model_order() -> None:
     cards = [{"id": str(i), "title": f"Project {i}", "claim": f"Built {i}",
               "details": {"results": []}} for i in range(4)]
     model = ModelDraft(selected_evidence_ids=["3", "1", "2", "0"], summary="Engineer",
-                       email_subject="Application", email_body="Hello")
+                       fit_text="Hello")
     _, projects = _selected_resume_projects({}, cards, model, "template")
     assert [project["id"] for project in projects] == ["3", "1", "2"]
 
@@ -166,7 +183,7 @@ def test_job_specific_project_bullets_are_used_in_resume(tmp_path: Path, monkeyp
     job = client.post("/api/jobs/import", json={"company": "Example AI", "title": "Search Engineer", "description": "Build Python document search and indexing systems."}).json()
     monkeypatch.setattr("job_radar.drafting._run_provider", lambda provider, job, profile, cards: ModelDraft(
         selected_evidence_ids=[project["id"]], project_bullets=[ProjectBullets(evidence_id=project["id"], bullets=["Built a Python document index for search."])],
-        summary="Python search engineer", email_subject="Search Engineer application", email_body="I built a Python index."
+        summary="Python search engineer", fit_text="I built a Python index."
     ))
     draft = prepare_draft(client.app.state.db, client.app.state.settings, job["id"], "codex")
     assert draft["resume_data"]["projects"][0]["bullets"] == ["Built a Python document index for search."]
@@ -216,7 +233,7 @@ def test_project_result_focus_changes_with_job_without_claiming_unsupported_llm_
 
     monkeypatch.setattr("job_radar.drafting._run_provider", lambda *_args: ModelDraft(
         selected_evidence_ids=[ids["WHAM"]], summary="Relevant AI work",
-        email_subject="Application", email_body="I am applying for this role.",
+        fit_text="I am applying for this role.",
     ))
     with pytest.raises(ValueError, match="fewer than three"):
         prepare_draft(client.app.state.db, client.app.state.settings, llm_job["id"], "codex")
@@ -229,7 +246,7 @@ def test_project_result_focus_changes_with_job_without_claiming_unsupported_llm_
     monkeypatch.setattr("job_radar.drafting._run_provider", lambda *_args: ModelDraft(
         selected_evidence_ids=[ids["CausClass"], ids["Quizzer"], ids["Pronunciation Assessment"]],
         project_bullets=model_bullets, bold_phrases=["0.5043 F1", "100% Recall at 10"],
-        summary="Relevant AI work", email_subject="Application", email_body="I am applying for this role.",
+        summary="Relevant AI work", fit_text="I am applying for this role.",
     ))
     ai_draft = prepare_draft(client.app.state.db, client.app.state.settings, llm_job["id"], "codex")
     ai_titles = {item["title"] for item in ai_draft["resume_data"]["projects"]}
@@ -259,8 +276,8 @@ def test_refreshing_draft_projects_keeps_saved_application_answers(tmp_path: Pat
     job = client.post("/api/jobs/import", json={"company": "Example", "title": "LLM Engineer",
                                                    "description": "Build RAG systems."}).json()
     monkeypatch.setattr("job_radar.drafting._run_provider", lambda *_args: ModelDraft(
-        selected_evidence_ids=[], summary="Original summary", email_subject="Original subject",
-        email_body="I am applying for this role."))
+        selected_evidence_ids=[], summary="Original summary",
+        fit_text="I am applying for this role."))
     original = prepare_draft(client.app.state.db, client.app.state.settings, job["id"], "codex")
     form = {"kind": "linkedin_easy_apply", "answers": {"0": "2"}, "fields": [{"index": 0, "label": "Years"}],
             "inspection_blockers": [], "complete": False}
@@ -285,8 +302,8 @@ def test_refreshing_draft_projects_keeps_saved_application_answers(tmp_path: Pat
     assert failed["resume_hash"] == original["resume_hash"]
     assert "quota" in failed["project_refresh_error"]
     monkeypatch.setattr("job_radar.drafting._run_provider", lambda *_args: ModelDraft(
-        selected_evidence_ids=[project["id"]], summary="Changed summary", email_subject="Changed subject",
-        email_body="Changed email."))
+        selected_evidence_ids=[project["id"]], summary="Changed summary",
+        fit_text="Changed email."))
 
     refreshed = drafting.refresh_draft_projects(client.app.state.db, client.app.state.settings, original["id"])
     assert refreshed["form_data"] == form
@@ -320,8 +337,7 @@ def test_refresh_one_draft_uses_exact_profile_identity_and_keeps_reviewed_data(t
                                                                    "Improved measured image quality."],
                                                           skills=["Computer Vision", "Python", "Image Processing", "Evaluation"])],
                           summary="Computer vision engineer.",
-                          email_subject=f"Ứng tuyển kỹ sư AI – {name}",
-                          email_body=f"Kính gửi nhà tuyển dụng. Tôi ứng tuyển vị trí kỹ sư AI.\n\nTrân trọng,\n{name}")
+                          fit_text="Tôi từng xây dựng hệ thống thị giác máy tính tại VinSmart Future.")
 
     monkeypatch.setattr("job_radar.drafting._run_provider", model)
     jobs = [client.post("/api/jobs/import", json={"company": "Example", "title": f"Kỹ sư AI {index}",
@@ -372,18 +388,19 @@ def test_vietnamese_posting_gets_vietnamese_email_and_english_cv_rule(monkeypatc
     assert _job_language(job) == "Vietnamese"
     assert _job_language({"title": "AI Engineer", "description": "Build Python systems."}) == "English"
     template = _template(job, profile, [])
-    assert "Kính gửi" in template.email_body and "Ứng tuyển" in template.email_subject
-    english = ModelDraft(summary="Python engineer", email_subject="Application", email_body="Dear team. I built data systems.")
+    composed = _compose_application_message(job, profile, template.fit_text)
+    assert "Kính gửi" in composed["body"] and "Ứng tuyển" in composed["subject"]
+    english = ModelDraft(summary="Python engineer", fit_text="Dear team. I built data systems.")
     prompts = []
 
     def fake_provider(_provider, prompt, response_type):
         prompts.append(prompt)
-        assert response_type is ApplicationMessage
-        return ApplicationMessage(subject="Ứng tuyển vị trí Kỹ sư dữ liệu", body="Kính gửi bộ phận tuyển dụng. Tôi có kinh nghiệm phát triển hệ thống dữ liệu.")
+        assert response_type is ApplicationFit
+        return ApplicationFit(fit="Tôi có kinh nghiệm phát triển hệ thống dữ liệu.")
 
     monkeypatch.setattr("job_radar.drafting._provider_json", fake_provider)
-    revised = _message_in_job_language("codex", job, english)
-    assert revised.email_body.startswith("Kính gửi")
+    revised = _fit_in_job_language("codex", job, english)
+    assert revised.fit_text.startswith("Tôi có kinh nghiệm")
     assert "Vietnamese" in prompts[0]
 
 
@@ -394,38 +411,34 @@ def test_english_email_keeps_accented_name_and_vietnamese_job_title(monkeypatch)
         "description": "Develop and evaluate AI models for banking applications.",
     }
     name = "Nguyễn Trung Long"
-    body = (f"Dear MBBank team,\n\nI am applying for the {job['title']} role. "
-            f"My experience in model evaluation fits this position.\n\nBest,\n{name}")
-    draft = ModelDraft(summary="AI engineer", email_subject=f"Application - {name}", email_body=body)
+    body = "My experience in model evaluation fits this position."
+    draft = ModelDraft(summary="AI engineer", fit_text=body)
 
     def fail_if_called(*_args):
         raise AssertionError("An English email must not be translated because of proper names")
 
     monkeypatch.setattr("job_radar.drafting._provider_json", fail_if_called)
-    result = _message_in_job_language("codex", job, draft, name)
-    assert result.email_body == body
+    result = _fit_in_job_language("codex", job, draft)
+    assert result.fit_text == body
 
 
 def test_overlong_application_message_uses_small_rewrite(monkeypatch) -> None:
     name = "Alex Example"
-    original = ModelDraft(summary="AI engineer", email_subject=f"AI Engineer application — {name}",
-                          email_body="Dear team,\n\n" + "I built relevant systems and models. " * 35 + f"\n\nBest,\n{name}")
+    original = ModelDraft(summary="AI engineer",
+                          fit_text="I built relevant systems and models. " * 35)
     prompts = []
 
     def fake_provider(_provider, prompt, response_type):
         prompts.append((prompt, response_type))
-        return ApplicationMessage(subject=original.email_subject,
-                                  body=f"Dear team,\n\nI saw your AI Engineer posting and am interested. "
-                                       "My AI internship and personal projects are relevant. "
-                                       f"Please check my attached resume.\n\nBest,\n{name}")
+        return ApplicationFit(fit="Tôi từng thực tập AI và có các dự án cá nhân liên quan.")
 
     monkeypatch.setattr("job_radar.drafting._provider_json", fake_provider)
-    revised = _message_in_job_language("codex", {"title": "AI Engineer", "company": "Example",
-                                                 "description": "Build AI systems."}, original, name)
+    revised = _fit_in_job_language("codex", {"title": "Kỹ sư AI", "company": "Example",
+                                             "description": "Tuyển dụng kỹ sư AI."}, original)
     assert revised.summary == original.summary
-    assert len(revised.email_body.split()) < 90
+    assert len(revised.fit_text.split()) < 90
     assert len(prompts) == 1
-    assert prompts[0][1] is ApplicationMessage
+    assert prompts[0][1] is ApplicationFit
 
 
 def test_vietnamese_experience_is_translated_before_cv_render(monkeypatch) -> None:

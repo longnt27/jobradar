@@ -355,8 +355,8 @@ def test_regeneration_uses_custom_prompt_and_invalidates_old_review(tmp_path: Pa
     seen = []
     def fake_provider(_provider, _job, _profile, _cards, custom_prompt=""):
         seen.append(custom_prompt)
-        return ModelDraft(summary="Python engineer", email_subject="AI Engineer application",
-                          email_body=f"Dear team. {custom_prompt or 'Initial version'}")
+        return ModelDraft(summary="Python engineer",
+                          fit_text=f"I built Python systems at Prior Co. {custom_prompt or 'Initial version'}")
     monkeypatch.setattr("job_radar.drafting._run_provider", fake_provider)
     original = prepare_draft(db, app.state.settings, job_id, "codex")
     db.execute("INSERT INTO auto_application_attempts(vacancy_id,status,draft_id,review_hash,created_at,updated_at) VALUES(?,'awaiting_review',?,?,?,?)",

@@ -189,7 +189,7 @@ def test_web_form_inspection_and_one_click_submit(tmp_path: Path) -> None:
         assert inspected.status_code == 200, inspected.text
         answers = inspected.json()["form_data"]["answers"]
         assert "Alex Example" in answers.values()
-        assert any("I came across your posting" in value and "attached resume" in value for value in answers.values())
+        assert any("I saw the posting" in value and "attached resume" in value for value in answers.values())
         form_data = inspected.json()["form_data"]
         resume_field = next(field for field in form_data["fields"] if field["type"] == "file")
         form_data["attachments"] = {str(resume_field["index"]): {"kind": "resume"}}
@@ -382,16 +382,16 @@ def test_targeted_message_regeneration_preserves_resume_and_reports_diff(tmp_pat
         return ModelDraft(
             selected_evidence_ids=[], project_bullets=[],
             summary=f"Summary {calls['count']}",
-            email_subject=f"Subject {calls['count']}",
-            email_body=f"Body {calls['count']}",
+            fit_text=f"Body {calls['count']}",
         )
     monkeypatch.setattr("job_radar.drafting._run_provider", fake_run)
     draft = prepare_draft(client.app.state.db, client.app.state.settings, job["id"], "codex")
     monkeypatch.setattr("job_radar.drafting._provider_json", lambda _provider, _prompt, response_type:
-                        response_type.model_validate({"subject": "Subject 2", "body": "Body 2"}))
+                        response_type.model_validate({"fit": "I built Python systems at Prior and have relevant personal projects."}))
     before_resume = draft["resume_data"]
     revised = regenerate_draft(client.app.state.db, client.app.state.settings, draft["id"],
                                "Shorter email", "message")
     assert revised["resume_data"] == before_resume
-    assert revised["message_data"]["body"] == "Body 2"
+    assert "I built Python systems at Prior" in revised["message_data"]["body"]
+    assert revised["message_data"]["body"].startswith("Dear Example hiring team,")
     assert [change["section"] for change in revised["changes"]] == ["message"]

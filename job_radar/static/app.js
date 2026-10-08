@@ -2534,8 +2534,8 @@ async function showApplication(id) {
 
     <section id="application-review-regenerate" class="application-review-section">
       <h3>Regenerate only what needs work</h3>
-      <p class="hint">Choose one section to use a smaller model request. Only that section will be replaced in your saved draft and PDF.</p>
-      <label>Section<select id="regenerate-section"><option value="summary">Professional summary</option><option value="experience">Experience bullets</option><option value="projects">Selected projects and bullets</option><option value="education">Education wording</option><option value="achievements">Achievements</option><option value="skills">Skills</option>${destination.kind === 'email' ? '<option value="message">Application email</option>' : ''}<option value="all">Full draft · uses more quota</option></select></label>
+      <p class="hint">Choose one section to use a smaller model request. Resume changes update the PDF. For the application email, AI rewrites only the experience and project fit paragraph.</p>
+      <label>Section<select id="regenerate-section"><option value="summary">Professional summary</option><option value="experience">Experience bullets</option><option value="projects">Selected projects and bullets</option><option value="education">Education wording</option><option value="achievements">Achievements</option><option value="skills">Skills</option>${destination.kind === 'email' ? '<option value="message">Application experience and project fit</option>' : ''}<option value="all">Full draft · uses more quota</option></select></label>
       <label>Custom instructions<textarea id="regenerate-prompt" rows="3" placeholder="Example: make the summary shorter and emphasize production search work"></textarea></label>
       <div class="actions"><button id="regenerate-draft" class="secondary" ${draft.provider === 'template' ? 'disabled' : ''}>Regenerate selected section</button></div>
       ${draft.provider === 'template' ? '<p class="hint">This draft used the basic template. Create a new draft with an AI provider to regenerate it with instructions.</p>' : ''}

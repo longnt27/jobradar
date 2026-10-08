@@ -308,8 +308,8 @@ def test_telegram_reply_edits_or_regenerates_draft(tmp_path: Path, monkeypatch, 
     prompts = []
     def fake_provider(_provider, _job, _profile, _cards, custom_prompt=""):
         prompts.append(custom_prompt)
-        return ModelDraft(summary="Python engineer", email_subject="AI Engineer application",
-                          email_body=f"Dear team. {custom_prompt or 'Initial'}")
+        return ModelDraft(summary="Python engineer",
+                          fit_text=f"I built Python systems at Prior Co. {custom_prompt or 'Initial'}")
     monkeypatch.setattr("job_radar.drafting._run_provider", fake_provider)
     monkeypatch.setattr("job_radar.auto_apply.send_review_packet", lambda *_args, **_kwargs: asyncio.sleep(0, result=88))
     draft = prepare_draft(db, app.state.settings, job_id, "codex")

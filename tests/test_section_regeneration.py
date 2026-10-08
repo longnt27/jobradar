@@ -163,18 +163,11 @@ def test_message_regeneration_uses_verified_facebook_source_and_specific_job_evi
 
     def fake_provider(_provider, prompt, response_type):
         captured.append(prompt)
-        return response_type.model_validate({
-            "subject": "Ứng tuyển AI Engineer — Nguyễn Trung Long",
-            "body": ("Kính gửi SETA,\n\nTôi thấy bài đăng tuyển AI Engineer của SETA trên Facebook và cảm thấy "
-                     "vị trí này phù hợp với kinh nghiệm và kỹ năng của mình. "
-                     "Tôi tốt nghiệp ngành Khoa học máy tính tại Đại học Bách khoa Hà Nội. "
-                     "Tôi từng thực tập vị trí AI Engineer tại VinSmart Future, xây dựng pipeline tái tạo 3D "
-                     "để tạo dữ liệu robot. Các dự án cá nhân của tôi tập trung vào Computer Vision, ứng dụng "
-                     "LLM và hệ thống AI đầu cuối. "
-                     "Anh/chị vui lòng xem CV đính kèm để biết thêm chi tiết. "
-                     "Rất mong có cơ hội trao đổi sâu hơn về vị trí này với quý công ty.\n\n"
-                     "Trân trọng,\nNguyễn Trung Long"),
-        })
+        assert set(response_type.model_fields) == {"fit"}
+        return response_type.model_validate({"fit": (
+            "Tôi từng thực tập vị trí AI Engineer tại VinSmart Future, xây dựng quy trình tái tạo 3D "
+            "để tạo dữ liệu robot. Các dự án cá nhân của tôi tập trung vào Computer Vision, ứng dụng "
+            "LLM và hệ thống AI đầu cuối.")})
 
     monkeypatch.setattr("job_radar.drafting._provider_json", fake_provider)
     revised = regenerate_draft(db, client.app.state.settings, before["id"], "Match the posting", "message")
@@ -182,14 +175,16 @@ def test_message_regeneration_uses_verified_facebook_source_and_specific_job_evi
     assert '"posting_source": {"kind": "facebook"' in captured[0]
     assert "Python, PyTorch" in captured[0]
     assert "Built an end-to-end 3D reconstruction pipeline for robot dataset synthesis" in captured[0]
-    assert '"application_school": "Đại học Bách khoa Hà Nội"' in captured[0]
-    assert '"education": [{"school": "Hanoi University of Science and Technology"' in captured[0]
-    assert "Tôi thấy bài đăng tuyển [vị trí] của [công ty]" in captured[0]
-    assert "phù hợp với kinh nghiệm và kỹ năng của mình" in captured[0]
-    assert "candidate's Computer Science education before experience" in captured[0]
-    assert "without project names" in captured[0]
+    assert '"application_school"' not in captured[0]
+    assert '"education"' not in captured[0]
+    assert "Write only the candidate-fit text" in captured[0]
+    assert "Do not write a greeting, posting source, education, call to action" in captured[0]
     assert "3D reconstruction pipeline for robot data generation" in captured[0]
-    assert "Rất mong có cơ hội trao đổi" in captured[0]
+    body = revised["message_data"]["body"]
+    assert "bài đăng tuyển AI Engineer của SETA trên Facebook" in body
+    assert "Đại học Bách khoa Hà Nội. Tôi từng thực tập" in body
+    assert "Rất mong có cơ hội trao đổi sâu hơn" in body
+    assert body.endswith("Nguyễn Trung Long")
     assert revised["resume_data"] == before["resume_data"]
     assert [change["section"] for change in revised["changes"]] == ["message"]
 
@@ -198,9 +193,8 @@ def test_long_message_revision_keeps_current_draft(tmp_path: Path, monkeypatch) 
     client, before, _ = _draft(tmp_path)
     db = client.app.state.db
     monkeypatch.setattr("job_radar.drafting._provider_json", lambda _provider, _prompt, response_type:
-                        response_type.model_validate({"subject": "Search Engineer — Alex Example",
-                                                      "body": "I am applying for this role. " * 40}))
-    with pytest.raises(ValueError, match="brief application message"):
+                        response_type.model_validate({"fit": "I built search systems. " * 40}))
+    with pytest.raises(ValueError, match="brief candidate-fit paragraph"):
         regenerate_draft(db, client.app.state.settings, before["id"], "Keep this short", "message")
     assert get_draft(db, before["id"])["package_hash"] == before["package_hash"]
 
@@ -210,8 +204,7 @@ def test_long_message_revision_keeps_current_draft(tmp_path: Path, monkeypatch) 
     ("education", {"entries": [{"index": 0, "degree": "Bachelor of Computer Science"}]}),
     ("achievements", {"achievements": ["Placed first in a regional programming contest."]}),
     ("skills", {"groups": [{"label": "Programming", "skills": ["Python", "SQL"]}]}),
-    ("message", {"subject": "Application for Search Engineer — Alex Example",
-                 "body": "Dear hiring team, Alex Example is applying for this role."}),
+    ("message", {"fit": "I built Python search systems at Prior Co and evaluated personal search projects."}),
 ])
 def test_other_sections_use_small_schema_and_preserve_reviewed_content(
     tmp_path: Path, monkeypatch, section: str, model_output: dict
@@ -235,8 +228,8 @@ def test_other_sections_use_small_schema_and_preserve_reviewed_content(
     assert revised["evidence_ids"] == before["evidence_ids"]
     assert [change["section"] for change in revised["changes"]] == [section]
     if section == "message":
-        assert "five or six plain sentences" in captured[0][0]
-        assert "attached resume" in captured[0][0]
+        assert "Write only the candidate-fit text" in captured[0][0]
+        assert captured[0][1] == {"fit"}
         assert revised["resume_data"] == before["resume_data"]
         assert revised["message_data"] != before["message_data"]
     else:

@@ -18,8 +18,8 @@ def test_application_tab_reviews_regenerates_and_deep_links_to_draft(tmp_path: P
         "experience": [{"company": "Prior Co", "role": "Engineer", "dates": "2024–2026", "bullets": ["Built Python systems."]}],
         "drafting_provider": "codex"})
     monkeypatch.setattr("job_radar.drafting._run_provider", lambda _p, _j, _c, _e, custom_prompt="":
-        ModelDraft(summary="Python engineer", email_subject="Engineer application",
-                   email_body=f"Dear team. {custom_prompt or 'Initial draft'}"))
+        ModelDraft(summary="Python engineer",
+                   fit_text=f"I built Python systems at Prior Co. {custom_prompt or 'Initial draft'}"))
     from fastapi.testclient import TestClient
     client = TestClient(app)
     job = client.post("/api/jobs/import", json={"company": "Example", "title": "Engineer",
@@ -31,8 +31,7 @@ def test_application_tab_reviews_regenerates_and_deep_links_to_draft(tmp_path: P
     def regenerate_message(_provider, _prompt, response_type):
         regeneration_started.set()
         assert allow_regeneration.wait(10)
-        return response_type.model_validate({"subject": "Engineer application",
-                                             "body": "Dear team. Emphasize production search"})
+        return response_type.model_validate({"fit": "I built production search systems at Prior Co."})
 
     monkeypatch.setattr("job_radar.drafting._provider_json", regenerate_message)
     app.state.auto_apply_manager.register_review(draft)
@@ -63,7 +62,7 @@ def test_application_tab_reviews_regenerates_and_deep_links_to_draft(tmp_path: P
                 page.locator(f'[data-application="{draft["id"]}"] .status-badge').get_by_text("Regenerating").wait_for(timeout=5000)
                 page.locator("#application-detail .application-review-header .status-badge").get_by_text("Regenerating").wait_for(timeout=5000)
                 allow_regeneration.set()
-                page.get_by_text("Dear team. Emphasize production search").wait_for()
+                page.get_by_text("I built production search systems at Prior Co.").wait_for()
                 change_note = page.get_by_text("Only this section changed. Untouched sections kept their reviewed content.")
                 change_note.wait_for(state="visible")
                 assert change_note.is_visible()
