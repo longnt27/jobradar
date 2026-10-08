@@ -165,10 +165,12 @@ def test_message_regeneration_uses_verified_facebook_source_and_specific_job_evi
         captured.append(prompt)
         return response_type.model_validate({
             "subject": "Ứng tuyển AI Engineer — Nguyễn Trung Long",
-            "body": ("Kính gửi SETA,\n\nTôi thấy tin tuyển AI Engineer trên Facebook và quan tâm vì vị trí phù hợp với hướng phát triển của tôi. "
-                     "Tôi học Khoa học máy tính tại Đại học Bách khoa Hà Nội. "
-                     "Tại VinSmart Future, tôi xây dựng pipeline tạo dữ liệu robot bằng tái dựng 3D. "
-                     "Các dự án cá nhân của tôi liên quan đến Computer Vision, LLM và học sâu. "
+            "body": ("Kính gửi SETA,\n\nTôi thấy bài đăng tuyển AI Engineer của SETA trên Facebook và cảm thấy "
+                     "vị trí này phù hợp với kinh nghiệm và kỹ năng của mình. "
+                     "Tôi tốt nghiệp ngành Khoa học máy tính tại Đại học Bách khoa Hà Nội. "
+                     "Tôi từng thực tập vị trí AI Engineer tại VinSmart Future, xây dựng pipeline tái tạo 3D "
+                     "để tạo dữ liệu robot. Các dự án cá nhân của tôi tập trung vào Computer Vision, ứng dụng "
+                     "LLM và hệ thống AI đầu cuối. "
                      "Anh/chị vui lòng xem CV đính kèm để biết thêm chi tiết. "
                      "Rất mong có cơ hội trao đổi sâu hơn về vị trí này với quý công ty.\n\n"
                      "Trân trọng,\nNguyễn Trung Long"),
@@ -182,11 +184,11 @@ def test_message_regeneration_uses_verified_facebook_source_and_specific_job_evi
     assert "Built an end-to-end 3D reconstruction pipeline for robot dataset synthesis" in captured[0]
     assert '"application_school": "Đại học Bách khoa Hà Nội"' in captured[0]
     assert '"education": [{"school": "Hanoi University of Science and Technology"' in captured[0]
-    assert "why the role interests the candidate" in captured[0]
-    assert "mention the field of study and school briefly before work experience" in captured[0]
-    assert "without naming individual projects" in captured[0]
-    assert "describe it as robot-data engineering" in captured[0]
-    assert "Keep both parts of this call to action" in captured[0]
+    assert "Tôi thấy bài đăng tuyển [vị trí] của [công ty]" in captured[0]
+    assert "phù hợp với kinh nghiệm và kỹ năng của mình" in captured[0]
+    assert "candidate's Computer Science education before experience" in captured[0]
+    assert "without project names" in captured[0]
+    assert "3D reconstruction pipeline for robot data generation" in captured[0]
     assert "Rất mong có cơ hội trao đổi" in captured[0]
     assert revised["resume_data"] == before["resume_data"]
     assert [change["section"] for change in revised["changes"]] == ["message"]
@@ -233,7 +235,7 @@ def test_other_sections_use_small_schema_and_preserve_reviewed_content(
     assert revised["evidence_ids"] == before["evidence_ids"]
     assert [change["section"] for change in revised["changes"]] == [section]
     if section == "message":
-        assert "about six short sentences" in captured[0][0]
+        assert "five or six plain sentences" in captured[0][0]
         assert "attached resume" in captured[0][0]
         assert revised["resume_data"] == before["resume_data"]
         assert revised["message_data"] != before["message_data"]
