@@ -87,6 +87,7 @@ def test_codex_provider_uses_scoped_cli_and_schema(monkeypatch) -> None:
     assert "combine their supported outcomes in the single second bullet" in prompts[0]
     assert "PA-MPJPE" in prompts[0]
     assert "Every metric in bullet 2 must be supported by a result ID in project_focus" in prompts[0]
+    assert "Keep internal logs and trace artifacts out of result bullets" in prompts[0]
     assert "three to five short, appealing skill categories" in prompts[0]
     assert "including Vietnamese diacritics" in prompts[0]
     assert "application_name" in prompts[0]

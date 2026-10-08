@@ -82,6 +82,7 @@ def test_project_regeneration_replaces_only_approved_project_section(tmp_path: P
         assert "one to three complementary job-relevant result IDs" in prompt
         assert "combine their supported outcomes in the single second bullet" in prompt
         assert "Every metric in bullet 2 must be supported by a result ID in project_focus" in prompt
+        assert "Keep internal logs and trace artifacts out of result bullets" in prompt
         return response_type.model_validate({
             "selected_evidence_ids": requested_ids,
             "project_bullets": [{"evidence_id": identifier,
