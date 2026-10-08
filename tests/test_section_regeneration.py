@@ -143,9 +143,12 @@ def test_message_regeneration_uses_verified_facebook_source_and_specific_job_evi
     client = TestClient(create_app(Settings(tmp_path)))
     db = client.app.state.db
     db.set_setting("profile", {"name": "Nguyen Trung Long", "application_name": "Nguyễn Trung Long",
+                               "application_school": "Đại học Bách khoa Hà Nội",
+                               "education": [{"school": "Hanoi University of Science and Technology",
+                                              "degree": "Bachelor of Computer Science", "dates": "2022-2026"}],
                                "email": "long@example.org", "skills": ["Python", "PyTorch"],
                                "experience": [{"company": "VinSmart Future", "role": "AI Engineering Intern",
-                                               "dates": "2025-2026", "bullets": ["Built an end-to-end 3D reconstruction pipeline."]}]})
+                                               "dates": "2025-2026", "bullets": ["Built an end-to-end 3D reconstruction pipeline for robot dataset synthesis."]}]})
     source_id = db.one("SELECT id FROM sources LIMIT 1")["id"]
     db.execute("UPDATE sources SET kind='facebook',name='AI Jobs',url=? WHERE id=?",
                ("https://www.facebook.com/groups/1", source_id))
@@ -162,9 +165,10 @@ def test_message_regeneration_uses_verified_facebook_source_and_specific_job_evi
         captured.append(prompt)
         return response_type.model_validate({
             "subject": "Ứng tuyển AI Engineer — Nguyễn Trung Long",
-            "body": ("Kính gửi SETA,\n\nTôi thấy tin tuyển AI Engineer của công ty trên Facebook. "
-                     "Tại VinSmart Future, tôi xây dựng pipeline tái dựng 3D từ đầu đến cuối. "
-                     "Dự án cá nhân CausClass dùng Python và PyTorch cho Computer Vision. "
+            "body": ("Kính gửi SETA,\n\nTôi thấy tin tuyển AI Engineer trên Facebook và quan tâm vì vị trí phù hợp với hướng phát triển của tôi. "
+                     "Tôi học Khoa học máy tính tại Đại học Bách khoa Hà Nội. "
+                     "Tại VinSmart Future, tôi xây dựng pipeline tạo dữ liệu robot bằng tái dựng 3D. "
+                     "Các dự án cá nhân của tôi liên quan đến Computer Vision, LLM và học sâu. "
                      "Anh/chị vui lòng xem CV đính kèm để biết thêm chi tiết. "
                      "Rất mong có cơ hội trao đổi sâu hơn về vị trí này với quý công ty.\n\n"
                      "Trân trọng,\nNguyễn Trung Long"),
@@ -175,9 +179,14 @@ def test_message_regeneration_uses_verified_facebook_source_and_specific_job_evi
 
     assert '"posting_source": {"kind": "facebook"' in captured[0]
     assert "Python, PyTorch" in captured[0]
-    assert "Built an end-to-end 3D reconstruction pipeline" in captured[0]
-    assert "Do not use vague phrases such as related personal projects or projects related to AI" in captured[0]
-    assert "Put work experience and personal projects in separate sentences" in captured[0]
+    assert "Built an end-to-end 3D reconstruction pipeline for robot dataset synthesis" in captured[0]
+    assert '"application_school": "Đại học Bách khoa Hà Nội"' in captured[0]
+    assert '"education": [{"school": "Hanoi University of Science and Technology"' in captured[0]
+    assert "why the role interests the candidate" in captured[0]
+    assert "mention the field of study and school briefly before work experience" in captured[0]
+    assert "without naming individual projects" in captured[0]
+    assert "describe it as robot-data engineering" in captured[0]
+    assert "Keep both parts of this call to action" in captured[0]
     assert "Rất mong có cơ hội trao đổi" in captured[0]
     assert revised["resume_data"] == before["resume_data"]
     assert [change["section"] for change in revised["changes"]] == ["message"]
@@ -224,7 +233,7 @@ def test_other_sections_use_small_schema_and_preserve_reviewed_content(
     assert revised["evidence_ids"] == before["evidence_ids"]
     assert [change["section"] for change in revised["changes"]] == [section]
     if section == "message":
-        assert "four or five short sentences" in captured[0][0]
+        assert "about six short sentences" in captured[0][0]
         assert "attached resume" in captured[0][0]
         assert revised["resume_data"] == before["resume_data"]
         assert revised["message_data"] != before["message_data"]
