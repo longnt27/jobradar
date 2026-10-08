@@ -264,16 +264,16 @@ def _job_domains(terms: set[str]) -> tuple[bool, bool]:
 
 def _relevant_results(job: dict, results: list[dict], requested_ids: list[str] | None = None) -> list[dict]:
     terms = _fit_terms(f"{job['title']} {job['description']}")
+    by_id = {str(item.get("id")): item for item in results if isinstance(item, dict) and item.get("id")}
+    requested = [by_id[identifier] for identifier in (requested_ids or []) if identifier in by_id]
+    if requested:
+        return requested[:3]
     llm_job, vision_job = _job_domains(terms)
     if llm_job != vision_job:
         focus = _LLM_RESULT_AREAS if llm_job else _VISION_RESULT_AREAS
         focused = [item for item in results if _fit_terms(str(item.get("area", ""))) & focus]
         if focused:
             results = focused
-    by_id = {str(item.get("id")): item for item in results if isinstance(item, dict) and item.get("id")}
-    requested = [by_id[identifier] for identifier in (requested_ids or []) if identifier in by_id]
-    if requested:
-        return requested[:3]
     ranked = sorted(enumerate(results), key=lambda pair: (-_result_score(terms, pair[1]), pair[0]))
     matched = [item for _, item in ranked if _result_score(terms, item) > 0]
     return (matched or results[:1])[:3]
@@ -354,13 +354,19 @@ def _run_provider(provider: str, job: dict, profile: dict, cards: list[dict], cu
               "public dataset can outrank a loosely related project with no measured outcome. Fill one A4 page "
               "with substantive evidence, not padding. "
               "Each structured project has distinct "
-              "result IDs, focus areas, and reviewed outcomes. For each selected structured project, put one "
-              "job-relevant result ID in project_focus; choose LLM results for LLM work and perception results for "
-              "vision work. Related model-evaluation work can support an LLM application, but never describe it as "
+              "result IDs, focus areas, and reviewed outcomes. For each selected structured project, put "
+              "one to three complementary job-relevant result IDs in project_focus; choose LLM results for LLM work and perception results for "
+              "vision work. For vision jobs, use strong perception results before unrelated LLM results. "
+              "Related model-evaluation work can support an LLM application, but never describe it as "
               "LLM work unless the project evidence says so. For EVERY selected project, write exactly two "
               "project_bullets. Bullet 1 explains the problem, what the project does, and how it works; "
-              "bullet 2 gives its strongest positive, job-relevant measured result. Name the dataset, evaluated "
-              "population, device, or baseline when needed to understand the number. Do not copy repository caveat notes into resume bullets. "
+              "combine their supported outcomes in the single second bullet when several results convey a stronger, "
+              "more balanced achievement. Prioritize measured accuracy over model count, mesh size, or speed for "
+              "accuracy-focused jobs. For 3D pose work, include PA-MPJPE when approved evidence supports it; if "
+              "citing reduced acceleration error, include its pose-accuracy tradeoff in the same result bullet. "
+              "Do not select only a secondary metric when a primary accuracy metric is available. Name the dataset, evaluated "
+              "population, device, or baseline when needed to understand the number. Every metric in bullet 2 must be supported by a result ID in project_focus. "
+              "Do not copy repository caveat notes into resume bullets. "
               "Do not list a secondary metric that fell, protocol-version warnings, historical-result warnings, "
               "or unresolved limitations in a resume bullet. If a qualifier is essential to avoid a misleading claim, "
               "state the measurement scope concisely or choose another supported result. "
@@ -747,7 +753,7 @@ def _section_model(provider: str, section: str, prompt: str, job: dict, profile:
     instructions = {
         "summary": "Return only a professional summary under 500 characters. Write in English and use supported work and outcomes.",
         "experience": "Return one indexed entry per current position. Rewrite only its bullets in English; do not change employers, roles, or dates. Keep measured results accurate.",
-        "projects": "Select up to three approved project IDs, ordered by strong job-relevant evidence. When at least three projects are approved, select exactly three. For each, return exactly two bullets: what it does and how, then its strongest supported result. Use three to five supported skill categories. Reference valid result IDs where available. Bold phrases must be short exact measured-result substrings from the second bullets. Do not include caveats or weaker negative metrics as achievements.",
+        "projects": "Select up to three approved project IDs, ordered by strong job-relevant evidence. When at least three projects are approved, select exactly three. For each, return exactly two bullets: first what it does and how, then one result bullet. Select one to three complementary job-relevant result IDs per project and combine their supported outcomes in the single second bullet when they give a fuller, more balanced achievement. Every metric in bullet 2 must be supported by a result ID in project_focus. For accuracy-focused work prioritize measured accuracy over model count, mesh size, or speed. For 3D pose work include PA-MPJPE when approved evidence supports it; if citing reduced acceleration error, include its pose-accuracy tradeoff in the same result bullet. For vision jobs, use strong perception results before unrelated LLM results. Name the dataset and measurement scope as needed; never invent or improve a metric. Use three to five supported skill categories. Reference valid result IDs where available. Bold phrases must be short exact measured-result substrings from the second bullets. Do not include caveats or weaker negative metrics as achievements.",
         "education": "Return one indexed entry per current education record. Rewrite only degree wording in English. Preserve the exact school, credential, and dates; do not invent qualifications.",
         "achievements": "Return concise English achievement bullets supported by the supplied candidate record. Omit weak items when requested; invent none.",
         "skills": "Return at most five appealing skill groups, each with concise skills supported by the candidate record or current selected projects. Do not invent skills.",

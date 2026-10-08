@@ -7,7 +7,7 @@ from pypdf import PdfReader
 from job_radar.settings import Settings
 from job_radar.web import create_app
 from job_radar.drafting import (ApplicationMessage, EnglishTranslations, ModelDraft, ProjectBullets,
-                                 TranslationItem, _ensure_english_resume, _job_language,
+                                 TranslationItem, _ensure_english_resume, _job_language, _relevant_results,
                                  _message_in_job_language, _run_provider, _selected_resume_projects,
                                  _template, prepare_draft,
                                  get_draft, refresh_draft_content)
@@ -83,7 +83,10 @@ def test_codex_provider_uses_scoped_cli_and_schema(monkeypatch) -> None:
     assert "bold_phrases" in schemas[0]["properties"]
     assert "Select exactly three approved project IDs" in prompts[0]
     assert "Bullet 1 explains the problem, what the project does, and how it works" in prompts[0]
-    assert "bullet 2 gives its strongest positive, job-relevant measured result" in prompts[0]
+    assert "one to three complementary job-relevant result IDs" in prompts[0]
+    assert "combine their supported outcomes in the single second bullet" in prompts[0]
+    assert "PA-MPJPE" in prompts[0]
+    assert "Every metric in bullet 2 must be supported by a result ID in project_focus" in prompts[0]
     assert "three to five short, appealing skill categories" in prompts[0]
     assert "including Vietnamese diacritics" in prompts[0]
     assert "application_name" in prompts[0]
@@ -92,6 +95,13 @@ def test_codex_provider_uses_scoped_cli_and_schema(monkeypatch) -> None:
     assert "three short sentences" in prompts[0]
     assert "attached resume" in prompts[0]
     assert "Do not repeat resume bullets" in prompts[0]
+
+
+def test_explicitly_selected_approved_results_survive_area_filtering() -> None:
+    job = {"title": "Computer Vision Engineer", "description": "Evaluate pose accuracy."}
+    results = [{"id": "pose", "area": "3D pose evaluation", "outcome": "PA-MPJPE 51.80 mm."},
+               {"id": "graph", "area": "LLM", "outcome": "Graph recovery F1 0.50."}]
+    assert [item["id"] for item in _relevant_results(job, results, ["pose", "graph"])] == ["pose", "graph"]
 
 
 def test_template_application_note_is_brief_and_points_to_resume() -> None:

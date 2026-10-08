@@ -1,7 +1,7 @@
 import socket
 import time
 from pathlib import Path
-from threading import Thread
+from threading import Event, Thread
 
 import uvicorn
 from playwright.sync_api import sync_playwright
@@ -25,9 +25,16 @@ def test_application_tab_reviews_regenerates_and_deep_links_to_draft(tmp_path: P
     job = client.post("/api/jobs/import", json={"company": "Example", "title": "Engineer",
         "description": "Build Python systems.", "apply_url": "https://example.org/apply"}).json()
     draft = prepare_draft(app.state.db, app.state.settings, job["id"], "codex")
-    monkeypatch.setattr("job_radar.drafting._provider_json", lambda _provider, _prompt, response_type:
-                        response_type.model_validate({"subject": "Engineer application",
-                                                      "body": "Dear team. Emphasize production search"}))
+    regeneration_started = Event()
+    allow_regeneration = Event()
+
+    def regenerate_message(_provider, _prompt, response_type):
+        regeneration_started.set()
+        assert allow_regeneration.wait(10)
+        return response_type.model_validate({"subject": "Engineer application",
+                                             "body": "Dear team. Emphasize production search"})
+
+    monkeypatch.setattr("job_radar.drafting._provider_json", regenerate_message)
     app.state.auto_apply_manager.register_review(draft)
     client.patch(f"/api/applications/{draft['id']}", json={"destination": {"kind": "email", "email": "jobs@example.org"}})
     with socket.socket() as sock:
@@ -52,6 +59,10 @@ def test_application_tab_reviews_regenerates_and_deep_links_to_draft(tmp_path: P
                 page.get_by_label("Custom instructions").fill("Emphasize production search")
                 page.locator("#regenerate-section").select_option("message")
                 page.get_by_role("button", name="Regenerate selected section").click()
+                assert regeneration_started.wait(5)
+                page.locator(f'[data-application="{draft["id"]}"] .status-badge').get_by_text("Regenerating").wait_for(timeout=5000)
+                page.locator("#application-detail .application-review-header .status-badge").get_by_text("Regenerating").wait_for(timeout=5000)
+                allow_regeneration.set()
                 page.get_by_text("Dear team. Emphasize production search").wait_for()
                 change_note = page.get_by_text("Only this section changed. Untouched sections kept their reviewed content.")
                 change_note.wait_for(state="visible")
@@ -59,5 +70,6 @@ def test_application_tab_reviews_regenerates_and_deep_links_to_draft(tmp_path: P
             finally:
                 browser.close()
     finally:
+        allow_regeneration.set()
         server.should_exit = True
         thread.join(timeout=5)

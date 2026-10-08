@@ -1888,8 +1888,8 @@ function applicationReviewLabel(draft) {
 function applicationReviewTone(draft) {
   const key = applicationReviewKey(draft);
   if (key === 'sent') return 'success';
-  if (key === 'awaiting_review' || key === 'sending' || key === 'preparing') return 'info';
-  if (['needs_review','needs_confirmation','queued','regenerating','submission_uncertain'].includes(key)) return 'warning';
+  if (key === 'awaiting_review' || key === 'sending' || key === 'preparing' || key === 'regenerating') return 'info';
+  if (['needs_review','needs_confirmation','queued','submission_uncertain'].includes(key)) return 'warning';
   if (key === 'failed') return 'danger';
   return 'neutral';
 }
@@ -2073,6 +2073,22 @@ function renderApplicationList(total = applicationsTotal) {
     const item = applicationPreparations.find((entry) => entry.vacancy_id === node.dataset.preparation);
     if (item) showPreparationIssue(item);
   }));
+}
+
+function showApplicationRegenerating(id) {
+  const draft = applicationDrafts.find((item) => item.id === id);
+  if (draft) {
+    draft.review_status = 'regenerating';
+    renderApplicationList();
+  }
+  const detail = $('#application-detail');
+  const badge = detail.querySelector('.application-review-header .status-badge');
+  if (badge) {
+    badge.className = 'status-badge status-badge--info';
+    badge.textContent = 'Regenerating';
+  }
+  const packageStatus = detail.querySelector('.application-status-card span');
+  if (packageStatus) packageStatus.textContent = 'Regenerating';
 }
 
 async function loadApplications(selectedId = null) {
@@ -2617,6 +2633,7 @@ async function showApplication(id) {
     if (!prompt) { notice('Enter custom instructions to regenerate the draft.', true); return; }
     const button = $('#regenerate-draft');
     beginPending(button, 'Regenerating…');
+    showApplicationRegenerating(id);
     try {
       const section = $('#regenerate-section').value;
       const result = await api(`/api/applications/${id}/regenerate`, {method:'POST', body:JSON.stringify({prompt, section})});
@@ -2624,6 +2641,7 @@ async function showApplication(id) {
       await loadApplications(id);
       notice(section === 'all' ? 'New draft prepared for review.' : 'Selected section regenerated. Untouched content was preserved.');
     } catch(error) {
+      try { await loadApplications(id); } catch (refreshError) { console.warn('Could not refresh application status', refreshError); }
       notice(error.message, true);
     } finally {
       if (button.isConnected) endPending(button);

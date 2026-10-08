@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -69,18 +70,27 @@ def test_summary_regeneration_requests_only_summary_and_preserves_other_sections
 def test_project_regeneration_replaces_only_approved_project_section(tmp_path: Path, monkeypatch) -> None:
     client, before, project_ids = _draft(tmp_path, projects=True)
     requested_ids = project_ids[::-1]
+    first = next(item for item in client.get("/api/evidence").json() if item["id"] == project_ids[0])
+    details = json.loads(first["details"])
+    details["results"].append({"id": "result-0b", "area": "Search",
+                               "outcome": "Reduced search latency by 25% on the same public dataset."})
+    assert client.patch(f"/api/evidence/{project_ids[0]}", json={"details": details}).status_code == 200
 
     def fake_provider(_provider, prompt, response_type):
         assert set(response_type.model_fields) == {"selected_evidence_ids", "project_bullets", "project_focus", "bold_phrases"}
         assert "email_subject" not in prompt
+        assert "one to three complementary job-relevant result IDs" in prompt
+        assert "combine their supported outcomes in the single second bullet" in prompt
+        assert "Every metric in bullet 2 must be supported by a result ID in project_focus" in prompt
         return response_type.model_validate({
             "selected_evidence_ids": requested_ids,
             "project_bullets": [{"evidence_id": identifier,
                                  "bullets": [f"Built project {index} with Python ranking and evaluation.",
-                                             f"Reached {80 + index}% recall on a public dataset."],
+                                             f"Reached {80 + index}% recall on a public dataset" +
+                                             (" and reduced search latency by 25%." if index == 0 else ".")],
                                  "skills": ["Python", "Search", "Evaluation"]}
                                 for index, identifier in reversed(list(enumerate(project_ids)))],
-            "project_focus": [{"evidence_id": identifier, "result_ids": [f"result-{index}"]}
+            "project_focus": [{"evidence_id": identifier, "result_ids": [f"result-{index}"] + (["result-0b"] if index == 0 else [])}
                               for index, identifier in enumerate(project_ids)],
             "bold_phrases": ["82% recall", "81% recall", "80% recall"],
         })
@@ -92,6 +102,10 @@ def test_project_regeneration_replaces_only_approved_project_section(tmp_path: P
 
     assert [item["id"] for item in revised["resume_data"]["projects"]] == requested_ids
     assert revised["evidence_ids"] == requested_ids
+    assert revised["resume_data"]["projects"][-1]["result_ids"] == ["result-0", "result-0b"]
+    assert len(revised["resume_data"]["projects"][-1]["bullets"]) == 2
+    assert "recall" in revised["resume_data"]["projects"][-1]["bullets"][1]
+    assert "latency" in revised["resume_data"]["projects"][-1]["bullets"][1]
     for key, value in before["resume_data"].items():
         if key not in {"projects", "evidence", "bold_phrases"}:
             assert revised["resume_data"][key] == value
