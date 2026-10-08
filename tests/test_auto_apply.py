@@ -4,6 +4,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
 
+import pytest
 from fastapi.testclient import TestClient
 
 from job_radar.auto_apply import AutoApplyManager, _safe_attachments
@@ -86,6 +87,49 @@ def test_retry_all_ai_preparations_excludes_forms_needing_review(tmp_path: Path)
         failures = client.get("/api/ai/failures")
     assert failures.status_code == 200
     assert failures.json()["preparations"] == 0
+
+
+def test_restart_releases_sending_claim_before_submission_started(tmp_path: Path) -> None:
+    app = create_app(Settings(tmp_path))
+    app.state.db.set_setting("profile", {"name": "Alex Example", "email": "alex@example.org",
+                                         "experience": [{"company": "Prior Co", "role": "Engineer",
+                                                         "dates": "2024-2026", "bullets": ["Built Python systems."]}]})
+    job_id = _scored_job(app, "Waiting For Browser", 88)
+    draft = prepare_draft(app.state.db, app.state.settings, job_id, "template")
+    app.state.auto_apply_manager.register_review(draft)
+    app.state.db.execute("UPDATE auto_application_attempts SET status='sending' WHERE draft_id=?", (draft["id"],))
+    with TestClient(app):
+        attempt = app.state.db.one("SELECT status,detail FROM auto_application_attempts WHERE draft_id=?", (draft["id"],))
+    assert attempt["status"] == "awaiting_review"
+    assert "before submission started" in attempt["detail"]
+
+
+def test_browser_wait_timeout_restores_review_without_submission(tmp_path: Path, monkeypatch) -> None:
+    app = create_app(Settings(tmp_path))
+    app.state.db.set_setting("profile", {"name": "Alex Example", "email": "alex@example.org",
+                                         "experience": [{"company": "Prior Co", "role": "Engineer",
+                                                         "dates": "2024-2026", "bullets": ["Built Python systems."]}]})
+    job_id = _scored_job(app, "Busy Browser", 88)
+    draft = prepare_draft(app.state.db, app.state.settings, job_id, "template")
+    manager = app.state.auto_apply_manager
+    manager.register_review(draft)
+    app.state.db.execute("UPDATE auto_application_attempts SET status='awaiting_review',review_hash=? WHERE draft_id=?",
+                         (draft["package_hash"], draft["id"]))
+    monkeypatch.setattr("job_radar.auto_apply.send_readiness", lambda *_args: [])
+    monkeypatch.setattr("job_radar.auto_apply.BROWSER_LOCK_WAIT_SECONDS", .01)
+
+    async def run():
+        await manager.browser_lock.acquire()
+        try:
+            with pytest.raises(ValueError, match="No submission started"):
+                await manager.approve(draft["id"], draft["package_hash"])
+        finally:
+            manager.browser_lock.release()
+
+    asyncio.run(run())
+    assert app.state.db.one("SELECT status FROM auto_application_attempts WHERE draft_id=?", (draft["id"],)) == {
+        "status": "awaiting_review"}
+    assert app.state.db.one("SELECT id FROM submissions WHERE draft_id=?", (draft["id"],)) is None
 
 
 def test_retry_all_failed_ai_work_retries_saved_resume_updates(tmp_path: Path, monkeypatch) -> None:

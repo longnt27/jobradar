@@ -6,7 +6,9 @@ import asyncio
 import json
 import logging
 import re
+from contextlib import asynccontextmanager
 from datetime import datetime
+from typing import AsyncContextManager, Callable
 
 import httpx
 from playwright.async_api import Error as PlaywrightError
@@ -30,6 +32,12 @@ from .search_intent import fit_summary, normalize_search_intent
 
 
 log = logging.getLogger(__name__)
+BROWSER_LOCK_WAIT_SECONDS = 30
+
+
+@asynccontextmanager
+async def _no_browser_priority():
+    yield
 
 EXISTING_MATCHES_SQL = (
     "FROM vacancies v LEFT JOIN auto_application_attempts a ON a.vacancy_id=v.id "
@@ -55,10 +63,12 @@ def _safe_attachments(fields: list[dict]) -> dict[str, dict]:
 
 
 class AutoApplyManager:
-    def __init__(self, db: Database, settings: Settings, browser_lock: asyncio.Lock):
+    def __init__(self, db: Database, settings: Settings, browser_lock: asyncio.Lock,
+                 priority_browser: Callable[[], AsyncContextManager[None]] | None = None):
         self.db = db
         self.settings = settings
         self.browser_lock = browser_lock
+        self.priority_browser = priority_browser or _no_browser_priority
         self.task: asyncio.Task | None = None
         self.telegram_task: asyncio.Task | None = None
         self.wake_event = asyncio.Event()
@@ -348,6 +358,14 @@ class AutoApplyManager:
                             (detail, now(), submission["id"]))
             self.db.execute("UPDATE application_drafts SET status='submission_uncertain',updated_at=? WHERE id=?",
                             (now(), submission["draft_id"]))
+        self.db.execute(
+            "UPDATE auto_application_attempts SET status='awaiting_review',"
+            "detail='Interrupted before submission started; review and try again',updated_at=? "
+            "WHERE status='sending' AND NOT EXISTS("
+            "SELECT 1 FROM submissions s WHERE s.draft_id=auto_application_attempts.draft_id "
+            "AND s.status IN ('sending','submitted_unconfirmed','sent_confirmed','submitted_confirmed'))",
+            (now(),),
+        )
         self.db.execute(
             "UPDATE auto_application_attempts SET status='submission_uncertain',telegram_status='pending',"
             "detail='Submission status uncertain after restart; verify on the employer site before retrying',updated_at=? "
@@ -725,10 +743,20 @@ class AutoApplyManager:
         if not claimed:
             raise ValueError("This application is already being sent or has changed")
         try:
-            async with self.browser_lock:
-                result = await send_application(self.db, self.settings, draft_id, expected_hash)
+            async with self.priority_browser():
+                try:
+                    await asyncio.wait_for(self.browser_lock.acquire(), timeout=BROWSER_LOCK_WAIT_SECONDS)
+                except TimeoutError as error:
+                    self._set_status(attempt["vacancy_id"], "awaiting_review",
+                                     "Browser is busy. Try sending again after the other browser task finishes.", draft_id)
+                    raise ValueError("Browser is busy. No submission started; try again shortly.") from error
+                try:
+                    result = await send_application(self.db, self.settings, draft_id, expected_hash)
+                finally:
+                    self.browser_lock.release()
         except Exception as error:
-            self._set_status(attempt["vacancy_id"], "needs_review", str(error), draft_id)
+            if not isinstance(error, ValueError) or "No submission started" not in str(error):
+                self._set_status(attempt["vacancy_id"], "needs_review", str(error), draft_id)
             raise
         if result["status"] in ("sent_confirmed", "submitted_confirmed"):
             self._set_status(attempt["vacancy_id"], "sent", result.get("receipt", ""), draft_id)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
 from .collectors import AccountWarning, AuthRequired, collect_source
@@ -15,6 +16,7 @@ from .social_browser import social_login_at
 
 
 log = logging.getLogger(__name__)
+SCAN_PREEMPT_WAIT_SECONDS = 10
 
 
 class ScanManager:
@@ -26,6 +28,7 @@ class ScanManager:
         self.pending: list[tuple[str, bool]] = []
         self._due_task: asyncio.Task | None = None
         self._scheduler_task: asyncio.Task | None = None
+        self._priority_browser_requests = 0
 
     async def start(self) -> None:
         self.recover_interrupted()
@@ -58,6 +61,34 @@ class ScanManager:
                 except asyncio.CancelledError:
                     pass
         self.pending.clear()
+
+    @asynccontextmanager
+    async def priority_browser(self):
+        """Let an approved application use the browser ahead of scheduled scans."""
+        self._priority_browser_requests += 1
+        try:
+            task = self._due_task
+            if task and not task.done():
+                task.cancel()
+                done, _ = await asyncio.wait({task}, timeout=SCAN_PREEMPT_WAIT_SECONDS)
+                if task in done:
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception:
+                        log.exception("Background scan ended while making room for an application")
+                else:
+                    log.warning("Background scan did not release the browser promptly")
+                if self._due_task is task and task.done():
+                    self._due_task = None
+            yield
+        finally:
+            self._priority_browser_requests -= 1
+            if not self._priority_browser_requests and self.pending and (
+                self._due_task is None or self._due_task.done()
+            ):
+                self._due_task = asyncio.create_task(self._run_due(self.pending))
 
     async def _scheduler(self) -> None:
         while True:
@@ -121,7 +152,9 @@ class ScanManager:
             self.pending.append((source_id, manual))
             waiting.add(source_id)
             added += 1
-        if self.pending and (self._due_task is None or self._due_task.done()):
+        if self.pending and not self._priority_browser_requests and (
+            self._due_task is None or self._due_task.done()
+        ):
             self._due_task = asyncio.create_task(self._run_due(self.pending))
         return added
 
@@ -185,6 +218,14 @@ class ScanManager:
                             (finished, status, len(jobs), new_count, run_id))
             self.db.execute("UPDATE sources SET last_success_at=?,last_status=? WHERE id=?", (finished, status, source_id))
             return {"run_id": run_id, "status": status, "observed": len(jobs), "new": new_count}
+        except asyncio.CancelledError:
+            self.db.execute("UPDATE scan_runs SET finished_at=?,status='interrupted',detail=? WHERE id=?",
+                            (now(), "Paused for an approved application", run_id))
+            self.db.execute("UPDATE sources SET last_attempt_at=NULL,last_status='interrupted' WHERE id=?",
+                            (source_id,))
+            if not any(queued_id == source_id for queued_id, _ in self.pending):
+                self.pending.insert(0, (source_id, False))
+            raise
         except Exception as error:
             status = "auth_required" if isinstance(error, AuthRequired) else "failed"
             self.db.execute("UPDATE scan_runs SET finished_at=?,status=?,detail=? WHERE id=?", (now(), status, str(error)[:1000], run_id))

@@ -246,7 +246,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             rescore_vacancies(db, profile, migrated_intent)
     clean_saved_analysis(db)
     scan_manager = ScanManager(db, settings)
-    auto_apply_manager = AutoApplyManager(db, settings, scan_manager.browser_lock)
+    auto_apply_manager = AutoApplyManager(db, settings, scan_manager.browser_lock, scan_manager.priority_browser)
     match_manager = MatchManager(db, settings, auto_apply_manager)
     login_manager = BrowserLoginManager(db, settings, scan_manager.browser_lock, scan_manager.queue_due)
     ai_retry_task: asyncio.Task | None = None

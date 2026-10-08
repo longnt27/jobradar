@@ -119,6 +119,41 @@ def test_interrupted_scan_is_requeued_on_restart(tmp_path: Path) -> None:
     assert manager.recover_interrupted() == 0
 
 
+def test_priority_browser_cancels_background_social_scan_and_resumes_it(monkeypatch, tmp_path: Path) -> None:
+    settings = Settings(tmp_path)
+    db = Database(settings.database_path)
+    seed(db)
+    source_id = db.one("SELECT id FROM sources LIMIT 1")["id"]
+    db.execute("UPDATE sources SET kind='facebook' WHERE id=?", (source_id,))
+    started = asyncio.Event()
+    attempts = 0
+
+    async def fake_collect(_settings, _source):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            started.set()
+            await asyncio.Event().wait()
+        return []
+
+    monkeypatch.setattr("job_radar.scanner.collect_source", fake_collect)
+
+    async def run():
+        manager = ScanManager(db, settings)
+        manager.pending.append((source_id, False))
+        manager._due_task = asyncio.create_task(manager._run_due(manager.pending))
+        await asyncio.wait_for(started.wait(), 2)
+        assert manager.browser_lock.locked()
+        async with manager.priority_browser():
+            assert not manager.browser_lock.locked()
+            assert db.one("SELECT last_status,last_attempt_at FROM sources WHERE id=?", (source_id,)) == {
+                "last_status": "interrupted", "last_attempt_at": None}
+        await asyncio.wait_for(manager._due_task, 2)
+        assert attempts == 2
+
+    asyncio.run(run())
+
+
 def test_generic_group_posts_do_not_merge_by_title(tmp_path: Path) -> None:
     db = Database(tmp_path / "db.sqlite3")
     seed(db)
