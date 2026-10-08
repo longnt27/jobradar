@@ -326,6 +326,8 @@ def test_regeneration_uses_custom_prompt_and_invalidates_old_review(tmp_path: Pa
         assert revised["package_hash"] != original["package_hash"]
         assert "Emphasize production search work" in revised["message_data"]["body"]
         assert seen[-1] == "Emphasize production search work"
+        review = db.one("SELECT review_hash,telegram_status FROM auto_application_attempts WHERE draft_id=?", (original["id"],))
+        assert review == {"review_hash": revised["package_hash"], "telegram_status": "web_only"}
         stale = client.post(f"/api/applications/{original['id']}/approve", json={"package_hash": original["package_hash"]})
         assert stale.status_code == 422
         db.execute("UPDATE auto_application_attempts SET status='regenerating' WHERE draft_id=?", (original["id"],))

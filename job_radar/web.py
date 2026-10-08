@@ -1527,7 +1527,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                               "WHERE retry_payload IS NOT NULL AND status='needs_review' ORDER BY updated_at"):
             try:
                 payload = json.loads(attempt["retry_payload"])
-                await auto_apply_manager.regenerate(attempt["draft_id"], payload["prompt"], payload["section"])
+                await auto_apply_manager.regenerate(attempt["draft_id"], payload["prompt"], payload["section"],
+                                                    deliver_telegram=False)
             except Exception:
                 log.exception("Draft revision retry failed for %s", attempt["draft_id"])
         auto_apply_manager.retry_failed_preparations()
@@ -2047,7 +2048,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/applications/{draft_id}/regenerate")
     async def regenerate_application(draft_id: str, payload: RegenerateInput):
         try:
-            return await auto_apply_manager.regenerate(draft_id, payload.prompt, payload.section)
+            return await auto_apply_manager.regenerate(draft_id, payload.prompt, payload.section,
+                                                       deliver_telegram=False)
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
         except (ValueError, RuntimeError) as error:

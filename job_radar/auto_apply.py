@@ -518,7 +518,7 @@ class AutoApplyManager:
             (new_id(), vacancy_id, channel, status, error, timestamp),
         )
 
-    async def notify_review(self, draft_id: str) -> None:
+    async def notify_review(self, draft_id: str, *, deliver_telegram: bool = True) -> None:
         attempt = self.db.one(
             "SELECT vacancy_id,status,review_hash,telegram_status,telegram_message_id,requested_by "
             "FROM auto_application_attempts WHERE draft_id=?",
@@ -530,7 +530,7 @@ class AutoApplyManager:
         blockers = send_readiness(self.db, self.settings, draft)
         status = "needs_review" if blockers else "awaiting_review"
         if (
-            attempt["review_hash"] == draft["package_hash"]
+            deliver_telegram and attempt["review_hash"] == draft["package_hash"]
             and attempt["status"] == status
             and attempt["telegram_status"] == "sent"
             and attempt["telegram_message_id"]
@@ -539,15 +539,19 @@ class AutoApplyManager:
         previous_message_id = attempt["telegram_message_id"]
         self.db.execute(
             "UPDATE auto_application_attempts SET review_hash=?,status=?,detail=?,"
-            "telegram_status='pending',telegram_error=NULL,updated_at=? WHERE draft_id=?",
+            "telegram_status=?,telegram_message_id=?,telegram_error=NULL,updated_at=? WHERE draft_id=?",
             (
                 draft["package_hash"],
                 status,
                 "; ".join(blockers) if blockers else "Review the complete application before approving.",
+                "pending" if deliver_telegram else "web_only",
+                previous_message_id if deliver_telegram else None,
                 now(),
                 draft_id,
             ),
         )
+        if not deliver_telegram:
+            return
         config = telegram_config(self.settings)
         if not config.get("token") or not config.get("chat_id"):
             self.db.execute(
@@ -666,7 +670,8 @@ class AutoApplyManager:
                 )
                 self._record_notification(vacancy_id, "telegram_application_review", status="failed", error=message)
 
-    async def regenerate(self, draft_id: str, prompt: str, section: str = "all") -> dict:
+    async def regenerate(self, draft_id: str, prompt: str, section: str = "all",
+                         *, deliver_telegram: bool = True) -> dict:
         attempt = self.db.one("SELECT vacancy_id,status FROM auto_application_attempts WHERE draft_id=?", (draft_id,))
         if not attempt or attempt["status"] in ("sent", "sending", "submission_uncertain", "skipped", "preparing", "regenerating"):
             raise ValueError("This application cannot be regenerated")
@@ -688,7 +693,7 @@ class AutoApplyManager:
                     self._set_status(attempt["vacancy_id"], "needs_review", f"Form inspection needs attention: {error}", draft_id)
             self._set_status(attempt["vacancy_id"], "needs_review", "Review the revised application.", draft_id)
             self.db.execute("UPDATE auto_application_attempts SET retry_payload=NULL WHERE draft_id=?", (draft_id,))
-            await self.notify_review(draft_id)
+            await self.notify_review(draft_id, deliver_telegram=deliver_telegram)
             result = get_draft(self.db, draft_id)
             result["changes"] = regeneration_changes
             result["regenerated_section"] = regenerated_section

@@ -8,7 +8,7 @@ from pypdf import PdfReader
 from reportlab.pdfgen import canvas
 
 from job_radar.review_telegram import build_review_pdf, format_review_details, send_preparation_notice, send_review_packet
-from job_radar.drafting import ModelDraft, get_draft, prepare_draft
+from job_radar.drafting import ModelDraft, get_draft, prepare_draft, update_draft
 from job_radar.web import create_app
 from job_radar.settings import Settings
 from job_radar.notifications import save_telegram
@@ -272,10 +272,21 @@ def test_review_notification_tracks_delivered_version(tmp_path: Path, monkeypatc
     draft = prepare_draft(db, app.state.settings, job_id, "template")
     db.execute("INSERT INTO auto_application_attempts(vacancy_id,status,draft_id,created_at,updated_at) VALUES(?,'awaiting_review',?,?,?)",
                (job_id, draft["id"], now(), now()))
-    monkeypatch.setattr("job_radar.auto_apply.send_review_packet", lambda *_args, **_kwargs: asyncio.sleep(0, result=42))
+    sent = []
+    async def fake_packet(*_args, **_kwargs):
+        sent.append(True)
+        return 42
+    monkeypatch.setattr("job_radar.auto_apply.send_review_packet", fake_packet)
     asyncio.run(app.state.auto_apply_manager.notify_review(draft["id"]))
     attempt = db.one("SELECT review_hash,telegram_status,telegram_message_id FROM auto_application_attempts WHERE vacancy_id=?", (job_id,))
     assert attempt == {"review_hash": draft["package_hash"], "telegram_status": "sent", "telegram_message_id": 42}
+
+    revised = update_draft(db, app.state.settings, draft["id"], {"message_data": {
+        "subject": "Updated application", "body": "Please review my attached resume."}})
+    asyncio.run(app.state.auto_apply_manager.notify_review(draft["id"], deliver_telegram=False))
+    attempt = db.one("SELECT review_hash,telegram_status,telegram_message_id FROM auto_application_attempts WHERE vacancy_id=?", (job_id,))
+    assert attempt == {"review_hash": revised["package_hash"], "telegram_status": "web_only", "telegram_message_id": None}
+    assert len(sent) == 1
 
 
 @pytest.mark.parametrize("action,instructions", [
@@ -321,4 +332,5 @@ def test_telegram_reply_edits_or_regenerates_draft(tmp_path: Path, monkeypatch, 
     else:
         assert prompts[-1] == instructions
     assert get_draft(db, draft["id"])["package_hash"] != draft["package_hash"]
-    assert db.one("SELECT status FROM auto_application_attempts WHERE vacancy_id=?", (job_id,))["status"] == "awaiting_review"
+    assert db.one("SELECT status,telegram_status,telegram_message_id FROM auto_application_attempts WHERE vacancy_id=?", (job_id,)) == {
+        "status": "awaiting_review", "telegram_status": "sent", "telegram_message_id": 88}
