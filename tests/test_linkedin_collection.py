@@ -1,9 +1,39 @@
 import asyncio
+from pathlib import Path
 
 import pytest
 from playwright.async_api import async_playwright
 
-from job_radar.collectors import _collect_linkedin_search_results
+from job_radar.collectors import AccountWarning, AuthRequired, _check_auth, _collect_linkedin_search_results
+from job_radar.settings import Settings
+from job_radar.web import create_app
+
+
+def test_linkedin_join_page_requires_sign_in_instead_of_becoming_a_job() -> None:
+    join_page = (
+        "Skip to main content LinkedIn Join LinkedIn Email Password (6+ characters) "
+        "By clicking Agree & Join, you agree to the LinkedIn User Agreement."
+    )
+    with pytest.raises(AuthRequired, match="Login or verification"):
+        _check_auth("https://www.linkedin.com/jobs/view/123/", join_page)
+    _check_auth("https://www.linkedin.com/jobs/view/123/", "AI Engineer at Acme. Build AI services with Python.")
+    with pytest.raises(AccountWarning):
+        _check_auth("https://www.linkedin.com/checkpoint/", "We noticed some unusual activity on your account. Your account has accessed a high volume of LinkedIn profile data.")
+
+
+def test_account_warning_stops_future_linkedin_scans(tmp_path: Path, monkeypatch) -> None:
+    app = create_app(Settings(tmp_path))
+    source_id = app.state.db.one("SELECT id FROM sources WHERE kind='linkedin' LIMIT 1")["id"]
+
+    async def warning(_settings, _source):
+        raise AccountWarning("LinkedIn showed an account activity warning")
+
+    monkeypatch.setattr("job_radar.scanner.collect_source", warning)
+    monkeypatch.setattr("job_radar.scanner.notify_social_sign_in_required", lambda _site: None)
+    result = asyncio.run(app.state.scan_manager.run_source(source_id))
+    assert result["status"] == "auth_required"
+    assert app.state.db.get_setting("linkedin_automation_paused", False)
+    assert asyncio.run(app.state.scan_manager.run_source(source_id))["status"] == "paused"
 
 
 def test_new_linkedin_results_page_reads_card_details() -> None:
@@ -32,7 +62,7 @@ def test_new_linkedin_results_page_reads_card_details() -> None:
                 """)
                 jobs = await _collect_linkedin_search_results(page, {"config": {"max_results": 10}})
                 assert [(job.external_id, job.title, job.company) for job in jobs] == [
-                    ("101", "AI Engineer", "Acme"), ("102", "Data Analyst", "Beta Bank")]
+                    ("101", "AI Engineer", "Acme")]
                 assert all(len(job.description) >= 30 for job in jobs)
                 await page.set_content("<p>Unexpected LinkedIn screen</p>")
                 with pytest.raises(RuntimeError, match="job cards were not recognized"):
@@ -71,7 +101,7 @@ def test_linkedin_results_continue_to_next_page() -> None:
                       document.getElementById('cards').innerHTML = `
                         <div role="button" tabindex="0" componentkey="job-card-component-ref-202"
                           onclick="choose('202', 'Research Engineer', 'Beta', 'Research and deploy computer vision models for production robotics.')">
-                          Research Engineer<br>Research Engineer<br>Beta<br>Hanoi<br>Posted 1 day ago
+                          Research Engineer<br>Research Engineer<br>Beta<br>Hanoi<br>Posted 3 hours ago
                         </div>`;
                       document.getElementById('next').remove();
                     }

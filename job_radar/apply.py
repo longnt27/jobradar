@@ -12,9 +12,11 @@ from urllib.parse import urlsplit
 
 from playwright.async_api import BrowserContext, Page, async_playwright
 
+from .application_action import is_linkedin_job_posting_url
 from .db import Database, new_id, now
 from .drafting import draft_custom_answers, get_draft, package_hash
 from .mail_config import send_smtp_message, validated_smtp_config
+from .linkedin_application import inspect_linkedin_application, submit_easy_apply_dialog
 from .settings import Settings
 from .social_browser import chrome_context_options
 
@@ -59,6 +61,8 @@ async def _form_structure(page: Page) -> dict:
     candidates = []
     for form_index in range(count):
         form = forms.nth(form_index)
+        if not await form.is_visible():
+            continue
         metadata = await form.evaluate("node => ({action:node.action,method:node.method,enctype:node.enctype,submit:(node.querySelector('button:not([type]),button[type=submit],input[type=submit]')?.innerText || node.querySelector('input[type=submit]')?.value || '').trim()})")
         fields = await form.locator("input,select,textarea").evaluate_all("""nodes => nodes.map((node, index) => {
           const type = (node.getAttribute('type') || node.tagName.toLowerCase()).toLowerCase();
@@ -82,6 +86,65 @@ async def _form_structure(page: Page) -> dict:
     return {"form_index": form_index, "fields": fields, "action": metadata["action"], "method": metadata["method"],
             "enctype": metadata["enctype"],
             "signature": _field_signature(fields, metadata["action"], metadata["method"], metadata["enctype"]), "final_url": page.url}
+
+
+async def _career_form_actions(page: Page) -> list[dict]:
+    return await page.evaluate(r"""() => {
+      const root = document.querySelector('main,[role=main]') || document.body;
+      const nodes = [...root.querySelectorAll('a[href],button,[role=button]')];
+      return nodes.map((node,index) => {
+        const box=node.getBoundingClientRect();
+        const style=getComputedStyle(node);
+        if (!box.width || !box.height || style.display==='none' || style.visibility==='hidden' || node.disabled) return null;
+        const label=(node.innerText || node.getAttribute('aria-label') || node.getAttribute('title') || '').trim().replace(/\s+/g,' ').slice(0,160);
+        const href=node.tagName==='A' ? node.href : '';
+        const hints=[label, node.id, node.className, node.getAttribute('data-testid') || '', href].join(' ').toLowerCase();
+        let score=0;
+        if (/apply|application|ứng tuyển|nộp hồ sơ|submit.{0,12}(cv|resume)|send.{0,12}(cv|resume)/i.test(hints)) score+=6;
+        if (/join (our |the )?team|start (your )?(application|journey)|send (us )?your (cv|resume)|gửi hồ sơ|đăng ký ứng tuyển/i.test(hints)) score+=5;
+        if (/continue|next step|proceed|register interest|i.m interested/i.test(label)) score+=2;
+        if (/\b(form|recruit|career|candidate)\b/i.test(href)) score+=2;
+        if (/sign.?in|log.?in|share|save|back|close|cancel|search|filter|subscribe|learn more|read more/i.test(label)) score-=10;
+        return score>0 ? {index,tag:node.tagName,label,href,score} : null;
+      }).filter(Boolean).sort((a,b)=>b.score-a.score);
+    }""")
+
+
+async def _open_application_form(page: Page, reviewed_opener: dict | None = None) -> tuple[Page, dict]:
+    """Follow a specific career-page action to a visible application form."""
+    if reviewed_opener is None:
+        try:
+            return page, await _form_structure(page)
+        except ValueError:
+            pass
+    actions = await _career_form_actions(page)
+    if reviewed_opener is not None:
+        chosen = next((action for action in actions if all(action.get(key) == reviewed_opener.get(key)
+                        for key in ("index", "tag", "label", "href"))), None)
+        if chosen is None:
+            raise ValueError("Application button changed after review; inspect the form again")
+    else:
+        if not actions or actions[0]["score"] < 2:
+            raise ValueError("No application form or recognizable form-opening button was found")
+        top = actions[0]
+        ambiguous = [action for action in actions[1:] if action["score"] >= top["score"] - 1]
+        if ambiguous:
+            labels = ", ".join(repr(action["label"] or action["href"]) for action in [top, *ambiguous][:5])
+            raise ValueError(f"Multiple possible application buttons were found: {labels}. Choose the application page manually.")
+        chosen = top
+    root = page.locator("main,[role=main]").first if await page.locator("main,[role=main]").count() else page.locator("body")
+    opened: list[Page] = []
+    page.context.on("page", lambda new_page: opened.append(new_page))
+    await root.locator('a[href],button,[role="button"]').nth(chosen["index"]).click(timeout=12000)
+    for _ in range(30):
+        target = opened[-1] if opened else page
+        try:
+            structure = await _form_structure(target)
+            structure["opener"] = {key: chosen[key] for key in ("index", "tag", "label", "href")}
+            return target, structure
+        except ValueError:
+            await page.wait_for_timeout(250)
+    raise ValueError(f"The {chosen['label'] or 'selected'} button did not open a recognizable application form")
 
 
 def _default_answer(field: dict, profile: dict, message: dict) -> str:
@@ -115,14 +178,21 @@ def _default_answer(field: dict, profile: dict, message: dict) -> str:
 async def inspect_form(db: Database, settings: Settings, draft_id: str) -> dict:
     draft = get_draft(db, draft_id)
     destination = draft["destination"]
+    if destination.get("kind") == "linkedin_easy_apply":
+        structure = await inspect_linkedin_application(settings, draft)
+        db.execute("UPDATE application_drafts SET form_data=?,updated_at=? WHERE id=?",
+                   (json.dumps(structure, ensure_ascii=False), now(), draft_id))
+        return get_draft(db, draft_id)
     if destination.get("kind") != "web" or not destination.get("url"):
         raise ValueError("Set a web application URL before inspecting a form")
+    if is_linkedin_job_posting_url(destination["url"]):
+        raise ValueError("A LinkedIn job posting is not an application form. Open its Apply button instead")
     async with async_playwright() as playwright:
         context = await playwright.chromium.launch_persistent_context(str(settings.browser_profile), headless=True, **chrome_context_options())
         try:
             page = await context.new_page()
             await page.goto(destination["url"], wait_until="domcontentloaded", timeout=45000)
-            structure = await _form_structure(page)
+            _, structure = await _open_application_form(page)
         finally:
             await context.close()
     profile = db.get_setting("profile", {})
@@ -156,9 +226,14 @@ def _validate_destination(destination: dict) -> None:
             raise ValueError("Enter a valid application email address")
     elif kind == "web":
         url = destination.get("url", "")
+        if is_linkedin_job_posting_url(url):
+            raise ValueError("A LinkedIn job posting is not an application form. Open its Apply button instead")
         parts = urlsplit(url)
         if parts.scheme not in ("http", "https") or not parts.hostname:
             raise ValueError("Enter a valid application URL")
+    elif kind == "linkedin_easy_apply":
+        if not is_linkedin_job_posting_url(destination.get("url")):
+            raise ValueError("Choose a valid LinkedIn Easy Apply posting")
     else:
         raise ValueError("Choose an email or web application destination")
 
@@ -356,6 +431,22 @@ def send_readiness(db: Database, settings: Settings, draft: dict) -> list[str]:
             for group in required_radios.values():
                 if not any(str(form.get("answers", {}).get(str(field["index"]), "")).casefold() in ("yes", "true", "checked") for field in group):
                     reasons.append(f"Choose an option: {group[0]['label'] or group[0]['name']}")
+    elif draft["destination"].get("kind") == "linkedin_easy_apply":
+        form = draft["form_data"]
+        if (form.get("kind") != "linkedin_easy_apply" or not form.get("complete") or
+                not form.get("signature") or form.get("destination_url") != draft["destination"].get("url")):
+            reasons.append("Inspect every LinkedIn application step before sending")
+        for field in form.get("fields", []):
+            label = field.get("label") or f"Field {field['index']}"
+            if field["type"] == "file":
+                try:
+                    attachment = _reviewed_attachment(settings, draft, field)
+                    if attachment and Path(attachment).stat().st_size > int(field.get("max_file_bytes") or 2_000_000):
+                        reasons.append(f"Resume PDF is too large for {label}; LinkedIn allows less than 2 MB")
+                except ValueError as error:
+                    reasons.append(str(error))
+            elif field.get("required") and not str(form.get("answers", {}).get(str(field["index"]), "")).strip():
+                reasons.append(f"Answer required: {label}")
     prior = db.one(
         "SELECT status,destination FROM submissions WHERE vacancy_id=? "
         "AND status IN ('sent_confirmed','submitted_confirmed','submitted_unconfirmed','sending') "
@@ -394,7 +485,10 @@ async def _send_web(settings: Settings, draft: dict) -> tuple[str, str]:
         try:
             page = await context.new_page()
             await page.goto(draft["destination"]["url"], wait_until="domcontentloaded", timeout=45000)
-            current = await _form_structure(page)
+            try:
+                page, current = await _open_application_form(page, form_data.get("opener"))
+            except ValueError as error:
+                return "needs_user_attention", str(error)
             if current["signature"] != form_data["signature"] or current["final_url"] != form_data["final_url"]:
                 return "needs_user_attention", "Application destination or form fields changed after review"
             form = page.locator("form").nth(form_data["form_index"])
@@ -454,16 +548,41 @@ async def _send_web(settings: Settings, draft: dict) -> tuple[str, str]:
             await context.close()
 
 
+async def _send_linkedin_easy_apply(settings: Settings, draft: dict) -> tuple[str, str]:
+    from .collectors import AuthRequired, _check_auth
+
+    posting_url = draft["destination"]["url"]
+    async with async_playwright() as playwright:
+        context = await playwright.chromium.launch_persistent_context(
+            str(settings.browser_profile), headless=True, accept_downloads=False,
+            **chrome_context_options(required=True),
+        )
+        try:
+            page = await context.new_page()
+            await page.goto(posting_url, wait_until="domcontentloaded", timeout=45000)
+            try:
+                _check_auth(page.url, await page.locator("body").inner_text(timeout=7000))
+            except AuthRequired as error:
+                return "needs_user_attention", str(error)
+            return await submit_easy_apply_dialog(page, draft["form_data"], Path(draft["resume_path"]))
+        finally:
+            await context.close()
+
+
 async def send_application(db: Database, settings: Settings, draft_id: str, expected_hash: str) -> dict:
     draft = get_draft(db, draft_id)
     if not expected_hash or expected_hash != package_hash(draft):
         raise ValueError("Application changed since review. Reload and review the package before sending")
     _validate_destination(draft["destination"])
+    if draft["destination"]["kind"] == "linkedin_easy_apply":
+        blockers = send_readiness(db, settings, draft)
+        if blockers:
+            raise ValueError("; ".join(blockers))
     if not draft["message_data"].get("body") or not draft["resume_data"].get("name"):
         raise ValueError("Complete the message and resume before sending")
     if draft["destination"]["kind"] == "email":
         _validated_smtp_config(settings)
-    elif draft["form_data"].get("fields"):
+    elif draft["destination"]["kind"] == "web" and draft["form_data"].get("fields"):
         if any(field["type"] == "file" for field in draft["form_data"]["fields"]) and draft["form_data"].get("enctype") != "multipart/form-data":
             raise ValueError("This form cannot upload files; check the application page before sending")
         for field in draft["form_data"]["fields"]:
@@ -494,6 +613,8 @@ async def send_application(db: Database, settings: Settings, draft_id: str, expe
         if draft["destination"]["kind"] == "email":
             receipt = await asyncio.to_thread(_send_email, draft, settings)
             status = "sent_confirmed"
+        elif draft["destination"]["kind"] == "linkedin_easy_apply":
+            status, receipt = await _send_linkedin_easy_apply(settings, draft)
         else:
             status, receipt = await _send_web(settings, draft)
         db.execute("UPDATE submissions SET status=?,receipt=?,updated_at=? WHERE id=?", (status, receipt, now(), identifier))

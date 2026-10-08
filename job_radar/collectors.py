@@ -20,6 +20,10 @@ class AuthRequired(RuntimeError):
     pass
 
 
+class AccountWarning(AuthRequired):
+    """LinkedIn displayed an account activity warning; stop automated access."""
+
+
 def _text(soup: BeautifulSoup, selectors: tuple[str, ...]) -> str:
     for selector in selectors:
         node = soup.select_one(selector)
@@ -184,7 +188,10 @@ async def _page_text(page: Page, selectors: tuple[str, ...]) -> str:
 
 def _check_auth(url: str, body: str) -> None:
     value = f"{url} {body[:1200]}".casefold()
-    if any(term in value for term in ("/login", "/checkpoint", "security verification", "verify your identity", "log in to see", "đăng nhập để")):
+    if "unusual activity" in value or "high volume of linkedin profile data" in value:
+        raise AccountWarning("LinkedIn showed an account activity warning; automated LinkedIn checks have been paused")
+    join_form = all(term in value for term in ("join linkedin", "password", "agree & join"))
+    if join_form or any(term in value for term in ("/login", "/checkpoint", "security verification", "verify your identity", "log in to see", "đăng nhập để")):
         raise AuthRequired("Login or verification is required in the browser profile")
 
 
@@ -272,6 +279,9 @@ async def _collect_linkedin_search_results(page: Page, source: dict) -> list[Obs
                 # Cards live inside LinkedIn's own scrollable results panel.
                 await card.scroll_into_view_if_needed(timeout=5000)
                 card_text = await card.inner_text(timeout=5000)
+                posted_at = _date_from_age(card_text)
+                if posted_at and datetime.fromisoformat(posted_at) <= datetime.now(timezone.utc) - timedelta(hours=24):
+                    continue
                 lines = [line.strip() for line in card_text.splitlines() if line.strip()]
                 await card.click(timeout=5000)
                 await page.wait_for_function("""id => {
@@ -660,6 +670,7 @@ def _detail_title(soup: BeautifulSoup, label: str) -> str:
 async def collect_html_board(source: dict) -> list[ObservedJob]:
     config = source["config"]
     pattern = re.compile(config["link_path"])
+    title_include = re.compile(config["title_include"], re.I) if config.get("title_include") else None
     async with _career_client() as client:
         response = await client.get(source["url"])
         response.raise_for_status()
@@ -691,12 +702,18 @@ async def collect_html_board(source: dict) -> list[ObservedJob]:
                 label = anchor.get_text(" ", strip=True)
                 if not label or len(label) > 180 or label.casefold() in {"apply", "apply now", "ứng tuyển", "ứng tuyển ngay", "learn more", "xem chi tiết"}:
                     label = ""
+                if config.get("listing_card_class") and config.get("listing_title_selector"):
+                    card = anchor.find_parent(class_=config["listing_card_class"])
+                    heading = card.select_one(config["listing_title_selector"]) if card else None
+                    label = heading.get_text(" ", strip=True) if heading else ""
+                if title_include and not title_include.search(label):
+                    continue
                 clean_url = url.split("#")[0]
                 if not config.get("keep_query"):
                     clean_url = clean_url.split("?")[0]
                 if clean_url not in links or (label and _target_title(label)):
                     links[clean_url] = label
-            if len(links) == before:
+            if len(links) == before and not title_include:
                 break
         jobs: list[ObservedJob] = []
         for url, label in list(links.items())[:int(config.get("max_results", 80))]:
@@ -707,7 +724,7 @@ async def collect_html_board(source: dict) -> list[ObservedJob]:
                 detail.raise_for_status()
                 item = BeautifulSoup(detail.text, "html.parser")
                 title = _detail_title(item, label)
-                if not _target_title(title):
+                if not _target_title(title) or (title_include and not title_include.search(title)):
                     continue
                 for tag in item(["script", "style", "nav", "footer", "header"]):
                     tag.decompose()

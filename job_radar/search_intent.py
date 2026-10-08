@@ -310,18 +310,12 @@ def apply_auto_search_intent(value: Any, profile: dict[str, Any], *, as_of: date
             result[key] = inferred.get(key)
     result["inferred"] = inferred
 
-    # Auto location is a conservative eligibility gate only when the profile has a usable location.
-    if result["preference_modes"].get("preferred_locations") == "auto":
+    # Infer initial gates, then respect the user's independent Hard constraint switches.
+    saved_hard = value.get("hard_constraints", {}) if isinstance(value, dict) else {}
+    if "location" not in saved_hard and result["preference_modes"].get("preferred_locations") == "auto":
         result["hard_constraints"]["location"] = bool(result["preferred_locations"])
-    # Auto role/seniority/work-mode remain ranking guidance, never implicit hard gates.
-    for key, hard_key in (
-        ("role_families", "role_family"),
-        ("seniority_levels", "seniority"),
-        ("work_modes", "work_mode"),
-    ):
-        if result["preference_modes"].get(key) == "auto":
-            result["hard_constraints"][hard_key] = False
-    result["hard_constraints"]["experience"] = result["max_required_experience_years"] is not None
+    if "experience" not in saved_hard:
+        result["hard_constraints"]["experience"] = result["max_required_experience_years"] is not None
     return result
 
 

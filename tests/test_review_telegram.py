@@ -7,7 +7,7 @@ import pytest
 from pypdf import PdfReader
 from reportlab.pdfgen import canvas
 
-from job_radar.review_telegram import build_review_pdf, format_review_details, send_review_packet
+from job_radar.review_telegram import build_review_pdf, format_review_details, send_preparation_notice, send_review_packet
 from job_radar.drafting import ModelDraft, get_draft, prepare_draft
 from job_radar.web import create_app
 from job_radar.settings import Settings
@@ -147,6 +147,54 @@ def test_updated_review_uses_human_indicator_but_keeps_hash_only_in_callbacks(tm
         if "callback_data" in button
     ]
     assert any(("b" * 12) in value for value in callback_data)
+
+
+def test_not_ready_application_still_sends_review_without_approve_button(tmp_path: Path) -> None:
+    settings = Settings(tmp_path)
+    save_telegram(settings, {"token": "test-token", "chat_id": "123"})
+    pdf = tmp_path / "resume.pdf"
+    _resume_pdf(pdf)
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.path.endswith("/getChat"):
+            return httpx.Response(200, json={"ok": True, "result": {"id": 123, "type": "private"}})
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": len(seen)}})
+
+    async def run() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            await send_review_packet(settings, _draft(pdf), ["Choose an application destination"], client=client)
+
+    asyncio.run(run())
+    summary = next(request for request in seen if request.url.path.endswith("/sendMessage"))
+    payload = json.loads(summary.content)
+    assert "Needs changes before sending" in payload["text"]
+    assert [button["text"] for row in payload["reply_markup"]["inline_keyboard"] for button in row] == ["Edit", "Regenerate"]
+    assert any(request.url.path.endswith("/sendDocument") for request in seen)
+
+
+def test_preparation_failure_notice_has_no_send_action_or_resume(tmp_path: Path) -> None:
+    settings = Settings(tmp_path)
+    save_telegram(settings, {"token": "test-token", "chat_id": "123"})
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.path.endswith("/getChat"):
+            return httpx.Response(200, json={"ok": True, "result": {"id": 123, "type": "private"}})
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 42}})
+
+    async def run() -> int:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await send_preparation_notice(settings, "AI Engineer", "Example", client)
+
+    assert asyncio.run(run()) == 42
+    assert [request.url.path.rsplit("/", 1)[-1] for request in seen] == ["getChat", "sendMessage"]
+    message = json.loads(seen[-1].content)
+    assert "AI Engineer at Example" in message["text"]
+    assert "No draft or resume was created" in message["text"]
+    assert "reply_markup" not in message
 
 
 def test_review_packet_refuses_group_chat_before_sending_resume(tmp_path: Path) -> None:

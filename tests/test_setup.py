@@ -37,6 +37,37 @@ def test_setup_saves_secrets_without_returning_them(tmp_path: Path) -> None:
     assert "1234567890:secret" not in json.dumps(status)
 
 
+def test_setup_is_available_when_automation_preview_is_busy(tmp_path: Path, monkeypatch) -> None:
+    app = create_app(Settings(tmp_path))
+
+    def unavailable_preview():
+        raise RuntimeError("Automation preview is busy")
+
+    monkeypatch.setattr(app.state.auto_apply_manager, "status", unavailable_preview)
+    response = TestClient(app).get("/api/setup")
+    assert response.status_code == 200
+    assert "matching" in response.json()
+    assert "capabilities" in response.json()
+
+
+def test_setup_discovery_avoids_full_job_count_scan(tmp_path: Path, monkeypatch) -> None:
+    app = create_app(Settings(tmp_path))
+    db = app.state.db
+    expected = sum(TestClient(app).get("/api/discovery/coverage").json()["counts"].values())
+    original_all = db.all
+    queries = []
+
+    def track_query(query, *args, **kwargs):
+        queries.append(query)
+        return original_all(query, *args, **kwargs)
+
+    monkeypatch.setattr(db, "all", track_query)
+    client = TestClient(app)
+    setup = client.get("/api/setup").json()
+    assert setup["capabilities"]["discovery"]["source_count"] == expected
+    assert not any("first_source AS" in query for query in queries)
+
+
 def test_gmail_smtp_requires_its_own_app_password(tmp_path: Path) -> None:
     client = TestClient(create_app(Settings(tmp_path)))
     generic = {"host": "mail.example.org", "port": 587, "user": "alex", "password": "old-secret", "from_address": "alex@example.org"}

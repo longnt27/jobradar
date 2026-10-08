@@ -26,11 +26,14 @@ def _valid_target(action: dict) -> bool:
     return False
 
 
-def preparation_preflight(db: Database, job_id: str) -> dict:
-    job = db.one("SELECT * FROM vacancies WHERE id=?", (job_id,))
+def preparation_preflight(
+    db: Database, job_id: str, *, job_data: dict | None = None,
+    observations: list[dict] | None = None,
+) -> dict:
+    job = job_data if job_data is not None else db.one("SELECT * FROM vacancies WHERE id=?", (job_id,))
     if not job:
         raise KeyError("Job not found")
-    action = resolve_application_action(db, job)
+    action = resolve_application_action(db, job, observations=observations)
     target_valid = _valid_target(action)
     manual_only = action.get("kind") == "manual" or action.get("action_type") in {
         "manual", "unknown", "linkedin_easy_apply",
@@ -46,8 +49,9 @@ def preparation_preflight(db: Database, job_id: str) -> dict:
         state = "confirmation_required"
         if action.get("action_type") == "linkedin_easy_apply":
             reason = (
-                "This posting uses LinkedIn Easy Apply. Job Radar can prepare the resume "
-                "and message, but submission will remain manual."
+                "This posting appears to use LinkedIn Easy Apply. Job Radar will inspect the form "
+                "while preparing your draft. Review the answers, then choose Approve & send "
+                "to fill and submit if every step still matches."
             )
         elif action.get("provenance") == "conflicting_explicit_evidence":
             reason = (

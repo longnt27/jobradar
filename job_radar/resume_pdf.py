@@ -1,23 +1,32 @@
-"""Compact, selectable-text A4 resume based on the user's supplied layout."""
+"""Render tailored resumes with the user's one-page LaTeX template."""
 
 from __future__ import annotations
 
 import hashlib
 import json
+import shutil
+import subprocess
+import tempfile
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from pypdf import PdfReader
-from reportlab.lib.colors import HexColor
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.utils import simpleSplit
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.pdfgen import canvas
 
 from .settings import Settings
 
 
+_TEMPLATE = Path(__file__).with_name("templates") / "resume.tex"
+_ESCAPES = {
+    "\\": r"\textbackslash{}", "&": r"\&", "%": r"\%", "$": r"\$",
+    "#": r"\#", "_": r"\_", "{": r"\{", "}": r"\}",
+    "~": r"\textasciitilde{}", "^": r"\textasciicircum{}",
+}
+
+
 def _fonts() -> tuple[str, str, str]:
+    """The Telegram review cover still uses ReportLab and these fonts."""
     base = Path("/System/Library/Fonts/Supplemental")
     variants = (("JobRadarRegular", "Arial.ttf"), ("JobRadarBold", "Arial Bold.ttf"),
                 ("JobRadarItalic", "Arial Italic.ttf"))
@@ -30,180 +39,141 @@ def _fonts() -> tuple[str, str, str]:
         return "Helvetica", "Helvetica-Bold", "Helvetica-Oblique"
 
 
-def render_resume(settings: Settings, draft_id: str, resume: dict) -> tuple[str, str]:
-    settings.ensure_dirs()
-    revision = hashlib.sha256(json.dumps(resume, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:16]
-    path = settings.artifact_dir / f"resume-{draft_id}-{revision}.pdf"
-    regular, bold, italic = _fonts()
-    width, height = A4
-    left = right = 36
-    top = bottom = 27.36
-    usable = width - left - right
-    doc = canvas.Canvas(str(path), pagesize=A4, pageCompression=1)
-    doc.setTitle(f"{resume.get('name', '')} — Resume")
-    doc.setAuthor(resume.get("name", ""))
-    y = height - top
+def _tex(value: object) -> str:
+    return "".join(_ESCAPES.get(c, c) for c in str(value or "").replace("\x00", ""))
 
-    def check(space: float) -> None:
-        nonlocal y
-        if y - space < bottom:
-            doc.showPage()
-            y = height - top
 
-    def line(value: str, font: str = regular, size: float = 9.4, leading: float = 11.5,
-             indent: float = 0, color: str = "#1e1e1e") -> None:
-        nonlocal y
-        doc.setFillColor(HexColor(color))
-        doc.setFont(font, size)
-        for paragraph in (str(value).replace("\x00", "").splitlines() or [""]):
-            for part in simpleSplit(paragraph, font, size, usable - indent) or [""]:
-                check(leading)
-                doc.drawString(left + indent, y, part)
-                y -= leading
+def _url(value: object) -> str | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    if "://" not in raw:
+        raw = "https://" + raw
+    parsed = urlsplit(raw)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return None
+    return raw if not any(c in raw for c in "{}\\\n\r%") else None
 
-    def section(title: str) -> None:
-        nonlocal y
-        check(29)
-        y -= 5
-        doc.setFont(bold, 12)
-        doc.setFillColor(HexColor("#1e1e1e"))
-        doc.drawString(left, y, title.upper())
-        y -= 3
-        doc.setStrokeColor(HexColor("#b4b4b4"))
-        doc.setLineWidth(.65)
-        doc.line(left, y, width - right, y)
-        y -= 12
 
-    def bullet(value: str) -> None:
-        nonlocal y
-        size = 9.3
-        leading = 11.3
-        parts = simpleSplit(str(value).replace("\x00", ""), regular, size, usable - 21) or [""]
-        check(leading * len(parts) + 1)
-        doc.setFont(regular, size)
-        doc.setFillColor(HexColor("#1e1e1e"))
-        doc.drawString(left + 10, y, "•")
-        for part in parts:
-            doc.drawString(left + 21, y, part)
-            y -= leading
+def _link(url: object, label: object) -> str:
+    target = _url(url)
+    return (r"\href{\detokenize{" + target + "}}{" + _tex(label) + "}") if target else _tex(label)
 
-    name = str(resume.get("name") or "")
-    doc.setFillColor(HexColor("#1e1e1e"))
-    doc.setFont(bold, 20)
-    doc.drawCentredString(width / 2, y - 4, name)
-    y -= 29
-    contacts = [resume.get("email"), resume.get("phone")]
-    contacts += [link.removeprefix("https://").removeprefix("http://") for link in resume.get("links", []) if link]
-    contacts = [str(value) for value in contacts if value]
-    contact_lines = []
-    current = ""
-    for value in contacts:
-        candidate = f"{current}    ·    {value}" if current else value
-        if current and pdfmetrics.stringWidth(candidate, regular, 8.4) > usable:
-            contact_lines.append(current)
-            current = value
-        else:
-            current = candidate
-    if current:
-        contact_lines.append(current)
-    doc.setFont(regular, 8.4)
-    doc.setFillColor(HexColor("#646464"))
-    for value in contact_lines:
-        doc.drawCentredString(width / 2, y, value)
-        y -= 11
-    y -= 6
+
+def _bullet(value: object, phrases: list[str]) -> str:
+    text = str(value or "")
+    phrase = next((p for p in phrases if p and p in text and p != text.strip()), None)
+    if not phrase:
+        return r"\item " + _tex(text)
+    before, after = text.split(phrase, 1)
+    return r"\item " + _tex(before) + r"\textbf{" + _tex(phrase) + "}" + _tex(after)
+
+
+def _items(values: list[str], phrases: list[str] | None = None) -> str:
+    lines = [_bullet(v, phrases or []) for v in values if str(v).strip()]
+    return "\n".join([r"\begin{itemize}", *lines, r"\end{itemize}"]) if lines else ""
+
+
+def _body(resume: dict) -> str:
+    pieces = [r"\begin{center}", r"\name{" + _tex(resume.get("name")) + r"}\\[4pt]", r"\small"]
+    contacts = []
+    for field, icon in (("email", r"\faEnvelope"), ("phone", r"\faPhone")):
+        if resume.get(field):
+            contacts.append(r"\contactitem{" + icon + "}{" + _tex(resume[field]) + "}")
+    for value in resume.get("links") or []:
+        target = _url(value)
+        if not target:
+            continue
+        host = urlsplit(target).hostname or ""
+        icon = r"\faLinkedin" if "linkedin.com" in host else r"\faGithub" if "github.com" in host else r"\faGlobe"
+        label = target.removeprefix("https://").removeprefix("http://").rstrip("/")
+        contacts.append(r"\contactitem{" + icon + "}{" + _link(target, label) + "}")
+    pieces += ["\n\\quad\n".join(contacts), r"\end{center}", r"\vspace{1pt}"]
     if resume.get("summary"):
-        line(resume["summary"], italic, 9.3, 11.5)
-        y -= 2
+        pieces += [r"\noindent", r"\textit{" + _tex(resume["summary"]) + "}", r"\vspace{-5pt}"]
 
-    positions = resume.get("experience") or []
-    if positions:
-        section("Experience")
-        for item in positions:
-            check(32)
-            company = item.get("company") or item.get("title") or ""
-            dates = item.get("dates", "")
-            doc.setFont(bold, 9.6)
-            doc.setFillColor(HexColor("#1e1e1e"))
-            doc.drawString(left, y, company)
-            doc.setFont(regular, 9.2)
-            doc.drawRightString(width - right, y, dates)
-            y -= 12
-            if item.get("role"):
-                line(item["role"], italic, 9.2, 11)
-            for value in item.get("bullets", []):
-                bullet(value)
-            y -= 3
+    phrases = [str(p) for p in resume.get("bold_phrases") or [] if p]
+    if resume.get("experience"):
+        pieces.append(r"\section{Experience}")
+        for item in resume["experience"]:
+            pieces.append(r"\begin{expentry}{" + _tex(item.get("company") or item.get("title")) +
+                          "}{" + _tex(item.get("dates")) + "}{" + _tex(item.get("role")) + "}")
+            pieces.append(_items(item.get("bullets") or [], phrases))
+            pieces.append(r"\end{expentry}")
 
-    projects = resume.get("projects") or []
-    if projects:
-        section("Selected Projects")
-        for project in projects:
-            check(31)
-            title = project.get("title", "")
-            url = project.get("repository_url") or ""
-            short_url = url.removeprefix("https://github.com/")
-            doc.setFillColor(HexColor("#1e1e1e"))
-            doc.setFont(bold, 9.6)
-            doc.drawString(left, y, title)
-            if url and pdfmetrics.stringWidth(title, bold, 9.6) + pdfmetrics.stringWidth(short_url, regular, 8) < usable - 12:
-                doc.setFont(regular, 8)
-                doc.drawRightString(width - right, y, short_url)
-                doc.linkURL(url, (width - right - pdfmetrics.stringWidth(short_url, regular, 8), y - 2, width - right, y + 9), relative=0)
-            y -= 11
-            stack = project.get("tech_stack") or []
-            if stack:
-                line(" · ".join(stack), italic, 8.5, 10)
-            for value in project.get("bullets", []):
-                bullet(value)
-            y -= 3
+    if resume.get("projects"):
+        pieces.append(r"\section{Selected Projects}")
+        for project in resume["projects"]:
+            title = _link(project.get("repository_url"), project.get("title"))
+            if target := _url(project.get("repository_url")):
+                parsed = urlsplit(target)
+                label = parsed.path.strip("/") if parsed.hostname == "github.com" else (
+                    parsed.hostname + parsed.path.rstrip("/"))
+                icon = r"\faGithub" if parsed.hostname == "github.com" else r"\faGlobe"
+                title += (r" \hfill \normalfont\small\href{\detokenize{" + target +
+                          "}}{" + icon + r"\ " + _tex(label) + "}")
+            stack = r" \textperiodcentered\ ".join(_tex(v) for v in (project.get("tech_stack") or [])[:5])
+            pieces.append(r"\begin{projentry}{" + title + "}{" + stack + "}")
+            bullets = project.get("bullets") or []
+            if bullets:
+                pieces.append("\n".join([r"\begin{itemize}", _bullet(bullets[0], []),
+                                         *(_bullet(value, phrases) for value in bullets[1:]),
+                                         r"\end{itemize}"]))
+            pieces.append(r"\end{projentry}")
 
-    education = resume.get("education") or []
-    if education:
-        section("Education")
-        for item in education:
+    if resume.get("education"):
+        pieces.append(r"\section{Education}")
+        for item in resume["education"]:
             if isinstance(item, str):
-                line(item, bold, 9.5, 12)
+                pieces.append(r"\noindent\textbf{" + _tex(item) + "}")
                 continue
-            check(24)
-            doc.setFont(bold, 9.5)
-            doc.drawString(left, y, item.get("school", ""))
-            doc.setFont(regular, 9)
-            doc.drawRightString(width - right, y, item.get("dates", ""))
-            y -= 12
-            line(item.get("degree", ""), regular, 9.2, 12)
+            pieces += [r"\noindent\begin{tabularx}{\linewidth}{@{}X r@{}}",
+                       r"\textbf{" + _tex(item.get("school")) + "} & " + _tex(item.get("dates")) + r" \\",
+                       _tex(item.get("degree")) + " &", r"\end{tabularx}"]
 
-    achievements = resume.get("achievements") or []
-    if achievements:
-        section("Achievements")
-        for value in achievements:
-            bullet(value)
+    if resume.get("achievements"):
+        pieces += [r"\section{Achievements}", _items(resume["achievements"])]
 
     groups = resume.get("skill_groups") or {}
     if not groups and resume.get("skills"):
-        groups = {"Skills": ", ".join(resume["skills"])}
+        groups = {"Skills": resume["skills"]}
     if groups:
-        section("Skills")
-        label_width = min(105, max(pdfmetrics.stringWidth(label, bold, 8.8) for label in groups) + 12)
+        pieces += [r"\section{Skills}",
+                   r"\noindent\begin{tabularx}{\linewidth}{@{}>{\bfseries\small}l @{\hspace{0.75em}} X@{}}"]
         for label, values in groups.items():
             value = ", ".join(values) if isinstance(values, list) else str(values)
-            parts = simpleSplit(value, regular, 9, usable - label_width) or [""]
-            check(len(parts) * 11 + 2)
-            doc.setFont(bold, 8.8)
-            doc.drawString(left, y, label)
-            doc.setFont(regular, 9)
-            for part in parts:
-                doc.drawString(left + label_width, y, part)
-                y -= 11
-            y -= 1
+            pieces.append(_tex(label) + " & " + _tex(value) + r" \\[1pt]")
+        pieces.append(r"\end{tabularx}")
+    return "\n".join(pieces)
 
-    doc.save()
-    reader = PdfReader(str(path))
-    extracted = "\n".join(page.extract_text() or "" for page in reader.pages)
-    if not name or name not in extracted or len(extracted.strip()) < 40:
-        path.unlink(missing_ok=True)
-        raise ValueError("Resume PDF failed text validation")
-    if len(reader.pages) > 2:
-        path.unlink(missing_ok=True)
-        raise ValueError("Resume exceeds two pages; shorten the selected content")
+
+def render_resume(settings: Settings, draft_id: str, resume: dict) -> tuple[str, str]:
+    settings.ensure_dirs()
+    template = _TEMPLATE.read_text(encoding="utf-8")
+    revision = hashlib.sha256((template + json.dumps(resume, sort_keys=True, ensure_ascii=False)).encode()).hexdigest()[:16]
+    path = settings.artifact_dir / f"resume-{draft_id}-{revision}.pdf"
+    if path.exists():
+        return str(path), hashlib.sha256(path.read_bytes()).hexdigest()
+    compiler = shutil.which("tectonic") or "/opt/homebrew/bin/tectonic"
+    if not Path(compiler).is_file():
+        raise RuntimeError("The LaTeX resume renderer (tectonic) is unavailable on this Mac")
+    source = template.replace("__PDF_TITLE__", _tex(f"{resume.get('name', '')} — Resume"))
+    source = source.replace("__PDF_AUTHOR__", _tex(resume.get("name")))
+    source = source.replace("__BODY__", _body(resume))
+    with tempfile.TemporaryDirectory(prefix="job-radar-resume-") as directory:
+        tex_path = Path(directory) / "resume.tex"
+        tex_path.write_text(source, encoding="utf-8")
+        result = subprocess.run([compiler, "--outdir", directory, str(tex_path)],
+                                capture_output=True, text=True, timeout=90, check=False)
+        output = Path(directory) / "resume.pdf"
+        if result.returncode or not output.exists():
+            raise ValueError("Resume template could not be rendered: " + (result.stderr or result.stdout)[-1200:])
+        reader = PdfReader(output)
+        extracted = "\n".join(page.extract_text() or "" for page in reader.pages)
+        name = str(resume.get("name") or "")
+        if len(reader.pages) != 1:
+            raise ValueError(f"Resume template filled {len(reader.pages)} pages; shorten the draft content")
+        if not name or name not in extracted or len(extracted.strip()) < 40:
+            raise ValueError("Resume PDF failed text validation")
+        shutil.copy2(output, path)
     return str(path), hashlib.sha256(path.read_bytes()).hexdigest()

@@ -76,3 +76,18 @@ def test_employer_directory_page_paginates_and_filters(tmp_path: Path) -> None:
     assert {row["id"] for row in first["items"]}.isdisjoint(row["id"] for row in second["items"])
     assert first["items"][0]["name"] == "Paging Employer 000"
     assert second["items"][0]["name"] == "Paging Employer 020"
+
+
+def test_employer_directory_can_focus_on_watched_companies(tmp_path: Path) -> None:
+    client = TestClient(create_app(Settings(tmp_path)))
+    client.post("/api/employers", json={"name": "Unwatched Example"})
+    client.post("/api/employers", json={
+        "name": "Watched Example", "career_url": "https://example.org/careers",
+    })
+
+    focused = client.get("/api/employers/page", params={"q": "Example", "coverage": "watching"})
+    assert focused.status_code == 200
+    assert [row["name"] for row in focused.json()["items"]] == ["Watched Example"]
+    assert focused.json()["total"] == 1
+    all_employers = client.get("/api/employers/page", params={"q": "Example"}).json()
+    assert {row["name"] for row in all_employers["items"]} == {"Watched Example", "Unwatched Example"}

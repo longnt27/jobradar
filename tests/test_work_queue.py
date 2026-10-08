@@ -1,4 +1,5 @@
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
 import socket
 import time
 from threading import Thread
@@ -31,13 +32,16 @@ def test_one_queue_reports_real_worker_order_and_analysis_stage(tmp_path: Path) 
         )
         return identifier
 
-    running = job("Running analysis", "running", None, "2026-10-04T12:00:00+00:00", "scoring")
-    pending = job("Pending analysis", "pending", None, "2026-10-04T11:00:00+00:00")
-    queued_draft = job("Explicit draft", "done", 90, "2026-10-04T10:00:00+00:00")
-    automatic_draft = job("Automatic draft", "done", 85, "2026-10-04T09:00:00+00:00")
-    waiting_score = job("Draft after scoring", "pending", None, "2026-10-04T08:00:00+00:00")
-    failed = job("Failed analysis", "failed", None, "2026-10-04T07:30:00+00:00")
-    reviewed = job("Ready for review", "done", 88, "2026-10-04T07:00:00+00:00")
+    def seen(hours_ago: float) -> str:
+        return (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).isoformat(timespec="seconds")
+
+    running = job("Running analysis", "running", None, seen(1), "scoring")
+    pending = job("Pending analysis", "pending", None, seen(2))
+    queued_draft = job("Explicit draft", "done", 90, seen(3))
+    automatic_draft = job("Automatic draft", "done", 85, seen(4))
+    waiting_score = job("Draft after scoring", "pending", None, seen(5))
+    failed = job("Failed analysis", "failed", None, seen(5.5))
+    reviewed = job("Ready for review", "done", 88, seen(6))
     reviewed_draft = new_id()
     db.execute(
         "INSERT INTO application_drafts(id,vacancy_id,provider,provider_mode,evidence_ids,resume_data,"

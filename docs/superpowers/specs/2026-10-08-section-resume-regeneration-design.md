@@ -1,0 +1,7 @@
+# Section-level resume regeneration
+
+The application review screen lets the candidate choose one resume content section, describe the desired change, and ask the configured drafting provider for a replacement of that section only. Supported sections are professional summary, experience bullets, selected projects, education wording, achievements, and skills; application email and full draft remain available. Contact details and fixed employer, position, school, and date facts remain manually editable.
+
+Each targeted request sends the job context, the current section, and only the candidate evidence relevant to that section. The provider returns a strict section-specific JSON shape. The backend validates the shape and factual anchors, merges only the chosen fields into the latest unsent draft, rebuilds the PDF, invalidates the previous review fingerprint, and reports the changed section. Selected projects may be replaced or reordered only with approved project evidence; exactly three are required when at least three approved projects exist. Existing form answers and application destination remain intact.
+
+The full-draft option retains the current behavior and is visibly marked as using more model quota. A targeted regeneration never reinspects a web form, because neither its destination nor answers changed. Provider errors or invalid output leave the saved draft unchanged and allow retry after quota refresh. No application is sent during regeneration.

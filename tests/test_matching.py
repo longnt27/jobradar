@@ -14,6 +14,18 @@ from job_radar.web import create_app
 from job_radar.matching import MatchManager
 
 
+def test_matching_status_endpoint_reports_model_and_backlog(tmp_path: Path) -> None:
+    app = create_app(Settings(tmp_path))
+    app.state.db.set_setting("matching_model", "test:small")
+    client = TestClient(app)
+    response = client.get("/api/matching/status")
+    assert response.status_code == 200
+    status = response.json()
+    assert status["model"] == "test:small"
+    assert status["pending"] >= 0
+    assert "completed" in status and "failed" in status
+
+
 def test_local_analysis_extracts_facts_and_weights_nine_scores(monkeypatch) -> None:
     prompts = []
     stages = []
@@ -114,6 +126,28 @@ def test_analysis_policy_change_queues_existing_jobs_once(tmp_path) -> None:
         await manager.stop()
     asyncio.run(start_and_stop())
     assert db.get_setting("analysis_version", 0) == 5
+
+
+def test_startup_preserves_completed_matches_with_current_model_and_policy(tmp_path) -> None:
+    from job_radar.local_analysis import ANALYSIS_VERSION
+
+    settings = Settings(tmp_path)
+    app = create_app(settings)
+    db = app.state.db
+    job_id = TestClient(app).post("/api/jobs/import", json={
+        "company": "Example", "title": "AI Engineer", "description": "Build AI systems."
+    }).json()["id"]
+    db.set_setting("matching_model", "test:small")
+    db.set_setting("analysis_version", ANALYSIS_VERSION)
+    db.execute("UPDATE vacancies SET analysis_status='done',analysis_model='test:small' WHERE id=?", (job_id,))
+    manager = MatchManager(db, settings)
+
+    async def start_and_stop():
+        await manager.start()
+        assert db.one("SELECT analysis_status FROM vacancies WHERE id=?", (job_id,))["analysis_status"] == "done"
+        await manager.stop()
+
+    asyncio.run(start_and_stop())
 
 
 def test_unstated_requirements_get_neutral_score(monkeypatch) -> None:

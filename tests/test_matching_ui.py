@@ -82,7 +82,7 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 page.get_by_role("button", name="Applications", exact=True).first.click()
                 page.get_by_role("tab", name="Automation").click()
                 assert page.locator("#auto-apply-form input[name='enabled']").is_visible()
-                assert page.locator("#auto-apply-status").inner_text() == "Off"
+                page.wait_for_function("document.querySelector('#auto-apply-status')?.textContent === 'Off'")
                 assert page.locator("#queue-existing-drafts").is_disabled()
                 page.get_by_role("button", name="Jobs", exact=True).first.click()
                 pending_card = page.get_by_role("button", name="Open Python Engineer at Pending Example")

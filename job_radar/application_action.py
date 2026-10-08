@@ -42,6 +42,10 @@ def _linkedin(value: str | None) -> bool:
     return host == "linkedin.com" or host.endswith(".linkedin.com")
 
 
+def is_linkedin_job_posting_url(value: str | None) -> bool:
+    return _linkedin(value) and urlsplit(value or "").path.casefold().startswith("/jobs/")
+
+
 def _formish(value: str | None) -> bool:
     if not _http(value):
         return False
@@ -98,10 +102,10 @@ def reviewed_application_action(destination: dict, previous: dict) -> dict:
     if _target(current) == _target(previous):
         merged = {**previous, **current}
         if not merged.get("action_type"):
-            merged["action_type"] = "email" if merged.get("kind") == "email" else "web_form" if merged.get("kind") == "web" else "manual"
+            merged["action_type"] = "email" if merged.get("kind") == "email" else "web_form" if merged.get("kind") == "web" else "linkedin_easy_apply" if merged.get("kind") == "linkedin_easy_apply" else "manual"
         return merged
     kind = current.get("kind")
-    current["action_type"] = "email" if kind == "email" else "web_form" if kind == "web" else "manual"
+    current["action_type"] = "email" if kind == "email" else "web_form" if kind == "web" else "linkedin_easy_apply" if kind == "linkedin_easy_apply" else "manual"
     current["provenance"] = "manual_override"
     current["confidence"] = "user_confirmed"
     current["evidence"] = "Destination edited during application review."
@@ -119,8 +123,8 @@ def describe_application_action(destination: dict) -> str:
     return f"{label} -> {target}" if target else label
 
 
-def resolve_application_action(db: Database, job: dict) -> dict:
-    rows = db.all(
+def resolve_application_action(db: Database, job: dict, *, observations: list[dict] | None = None) -> dict:
+    rows = observations if observations is not None else db.all(
         "SELECT s.kind AS source_kind,o.url AS observation_url,o.raw_text,o.payload,o.last_seen_at "
         "FROM vacancy_observations vo JOIN observations o ON o.id=vo.observation_id "
         "JOIN sources s ON s.id=o.source_id WHERE vo.vacancy_id=? ORDER BY o.last_seen_at DESC",
@@ -166,7 +170,7 @@ def resolve_application_action(db: Database, job: dict) -> dict:
                 kind="manual", action_type="linkedin_easy_apply",
                 destination=str(payload.get("url") or row.get("observation_url") or apply_url or job.get("apply_url") or ""),
                 source_kind="linkedin", provenance="linkedin_easy_apply_control", confidence="high",
-                evidence="The LinkedIn posting exposes Easy Apply; Job Radar preserves the target but requires manual submission.", strength=3,
+                evidence="The LinkedIn posting indicates Easy Apply. Job Radar will verify the button and form before submission.", strength=3,
             ))
         if not _http(apply_url):
             continue

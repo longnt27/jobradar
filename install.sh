@@ -21,6 +21,14 @@ if [[ -z "$uv_bin" ]]; then
 fi
 
 if [[ "${JOB_RADAR_INSTALL_TEST_MODE:-}" != "1" ]]; then
+  if ! command -v tectonic >/dev/null 2>&1; then
+    if command -v brew >/dev/null 2>&1; then
+      brew install tectonic
+    else
+      echo "Tectonic is required to render the supplied LaTeX resume template. Install Tectonic, then rerun ./install.sh." >&2
+      exit 1
+    fi
+  fi
   if ! command -v ollama >/dev/null 2>&1; then
     if command -v brew >/dev/null 2>&1; then
       brew install ollama

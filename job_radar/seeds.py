@@ -4,8 +4,9 @@ import json
 from urllib.parse import urlencode
 
 from .db import Database, new_id, now
-from .feed_catalog import CAREER_FEEDS
+from .feed_catalog import CAREER_FEEDS, CAREER_SCAN_INTERVAL_MINUTES
 from .employer_scope import HCMC_BASED
+from .linkedin_searches import LINKEDIN_SCAN_INTERVAL_MINUTES, recent_search_url
 
 
 EMPLOYER_DIRECTORY: dict[str, str] = {
@@ -118,6 +119,17 @@ EMPLOYER_ALIASES = {
 def seed(db: Database) -> None:
     timestamp = now()
     with db.connection() as conn:
+        for source_id, url, interval_minutes in conn.execute(
+            "SELECT id,url,interval_minutes FROM sources WHERE kind='linkedin' "
+            "AND COALESCE(json_extract(config,'$.retired'),0)=0"
+        ).fetchall():
+            try:
+                filtered_url = recent_search_url(url)
+            except ValueError:
+                continue
+            if filtered_url != url or interval_minutes != LINKEDIN_SCAN_INTERVAL_MINUTES:
+                conn.execute("UPDATE sources SET url=?,interval_minutes=? WHERE id=?",
+                             (filtered_url, LINKEDIN_SCAN_INTERVAL_MINUTES, source_id))
         # Keep historical scans for audit, but remove HCMC-based employers and
         # their sources from the active discovery surface on upgrade.
         for name in HCMC_BASED:
@@ -147,10 +159,12 @@ def seed(db: Database) -> None:
             else:
                 conn.execute(
                     "INSERT INTO sources(id,kind,name,url,employer_id,interval_minutes,config,created_at) VALUES(?,?,?,?,?,?,?,?)",
-                    (new_id(), "career", f"{feed.employer} careers", feed.url, employer[0], 240, config, timestamp),
+                    (new_id(), "career", f"{feed.employer} careers", feed.url, employer[0], CAREER_SCAN_INTERVAL_MINUTES, config, timestamp),
                 )
+        conn.execute("UPDATE sources SET interval_minutes=? WHERE kind='career' AND interval_minutes<>?",
+                     (CAREER_SCAN_INTERVAL_MINUTES, CAREER_SCAN_INTERVAL_MINUTES))
         for role in ROLE_TERMS:
-            url = f"https://www.linkedin.com/jobs/search/?{urlencode({'keywords': role})}"
+            url = f"https://www.linkedin.com/jobs/search/?{urlencode({'keywords': role, 'f_TPR': 'r86400'})}"
             saved = conn.execute(
                 "SELECT id,name,url,config,enabled FROM sources WHERE kind='linkedin' AND name=? AND url=?",
                 (role, url),
@@ -177,8 +191,9 @@ def seed(db: Database) -> None:
             else:
                 survivor_id = new_id()
                 conn.execute(
-                    "INSERT INTO sources(id,kind,name,url,config,created_at) VALUES(?,'linkedin',?,?,?,?)",
-                    (survivor_id, role, url, json.dumps({"max_results": 150}), timestamp),
+                    "INSERT INTO sources(id,kind,name,url,interval_minutes,config,created_at) VALUES(?,'linkedin',?,?,?,?,?)",
+                    (survivor_id, role, url, LINKEDIN_SCAN_INTERVAL_MINUTES,
+                     json.dumps({"max_results": 150}), timestamp),
                 )
             for old in legacy:
                 if old[0] == survivor_id:

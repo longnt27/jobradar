@@ -107,9 +107,13 @@ def automation_eligibility(
     require_analysis: bool = True,
     check_daily_limit: bool = False,
     check_existing_artifacts: bool = True,
+    job_data: dict[str, Any] | None = None,
+    preferences_data: dict[str, Any] | None = None,
+    excluded_employer_ids: set[str] | None = None,
+    observations: list[dict] | None = None,
 ) -> dict[str, Any]:
     config = policy or automation_policy(db)
-    job = db.one("SELECT * FROM vacancies WHERE id=?", (job_id,))
+    job = job_data if job_data is not None else db.one("SELECT * FROM vacancies WHERE id=?", (job_id,))
     if not job:
         raise KeyError("Job not found")
     reasons: list[str] = []
@@ -130,10 +134,12 @@ def automation_eligibility(
     if str(job.get("recruiting_outcome") or "none") != "none":
         reasons.append("The job already has a recruiting outcome.")
 
-    excluded = db.one(
-        "SELECT 1 AS blocked FROM employers WHERE id=? AND coverage_status='excluded_hcm' LIMIT 1",
-        (job.get("employer_id"),),
-    ) if job.get("employer_id") else None
+    excluded = (job.get("employer_id") in excluded_employer_ids) if excluded_employer_ids is not None else (
+        db.one(
+            "SELECT 1 AS blocked FROM employers WHERE id=? AND coverage_status='excluded_hcm' LIMIT 1",
+            (job.get("employer_id"),),
+        ) if job.get("employer_id") else None
+    )
     if excluded:
         reasons.append("The employer is excluded.")
 
@@ -147,7 +153,7 @@ def automation_eligibility(
         detail = json.loads(job.get("score_detail") or "{}")
     except (TypeError, ValueError):
         detail = {}
-    preferences = normalize_search_intent(db.get_setting("search_intent", {}))
+    preferences = preferences_data if preferences_data is not None else normalize_search_intent(db.get_setting("search_intent", {}))
     company = str(job.get("company") or "").casefold()
     excluded_employers = [
         str(item).strip().casefold()
@@ -171,7 +177,7 @@ def automation_eligibility(
                 reasons.append("The job violates a hard search preference.")
 
     if config["require_verified_destination"]:
-        preflight = preparation_preflight(db, job_id)
+        preflight = preparation_preflight(db, job_id, job_data=job, observations=observations)
         if not preflight["ready"]:
             reasons.append("No verified application destination is available.")
 

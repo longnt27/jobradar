@@ -375,7 +375,7 @@ def finalize_match(job: dict, facts: dict, profile: dict,
 
     exclusions = []
     maximum_years = prefs.get("max_required_experience_years")
-    if years is not None and maximum_years is not None and years > maximum_years:
+    if hard.get("experience") and years is not None and maximum_years is not None and years > maximum_years:
         exclusions.append(
             f"Experience requirement asks for {years} years; your search includes jobs requiring up to {maximum_years} years."
         )

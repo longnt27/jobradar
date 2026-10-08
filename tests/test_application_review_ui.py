@@ -25,6 +25,9 @@ def test_application_tab_reviews_regenerates_and_deep_links_to_draft(tmp_path: P
     job = client.post("/api/jobs/import", json={"company": "Example", "title": "Engineer",
         "description": "Build Python systems.", "apply_url": "https://example.org/apply"}).json()
     draft = prepare_draft(app.state.db, app.state.settings, job["id"], "codex")
+    monkeypatch.setattr("job_radar.drafting._provider_json", lambda _provider, _prompt, response_type:
+                        response_type.model_validate({"subject": "Engineer application",
+                                                      "body": "Dear team. Emphasize production search"}))
     app.state.auto_apply_manager.register_review(draft)
     client.patch(f"/api/applications/{draft['id']}", json={"destination": {"kind": "email", "email": "jobs@example.org"}})
     with socket.socket() as sock:

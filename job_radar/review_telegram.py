@@ -154,6 +154,28 @@ async def _post(client: httpx.AsyncClient, token: str, method: str, **kwargs) ->
     return payload["result"]
 
 
+async def send_preparation_notice(settings: Settings, title: str, company: str,
+                                  client: httpx.AsyncClient | None = None) -> int:
+    """Notify about a preparation failure when there is no draft to review yet."""
+    config = telegram_config(settings)
+    if not config.get("token") or not config.get("chat_id"):
+        raise ValueError("Configure a Telegram bot and private chat in My profile first")
+    if client is None:
+        async with httpx.AsyncClient(timeout=30) as owned:
+            return await send_preparation_notice(settings, title, company, owned)
+    token, chat_id = config["token"], config["chat_id"]
+    chat = await _post(client, token, "getChat", json={"chat_id": chat_id})
+    if chat.get("type") != "private" or str(chat.get("id")) != str(chat_id):
+        raise ValueError("Application notices require your private Telegram chat")
+    result = await _post(client, token, "sendMessage", json={
+        "chat_id": chat_id,
+        "text": (f"Application could not be prepared · {title[:180]} at {company[:180]}\n"
+                 "No draft or resume was created, and nothing was sent. "
+                 "Open Jobs in Job Radar to review and retry.")[:4000],
+    })
+    return int(result["message_id"])
+
+
 async def send_review_packet(settings: Settings, draft: dict, blockers: list[str],
                              client: httpx.AsyncClient | None = None, *, updated: bool = False) -> int:
     config = telegram_config(settings)

@@ -138,19 +138,31 @@ def test_automation_toggle_keeps_shared_threshold(tmp_path: Path) -> None:
     assert client.get("/api/search-intent").json()["strong_match_threshold"] == 91
 
 
+def test_applications_threshold_remains_shared_after_profile_refresh(tmp_path: Path) -> None:
+    app = create_app(Settings(tmp_path))
+    client = TestClient(app)
+    response = client.put("/api/auto-apply", json={"enabled": False, "threshold": 87})
+    assert response.status_code == 200
+    first = client.get("/api/search-intent").json()
+    second = client.get("/api/search-intent").json()
+    assert first["strong_match_threshold"] == second["strong_match_threshold"] == 87
+    assert second["preference_modes"]["strong_match_threshold"] == "custom"
+
+
 def test_search_intent_ui_contract_is_unified() -> None:
     static = Path(__file__).parents[1] / "job_radar" / "static"
     html = (static / "index.html").read_text()
     js = (static / "app.js").read_text()
 
     assert 'id="search-intent-panel"' in html
-    assert "What JobRadar is looking for" in html
+    assert "Search preferences" in html
     assert 'name="minimum_salary"' in html
     assert 'name="salary_expectation"' in html
     assert 'id="job-seniority"' in html
     assert '<option value="intern">Intern</option>' in html
     assert '<option value="lead_plus">Lead+</option>' in html
-    assert 'name="threshold" type="number" min="0" max="100" value="80" readonly' in html
+    assert 'name="threshold" type="number" min="0" max="100" value="80" required' in html
+    assert 'id="pref-strong-threshold"' not in html
     assert "fitClassLabel" in js
     assert "Evidence confidence:" in js
     assert "Missing evidence:" in js

@@ -158,7 +158,28 @@ def test_ambiguous_destination_requires_prepare_anyway_before_any_drafting(tmp_p
         assert attempt["draft_id"]
         draft = client.get(f"/api/applications/{attempt['draft_id']}").json()
         assert draft["destination"]["kind"] == "manual"
-        assert any("destination" in warning.lower() for warning in draft["warnings"])
+        assert any("No verified application method" in warning for warning in draft["warnings"])
+
+
+def test_linkedin_easy_apply_preflight_explains_inspection_and_approved_send(tmp_path: Path) -> None:
+    app = create_app(Settings(tmp_path))
+    app.state.db.execute("UPDATE sources SET enabled=0")
+    _ready_profile(app)
+    source_id = app.state.db.one("SELECT id FROM sources WHERE kind='linkedin' LIMIT 1")["id"]
+    job_id, _ = ingest(app.state.db, source_id, ObservedJob(
+        "https://www.linkedin.com/jobs/view/101/", "AI Engineer", "Example",
+        "Build reliable AI systems in Python.", raw_text="AI Engineer\nEasy Apply",
+    ))
+
+    with TestClient(app) as client:
+        preflight = client.get(f"/api/jobs/{job_id}/prepare/preflight").json()
+
+    assert preflight["requires_confirmation"] is True
+    assert preflight["action"]["action_type"] == "linkedin_easy_apply"
+    assert "inspect" in preflight["reason"].lower()
+    assert "approve" in preflight["reason"].lower()
+    assert "manual submission" not in preflight["reason"].lower()
+    assert "manual submission" not in preflight["action"]["evidence"].lower()
 
 
 def test_automatic_policy_rejects_unknown_destination_before_preparation(tmp_path: Path) -> None:

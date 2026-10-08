@@ -5,7 +5,7 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 
-from .collectors import AuthRequired, collect_source
+from .collectors import AccountWarning, AuthRequired, collect_source
 from .db import Database, new_id, now
 from .employer_scope import HCMC_NAMES
 from .ingest import ingest
@@ -73,6 +73,8 @@ class ScanManager:
         current = datetime.now(timezone.utc)
         due = []
         for source in sources:
+            if source["kind"] == "linkedin" and self.db.get_setting("linkedin_automation_paused", False):
+                continue
             if source["kind"] in ("linkedin", "facebook") and (
                 not social_login_at(self.db, source["kind"]) or self.db.get_setting(f"social_reauth_required_{source['kind']}")
             ):
@@ -110,6 +112,8 @@ class ScanManager:
             if not source:
                 continue
             kind = source["kind"]
+            if kind == "linkedin" and self.db.get_setting("linkedin_automation_paused", False):
+                continue
             if kind in ("linkedin", "facebook") and (
                 not social_login_at(self.db, kind) or self.db.get_setting(f"social_reauth_required_{kind}")
             ):
@@ -148,6 +152,8 @@ class ScanManager:
             raise ValueError("Retired source cannot be scanned")
         if source["employer_id"] and self.db.one("SELECT id FROM employers WHERE id=? AND coverage_status='excluded_hcm'", (source["employer_id"],)):
             raise ValueError("HCMC-based employer is outside the crawl scope")
+        if source["kind"] == "linkedin" and self.db.get_setting("linkedin_automation_paused", False):
+            return {"status": "paused", "error": "LinkedIn automated checks are paused after an account activity warning"}
         if source["kind"] in ("linkedin", "facebook") and self.db.get_setting(f"social_reauth_required_{source['kind']}"):
             return {"status": "auth_required", "error": f"Sign in to {source['kind'].capitalize()} again in Profile"}
         if source_id in self.active:
@@ -184,6 +190,8 @@ class ScanManager:
             self.db.execute("UPDATE scan_runs SET finished_at=?,status=?,detail=? WHERE id=?", (now(), status, str(error)[:1000], run_id))
             self.db.execute("UPDATE sources SET last_status=? WHERE id=?", (status, source_id))
             if status == "auth_required" and source["kind"] in ("linkedin", "facebook"):
+                if isinstance(error, AccountWarning):
+                    self.db.set_setting("linkedin_automation_paused", True)
                 key = f"social_reauth_required_{source['kind']}"
                 if not self.db.get_setting(key):
                     self.db.set_setting(key, {"source_id": source_id, "detected_at": now()})

@@ -45,3 +45,13 @@ def test_source_list_counts_distinct_jobs_and_new_jobs_in_latest_scan(tmp_path: 
                (new_id(), first, "2026-10-04T10:00:00+00:00", "2026-10-04T10:01:00+00:00"))
     refreshed = {source["id"]: source for source in TestClient(app).get("/api/sources?kind=linkedin").json()}
     assert (refreshed[first]["job_count"], refreshed[first]["new_job_count"]) == (2, 0)
+
+
+def test_source_overview_returns_sources_and_coverage_in_one_response(tmp_path: Path) -> None:
+    client = TestClient(create_app(Settings(tmp_path)))
+    response = client.get("/api/sources/overview")
+    assert response.status_code == 200
+    overview = response.json()
+    assert len(overview["sources"]) >= 40
+    assert overview["coverage"]["counts"]["career"] >= 40
+    assert overview["coverage"]["sources"]

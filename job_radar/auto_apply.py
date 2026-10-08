@@ -9,6 +9,7 @@ import re
 from datetime import datetime
 
 import httpx
+from playwright.async_api import Error as PlaywrightError
 
 from .apply import inspect_form, send_application, send_readiness
 from .automation_policy import (
@@ -19,10 +20,11 @@ from .automation_policy import (
     normalize_automation_policy,
 )
 from .db import Database, new_id, now
-from .drafting import get_draft, prepare_draft, regenerate_draft
+from .drafting import get_draft, prepare_draft, regenerate_draft, set_discovered_linkedin_destination, set_discovered_web_destination, set_unavailable_linkedin_destination
+from .linkedin_application import discover_linkedin_apply
 from .notifications import telegram_config, telegram_mode_enabled, telegram_quiet_now
 from .preparation import preparation_preflight
-from .review_telegram import _post, send_review_packet
+from .review_telegram import _post, send_preparation_notice, send_review_packet
 from .settings import Settings
 from .search_intent import fit_summary, normalize_search_intent
 
@@ -65,37 +67,11 @@ class AutoApplyManager:
     def config(self) -> dict:
         return automation_policy(self.db)
 
-    def status(self) -> dict:
+    def status(self, include_preview: bool = True) -> dict:
         config = self.config()
         counts = {row["status"]: row["count"] for row in self.db.all(
             "SELECT status,COUNT(*) AS count FROM auto_application_attempts "
             "WHERE requested_by='automation' GROUP BY status")}
-        preview_policy = {**config, "enabled": True}
-        candidates = self.db.all(
-            "SELECT v.id,v.analysis_status,v.score " + EXISTING_MATCHES_SQL
-            + " ORDER BY v.score DESC,v.first_seen_at DESC"
-        )
-        eligible_existing = 0
-        waiting_existing = 0
-        highest_existing_score = None
-        for candidate in candidates:
-            if candidate["analysis_status"] == "done":
-                if candidate["score"] is not None:
-                    highest_existing_score = (
-                        candidate["score"] if highest_existing_score is None
-                        else max(highest_existing_score, candidate["score"])
-                    )
-                if automation_eligibility(
-                    self.db, candidate["id"], policy=preview_policy,
-                    require_analysis=True, check_daily_limit=False,
-                )["eligible"]:
-                    eligible_existing += 1
-            elif candidate["analysis_status"] in ("pending", "running"):
-                if automation_eligibility(
-                    self.db, candidate["id"], policy=preview_policy,
-                    require_analysis=False, check_daily_limit=False,
-                )["eligible"]:
-                    waiting_existing += 1
         recent = self.db.all(
             "SELECT a.vacancy_id,a.status,a.draft_id,a.detail,a.updated_at,a.requested_by,"
             "a.requested_provider,a.prepare_anyway,v.title,v.company,v.score,v.analysis_status "
@@ -103,12 +79,9 @@ class AutoApplyManager:
             "WHERE a.status!='skipped' ORDER BY a.updated_at DESC LIMIT 20")
         used = daily_auto_drafts_used(self.db)
         review_used = daily_review_notifications_used(self.db)
-        return {
+        summary = {
             **config,
             "counts": counts,
-            "eligible_existing": eligible_existing,
-            "waiting_existing": waiting_existing,
-            "highest_existing_score": highest_existing_score,
             "daily_auto_drafts_used": used,
             "daily_auto_drafts_remaining": max(0, config["max_auto_drafts_per_day"] - used),
             "daily_review_notifications_used": review_used,
@@ -117,8 +90,79 @@ class AutoApplyManager:
             ),
             "recent": recent,
         }
+        if not include_preview:
+            return {
+                **summary,
+                "eligible_existing": None,
+                "waiting_existing": None,
+                "highest_existing_score": None,
+            }
+        preview_policy = {**config, "enabled": True}
+        highest_row = self.db.one(
+            "SELECT MAX(v.score) AS score " + EXISTING_MATCHES_SQL
+            + " AND v.analysis_status='done'"
+        )
+        highest_existing_score = highest_row["score"] if highest_row else None
+        candidates = self.db.all(
+            "SELECT v.* " + EXISTING_MATCHES_SQL
+            + " AND (v.analysis_status IN ('pending','running') OR (v.analysis_status='done' AND v.score>=?))"
+            + " AND datetime(v.first_seen_at)>=datetime('now',?)"
+            + " AND v.snoozed_until IS NULL AND v.manual_applied_at IS NULL "
+            + "AND v.recruiting_outcome='none'"
+            + " ORDER BY v.score DESC,v.first_seen_at DESC",
+            (config["threshold"], f"-{config['max_job_age_days']} days"),
+        )
+        preferences = normalize_search_intent(self.db.get_setting("search_intent", {}))
+        excluded_employer_ids = {row["id"] for row in self.db.all(
+            "SELECT id FROM employers WHERE coverage_status='excluded_hcm'")}
+        observations_by_job: dict[str, list[dict]] = {}
+        if config["require_verified_destination"]:
+            for offset in range(0, len(candidates), 500):
+                ids = [item["id"] for item in candidates[offset:offset + 500]]
+                if not ids:
+                    continue
+                placeholders = ",".join("?" for _ in ids)
+                rows = self.db.all(
+                    "SELECT vo.vacancy_id,s.kind AS source_kind,o.url AS observation_url,"
+                    "o.raw_text,o.payload,o.last_seen_at "
+                    "FROM vacancy_observations vo JOIN observations o ON o.id=vo.observation_id "
+                    "JOIN sources s ON s.id=o.source_id "
+                    f"WHERE vo.vacancy_id IN ({placeholders}) "
+                    "ORDER BY o.last_seen_at DESC",
+                    tuple(ids),
+                )
+                for row in rows:
+                    observations_by_job.setdefault(row["vacancy_id"], []).append(row)
+        eligible_existing = 0
+        waiting_existing = 0
+        for candidate in candidates:
+            if candidate["analysis_status"] == "done":
+                if automation_eligibility(
+                    self.db, candidate["id"], policy=preview_policy,
+                    require_analysis=True, check_daily_limit=False,
+                    check_existing_artifacts=False, job_data=candidate,
+                    preferences_data=preferences, excluded_employer_ids=excluded_employer_ids,
+                    observations=observations_by_job.get(candidate["id"], []),
+                )["eligible"]:
+                    eligible_existing += 1
+            elif candidate["analysis_status"] in ("pending", "running"):
+                if automation_eligibility(
+                    self.db, candidate["id"], policy=preview_policy,
+                    require_analysis=False, check_daily_limit=False,
+                    check_existing_artifacts=False, job_data=candidate,
+                    preferences_data=preferences, excluded_employer_ids=excluded_employer_ids,
+                    observations=observations_by_job.get(candidate["id"], []),
+                )["eligible"]:
+                    waiting_existing += 1
+        return {
+            **summary,
+            "eligible_existing": eligible_existing,
+            "waiting_existing": waiting_existing,
+            "highest_existing_score": highest_existing_score,
+        }
 
     def configure(self, enabled: bool, threshold: int | None = None, policy: dict | None = None) -> dict:
+        explicit_threshold = threshold is not None
         threshold = self.config()["threshold"] if threshold is None else threshold
         if not 0 <= threshold <= 100:
             raise ValueError("Threshold must be between 0 and 100")
@@ -135,12 +179,14 @@ class AutoApplyManager:
             self.db.get_setting("search_intent", {}) or {"strong_match_threshold": threshold}
         )
         intent["strong_match_threshold"] = threshold
+        if explicit_threshold:
+            intent["preference_modes"]["strong_match_threshold"] = "custom"
         self.db.set_setting("search_intent", intent)
         merged = {**self.db.get_setting("auto_apply", {}), **(policy or {}), "enabled": enabled}
         normalized = normalize_automation_policy(merged, threshold=threshold)
         self.db.set_setting("auto_apply", {key: value for key, value in normalized.items() if key != "threshold"})
         self.wake()
-        return self.status()
+        return self.status(include_preview=False)
 
     def queue_existing(self) -> dict:
         config = self.config()
@@ -269,6 +315,29 @@ class AutoApplyManager:
         if self.loop and self.loop.is_running():
             self.loop.call_soon_threadsafe(self.wake_event.set)
 
+    def failed_preparations(self) -> list[dict]:
+        return self.db.all(
+            "SELECT vacancy_id,detail FROM auto_application_attempts a WHERE status='needs_review' "
+            "AND draft_id IS NULL AND (detail LIKE 'AI drafting failed:%' "
+            "OR detail LIKE '% preparation stopped: % drafting failed:%' "
+            "OR detail LIKE '% preparation stopped: % returned an invalid draft:%') "
+            "AND NOT EXISTS(SELECT 1 FROM application_drafts d WHERE d.vacancy_id=a.vacancy_id) "
+            "AND NOT EXISTS(SELECT 1 FROM submissions s WHERE s.vacancy_id=a.vacancy_id)"
+        )
+
+    def retry_failed_preparations(self) -> int:
+        failures = self.failed_preparations()
+        for item in failures:
+            self.db.execute(
+                "UPDATE auto_application_attempts SET status='queued',requested_by='manual',"
+                "detail='Retry requested after AI drafting failed',telegram_status='pending',updated_at=? "
+                "WHERE vacancy_id=? AND status='needs_review' AND draft_id IS NULL",
+                (now(), item["vacancy_id"]),
+            )
+        if failures:
+            self.wake()
+        return len(failures)
+
     async def start(self) -> None:
         self.loop = asyncio.get_running_loop()
         self.wake_event = asyncio.Event()
@@ -374,21 +443,36 @@ class AutoApplyManager:
         if not manual and not self._still_eligible(job_id):
             self._set_status(job_id, "needs_review", "Automatic preparation paused or job score changed.")
             return
-        if draft["destination"].get("kind") == "web":
+        if manual and draft.get("job_source_kind") == "linkedin" and draft["destination"].get("kind") not in {"web", "email"}:
+            try:
+                async with self.browser_lock:
+                    action = await discover_linkedin_apply(self.settings, draft["job_posting_url"])
+                if action["kind"] == "web":
+                    draft = set_discovered_web_destination(self.db, draft["id"], action["url"])
+                elif action["kind"] == "linkedin_easy_apply":
+                    draft = set_discovered_linkedin_destination(self.db, draft["id"])
+                elif action["kind"] in {"closed", "already_applied"}:
+                    draft = set_unavailable_linkedin_destination(self.db, draft["id"], action["detail"])
+            except (ValueError, RuntimeError, PlaywrightError) as error:
+                self._set_status(job_id, "needs_review", f"Application button inspection needs attention: {error}", draft["id"])
+                await self.notify_review(draft["id"])
+                return
+        if draft["destination"].get("kind") in {"web", "linkedin_easy_apply"}:
             try:
                 async with self.browser_lock:
                     draft = await inspect_form(self.db, self.settings, draft["id"])
-            except (ValueError, RuntimeError) as error:
+            except (ValueError, RuntimeError, PlaywrightError) as error:
                 self._set_status(job_id, "needs_review", f"Form inspection needs attention: {error}", draft["id"])
                 await self.notify_review(draft["id"])
                 return
-            attachments = {**draft["form_data"].get("attachments", {}),
-                           **_safe_attachments(draft["form_data"].get("fields", []))}
-            if attachments:
-                form_data = {**draft["form_data"], "attachments": attachments}
-                self.db.execute("UPDATE application_drafts SET form_data=?,updated_at=? WHERE id=?",
-                                (json.dumps(form_data, ensure_ascii=False), now(), draft["id"]))
-                draft = get_draft(self.db, draft["id"])
+            if draft["destination"].get("kind") == "web":
+                attachments = {**draft["form_data"].get("attachments", {}),
+                               **_safe_attachments(draft["form_data"].get("fields", []))}
+                if attachments:
+                    form_data = {**draft["form_data"], "attachments": attachments}
+                    self.db.execute("UPDATE application_drafts SET form_data=?,updated_at=? WHERE id=?",
+                                    (json.dumps(form_data, ensure_ascii=False), now(), draft["id"]))
+                    draft = get_draft(self.db, draft["id"])
         blockers = send_readiness(self.db, self.settings, draft)
         if blockers:
             self._set_status(job_id, "needs_review", "; ".join(blockers), draft["id"])
@@ -535,6 +619,53 @@ class AutoApplyManager:
                     attempt["vacancy_id"], review_channel, status="failed", error=message
                 )
 
+    async def notify_preparation_issue(self, vacancy_id: str) -> None:
+        """Tell the user when preparation stopped before a reviewable draft existed."""
+        attempt = self.db.one(
+            "SELECT a.status,a.draft_id,a.telegram_status,a.requested_by,v.title,v.company "
+            "FROM auto_application_attempts a JOIN vacancies v ON v.id=a.vacancy_id "
+            "WHERE a.vacancy_id=?", (vacancy_id,),
+        )
+        if not attempt or attempt["status"] != "needs_review" or attempt["draft_id"]:
+            return
+        if attempt["telegram_status"] == "sent":
+            return
+        config = telegram_config(self.settings)
+        if not config.get("token") or not config.get("chat_id"):
+            self.db.execute("UPDATE auto_application_attempts SET telegram_status='not_configured' WHERE vacancy_id=?", (vacancy_id,))
+            return
+        if not telegram_mode_enabled(config, "application_reviews"):
+            self.db.execute("UPDATE auto_application_attempts SET telegram_status='disabled' WHERE vacancy_id=?", (vacancy_id,))
+            return
+        if telegram_quiet_now(config):
+            self.db.execute("UPDATE auto_application_attempts SET telegram_status='deferred',"
+                            "telegram_error='Deferred during Telegram quiet hours' WHERE vacancy_id=?", (vacancy_id,))
+            return
+        if (attempt["requested_by"] == "automation" and
+                daily_review_notifications_used(self.db) >= self.config()["max_review_notifications_per_day"]):
+            self.db.execute("UPDATE auto_application_attempts SET telegram_status='deferred_limit',"
+                            "telegram_error='Daily Telegram review limit reached' WHERE vacancy_id=?", (vacancy_id,))
+            return
+        try:
+            message_id = await send_preparation_notice(self.settings, attempt["title"], attempt["company"])
+            if self._same_telegram_destination(telegram_config(self.settings), config):
+                self.db.execute(
+                    "UPDATE auto_application_attempts SET telegram_status='sent',telegram_message_id=?,"
+                    "telegram_error=NULL WHERE vacancy_id=? AND status='needs_review' AND draft_id IS NULL",
+                    (message_id, vacancy_id),
+                )
+                self._record_notification(vacancy_id, "telegram_application_review", status="sent", sent=True)
+        except (httpx.HTTPError, OSError, ValueError, RuntimeError) as error:
+            log.warning("Could not deliver preparation notice %s: %s", vacancy_id, type(error).__name__)
+            if self._same_telegram_destination(telegram_config(self.settings), config):
+                message = f"Telegram delivery failed ({type(error).__name__})"
+                self.db.execute(
+                    "UPDATE auto_application_attempts SET telegram_status='failed',telegram_error=? "
+                    "WHERE vacancy_id=? AND status='needs_review' AND draft_id IS NULL",
+                    (message, vacancy_id),
+                )
+                self._record_notification(vacancy_id, "telegram_application_review", status="failed", error=message)
+
     async def regenerate(self, draft_id: str, prompt: str, section: str = "all") -> dict:
         attempt = self.db.one("SELECT vacancy_id,status FROM auto_application_attempts WHERE draft_id=?", (draft_id,))
         if not attempt or attempt["status"] in ("sent", "sending", "submission_uncertain", "skipped", "preparing", "regenerating"):
@@ -544,7 +675,7 @@ class AutoApplyManager:
             draft = await asyncio.to_thread(regenerate_draft, self.db, self.settings, draft_id, prompt, section)
             regeneration_changes = draft.get("changes", [])
             regenerated_section = draft.get("regenerated_section", section)
-            if draft["destination"].get("kind") == "web":
+            if section == "all" and draft["destination"].get("kind") == "web":
                 try:
                     async with self.browser_lock:
                         draft = await inspect_form(self.db, self.settings, draft_id)
@@ -556,6 +687,7 @@ class AutoApplyManager:
                 except (ValueError, RuntimeError) as error:
                     self._set_status(attempt["vacancy_id"], "needs_review", f"Form inspection needs attention: {error}", draft_id)
             self._set_status(attempt["vacancy_id"], "needs_review", "Review the revised application.", draft_id)
+            self.db.execute("UPDATE auto_application_attempts SET retry_payload=NULL WHERE draft_id=?", (draft_id,))
             await self.notify_review(draft_id)
             result = get_draft(self.db, draft_id)
             result["changes"] = regeneration_changes
@@ -563,6 +695,9 @@ class AutoApplyManager:
             return result
         except Exception as error:
             self._set_status(attempt["vacancy_id"], "needs_review", f"Regeneration failed: {str(error)[:500]}", draft_id)
+            if isinstance(error, RuntimeError) and ("drafting failed" in str(error) or "invalid draft" in str(error)):
+                self.db.execute("UPDATE auto_application_attempts SET retry_payload=? WHERE draft_id=?",
+                                (json.dumps({"prompt": prompt, "section": section}), draft_id))
             raise
 
     async def approve(self, draft_id: str, expected_hash: str) -> dict:
@@ -793,13 +928,16 @@ class AutoApplyManager:
                     await self._send_daily_digest(config)
                     if telegram_mode_enabled(config, "application_reviews"):
                         undelivered = self.db.all(
-                            "SELECT draft_id FROM auto_application_attempts "
+                            "SELECT vacancy_id,draft_id FROM auto_application_attempts "
                             "WHERE telegram_status IN ('pending','failed','not_configured','deferred','deferred_limit') "
-                            "AND status IN ('awaiting_review','needs_review') AND draft_id IS NOT NULL "
+                            "AND status IN ('awaiting_review','needs_review') "
                             "ORDER BY updated_at DESC LIMIT 10"
                         )
                         for item in undelivered:
-                            await self.notify_review(item["draft_id"])
+                            if item["draft_id"]:
+                                await self.notify_review(item["draft_id"])
+                            else:
+                                await self.notify_preparation_issue(item["vacancy_id"])
                 async with httpx.AsyncClient(timeout=15) as client:
                     response = await client.get(
                         f"https://api.telegram.org/bot{token}/getUpdates",
@@ -934,10 +1072,12 @@ class AutoApplyManager:
             except Exception as error:
                 label = "Manual" if requested_by == "manual" else "Automatic"
                 log.exception("%s application preparation failed for %s", label, job_id)
+                provider_failure = isinstance(error, RuntimeError) and (
+                    "drafting failed" in str(error) or "invalid draft" in str(error))
                 self._set_status(
                     job_id,
                     "needs_review",
-                    f"{label} preparation stopped: {str(error)[:800]}",
+                    (f"AI drafting failed: {str(error)[:800]}" if provider_failure else
+                     f"{label} preparation stopped: {str(error)[:800]}"),
                 )
             await asyncio.sleep(0.1)
-

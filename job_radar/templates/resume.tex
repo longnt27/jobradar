@@ -1,0 +1,64 @@
+% Adapted from the user's LaTeX resume template. XeTeX supports Vietnamese text.
+\documentclass[10pt, a4paper]{article}
+\usepackage{fontspec}
+\setmainfont{Times New Roman}
+\usepackage[left=0.50in, right=0.50in, top=0.38in, bottom=0.38in]{geometry}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{titlesec}
+\usepackage{microtype}
+\usepackage{parskip}
+\usepackage{setspace}
+\setstretch{1.05}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{fontawesome5}
+\usepackage{xcolor}
+\definecolor{headingcolor}{RGB}{30,30,30}
+\definecolor{accentcolor}{RGB}{60,60,60}
+\definecolor{mutedcolor}{RGB}{100,100,100}
+\definecolor{rulecolor}{RGB}{180,180,180}
+\hypersetup{
+    colorlinks=true,
+    urlcolor=accentcolor,
+    linkcolor=accentcolor,
+    pdftitle={__PDF_TITLE__},
+    pdfauthor={__PDF_AUTHOR__}
+}
+\pagestyle{empty}
+\titleformat{\section}
+    {\normalfont\large\bfseries\color{headingcolor}\scshape}
+    {}{0em}{}
+    [\color{rulecolor}\titlerule]
+\titlespacing{\section}{0pt}{5pt}{2pt}
+\setlist[itemize]{
+    leftmargin=1.5em,
+    itemsep=0pt,
+    parsep=0pt,
+    topsep=0pt,
+    partopsep=0pt
+}
+\newcommand{\name}[1]{%
+    {\fontsize{20}{24}\selectfont\bfseries\color{headingcolor} #1}%
+}
+\newcommand{\contactitem}[2]{%
+    \textcolor{mutedcolor}{#1}~#2%
+}
+\newenvironment{expentry}[3]{%
+    \vspace{1pt}
+    \noindent
+    \begin{tabularx}{\linewidth}{@{}X r@{}}
+        \textbf{#1} & {#2}
+    \end{tabularx}\\[-3pt]
+    \textit{{#3}}
+    \vspace{1pt}
+}{\vspace{1pt}}
+\newenvironment{projentry}[2]{%
+    \vspace{1pt}
+    \noindent\textbf{#1} \\[-2pt]
+    \textit{\small #2}
+    \vspace{0pt}
+}{\vspace{1pt}}
+\begin{document}
+__BODY__
+\end{document}

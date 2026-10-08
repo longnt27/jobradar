@@ -273,7 +273,7 @@ def build_home_dashboard(
         "message": (
             "Your radar needs attention before an empty inbox can be trusted."
             if health_degraded and analysis["failed"] else
-            "Some jobs are still being reviewed, so the current empty inbox is not final."
+            "Some jobs are still being reviewed. Match results may change as review finishes."
             if analysis["pending"] else
             "Discovery coverage needs attention before an empty inbox can be trusted."
             if discovery_degraded else

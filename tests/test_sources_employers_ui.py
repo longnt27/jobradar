@@ -45,6 +45,7 @@ def test_sources_and_employers_management_ui(tmp_path: Path) -> None:
                 assert source_link.get_attribute("aria-label") != "Open source"
 
                 assert page.locator("#source-status").is_visible()
+                page.locator("#source-more-filters summary").click()
                 assert page.locator("#source-enabled").is_visible()
                 assert page.locator("#source-success").is_visible()
                 assert page.locator("#source-sort").is_visible()

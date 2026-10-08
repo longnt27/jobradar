@@ -102,6 +102,8 @@ class BrowserLoginManager:
                 await self._close_process()
                 self.db.set_setting(f"social_login_completed_at_{self.site}", now())
                 self.db.set_setting(f"social_reauth_required_{self.site}", None)
+                if self.site == "linkedin":
+                    self.db.set_setting("linkedin_automation_paused", False)
                 if self.on_complete:
                     try:
                         self.on_complete()

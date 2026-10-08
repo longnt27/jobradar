@@ -60,6 +60,49 @@ def test_manual_application_is_registered_for_review_and_edit_refreshes_version(
     assert revised["review_hash"] == revised["package_hash"]
 
 
+def test_application_list_is_compact_and_detail_explains_preparation(tmp_path: Path) -> None:
+    client = TestClient(create_app(Settings(tmp_path)))
+    draft = _prepared(client, "https://example.org/apply")
+    page = client.get("/api/applications/page").json()
+    card = page["items"][0]
+    assert card["id"] == draft["id"]
+    assert card["job_title"] == "Engineer"
+    assert "resume_data" not in card
+    assert "review_context" not in card
+    detail = client.get(f"/api/applications/{draft['id']}").json()
+    assert detail["preparation_requested_by"] == "automation"
+    assert detail["vacancy_id"] == draft["vacancy_id"]
+
+
+def test_failed_ai_preparation_is_visible_without_exposing_provider_payload(tmp_path: Path) -> None:
+    client = TestClient(create_app(Settings(tmp_path)))
+    db = client.app.state.db
+    strong = client.post("/api/jobs/import", json={
+        "company": "SETA", "title": "AI Engineer", "description": "Build AI systems.",
+    }).json()
+    weak = client.post("/api/jobs/import", json={
+        "company": "Other", "title": "Other Engineer", "description": "Build systems.",
+    }).json()
+    for job, score in ((strong, 91), (weak, 60)):
+        db.execute("UPDATE vacancies SET analysis_status='done',score=? WHERE id=?", (score, job["id"]))
+        db.execute(
+            "INSERT INTO auto_application_attempts(vacancy_id,status,draft_id,detail,requested_by,created_at,updated_at) "
+            "VALUES(?,'needs_review',NULL,?,'automation','2026-10-08T00:00:00Z','2026-10-08T00:00:00Z')",
+            (job["id"], "Automatic preparation stopped: codex drafting failed: "
+             "candidate private payload. ERROR: Your workspace is out of credits."),
+        )
+
+    response = client.get("/api/application-preparations")
+    assert response.status_code == 200
+    issues = response.json()
+    assert len(issues) == 1
+    assert issues[0]["vacancy_id"] == strong["id"]
+    assert issues[0]["label"] == "Out of credits"
+    assert "Retry" in issues[0]["reason"]
+    assert "private payload" not in json.dumps(issues)
+    assert client.get("/api/applications/page").json()["total"] == 0
+
+
 def test_missing_smtp_settings_do_not_lock_future_send(tmp_path: Path, monkeypatch) -> None:
     client = TestClient(create_app(Settings(tmp_path)))
     draft = _prepared(client, "https://example.org/apply")
@@ -85,7 +128,15 @@ def test_destination_warning_and_send_readiness_follow_current_draft(tmp_path: P
     job = client.post("/api/jobs/import", json={"company": "Example", "title": "Engineer", "description": "Build Python systems."}).json()
     draft = prepare_draft(client.app.state.db, client.app.state.settings, job["id"], "template")
     client.app.state.auto_apply_manager.register_review(draft)
-    assert any("No application destination" in warning for warning in draft["warnings"])
+    assert any("No verified application method" in warning for warning in draft["warnings"])
+    client.app.state.db.execute(
+        "UPDATE application_drafts SET warnings=? WHERE id=?",
+        (json.dumps(["No application destination is known. Add an email address or application URL before sending."]), draft["id"]),
+    )
+    refreshed = client.get(f"/api/applications/{draft['id']}").json()
+    assert refreshed["warnings"] == [
+        "No verified application method was found. Check the original posting's Apply instructions before sending."
+    ]
     assert client.get(f"/api/applications/{draft['id']}").json()["send_ready"] is False
     updated = client.patch(f"/api/applications/{draft['id']}", json={"destination": {"kind": "email", "email": "jobs@example.org"}}).json()
     assert not any("destination" in warning for warning in updated["warnings"])
@@ -138,7 +189,7 @@ def test_web_form_inspection_and_one_click_submit(tmp_path: Path) -> None:
         assert inspected.status_code == 200, inspected.text
         answers = inspected.json()["form_data"]["answers"]
         assert "Alex Example" in answers.values()
-        assert any("I am applying" in value for value in answers.values())
+        assert any("I came across your posting" in value and "attached resume" in value for value in answers.values())
         form_data = inspected.json()["form_data"]
         resume_field = next(field for field in form_data["fields"] if field["type"] == "file")
         form_data["attachments"] = {str(resume_field["index"]): {"kind": "resume"}}
@@ -336,6 +387,8 @@ def test_targeted_message_regeneration_preserves_resume_and_reports_diff(tmp_pat
         )
     monkeypatch.setattr("job_radar.drafting._run_provider", fake_run)
     draft = prepare_draft(client.app.state.db, client.app.state.settings, job["id"], "codex")
+    monkeypatch.setattr("job_radar.drafting._provider_json", lambda _provider, _prompt, response_type:
+                        response_type.model_validate({"subject": "Subject 2", "body": "Body 2"}))
     before_resume = draft["resume_data"]
     revised = regenerate_draft(client.app.state.db, client.app.state.settings, draft["id"],
                                "Shorter email", "message")

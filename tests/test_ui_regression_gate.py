@@ -202,7 +202,7 @@ def _stabilize(page: Page, active_selector: str) -> None:
         transition: none !important;
         caret-color: transparent !important;
       }
-      #clock,#queue-updated-at,#notice,#tab-loading {
+      #queue-updated-at,#notice,#tab-loading {
         visibility: hidden !important;
       }
     """)
@@ -214,6 +214,10 @@ def _stabilize(page: Page, active_selector: str) -> None:
       document.querySelectorAll('.application-card .item-meta:last-child').forEach((node) => {
         node.textContent = node.textContent.includes('Sent') ? 'Updated recently · Sent' : 'Updated recently';
       });
+      const sinceLabel = document.querySelector('#jobs-since-label');
+      const sinceCount = document.querySelector('#jobs-since-count');
+      if (sinceLabel) sinceLabel.textContent = 'Since last visit';
+      if (sinceCount) sinceCount.textContent = '0';
     }""")
     page.wait_for_timeout(120)
 

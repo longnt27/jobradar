@@ -1,3 +1,4 @@
+import hashlib
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -6,6 +7,46 @@ from job_radar.settings import Settings
 from job_radar.ingest import ObservedJob, ingest
 from job_radar.ranking import score_job
 from job_radar.web import create_app
+
+
+def test_upgrade_quarantines_untouched_linkedin_join_pages(tmp_path: Path) -> None:
+    from job_radar.db import Database, new_id, now
+
+    path = Settings(tmp_path).database_path
+    db = Database(path)
+    timestamp = now()
+    suspicious = new_id()
+    genuine = new_id()
+    for job_id, description in (
+        (suspicious, "Join LinkedIn Email Password (6+ characters) By clicking Agree & Join"),
+        (genuine, "A genuine job posting for an AI engineer at a company."),
+    ):
+        db.execute(
+            "INSERT INTO vacancies(id,company,title,description,first_seen_at,last_seen_at,"
+            "analysis_status,created_at,updated_at) VALUES(?,?,'Join LinkedIn',?,?,?,'pending',?,?)",
+            (job_id, "Unknown employer", description, timestamp, timestamp, timestamp, timestamp),
+        )
+    db.execute("DELETE FROM settings WHERE key='linkedin_join_quarantine_v1'")
+
+    upgraded = Database(path)
+    junk = upgraded.one("SELECT decision_state,analysis_status,score FROM vacancies WHERE id=?", (suspicious,))
+    good = upgraded.one("SELECT decision_state,analysis_status FROM vacancies WHERE id=?", (genuine,))
+    assert junk == {"decision_state": "ignored", "analysis_status": "dismissed", "score": None}
+    assert good == {"decision_state": "undecided", "analysis_status": "pending"}
+
+
+def test_browser_assets_use_current_content_versions_after_an_update(tmp_path: Path) -> None:
+    client = TestClient(create_app(Settings(tmp_path)))
+    html = client.get("/")
+    assert html.status_code == 200
+    assert html.headers["cache-control"] == "no-store"
+    static = Path(__file__).parents[1] / "job_radar" / "static"
+    for asset, attribute in (("app.js", "src"), ("app.css", "href")):
+        version = hashlib.sha256((static / asset).read_bytes()).hexdigest()[:12]
+        assert f'{attribute}="/{asset}?v={version}"' in html.text
+        response = client.get(f"/{asset}?v={version}")
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "no-store"
 
 
 def test_jobs_page_returns_lightweight_nonoverlapping_pages(tmp_path) -> None:
@@ -35,14 +76,14 @@ def test_jobs_pages_put_completed_matches_before_analyzing_jobs(tmp_path) -> Non
     assert [job["id"] for job in client.get("/api/jobs").json()] == pages
 
 
-def test_first_run_seeds_employers_and_four_hour_linkedin_searches(tmp_path: Path) -> None:
+def test_first_run_seeds_employers_and_recent_twelve_hour_linkedin_searches(tmp_path: Path) -> None:
     client = TestClient(create_app(Settings(tmp_path)))
     status = client.get("/api/status").json()
     assert status["counts"]["employers"] >= 150
     searches = client.get("/api/sources?kind=linkedin").json()
     assert len(searches) == 9
-    assert all(source["interval_minutes"] == 240 for source in searches)
-    assert all("f_TPR=" not in source["url"] for source in searches)
+    assert all(source["interval_minutes"] == 720 for source in searches)
+    assert all("f_TPR=r86400" in source["url"] for source in searches)
     assert all("location=" not in source["url"] for source in searches)
     assert all("Hanoi" not in source["url"] and "Vietnam" not in source["url"]
                and "remote" not in source["url"].lower() for source in searches)
@@ -50,6 +91,39 @@ def test_first_run_seeds_employers_and_four_hour_linkedin_searches(tmp_path: Pat
     assert not client.get("/api/sources?kind=facebook").json()
     gsm = next(row for row in client.get("/api/employers?q=GSM").json() if row["name"] == "GSM / Xanh SM")
     assert "GreenSM" in gsm["aliases"]
+
+
+def test_existing_linkedin_searches_gain_recent_filter_and_twelve_hour_schedule(tmp_path: Path) -> None:
+    from job_radar.db import Database, new_id, now
+
+    settings = Settings(tmp_path)
+    db = Database(settings.database_path)
+    db.execute(
+        "INSERT INTO sources(id,kind,name,url,interval_minutes,config,created_at) "
+        "VALUES(?,'linkedin','AI Engineer','https://www.linkedin.com/jobs/search/?keywords=AI+Engineer',240,'{}',?)",
+        (new_id(), now()),
+    )
+    client = TestClient(create_app(settings))
+    matching = [source for source in client.get("/api/sources?kind=linkedin").json()
+                if source["name"] == "AI Engineer"]
+    assert len(matching) == 1
+    assert matching[0]["interval_minutes"] == 720
+    assert "f_TPR=r86400" in matching[0]["url"]
+
+
+def test_paused_linkedin_sources_do_not_start_browser_checks(tmp_path: Path) -> None:
+    import asyncio
+
+    app = create_app(Settings(tmp_path))
+    app.state.db.set_setting("linkedin_automation_paused", True)
+    client = TestClient(app)
+    source = client.get("/api/sources?kind=linkedin").json()[0]
+    assert source["scan_state"] == "paused"
+    assert source["coverage"]["label"] == "LinkedIn checks paused"
+    assert client.get("/api/setup").json()["linkedin_automation_paused"]
+    response = client.post(f"/api/sources/{source['id']}/scan")
+    assert response.status_code == 409
+    assert asyncio.run(app.state.scan_manager.run_source(source["id"]))["status"] == "paused"
 
 
 def test_old_location_searches_merge_into_one_title_feed_without_losing_jobs(tmp_path: Path) -> None:
@@ -77,7 +151,8 @@ def test_old_location_searches_merge_into_one_title_feed_without_losing_jobs(tmp
     visible = client.get("/api/sources?kind=linkedin").json()
     assert len(visible) == 9
     assert {row["name"] for row in visible} == set(ROLE_TERMS)
-    assert all(row["url"].endswith(urlencode({"keywords": row["name"]})) for row in visible)
+    assert all(row["url"].endswith(urlencode({"keywords": row["name"], "f_TPR": "r86400"})) for row in visible)
+    assert all(row["interval_minutes"] == 720 for row in visible)
     assert db.one("SELECT COUNT(*) AS count FROM sources WHERE kind='linkedin' AND enabled=1")["count"] == 9
     retired = db.all("SELECT config,enabled FROM sources WHERE kind='linkedin' AND name LIKE '% · %'")
     assert len(retired) == 18 and all(not row["enabled"] and json.loads(row["config"])["retired"] for row in retired)

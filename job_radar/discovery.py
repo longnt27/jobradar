@@ -51,6 +51,10 @@ def source_coverage(source: dict[str, Any], recent_runs: list[dict[str, Any]]) -
 
     if not source.get("enabled"):
         return {"level": "paused", "label": "Not watching", "detail": "Automatic checks are off.", "actionable": False}
+    if state == "paused":
+        return {"level": "paused", "label": "LinkedIn checks paused",
+                "detail": "Automated LinkedIn access is paused after an account activity warning. Other sources continue checking.",
+                "actionable": False}
     if state == "scanning":
         return {"level": "moderate", "label": "Checking now", "detail": "Coverage confidence will update when this check finishes.", "actionable": False}
     if state == "queued":
@@ -87,7 +91,7 @@ def source_coverage(source: dict[str, Any], recent_runs: list[dict[str, Any]]) -
 
 
 def summarize_discovery(sources: list[dict[str, Any]]) -> dict[str, Any]:
-    enabled = [source for source in sources if source.get("enabled")]
+    enabled = [source for source in sources if source.get("enabled") and source.get("scan_state") != "paused"]
     by_kind = {
         kind: sum(1 for source in enabled if source.get("kind") == kind)
         for kind in ("linkedin", "facebook", "career")
@@ -95,7 +99,7 @@ def summarize_discovery(sources: list[dict[str, Any]]) -> dict[str, Any]:
     degraded = [source for source in enabled if source.get("coverage", {}).get("level") == "degraded"]
     limited = [source for source in enabled if source.get("coverage", {}).get("level") in {"limited", "unknown"}]
     if degraded:
-        level, label = "degraded", f"{len(degraded)} source{'s' if len(degraded) != 1 else ''} threaten discovery"
+        level, label = "degraded", f"{len(degraded)} source{'s' if len(degraded) != 1 else ''} threaten{'s' if len(degraded) == 1 else ''} discovery"
     elif limited:
         level, label = "limited", f"{len(limited)} source{'s' if len(limited) != 1 else ''} have uncertain coverage"
     elif enabled:

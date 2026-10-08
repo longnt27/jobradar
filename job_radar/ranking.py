@@ -74,7 +74,7 @@ def score_job(job: dict[str, Any], profile: dict[str, Any], preferences: dict[st
     hard = prefs["hard_constraints"]
     exclusions = []
     maximum_years = prefs.get("max_required_experience_years")
-    if years_required is not None and maximum_years is not None and years_required > maximum_years:
+    if hard.get("experience") and years_required is not None and maximum_years is not None and years_required > maximum_years:
         exclusions.append(
             f"Experience requirement asks for {years_required} years; your search includes jobs requiring up to {maximum_years} years."
         )

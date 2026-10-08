@@ -1,8 +1,12 @@
+import asyncio
+import json
 from pathlib import Path
+
+import httpx
 
 from bs4 import BeautifulSoup
 
-from job_radar.collectors import _application_destination, _expired_posting, _target_title
+from job_radar.collectors import _application_destination, _expired_posting, _target_title, collect_html_board
 from job_radar.db import Database
 from job_radar.employer_scope import HCMC_BASED
 from job_radar.feed_catalog import CAREER_FEEDS
@@ -24,7 +28,48 @@ def test_company_feeds_are_seeded_idempotently(tmp_path: Path) -> None:
     rows = db.all("SELECT s.name,s.interval_minutes,s.config,e.name AS employer FROM sources s JOIN employers e ON e.id=s.employer_id WHERE s.kind='career'")
     assert len(rows) == len(CAREER_FEEDS)
     assert {row["employer"] for row in rows} == {feed.employer for feed in CAREER_FEEDS}
-    assert all(row["interval_minutes"] == 240 and '"adapter"' in row["config"] for row in rows)
+    assert all(row["interval_minutes"] == 1440 and '"adapter"' in row["config"] for row in rows)
+
+    cmc = next(row for row in rows if row["employer"] == "CMC Global")
+    assert json.loads(cmc["config"])["title_include"]
+    db.execute("UPDATE sources SET interval_minutes=240 WHERE kind='career'")
+    seed(db)
+    assert {row["interval_minutes"] for row in db.all("SELECT interval_minutes FROM sources WHERE kind='career'")} == {1440}
+
+
+def test_cmc_uses_card_titles_to_filter_before_detail_limit(monkeypatch) -> None:
+    cmc = next(feed for feed in CAREER_FEEDS if feed.employer == "CMC Global")
+    config = {"adapter": cmc.adapter, **cmc.options, "max_pages": 2, "max_results": 1}
+    listing = "".join(
+        f'<li class="__careers-post-wrapper"><h3>Frontend Developer {index}</h3>'
+        f'<a href="/career/frontend-{index}/">Learn more</a></li>'
+        for index in range(120)
+    )
+    second_page = '<li class="__careers-post-wrapper"><h3>AI Engineer</h3><a href="/career/ai-engineer/">Learn more</a></li>'
+    requested: list[str] = []
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def get(self, url):
+            requested.append(url)
+            if url.endswith("/career/"):
+                html = f"<main>{listing}</main>"
+            elif url.endswith("/career/page/2/"):
+                html = f"<main>{second_page}</main>"
+            else:
+                html = "<main><h1>AI Engineer</h1><p>" + "Build and deploy AI systems with Python. " * 8 + "</p></main>"
+            return httpx.Response(200, text=html, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr("job_radar.collectors._career_client", Client)
+    jobs = asyncio.run(collect_html_board({"url": cmc.url, "name": "CMC Global careers", "config": config}))
+    assert [job.title for job in jobs] == ["AI Engineer"]
+    assert requested == [cmc.url, "https://cmcglobal.com.vn/career/page/2/",
+                         "https://cmcglobal.com.vn/career/ai-engineer/"]
 
 
 def test_expired_requisition_and_non_job_heading_are_rejected() -> None:

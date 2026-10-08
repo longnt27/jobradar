@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from io import BytesIO
 import json
+import logging
 import re
 import shutil
 import smtplib
@@ -14,7 +16,9 @@ from urllib.parse import urlsplit
 
 import httpx
 from fastapi import Body, FastAPI, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
+import pypdfium2 as pdfium
+from playwright.async_api import Error as PlaywrightError
 from pydantic import BaseModel, Field, HttpUrl
 
 from .db import Database, new_id, now
@@ -23,15 +27,17 @@ from .apply import inspect_form, send_application, send_readiness, submission_at
 from .auto_apply import AutoApplyManager
 from .browser_login import BrowserLoginManager
 from .capabilities import capability_readiness, provider_processing
-from .drafting import PROVIDERS, get_draft, prepare_draft, update_draft
+from .drafting import PROVIDERS, get_draft, prepare_draft, refresh_draft_projects, set_discovered_linkedin_destination, set_discovered_web_destination, set_unavailable_linkedin_destination, update_draft
 from .evidence import generate_project_content, inspect_repository
+from .feed_catalog import CAREER_SCAN_INTERVAL_MINUTES
 from .feedback_learning import (
     apply_feedback_suggestion,
     dismiss_feedback_suggestion,
     feedback_suggestions,
 )
 from .facebook_groups import group_from_url, lookup_facebook_group_name
-from .linkedin_searches import search_from_url
+from .linkedin_searches import LINKEDIN_SCAN_INTERVAL_MINUTES, search_from_url
+from .linkedin_application import discover_linkedin_apply
 from .github import list_public_repositories
 from .mail_config import save_smtp, send_test_email, smtp_config, smtp_config_fingerprint
 from .local_analysis import clean_saved_analysis, list_local_models, validate_local_model
@@ -52,6 +58,9 @@ from .scanner import ScanManager
 from .service import service_path
 from .social_browser import social_login_at
 from .work_queue import work_queue
+
+
+log = logging.getLogger(__name__)
 
 
 JOBS_ORDER = ("CASE WHEN v.analysis_status='done' THEN 0 ELSE 1 END, "
@@ -194,7 +203,7 @@ class SendInput(BaseModel):
 
 class RegenerateInput(BaseModel):
     prompt: str = Field(min_length=1, max_length=2000)
-    section: Literal["all", "summary", "projects", "message"] = "all"
+    section: Literal["all", "summary", "experience", "projects", "education", "achievements", "skills", "message"] = "all"
 
 
 class SmtpInput(BaseModel):
@@ -240,15 +249,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     auto_apply_manager = AutoApplyManager(db, settings, scan_manager.browser_lock)
     match_manager = MatchManager(db, settings, auto_apply_manager)
     login_manager = BrowserLoginManager(db, settings, scan_manager.browser_lock, scan_manager.queue_due)
+    ai_retry_task: asyncio.Task | None = None
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        nonlocal ai_retry_task
         await scan_manager.start()
         await match_manager.start()
         await auto_apply_manager.start()
         try:
             yield
         finally:
+            if ai_retry_task and not ai_retry_task.done():
+                ai_retry_task.cancel()
+                try:
+                    await ai_retry_task
+                except asyncio.CancelledError:
+                    pass
             await login_manager.stop()
             await auto_apply_manager.stop()
             await match_manager.stop()
@@ -293,10 +310,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(422, "Career page must be an HTTP or HTTPS URL")
         db.execute("UPDATE sources SET enabled=0 WHERE employer_id=? AND kind='career' AND url<>?", (employer_id, url))
         if db.one("SELECT id FROM sources WHERE employer_id=? AND kind='career' AND url=?", (employer_id, url)):
-            db.execute("UPDATE sources SET enabled=1 WHERE employer_id=? AND kind='career' AND url=?", (employer_id, url))
+            db.execute("UPDATE sources SET enabled=1,interval_minutes=? WHERE employer_id=? AND kind='career' AND url=?",
+                       (CAREER_SCAN_INTERVAL_MINUTES, employer_id, url))
         else:
             db.execute("INSERT INTO sources(id,kind,name,url,employer_id,interval_minutes,created_at) VALUES(?,?,?,?,?,?,?)",
-                       (new_id(), "career", f"{name} careers", url, employer_id, 240, now()))
+                       (new_id(), "career", f"{name} careers", url, employer_id, CAREER_SCAN_INTERVAL_MINUTES, now()))
 
     def saved_job_views() -> list[dict[str, Any]]:
         views = db.get_setting("job_saved_views", [])
@@ -312,15 +330,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/")
     def index():
-        return FileResponse(Path(__file__).parent / "static" / "index.html")
+        static = Path(__file__).parent / "static"
+        html = (static / "index.html").read_text()
+        for asset, attribute in (("app.js", "src"), ("app.css", "href")):
+            version = hashlib.sha256((static / asset).read_bytes()).hexdigest()[:12]
+            html = html.replace(f'{attribute}="/{asset}"', f'{attribute}="/{asset}?v={version}"')
+        return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
     @app.get("/app.js")
     def javascript():
-        return FileResponse(Path(__file__).parent / "static" / "app.js", media_type="application/javascript")
+        return FileResponse(Path(__file__).parent / "static" / "app.js", media_type="application/javascript",
+                            headers={"Cache-Control": "no-store"})
 
     @app.get("/app.css")
     def stylesheet():
-        return FileResponse(Path(__file__).parent / "static" / "app.css", media_type="text/css")
+        return FileResponse(Path(__file__).parent / "static" / "app.css", media_type="text/css",
+                            headers={"Cache-Control": "no-store"})
 
     @app.get("/logo.svg")
     def logo():
@@ -376,6 +401,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def queue():
         return work_queue(db, scan_manager, match_manager, auto_apply_manager)
 
+    def setup_discovery() -> dict:
+        """Read source health for readiness without counting every saved job."""
+        linkedin_paused = bool(db.get_setting("linkedin_automation_paused", False))
+        with db.connection() as conn:
+            rows = [dict(row) for row in conn.execute("""
+                SELECT s.id,s.name,s.kind,s.enabled,s.config,s.last_status,s.last_success_at,s.interval_minutes,
+                       EXISTS(SELECT 1 FROM observations o JOIN vacancy_observations vo ON vo.observation_id=o.id
+                              WHERE o.source_id=s.id) AS job_count
+                FROM sources s
+                WHERE COALESCE(json_extract(s.config,'$.retired'),0)=0
+                  AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=s.employer_id AND e.coverage_status='excluded_hcm')
+            """)]
+            for source in rows:
+                source["config"] = json.loads(source["config"])
+                source["enabled"] = bool(source["enabled"])
+                position = scan_manager.queue_position(source["id"])
+                source["scan_state"] = (
+                    "paused" if source["kind"] == "linkedin" and linkedin_paused else
+                    "scanning" if source["id"] in scan_manager.active else
+                    "queued" if position is not None else
+                    "auto_off" if not source["enabled"] else
+                    source["last_status"] or "not_scanned"
+                )
+                recent_runs = [dict(run) for run in conn.execute(
+                    "SELECT status,observed_count,new_count,detail,started_at,finished_at FROM scan_runs "
+                    "WHERE source_id=? ORDER BY started_at DESC,rowid DESC LIMIT 5", (source["id"],)
+                )]
+                source["coverage"] = source_coverage(source, recent_runs)
+        return summarize_discovery(rows)
+
     @app.get("/api/setup")
     def setup_status():
         profile = db.get_setting("profile", {})
@@ -390,7 +445,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                            (mail.get("user") and mail.get("password"))))
         telegram_ready = bool(telegram.get("token") and telegram.get("chat_id"))
         provider = str(profile.get("drafting_provider") or "")
-        discovery = summarize_discovery(sources())
+        discovery = setup_discovery()
         capabilities = capability_readiness(
             profile=profile,
             discovery=discovery,
@@ -407,6 +462,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "approved_evidence": approved_projects,
             "facebook_groups": db.one("SELECT COUNT(*) AS count FROM sources WHERE kind='facebook' AND enabled=1")["count"],
             "linkedin_searches": db.one("SELECT COUNT(*) AS count FROM sources WHERE kind='linkedin' AND enabled=1")["count"],
+            "linkedin_automation_paused": bool(db.get_setting("linkedin_automation_paused", False)),
             "browser": login_manager.status(),
             "smtp_configured": smtp_ready,
             "smtp_host": mail.get("host", ""),
@@ -423,7 +479,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "quiet_end": telegram.get("quiet_end", ""),
             },
             "matching": match_manager.status(),
-            "auto_apply": auto_apply_manager.status(),
             "service_installed": service_path().exists(),
             "providers": availability,
             "provider_processing": {name: provider_processing(name) for name in ("codex_local", "codex", "agy", "claude")},
@@ -583,6 +638,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return {"models": available, "matching": match_manager.status(), "error": None}
         except RuntimeError as error:
             return {"models": [], "matching": match_manager.status(), "error": str(error)}
+
+    @app.get("/api/matching/status")
+    def matching_status():
+        return match_manager.status()
 
     @app.put("/api/matching/model")
     async def choose_matching_model(payload: MatchingModelInput):
@@ -769,6 +828,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/sources")
     def sources(kind: str | None = None):
+        linkedin_paused = bool(db.get_setting("linkedin_automation_paused", False))
         rows = db.all("""
             WITH latest_scan AS (
                 SELECT source_id, started_at, finished_at, observed_count, new_count FROM (
@@ -800,6 +860,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             row["enabled"] = bool(row["enabled"])
             row["queue_position"] = scan_manager.queue_position(row["id"])
             row["scan_state"] = (
+                "paused" if row["kind"] == "linkedin" and linkedin_paused else
                 "scanning" if row["id"] in scan_manager.active else
                 "queued" if row["queue_position"] is not None else
                 "auto_off" if not row["enabled"] else
@@ -813,9 +874,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             row["coverage"] = source_coverage(row, recent_runs)
         return rows
 
-    @app.get("/api/discovery/coverage")
-    def discovery_coverage():
-        snapshot = sources()
+    def coverage_summary(snapshot: list[dict]) -> dict:
         summary = summarize_discovery(snapshot)
         intent = db.get_setting("search_intent", {})
         summary["intent"] = {
@@ -828,6 +887,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             for source in snapshot if source["enabled"]
         ]
         return summary
+
+    @app.get("/api/discovery/coverage")
+    def discovery_coverage():
+        return coverage_summary(sources())
+
+    @app.get("/api/sources/overview")
+    def sources_overview():
+        snapshot = sources()
+        return {"sources": snapshot, "coverage": coverage_summary(snapshot)}
 
     @app.post("/api/sources", status_code=201)
     async def add_source(source: SourceInput):
@@ -876,7 +944,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     existing = saved
                     break
             if existing:
-                db.execute("UPDATE sources SET enabled=1,url=? WHERE id=?", (url, existing["id"]))
+                db.execute("UPDATE sources SET enabled=1,url=?,interval_minutes=? WHERE id=?",
+                           (url, LINKEDIN_SCAN_INTERVAL_MINUTES, existing["id"]))
                 return {"id": existing["id"], "name": existing["name"], "existing": True}
         elif len(name) < 2:
             raise HTTPException(422, "Enter a source name")
@@ -884,7 +953,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         db.execute(
             "INSERT INTO sources(id,kind,name,url,employer_id,enabled,interval_minutes,config,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
             (identifier, source.kind, name, url, source.employer_id,
-             int(source.enabled), source.interval_minutes, json.dumps(source.config), now()),
+             int(source.enabled), LINKEDIN_SCAN_INTERVAL_MINUTES if source.kind == "linkedin" else
+             CAREER_SCAN_INTERVAL_MINUTES if source.kind == "career" else source.interval_minutes,
+             json.dumps(source.config), now()),
         )
         return {"id": identifier, "name": name}
 
@@ -902,17 +973,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         validated = SourceInput(**merged)
         if len(validated.name.strip()) < 2:
             raise HTTPException(422, "Enter a source name")
+        url = str(validated.url)
+        interval_minutes = validated.interval_minutes
+        if validated.kind == "linkedin":
+            try:
+                url, _ = search_from_url(url)
+            except ValueError as error:
+                raise HTTPException(422, str(error)) from error
+            interval_minutes = LINKEDIN_SCAN_INTERVAL_MINUTES
+        elif validated.kind == "career":
+            interval_minutes = CAREER_SCAN_INTERVAL_MINUTES
         db.execute(
             "UPDATE sources SET name=?,url=?,enabled=?,interval_minutes=?,config=? WHERE id=?",
-            (validated.name, str(validated.url), int(validated.enabled),
-             validated.interval_minutes, json.dumps(validated.config), source_id),
+            (validated.name, url, int(validated.enabled),
+             interval_minutes, json.dumps(validated.config), source_id),
         )
         return {"id": source_id}
 
     @app.post("/api/sources/{source_id}/scan")
     async def scan_one(source_id: str):
-        if not db.one("SELECT id FROM sources WHERE id=? AND COALESCE(json_extract(config,'$.retired'),0)=0", (source_id,)):
+        source = db.one("SELECT id,kind FROM sources WHERE id=? AND COALESCE(json_extract(config,'$.retired'),0)=0", (source_id,))
+        if not source:
             raise HTTPException(404, "Source not found")
+        if source["kind"] == "linkedin" and db.get_setting("linkedin_automation_paused", False):
+            raise HTTPException(409, "LinkedIn checks are paused after an account activity warning. Open LinkedIn manually.")
         queued = scan_manager.queue_sources([source_id], manual=True)
         if not queued and source_id not in scan_manager.active and scan_manager.queue_position(source_id) is None:
             raise HTTPException(409, "Sign in to this source in My profile before scanning")
@@ -965,9 +1049,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     @app.get("/api/employers/page")
-    def employers_page(q: str = "", category: str = "", page: int = Query(1, ge=1),
+    def employers_page(q: str = "", category: str = "", coverage: str = "all", page: int = Query(1, ge=1),
                        page_size: int = Query(48, ge=1, le=100)):
+        if coverage not in {"all", "watching"}:
+            raise HTTPException(422, "Unknown employer coverage filter")
         where = "e.coverage_status!='excluded_hcm' AND e.name LIKE ? AND (?='' OR e.category=?)"
+        if coverage == "watching":
+            where += " AND EXISTS(SELECT 1 FROM sources active WHERE active.employer_id=e.id AND active.enabled=1)"
         values = (f"%{q}%", category, category)
         total = db.one(f"SELECT COUNT(*) AS count FROM employers e WHERE {where}", values)["count"]
         rows = db.all(
@@ -1129,10 +1217,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/jobs/page")
     def jobs_page(q: str = "", decision: str = "", application: str = "", outcome: str = "",
                   inbox: str = "", since: str = "", state: str = "",
+                  focus_id: str = "",
                   min_score: int | None = Query(None, ge=0, le=100),
                   freshness: int | None = Query(None, ge=1, le=3650), work_mode: str = "",
                   location: str = "", source: str = "", seniority: str = "", fit: str = "", sort: str = "best",
-                  page: int = Query(1, ge=1), page_size: int = Query(25, ge=1, le=50)):
+                  page: int = Query(1, ge=1), page_size: int = Query(10, ge=1, le=50)):
         release_due_snoozes(db)
         if state and not any((decision, application, outcome)):
             dimension, legacy_value = legacy_job_state_filter(state)
@@ -1219,13 +1308,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "company": "lower(v.company),lower(v.title),v.id",
         }.get(sort, JOBS_ORDER)
         where = " AND ".join(conditions)
+        if focus_id:
+            where = f"(({where}) OR v.id=?)"
+            values.append(focus_id)
         total = db.one(f"SELECT COUNT(*) AS count FROM vacancies v WHERE {where}", tuple(values))["count"]
         rows = db.all(
             "SELECT v.id,v.company,v.title,v.location,v.work_mode,v.published_at,v.first_seen_at,"
             "v.state,v.decision_state,v.seen_at,v.snoozed_until,v.recruiting_outcome,"
             "v.manual_applied_at,v.manual_applied_source,v.score,v.score_detail,v.analysis_status "
-            f"FROM vacancies v WHERE {where} ORDER BY {order} LIMIT ? OFFSET ?",
-            (*values, page_size, (page - 1) * page_size),
+            f"FROM vacancies v WHERE {where} ORDER BY "
+            f"{'CASE WHEN v.id=? THEN 0 ELSE 1 END,' if focus_id else ''}{order} LIMIT ? OFFSET ?",
+            (*values, *((focus_id,) if focus_id else ()), page_size, (page - 1) * page_size),
         )
         enrich_jobs(db, rows)
         for row in rows:
@@ -1308,6 +1401,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/jobs/{job_id}/decision")
     def decide_job(job_id: str, payload: DecisionInput):
+        previous = db.one("SELECT decision_state FROM vacancies WHERE id=?", (job_id,))
         try:
             result = set_decision(
                 db, job_id, payload.decision, reason=payload.reason, snoozed_until=payload.snoozed_until
@@ -1316,6 +1410,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404, str(error)) from error
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
+        if payload.decision == "shortlisted" and previous and previous["decision_state"] != "shortlisted":
+            provider = db.get_setting("profile", {}).get("drafting_provider", "")
+            try:
+                result["application_preparation"] = auto_apply_manager.queue_manual(job_id, provider, True)
+            except ValueError as error:
+                result["application_preparation"] = {"status": "needs_review", "detail": str(error)}
         auto_apply_manager.wake()
         return result
 
@@ -1383,8 +1483,65 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"queued": True}
 
     @app.get("/api/auto-apply")
-    def auto_apply_status():
-        return auto_apply_manager.status()
+    def auto_apply_status(summary_only: bool = False):
+        return auto_apply_manager.status(include_preview=not summary_only)
+
+    def failed_project_briefs() -> list[dict]:
+        cards = db.all("SELECT id,details FROM evidence WHERE approved=0 AND repository_id IS NOT NULL")
+        failed = []
+        for card in cards:
+            try:
+                details = json.loads(card["details"] or "{}")
+            except (TypeError, ValueError):
+                continue
+            if details.get("generation_status") == "failed":
+                failed.append({"id": card["id"], "provider": details.get("generation_provider")})
+        return failed
+
+    def failed_ai_work() -> dict:
+        return {
+            "preparations": len(auto_apply_manager.failed_preparations()),
+            "project_briefs": len(failed_project_briefs()),
+            "draft_projects": db.one("SELECT COUNT(*) AS count FROM application_drafts WHERE project_refresh_error IS NOT NULL")["count"],
+            "regenerations": db.one("SELECT COUNT(*) AS count FROM auto_application_attempts WHERE retry_payload IS NOT NULL AND status='needs_review'")["count"],
+            "running": bool(ai_retry_task and not ai_retry_task.done()),
+        }
+
+    @app.get("/api/ai/failures")
+    def ai_failures():
+        return failed_ai_work()
+
+    async def retry_ai_work() -> None:
+        for card in failed_project_briefs():
+            try:
+                provider = card["provider"] or db.get_setting("profile", {}).get("drafting_provider", "codex")
+                await asyncio.to_thread(generate_project_content, db, card["id"], provider)
+            except Exception:
+                log.exception("Project brief retry failed for %s", card["id"])
+        for draft in db.all("SELECT id FROM application_drafts WHERE project_refresh_error IS NOT NULL ORDER BY updated_at,id"):
+            try:
+                await asyncio.to_thread(refresh_draft_projects, db, settings, draft["id"])
+            except Exception:
+                log.exception("Resume project retry failed for %s", draft["id"])
+        for attempt in db.all("SELECT draft_id,retry_payload FROM auto_application_attempts "
+                              "WHERE retry_payload IS NOT NULL AND status='needs_review' ORDER BY updated_at"):
+            try:
+                payload = json.loads(attempt["retry_payload"])
+                await auto_apply_manager.regenerate(attempt["draft_id"], payload["prompt"], payload["section"])
+            except Exception:
+                log.exception("Draft revision retry failed for %s", attempt["draft_id"])
+        auto_apply_manager.retry_failed_preparations()
+
+    @app.post("/api/ai/retry-failed", status_code=202)
+    async def retry_failed_ai():
+        nonlocal ai_retry_task
+        state = failed_ai_work()
+        if state["running"]:
+            raise HTTPException(409, "AI retry is already running")
+        total = sum(state[key] for key in ("preparations", "project_briefs", "draft_projects", "regenerations"))
+        if total:
+            ai_retry_task = asyncio.create_task(retry_ai_work())
+        return {"queued": total, **state}
 
     @app.put("/api/auto-apply")
     def configure_auto_apply(payload: AutoApplyInput):
@@ -1454,8 +1611,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "INSERT INTO evidence(id,kind,title,claim,support,approved,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
             (identifier, payload.kind, payload.title, payload.claim, json.dumps(payload.support), int(payload.approved), now(), now()),
         )
-        if payload.approved and payload.kind == "project":
-            match_manager.invalidate_all()
         return {"id": identifier}
 
     @app.patch("/api/evidence/{evidence_id}")
@@ -1469,18 +1624,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         details = updates.get("details", json.loads(row["details"]))
         if not isinstance(details, dict) or not isinstance(details.get("bullets", [validated.claim]), list) or not isinstance(details.get("tech_stack", []), list):
             raise HTTPException(422, "Project details must contain bullet and technology lists")
+        structured = row["repository_id"] and details.get("schema_version") == 2
+        if structured:
+            results = details.get("results")
+            if not isinstance(results, list) or len(results) > 8 or any(not isinstance(item, dict) for item in results):
+                raise HTTPException(422, "Add up to eight project results")
+            normalized = [{key: str(item.get(key) or "").strip() for key in ("id", "area", "outcome", "source")}
+                          for item in results]
+            identifiers = [item["id"] for item in normalized]
+            if any(not identifier for identifier in identifiers) or len(set(identifiers)) != len(identifiers):
+                raise HTTPException(422, "Each project result needs a unique identifier")
+            details = {**details, "results": normalized,
+                       "summary": str(details.get("what") or "").strip(),
+                       "bullets": [item["outcome"] for item in normalized if item["outcome"]]}
+            if details["bullets"]:
+                validated = validated.model_copy(update={"claim": details["bullets"][0]})
         if validated.approved and row["repository_id"]:
-            bullets = [str(item).strip() for item in details.get("bullets", []) if str(item).strip()]
-            if (not bullets or len(bullets[0]) < 20 or
-                    re.search(r"<[^>]+>|^(?:project:|repository summary:|describe your contribution|repository available)", bullets[0], re.I) or
-                    (not details.get("generated_by") and validated.claim == row["claim"])):
-                raise HTTPException(422, "Replace the repository placeholder with a specific reviewed project bullet before approval")
+            if structured:
+                fields = [str(details.get(key) or "").strip() for key in ("what", "why", "how")]
+                complete_results = all(len(item["area"]) >= 2 and len(item["outcome"]) >= 20 and len(item["source"]) >= 2
+                                       for item in details["results"])
+                if any(len(value) < 10 for value in fields) or not details["results"] or not complete_results:
+                    raise HTTPException(422, "Complete What, Why, How, and sourced results before including this project in resumes")
+            else:
+                bullets = [str(item).strip() for item in details.get("bullets", []) if str(item).strip()]
+                if (not bullets or len(bullets[0]) < 20 or
+                        re.search(r"<[^>]+>|^(?:project:|repository summary:|describe your contribution|repository available)", bullets[0], re.I) or
+                        (not details.get("generated_by") and validated.claim == row["claim"])):
+                    raise HTTPException(422, "Replace the repository placeholder with a specific reviewed project bullet before approval")
             details = {**details, "generation_status": "reviewed"}
             details.pop("generation_error", None)
         db.execute("UPDATE evidence SET kind=?,title=?,claim=?,details=?,support=?,approved=?,updated_at=? WHERE id=?",
                    (validated.kind, validated.title, validated.claim, json.dumps(details, ensure_ascii=False), json.dumps(validated.support), int(validated.approved), now(), evidence_id))
-        if (validated.approved or row["approved"]) and (validated.kind == "project" or row["kind"] == "project"):
-            match_manager.invalidate_all()
         return {"id": evidence_id}
 
     @app.delete("/api/evidence/{evidence_id}")
@@ -1489,8 +1664,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not row:
             raise HTTPException(404, "Evidence not found")
         db.execute("DELETE FROM evidence WHERE id=?", (evidence_id,))
-        if row["kind"] == "project" and row["approved"]:
-            match_manager.invalidate_all()
         return {"deleted": True}
 
     @app.post("/api/repositories/inspect")
@@ -1503,8 +1676,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             result["processing"] = provider_processing(provider)
             try:
                 result["project_content"] = generate_project_content(db, result["evidence_id"], provider)
-                if db.one("SELECT approved FROM evidence WHERE id=?", (result["evidence_id"],))["approved"]:
-                    match_manager.invalidate_all()
             except (ValueError, RuntimeError) as error:
                 result["generation_warning"] = str(error)
             return result
@@ -1517,8 +1688,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             provider = payload.provider or configured_provider()
             result = generate_project_content(db, evidence_id, provider)
             result["processing"] = provider_processing(provider)
-            if db.one("SELECT approved FROM evidence WHERE id=?", (evidence_id,))["approved"]:
-                match_manager.invalidate_all()
             return result
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
@@ -1543,11 +1712,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return PROVIDERS
 
     @app.get("/api/jobs/{job_id}/prepare/preflight")
-    def prepare_preflight(job_id: str):
+    def prepare_preflight(job_id: str, provider: str = ""):
         try:
             result = preparation_preflight(db, job_id)
-            provider = configured_provider()
-            result["processing"] = provider_processing(provider) if provider else None
+            chosen_provider = provider or configured_provider()
+            if provider and not provider_available(provider):
+                raise HTTPException(422, f"{provider} is not available on this Mac")
+            result["processing"] = provider_processing(chosen_provider) if chosen_provider else None
             return result
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
@@ -1574,7 +1745,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {**result, "processing": processing}
 
     def application_page_data(page: int, page_size: int, q: str = "", review: str = "",
-                              company: str = "", delivery: str = "") -> dict:
+                              company: str = "", delivery: str = "", full: bool = False) -> dict:
         clauses = []
         params: list[Any] = []
         query = q.strip().casefold()
@@ -1607,19 +1778,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         pages = max(1, (total + page_size - 1) // page_size)
         page = min(page, pages)
         rows = db.all(
-            "SELECT d.id,a.status AS review_status,a.telegram_status" + base + where +
+            "SELECT d.id,d.vacancy_id,d.status,d.provider,d.provider_mode,d.created_at,d.updated_at,"
+            "v.title AS job_title,v.company,a.status AS review_status,a.telegram_status" + base + where +
             " ORDER BY d.created_at DESC,d.id DESC LIMIT ? OFFSET ?",
             (*params, page_size, (page - 1) * page_size),
         )
         items = []
         for row in rows:
-            draft = get_draft(db, row["id"])
             latest = db.one("SELECT * FROM submissions WHERE draft_id=? ORDER BY sent_at DESC,id DESC LIMIT 1",
                             (row["id"],))
             items.append({
-                **draft,
-                "review_status": row.get("review_status"),
-                "telegram_status": row.get("telegram_status"),
+                **(get_draft(db, row["id"]) if full else row),
                 "latest_submission": submission_record(latest) if latest else None,
             })
         companies = [row["company"] for row in db.all(
@@ -1636,23 +1805,67 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ):
         return application_page_data(page, page_size, q, review, company, delivery)
 
+    @app.get("/api/application-preparations")
+    def application_preparations():
+        threshold = normalize_search_intent(db.get_setting("search_intent", {}))["strong_match_threshold"]
+        rows = db.all(
+            "SELECT a.vacancy_id,a.status,a.detail,a.requested_provider,a.updated_at,"
+            "v.title AS job_title,v.company,v.score FROM auto_application_attempts a "
+            "JOIN vacancies v ON v.id=a.vacancy_id "
+            "WHERE a.draft_id IS NULL AND a.status IN ('queued','preparing','needs_review','needs_confirmation') "
+            "AND v.analysis_status='done' AND v.score>=? "
+            "AND NOT EXISTS(SELECT 1 FROM application_drafts d WHERE d.vacancy_id=a.vacancy_id) "
+            "AND NOT EXISTS(SELECT 1 FROM submissions s WHERE s.vacancy_id=a.vacancy_id) "
+            "ORDER BY a.updated_at DESC LIMIT 100",
+            (threshold,),
+        )
+        provider = db.get_setting("profile", {}).get("drafting_provider", "")
+        issues = []
+        for row in rows:
+            detail = (row["detail"] or "").casefold()
+            if row["status"] == "queued":
+                category, label, reason = "queued", "Queued", "Application preparation is waiting to start."
+            elif row["status"] == "preparing":
+                category, label, reason = "preparing", "Preparing", "The application draft is being created."
+            elif row["status"] == "needs_confirmation":
+                category, label, reason = "method", "Application method needed", "Confirm how to apply before creating a draft."
+            elif re.search(r"out of credits|insufficient credits|credit balance", detail):
+                category, label, reason = "credits", "Out of credits", "The AI provider ran out of credits before creating a draft. Retry when credits are available."
+            elif re.search(r"quota|rate limit|usage limit", detail):
+                category, label, reason = "quota", "AI limit reached", "The AI provider hit a usage limit before creating a draft. Retry when the limit resets."
+            else:
+                category, label, reason = "failed", "Draft failed", "Application preparation stopped before a draft was created. Retry to try again."
+            issues.append({
+                "vacancy_id": row["vacancy_id"], "job_title": row["job_title"],
+                "company": row["company"], "score": row["score"], "status": row["status"],
+                "category": category, "label": label, "reason": reason,
+                "provider": row["requested_provider"] or provider,
+                "updated_at": row["updated_at"],
+                "retryable": row["status"] in ("needs_review", "needs_confirmation"),
+            })
+        return issues
+
     @app.get("/api/applications")
     def applications():
         # Backward-compatible first page for integrations that still expect a list.
-        return application_page_data(1, 100)["items"]
+        return application_page_data(1, 100, full=True)["items"]
 
     @app.get("/api/applications/{draft_id}")
     def application(draft_id: str):
         try:
             draft = get_draft(db, draft_id)
             reasons = send_readiness(db, settings, draft)
-            review = db.one("SELECT status,review_hash,telegram_status,telegram_error FROM auto_application_attempts WHERE draft_id=?", (draft_id,))
+            review = db.one("SELECT status,review_hash,telegram_status,telegram_error,requested_by,detail,prepare_anyway FROM auto_application_attempts WHERE draft_id=?", (draft_id,))
             latest = db.one("SELECT * FROM submissions WHERE draft_id=? ORDER BY sent_at DESC,id DESC LIMIT 1", (draft_id,))
             return {**draft, "send_ready": not reasons, "send_blockers": reasons,
+                    "linkedin_automation_paused": bool(db.get_setting("linkedin_automation_paused", False)) if draft["job_source_kind"] == "linkedin" else False,
                     "review_status": review["status"] if review else None,
                     "review_hash": review["review_hash"] if review else None,
                     "telegram_status": review["telegram_status"] if review else None,
                     "telegram_error": review["telegram_error"] if review else None,
+                    "preparation_requested_by": review["requested_by"] if review else None,
+                    "preparation_detail": review["detail"] if review else None,
+                    "preparation_approved_without_destination": bool(review["prepare_anyway"]) if review else False,
                     "latest_submission": submission_record(latest, include_package=True) if latest else None}
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
@@ -1681,16 +1894,48 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
 
-    @app.get("/api/applications/{draft_id}/resume")
-    def resume_file(draft_id: str):
-        try:
-            draft = get_draft(db, draft_id)
-        except KeyError as error:
-            raise HTTPException(404, str(error)) from error
-        path = Path(draft["resume_path"])
+    def draft_resume_path(draft_id: str) -> Path:
+        row = db.one("SELECT resume_path FROM application_drafts WHERE id=?", (draft_id,))
+        if not row:
+            raise HTTPException(404, "Draft not found")
+        path = Path(row["resume_path"])
         if not path.is_file():
             raise HTTPException(404, "Resume file not found")
-        return FileResponse(path, media_type="application/pdf", filename=f"resume-{draft_id[:8]}.pdf")
+        return path
+
+    @app.get("/api/applications/{draft_id}/resume")
+    def resume_file(draft_id: str):
+        path = draft_resume_path(draft_id)
+        return FileResponse(path, media_type="application/pdf", filename=f"resume-{draft_id[:8]}.pdf",
+                            content_disposition_type="inline")
+
+    @app.get("/api/applications/{draft_id}/resume/preview/pages")
+    def resume_preview_pages(draft_id: str):
+        pdf = pdfium.PdfDocument(str(draft_resume_path(draft_id)))
+        try:
+            return {"pages": len(pdf)}
+        finally:
+            pdf.close()
+
+    @app.get("/api/applications/{draft_id}/resume/preview")
+    def resume_preview(draft_id: str, page: int = Query(default=1, ge=1)):
+        pdf = pdfium.PdfDocument(str(draft_resume_path(draft_id)))
+        try:
+            if page > len(pdf):
+                raise HTTPException(404, "Resume page not found")
+            pdf_page = pdf[page - 1]
+            try:
+                bitmap = pdf_page.render(scale=1.7)
+                try:
+                    output = BytesIO()
+                    bitmap.to_pil().save(output, format="PNG")
+                finally:
+                    bitmap.close()
+            finally:
+                pdf_page.close()
+            return Response(output.getvalue(), media_type="image/png", headers={"Cache-Control": "private, max-age=60"})
+        finally:
+            pdf.close()
 
     @app.post("/api/applications/{draft_id}/attachments")
     async def upload_application_attachment(draft_id: str, file: UploadFile = File(...)):
@@ -1717,11 +1962,54 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             async with scan_manager.browser_lock:
                 draft = await inspect_form(db, settings, draft_id)
+            if draft["destination"].get("kind") == "linkedin_easy_apply":
+                db.set_setting("linkedin_automation_paused", False)
             await auto_apply_manager.notify_review(draft_id)
             return draft
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
         except (ValueError, RuntimeError) as error:
+            raise HTTPException(422, str(error)) from error
+
+    @app.post("/api/applications/{draft_id}/discover-apply")
+    async def discover_application_apply(draft_id: str):
+        require_editable_application(draft_id)
+        try:
+            draft = get_draft(db, draft_id)
+            if draft["job_source_kind"] != "linkedin" or not draft["job_posting_url"]:
+                raise ValueError("This application has no LinkedIn posting to check")
+            if draft["destination"].get("kind") in {"web", "email"}:
+                raise ValueError("This application already has a destination; review it before replacing it")
+            if db.get_setting("social_reauth_required_linkedin"):
+                return {
+                    "action": {"kind": "sign_in_required", "detail": "LinkedIn needs a new sign-in. Use the Sign in again button, then check Apply again."},
+                    "draft": draft,
+                    "inspection_error": None,
+                }
+            async with scan_manager.browser_lock:
+                action = await discover_linkedin_apply(settings, draft["job_posting_url"])
+                inspection_error = None
+                if action["kind"] == "web":
+                    draft = set_discovered_web_destination(db, draft_id, action["url"])
+                    try:
+                        draft = await inspect_form(db, settings, draft_id)
+                    except (ValueError, RuntimeError, PlaywrightError) as error:
+                        inspection_error = str(error)
+                elif action["kind"] == "linkedin_easy_apply":
+                    draft = set_discovered_linkedin_destination(db, draft_id)
+                    try:
+                        draft = await inspect_form(db, settings, draft_id)
+                    except (ValueError, RuntimeError, PlaywrightError) as error:
+                        inspection_error = str(error)
+                elif action["kind"] in {"closed", "already_applied"}:
+                    draft = set_unavailable_linkedin_destination(db, draft_id, action["detail"])
+            if action["kind"] in {"web", "linkedin_easy_apply", "closed", "already_applied"}:
+                db.set_setting("linkedin_automation_paused", False)
+                await auto_apply_manager.notify_review(draft_id)
+            return {"action": action, "draft": draft, "inspection_error": inspection_error}
+        except KeyError as error:
+            raise HTTPException(404, str(error)) from error
+        except (ValueError, RuntimeError, PlaywrightError) as error:
             raise HTTPException(422, str(error)) from error
 
     @app.post("/api/applications/{draft_id}/send")
@@ -1806,7 +2094,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         path = submission_resume_path(row)
         if not path:
             raise HTTPException(404, "Exact submitted resume is not available")
-        return FileResponse(path, media_type="application/pdf", filename=f"submitted-resume-{submission_id[:8]}.pdf")
+        return FileResponse(path, media_type="application/pdf", filename=f"submitted-resume-{submission_id[:8]}.pdf",
+                            content_disposition_type="inline")
 
     @app.get("/api/submissions/{submission_id}/attachments/{field_index}")
     def submission_attachment_file(submission_id: str, field_index: str):

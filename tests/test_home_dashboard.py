@@ -83,7 +83,7 @@ def test_home_ui_separates_required_optional_and_operational_work() -> None:
 
     assert "data-home-queue-kind" in js
     assert "await showApplication(button.dataset.homeQueueDraft)" in js
-    assert "await showJob(id)" in js
+    assert "await openJobInJobs(id)" in js
 
     assert ".hero.is-compact" in css
     assert ".home-optional-row" in css

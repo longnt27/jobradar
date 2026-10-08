@@ -15,20 +15,22 @@
       <p class="sidebar-caption">Your job search workspace</p>
       <nav aria-label="Main navigation">
         <button data-tab="home" class="active">Home</button>
-        <button data-tab="queue">Queue</button>
         <button data-tab="jobs">Jobs</button>
+        <button data-tab="applications">Applications</button>
         <button data-tab="sources">Job sources</button>
         <button data-tab="employers">Employers</button>
-        <button data-tab="applications">Applications</button>
         <button data-tab="profile">My profile</button>
         <button data-tab="settings">Settings</button>
       </nav>
+      <div class="sidebar-utilities">
+        <button data-tab="queue" class="sidebar-guide">Queue</button>
+        <button data-tab="guide" class="sidebar-guide">How it works</button>
+      </div>
       <div class="sidebar-foot"><span class="status-dot"></span> Running on this Mac</div>
     </aside>
     <main>
       <header class="topbar">
         <div><p class="eyebrow">JOB RADAR</p><h1 id="page-title">Home</h1></div>
-        <span id="clock"></span>
       </header>
       <div id="notice" role="status" aria-live="polite"></div>
       <div id="tab-loading" role="status" aria-live="polite" hidden>Loading…</div>
@@ -55,6 +57,7 @@
           <section class="panel home-health-panel" aria-labelledby="home-health-title">
             <div class="section-head"><div><h3 id="home-health-title">Radar confidence</h3><p id="source-summary" class="hint"></p></div><span id="home-health-status" class="status-badge status-badge--neutral"></span></div>
             <p id="home-health-message" class="hint"></p>
+            <div id="home-health-details" class="home-health-details"></div>
             <button id="home-health-action" class="text-button" type="button">Review radar health →</button>
           </section>
         </div>
@@ -66,6 +69,17 @@
         </details>
 
         <div class="panel home-activity-panel"><div class="section-head"><div><h3>Background activity</h3><p id="home-queue-count" class="hint"></p></div><button class="text-button" data-tab="queue" type="button">View activity →</button></div><div id="home-queue" class="home-queue" aria-live="polite"></div></div>
+      </section>
+
+      <section id="guide" class="tab guide-page">
+        <div class="guide-intro panel"><p class="eyebrow">START HERE</p><h2>Your job search, step by step</h2><p>Job Radar collects postings, helps you decide which fit, and prepares applications for your review. Nothing is sent until you approve it.</p></div>
+        <div class="guide-steps">
+          <section class="panel"><span class="guide-number">1</span><h3>Find jobs</h3><p><strong>Job sources</strong> are the websites and searches Job Radar checks. The <strong>Employers</strong> directory also includes companies that are not being checked yet.</p><button type="button" class="secondary" data-tab="sources">See job sources →</button></section>
+          <section class="panel"><span class="guide-number">2</span><h3>Review matches</h3><p>Your selected local model reads each posting and gives it a fit score. Set the strong-match threshold in Applications → Automation. Reviews run in the background; the Queue shows progress.</p><button type="button" class="secondary" data-tab="queue">See progress →</button></section>
+          <section class="panel"><span class="guide-number">3</span><h3>Decide what to keep</h3><p>Open <strong>Jobs</strong>, read a posting, then choose <strong>Shortlist</strong>, <strong>Later</strong>, or <strong>Ignore</strong>. The score is a guide; you make the decision.</p><button type="button" class="secondary" data-tab="jobs">Open Jobs →</button></section>
+          <section class="panel"><span class="guide-number">4</span><h3>Review an application</h3><p>Codex can prepare a CV and message for a shortlisted job. Check the draft in <strong>Applications</strong>. For a LinkedIn posting, use <strong>Check LinkedIn Apply</strong> to find its application method. For Easy Apply, answer the questions, save, then inspect the remaining steps. Review every answer and the final form before approving a supported submission. Nothing is sent without your approval.</p><button type="button" class="secondary" data-tab="applications">See applications →</button></section>
+        </div>
+        <div class="panel guide-glossary"><h3>Quick definitions</h3><dl><div><dt>Source</dt><dd>A site or search checked for jobs.</dd></div><div><dt>Employer</dt><dd>A company in the directory; it is watched only if it has an active source.</dd></div><div><dt>Match score</dt><dd>An estimate of fit from 0 to 100, based on your profile and the posting.</dd></div><div><dt>Draft</dt><dd>An application package waiting for your review.</dd></div></dl></div>
       </section>
 
       <section id="queue" class="tab">
@@ -80,9 +94,9 @@
       </section>
 
       <section id="jobs" class="tab">
-        <div class="section-head jobs-page-head"><div><h2>Job inbox</h2><p>Start with what changed, triage quickly, then inspect the jobs worth your time.</p></div></div>
+        <div class="section-head jobs-page-head"><div><p>Choose a job to read it, then Shortlist, Later, or Ignore. Match reviews continue in the background.</p></div></div>
         <div class="panel job-analysis-panel" aria-label="Job match status">
-          <div class="job-analysis-heading"><div><strong>Job match status</strong><p id="job-analysis-model" class="hint">Checking model…</p></div><button id="job-analysis-settings" class="text-button" type="button">Change model</button></div>
+          <div class="job-analysis-heading"><div><strong>Local match review</strong><p id="job-analysis-model" class="hint">Loading review progress…</p></div><button id="job-analysis-settings" class="text-button" type="button">Change model</button></div>
           <div id="matching-overview" class="matching-overview" role="status" aria-live="polite"></div>
           <section id="matching-failures" class="matching-failures" aria-label="Failed job analyses" hidden>
             <div class="matching-failures-head"><div><strong id="matching-failures-title">Jobs needing attention</strong><p>These jobs have no completed match review yet.</p></div><button id="matching-retry-all" class="secondary" type="button">Retry all</button></div>
@@ -92,35 +106,32 @@
 
         <div class="jobs-inbox-strip panel">
           <div class="jobs-inbox-tabs" role="tablist" aria-label="Job inbox view">
-            <button type="button" role="tab" data-job-inbox="since_last_visit" aria-selected="true">Since last visit <span id="jobs-since-count" class="pill muted"></span></button>
+            <button type="button" role="tab" data-job-inbox="since_last_visit" aria-selected="true"><span id="jobs-since-label">Since last visit</span> <span id="jobs-since-count" class="pill muted"></span></button>
             <button type="button" role="tab" data-job-inbox="unseen" aria-selected="false">Unseen <span id="jobs-unseen-count" class="pill muted"></span></button>
             <button type="button" role="tab" data-job-inbox="all" aria-selected="false">All jobs</button>
-          </div>
-          <div class="jobs-saved-views">
-            <label>Saved view<select id="job-view-select" aria-label="Saved job view"><option value="">None</option></select></label>
-            <button id="job-save-view" type="button" class="secondary">Save current view</button>
-            <button id="job-delete-view" type="button" class="text-button danger" disabled>Delete view</button>
           </div>
         </div>
 
         <div class="jobs-controls panel">
           <div class="jobs-search-row"><input id="job-query" type="search" placeholder="Search jobs, skills, or companies" aria-label="Search jobs"><button id="job-search" type="button">Search</button><button id="jobs-clear-filters" class="text-button" type="button">Clear filters</button></div>
-          <div class="job-filter-grid">
+          <div class="jobs-basic-filters"><label>Search scope<select id="job-fit"><option value="eligible" selected>In my search</option><option value="outside">Outside search</option><option value="all">All stored jobs</option></select></label><label>Sort<select id="job-sort"><option value="best">Best match</option><option value="posted">Newest posted</option><option value="found">Recently found</option><option value="company">Company</option></select></label></div>
+          <details id="job-more-filters" class="more-filters"><summary>More filters and saved views</summary>
+            <div class="jobs-saved-views"><label>Saved view<select id="job-view-select" aria-label="Saved job view"><option value="">None</option></select></label><button id="job-save-view" type="button" class="secondary">Save current view</button><button id="job-delete-view" type="button" class="text-button danger" disabled>Delete view</button></div>
+            <div class="job-filter-grid">
             <label>Decision<select id="job-decision"><option value="">Any decision</option><option value="undecided">Undecided</option><option value="shortlisted">Shortlisted</option><option value="later">Later</option><option value="ignored">Ignored</option></select></label>
             <label>Application<select id="job-application"><option value="">Any progress</option><option value="not_started">Not started</option><option value="preparing">Preparing</option><option value="needs_confirmation">Needs confirmation</option><option value="draft_ready">Draft ready</option><option value="applied">Applied</option><option value="attention">Needs attention</option></select></label>
             <label>Recruiting outcome<select id="job-outcome"><option value="">Any outcome</option><option value="none">No outcome yet</option><option value="interview">Interview</option><option value="offer">Offer</option><option value="rejected">Rejected</option></select></label>
-            <label>Search scope<select id="job-fit"><option value="eligible" selected>In my search</option><option value="outside">Outside search</option><option value="all">All stored jobs</option></select></label>
             <label>Minimum score<input id="job-score" type="number" min="0" max="100" placeholder="Any score"></label>
             <label>Freshness<select id="job-freshness"><option value="">Any time</option><option value="1">Past 24 hours</option><option value="3">Past 3 days</option><option value="7">Past week</option><option value="30">Past month</option></select></label>
             <label>Work mode<select id="job-work-mode"><option value="">Any mode</option><option value="remote">Remote</option><option value="hybrid">Hybrid</option><option value="onsite">On-site</option></select></label>
             <label>Location<input id="job-location" placeholder="e.g. Hanoi"></label>
             <label>Source<select id="job-source"><option value="">Any source</option><option value="career">Career page</option><option value="linkedin">LinkedIn</option><option value="facebook">Facebook</option></select></label>
             <label>Seniority<select id="job-seniority"><option value="">Any level</option><option value="intern">Intern</option><option value="entry">Entry / Junior</option><option value="mid">Mid</option><option value="senior">Senior</option><option value="lead_plus">Lead+</option></select></label>
-            <label>Sort<select id="job-sort"><option value="best">Best match</option><option value="posted">Newest posted</option><option value="found">Recently found</option><option value="company">Company</option></select></label>
-          </div>
+            </div>
+          </details>
         </div>
         <p id="jobs-inbox-summary" class="hint jobs-inbox-summary" role="status" aria-live="polite"></p>
-        <div class="two-col jobs-layout"><div class="job-list-pane"><div id="job-list" class="stack"></div><div class="job-pagination"><button id="jobs-prev" type="button" class="secondary">Previous</button><span id="jobs-page-summary" aria-live="polite"></span><button id="jobs-next" type="button" class="secondary">Next</button></div></div><div id="job-detail" class="panel detail" role="region" aria-label="Job details" tabindex="-1"><div class="empty">Select a job to see details.</div></div></div>
+        <div class="two-col jobs-layout"><div class="job-list-pane"><div id="job-list" class="stack"></div><div class="job-pagination"><button id="jobs-prev" type="button" class="secondary">Previous</button><span id="jobs-page-summary" aria-live="polite"></span><button id="jobs-next" type="button" class="secondary">Next</button></div></div><div id="job-detail" class="panel detail" role="region" aria-label="Job details" tabindex="-1"><div class="empty">Choose a job to read its posting and match explanation.</div></div></div>
         <details class="panel"><summary>Add a job from a description</summary><form id="job-import" class="form-grid"><label>Company<input name="company" required></label><label>Title<input name="title" required></label><label>Location<input name="location"></label><label>Application URL<input name="apply_url" type="url"></label><label class="full">Description<textarea name="description" required rows="6"></textarea></label><button class="primary" type="submit">Add job</button></form></details>
 
         <dialog id="job-ignore-reason-dialog" class="confirm-dialog" aria-labelledby="job-ignore-title">
@@ -139,22 +150,6 @@
           </form>
         </dialog>
 
-        <dialog id="job-prepare-confirm-dialog" class="confirm-dialog" aria-labelledby="job-prepare-confirm-title">
-          <form method="dialog">
-            <h3 id="job-prepare-confirm-title">Application method needs confirmation</h3>
-            <p id="job-prepare-confirm-reason"></p>
-            <div class="confirm-summary">
-              <strong id="job-prepare-confirm-action"></strong>
-              <span id="job-prepare-confirm-evidence"></span>
-            </div>
-            <p class="hint">Preparing anyway only creates a draft. It does not authorize Job Radar to send anything.</p>
-            <div class="actions">
-              <button type="submit" value="cancel" class="secondary">Cancel</button>
-              <button type="submit" value="confirm" class="primary">Prepare anyway</button>
-            </div>
-          </form>
-        </dialog>
-
         <dialog id="job-view-dialog" class="confirm-dialog" aria-labelledby="job-view-title">
           <form id="job-view-form" method="dialog">
             <h3 id="job-view-title">Save this Jobs view</h3>
@@ -166,9 +161,25 @@
         </dialog>
       </section>
 
+      <dialog id="job-prepare-confirm-dialog" class="confirm-dialog" aria-labelledby="job-prepare-confirm-title">
+        <form method="dialog">
+          <h3 id="job-prepare-confirm-title">Application method needs confirmation</h3>
+          <p id="job-prepare-confirm-reason"></p>
+          <div class="confirm-summary">
+            <strong id="job-prepare-confirm-action"></strong>
+            <span id="job-prepare-confirm-evidence"></span>
+          </div>
+          <p class="hint">Preparing anyway only creates a draft. It does not authorize Job Radar to send anything.</p>
+          <div class="actions">
+            <button type="submit" value="cancel" class="secondary">Cancel</button>
+            <button type="submit" value="confirm" class="primary">Prepare anyway</button>
+          </div>
+        </form>
+      </dialog>
+
       <section id="applications" class="tab">
         <div class="applications-header">
-          <div><p class="section-intro">Review prepared applications, make any final edits, then approve the exact saved version you want to send.</p></div>
+          <div><p class="section-intro">Track drafts being prepared, fix anything that stopped, then review each application before sending.</p></div>
           <div class="applications-view-tabs" role="tablist" aria-label="Applications workspace">
             <button type="button" role="tab" data-app-view="drafts" aria-selected="true" class="active">Drafts</button>
             <button type="button" role="tab" data-app-view="automation" aria-selected="false">Automation</button>
@@ -180,7 +191,7 @@
         <section id="applications-drafts-view" data-app-panel="drafts" role="tabpanel">
           <div class="application-toolbar" aria-label="Filter applications">
             <label class="application-search">Search applications<input id="application-query" type="search" placeholder="Job title, company, or provider"></label>
-            <label>Review status<select id="application-review-filter"><option value="">All review states</option><option value="awaiting_review">Ready for review</option><option value="needs_review">Needs changes</option><option value="submission_uncertain">Submission status uncertain</option><option value="sent">Sent</option><option value="sending">Sending</option><option value="regenerating">Regenerating</option><option value="draft">Draft</option></select></label>
+            <label>Review status<select id="application-review-filter"><option value="">All review states</option><option value="preparation_failed">Draft not created</option><option value="awaiting_review">Ready for review</option><option value="needs_review">Needs changes</option><option value="submission_uncertain">Submission status uncertain</option><option value="sent">Sent</option><option value="sending">Sending</option><option value="regenerating">Regenerating</option><option value="draft">Draft</option></select></label>
             <label>Company<select id="application-company-filter"><option value="">All companies</option></select></label>
             <label>Delivery<select id="application-sent-filter"><option value="">All delivery states</option><option value="unsent">Not sent</option><option value="sent">Confirmed sent</option><option value="uncertain">Uncertain</option></select></label>
           </div>
@@ -197,7 +208,7 @@
             <p class="hint">Job Radar prepares application drafts for jobs that score at least your minimum. The complete draft and resume PDF can be sent to your private Telegram review chat only after preparation finishes. Every application still waits for your approval.</p>
             <form id="auto-apply-form" class="form-grid">
               <label class="checkbox-label full"><input name="enabled" type="checkbox"><span>Prepare drafts automatically for eligible new matches</span></label>
-              <label>Strong-match threshold<input name="threshold" type="number" min="0" max="100" value="80" readonly aria-describedby="auto-apply-threshold-help"></label><p id="auto-apply-threshold-help" class="hint">Shared with Home and Jobs. Change it in Settings → What JobRadar is looking for.</p>
+              <label>Strong-match threshold<input name="threshold" type="number" min="0" max="100" value="80" required aria-describedby="auto-apply-threshold-help"></label><p id="auto-apply-threshold-help" class="hint">One threshold for Home, Jobs, and automatic draft preparation.</p>
               <label>Freshness window<input name="max_job_age_days" type="number" min="1" max="30" value="3"><span class="hint">Only auto-prepare jobs found within this many days.</span></label>
               <label>Automatic drafts per day<input name="max_auto_drafts_per_day" type="number" min="1" max="50" value="5"></label>
               <label>Telegram review packets per day<input name="max_review_notifications_per_day" type="number" min="1" max="50" value="5"><span class="hint">Only limits review packets created by automation. Manual Prepare is never blocked.</span></label>
@@ -212,6 +223,10 @@
         </section>
 
         <section id="applications-activity-view" data-app-panel="activity" role="tabpanel" hidden>
+          <div id="ai-failures-panel" class="panel surface-status" hidden>
+            <div class="section-head"><div><h3>Failed AI work</h3><p id="ai-failures-summary" class="hint"></p></div><button id="ai-retry-all" type="button" class="secondary">Retry all failed AI work</button></div>
+            <p class="hint">Use this after Codex, Antigravity, or Claude quota refreshes. It retries failed project briefs, resume project updates, and application drafting. Applications still require your review before sending.</p>
+          </div>
           <div class="panel surface-status">
             <div class="section-head"><div><h3>Draft activity</h3><p class="hint">Recent automatic preparation and delivery state.</p></div></div>
             <div id="auto-apply-activity" class="stack"></div>
@@ -246,69 +261,35 @@
 
       <section id="settings" class="tab">
         <p class="section-intro">Configure what Job Radar should look for, then choose the models and integrations that support it.</p>
-        <details class="panel flow-panel" id="search-intent-panel" open>
-          <summary><span><strong>What JobRadar is looking for</strong></span><span id="search-intent-status" class="pill muted">Automatic</span></summary>
-          <div id="search-intent-summary" class="search-intent-summary" role="status" aria-live="polite">
-            <strong>Using your profile to choose sensible defaults.</strong>
-            <p class="hint">Import or edit your profile and JobRadar will adjust automatically.</p>
-          </div>
-          <details id="search-intent-advanced" class="search-intent-advanced">
-            <summary>Adjust</summary>
-            <p class="hint">Automatic values follow your profile. Switch only the preferences you want to override; custom values survive future profile changes.</p>
-            <form id="search-intent-form" class="form-grid">
-              <div class="preference-field full" data-preference-field="role_families">
-                <div class="preference-field-head"><label for="pref-role-families">Role families</label><select name="mode_role_families" aria-label="Role families mode"><option value="auto">Automatic</option><option value="custom">Custom</option></select><button type="button" class="text-button" data-reset-preference="role_families" hidden>Reset to automatic</button></div>
-                <input id="pref-role-families" name="role_families" placeholder="AI Engineer, Data Scientist">
-                <span class="hint" data-preference-source="role_families"></span>
-              </div>
-              <div class="preference-field full" data-preference-field="seniority_levels">
-                <div class="preference-field-head"><label for="pref-seniority">Seniority guidance</label><select name="mode_seniority_levels" aria-label="Seniority mode"><option value="auto">Automatic</option><option value="custom">Custom</option></select><button type="button" class="text-button" data-reset-preference="seniority_levels" hidden>Reset to automatic</button></div>
-                <select id="pref-seniority" name="seniority_levels" multiple size="5"><option value="intern">Intern</option><option value="entry">Entry / Junior</option><option value="mid">Mid</option><option value="senior">Senior</option><option value="lead_plus">Lead+</option></select>
-                <span class="hint" data-preference-source="seniority_levels"></span>
-              </div>
-              <div class="preference-field full" data-preference-field="preferred_locations">
-                <div class="preference-field-head"><label for="pref-locations">Locations</label><select name="mode_preferred_locations" aria-label="Location mode"><option value="auto">Automatic</option><option value="custom">Custom</option></select><button type="button" class="text-button" data-reset-preference="preferred_locations" hidden>Reset to automatic</button></div>
-                <input id="pref-locations" name="preferred_locations" placeholder="Hanoi, Remote">
-                <span class="hint" data-preference-source="preferred_locations"></span>
-              </div>
-              <div class="preference-field" data-preference-field="max_required_experience_years">
-                <div class="preference-field-head"><label for="pref-max-yoe">Maximum employer-required experience</label><select name="mode_max_required_experience_years" aria-label="Experience requirement mode"><option value="auto">Automatic</option><option value="custom">Custom</option></select><button type="button" class="text-button" data-reset-preference="max_required_experience_years" hidden>Reset to automatic</button></div>
-                <input id="pref-max-yoe" name="max_required_experience_years" type="number" min="0" max="50" placeholder="e.g. 2">
-                <span class="hint" data-preference-source="max_required_experience_years"></span>
-              </div>
-              <div class="preference-field" data-preference-field="work_modes">
-                <div class="preference-field-head"><label for="pref-work-modes">Work modes</label><select name="mode_work_modes" aria-label="Work mode preference mode"><option value="auto">Automatic</option><option value="custom">Custom</option></select><button type="button" class="text-button" data-reset-preference="work_modes" hidden>Reset to automatic</button></div>
-                <select id="pref-work-modes" name="work_modes" multiple size="3"><option value="remote">Remote</option><option value="hybrid">Hybrid</option><option value="onsite">On-site</option></select>
-                <span class="hint" data-preference-source="work_modes"></span>
-              </div>
-              <div class="preference-field" data-preference-field="strong_match_threshold">
-                <div class="preference-field-head"><label for="pref-strong-threshold">Strong-match threshold</label><select name="mode_strong_match_threshold" aria-label="Strong match threshold mode"><option value="auto">Automatic</option><option value="custom">Custom</option></select><button type="button" class="text-button" data-reset-preference="strong_match_threshold" hidden>Reset to automatic</button></div>
-                <input id="pref-strong-threshold" name="strong_match_threshold" type="number" min="0" max="100" value="80" required>
-                <span class="hint" data-preference-source="strong_match_threshold"></span>
-              </div>
-              <label>Minimum discovery salary <span class="hint">Optional custom filter</span><input name="minimum_salary" type="number" min="0" placeholder="e.g. 30000000"></label>
-              <label>Salary currency<input name="salary_currency" value="VND"></label>
-              <label class="checkbox-label"><input name="salary_unknown_ok" type="checkbox" checked><span>Keep jobs when salary is not listed</span></label>
-              <label class="full">Preferred employers <span class="hint">Optional explicit preference</span><input name="preferred_employers"></label>
-              <label class="full">Excluded employers <span class="hint">Optional explicit blocklist</span><input name="excluded_employers"></label>
-              <label class="full">Negative preferences <span class="hint">Comma-separated words or phrases to deprioritize</span><input name="negative_keywords" placeholder="sales, night shift"></label>
-              <fieldset class="structured-field full"><legend>Advanced hard constraints</legend><p class="hint">Automatic location and maximum experience already act as conservative eligibility gates. These extra switches only apply to custom preferences.</p>
-                <div class="search-hard-grid">
-                  <label class="checkbox-label"><input name="hard_role_family" type="checkbox"><span>Role family must match</span></label>
-                  <label class="checkbox-label"><input name="hard_seniority" type="checkbox"><span>Seniority must match</span></label>
-                  <label class="checkbox-label"><input name="hard_location" type="checkbox"><span>Location must match</span></label>
-                  <label class="checkbox-label"><input name="hard_work_mode" type="checkbox"><span>Work mode must match</span></label>
-                  <label class="checkbox-label"><input name="hard_employer" type="checkbox" checked><span>Exclude blocked employers</span></label>
-                  <label class="checkbox-label"><input name="hard_minimum_salary" type="checkbox"><span>Minimum salary is required when known</span></label>
-                </div>
-              </fieldset>
-              <button class="primary" type="submit">Save overrides</button>
-              <p id="search-intent-message" class="hint" role="status" aria-live="polite"></p>
-            </form>
-          </details>
-          <div class="preference-suggestions">
-            <div class="section-head"><div><h4>Suggestions from your decisions</h4><p class="hint">Job Radar only suggests changes after repeated explicit choices. Nothing changes until you apply it.</p></div></div>
-            <div id="preference-suggestions" class="stack"><p class="hint">No repeated preference pattern yet.</p></div>
+        <details class="panel flow-panel" id="search-intent-panel">
+          <summary><span><strong>Search preferences</strong><small id="search-intent-glance" class="hint">Based on your profile</small></span><span id="search-intent-status" class="pill muted">Automatic</span></summary>
+          <div class="search-intent-body">
+            <div id="search-intent-summary" class="search-intent-summary" role="status" aria-live="polite">
+              <strong>Using your profile to choose sensible defaults.</strong>
+              <p class="hint">Import or edit your profile and Job Radar will adjust automatically.</p>
+            </div>
+            <details id="search-intent-advanced" class="search-intent-advanced">
+              <summary>Adjust preferences</summary>
+              <p class="hint">Auto follows your profile. Turn it off to edit a value. A hard constraint excludes jobs that do not meet it.</p>
+              <form id="search-intent-form" class="preference-form">
+                <div class="preference-column-labels" aria-hidden="true"><span>Preference</span><span>Value</span><span>Auto</span><span>Hard constraint</span></div>
+                <div class="preference-row" data-preference-field="role_families"><div class="preference-row-label"><label for="pref-role-families">Role families</label><small data-preference-source="role_families"></small></div><input id="pref-role-families" name="role_families" placeholder="AI Engineer, Data Scientist"><label class="switch-control"><input name="auto_role_families" type="checkbox" role="switch" checked><span>Auto</span></label><label class="switch-control"><input name="hard_role_family" type="checkbox" role="switch"><span>Hard constraint</span></label></div>
+                <div class="preference-row" data-preference-field="seniority_levels"><div class="preference-row-label"><label for="pref-seniority">Seniority guidance</label><small data-preference-source="seniority_levels"></small></div><select id="pref-seniority" name="seniority_levels" multiple size="5"><option value="intern">Intern</option><option value="entry">Entry / Junior</option><option value="mid">Mid</option><option value="senior">Senior</option><option value="lead_plus">Lead+</option></select><label class="switch-control"><input name="auto_seniority_levels" type="checkbox" role="switch" checked><span>Auto</span></label><label class="switch-control"><input name="hard_seniority" type="checkbox" role="switch"><span>Hard constraint</span></label></div>
+                <div class="preference-row" data-preference-field="preferred_locations"><div class="preference-row-label"><label for="pref-locations">Locations</label><small data-preference-source="preferred_locations"></small></div><input id="pref-locations" name="preferred_locations" placeholder="Hanoi, Remote"><label class="switch-control"><input name="auto_preferred_locations" type="checkbox" role="switch" checked><span>Auto</span></label><label class="switch-control"><input name="hard_location" type="checkbox" role="switch"><span>Hard constraint</span></label></div>
+                <div class="preference-row" data-preference-field="max_required_experience_years"><div class="preference-row-label"><label for="pref-max-yoe">Maximum required experience</label><small data-preference-source="max_required_experience_years"></small></div><input id="pref-max-yoe" name="max_required_experience_years" type="number" min="0" max="50" placeholder="e.g. 2"><label class="switch-control"><input name="auto_max_required_experience_years" type="checkbox" role="switch" checked><span>Auto</span></label><label class="switch-control"><input name="hard_experience" type="checkbox" role="switch" checked><span>Hard constraint</span></label></div>
+                <div class="preference-row" data-preference-field="work_modes"><div class="preference-row-label"><label for="pref-work-modes">Work modes</label><small data-preference-source="work_modes"></small></div><select id="pref-work-modes" name="work_modes" multiple size="3"><option value="remote">Remote</option><option value="hybrid">Hybrid</option><option value="onsite">On-site</option></select><label class="switch-control"><input name="auto_work_modes" type="checkbox" role="switch" checked><span>Auto</span></label><label class="switch-control"><input name="hard_work_mode" type="checkbox" role="switch"><span>Hard constraint</span></label></div>
+                <div class="preference-row"><label for="pref-min-salary">Minimum salary</label><input id="pref-min-salary" name="minimum_salary" type="number" min="0" placeholder="e.g. 30000000"><span></span><label class="switch-control"><input name="hard_minimum_salary" type="checkbox" role="switch"><span>Hard constraint</span></label></div>
+                <div class="preference-row"><label for="pref-salary-currency">Salary currency</label><input id="pref-salary-currency" name="salary_currency" value="VND"><span></span><label class="switch-control"><input name="salary_unknown_ok" type="checkbox" role="switch" checked><span>Keep unknown</span></label></div>
+                <div class="preference-row"><label for="pref-employers">Preferred employers</label><input id="pref-employers" name="preferred_employers" placeholder="Comma-separated"><span></span><span></span></div>
+                <div class="preference-row"><label for="pref-excluded-employers">Excluded employers</label><input id="pref-excluded-employers" name="excluded_employers" placeholder="Comma-separated"><span></span><label class="switch-control"><input name="hard_employer" type="checkbox" role="switch" checked><span>Hard constraint</span></label></div>
+                <div class="preference-row"><label for="pref-negative-keywords">Negative preferences</label><input id="pref-negative-keywords" name="negative_keywords" placeholder="sales, night shift"><span></span><span></span></div>
+                <div class="preference-form-actions"><button class="primary" type="submit">Save preferences</button><p id="search-intent-message" class="hint" role="status" aria-live="polite"></p></div>
+              </form>
+            </details>
+            <div class="preference-suggestions">
+              <div class="section-head"><div><h4>Suggestions from your decisions</h4><p class="hint">Job Radar only suggests changes after repeated explicit choices. Nothing changes until you apply it.</p></div></div>
+              <div id="preference-suggestions" class="stack"><p class="hint">No repeated preference pattern yet.</p></div>
+            </div>
           </div>
         </details>
         <details class="panel flow-panel" id="provider-panel">
@@ -400,7 +381,8 @@
           <p class="hint">Review your contact details, education, skills, links, and application preferences.</p>
           <p id="personal-loading" class="hint" role="status">Loading personal details…</p>
           <form id="profile-form" class="form-grid" hidden>
-            <label>Name<input name="name"></label><label>Email<input name="email" type="email"></label>
+            <label>Name on resume<input name="name"></label><label>Email<input name="email" type="email"></label>
+            <label>Name in application emails <span class="hint">Optional</span><input name="application_name" placeholder="Use resume name if blank"></label><label>School in application emails <span class="hint">Optional</span><input name="application_school" placeholder="Use resume school if blank"></label>
             <label>Given name for application forms <span class="hint">Optional</span><input name="given_name"></label><label>Family name for application forms <span class="hint">Optional</span><input name="family_name"></label>
             <label>Phone<input name="phone"></label><label>Location<input name="location"></label>
             <label class="full">Professional summary<textarea name="summary" rows="4"></textarea></label>
@@ -446,7 +428,7 @@
       </section>
 
       <section id="sources" class="tab">
-        <div class="section-head"><div><h3>Job sources</h3><p>See where Job Radar is looking and whether any gap could hide relevant jobs.</p></div><button class="primary" id="scan-now">Check for jobs now</button></div>
+        <div class="section-head"><div><p>See where Job Radar is looking and whether any gap could hide relevant jobs.</p></div><button class="primary" id="scan-now">Check for jobs now</button></div>
         <div class="panel source-coverage-panel source-operations">
           <div class="section-head"><div><h3>Discovery coverage</h3><p id="source-coverage-summary">Checking source coverage…</p></div><span id="source-coverage-status" class="status-badge status-badge--neutral">Checking</span></div>
           <div id="source-coverage-grid" class="source-coverage-grid"></div>
@@ -458,21 +440,24 @@
           </details>
         </div>
         <details class="panel"><summary>Add a source</summary><form id="source-form" class="form-grid"><label>Type<select name="kind"><option value="facebook">Facebook group</option><option value="career">Career page</option><option value="linkedin">LinkedIn search</option></select></label><label id="source-name-label">Name<input name="name"></label><label class="full">URL<input name="url" type="url" placeholder="https://www.facebook.com/groups/..." required></label><p id="source-url-hint" class="full hint">Paste a Facebook group link. Job Radar names it from the page or link.</p><button class="primary" type="submit">Add source</button></form></details>
-        <div class="panel"><div class="section-head"><div><h3>Configured sources</h3><p>Search, filter, and sort without digging through scan diagnostics.</p></div></div>
+        <div class="panel"><div class="section-head"><div><h3>Configured sources</h3><p>Check each source’s status and choose which ones to watch.</p></div></div>
           <div class="source-controls">
             <input id="source-query" type="search" placeholder="Search name or URL" aria-label="Search configured sources">
             <select id="source-kind" aria-label="Filter source type"><option value="">All types</option><option value="linkedin">LinkedIn</option><option value="facebook">Facebook</option><option value="career">Career</option></select>
             <select id="source-status" aria-label="Filter discovery coverage"><option value="">All coverage states</option><option value="attention">Needs attention</option><option value="limited">Limited or uncertain</option><option value="healthy">Looks normal</option><option value="unknown">Not checked yet</option><option value="auto_off">Not watching</option></select>
+          </div>
+          <details id="source-more-filters" class="more-filters"><summary>More filters and sorting</summary><div class="source-controls source-extra-controls">
             <select id="source-enabled" aria-label="Filter automatic scan setting"><option value="">Automatic: all</option><option value="enabled">Automatic on</option><option value="paused">Automatic off</option></select>
             <select id="source-success" aria-label="Filter last successful scan"><option value="">Last success: all</option><option value="has_success">Has succeeded</option><option value="never">Never succeeded</option></select>
-            <select id="source-sort" aria-label="Sort configured sources"><option value="name">Sort: name</option><option value="last_success">Sort: last success</option><option value="jobs">Sort: new jobs</option><option value="status">Sort: status</option></select>
-          </div>
-          <p id="source-result-summary" class="hint"></p><div id="source-list" class="stack"></div>
+            <select id="source-sort" aria-label="Sort configured sources"><option value="attention">Needs attention first</option><option value="name">Sort: name</option><option value="last_success">Sort: last success</option><option value="jobs">Sort: new jobs</option></select>
+          </div></details>
+          <p id="source-result-summary" class="hint"></p><div id="source-list" class="stack"></div><div class="job-pagination source-pagination"><button id="sources-prev" type="button" class="secondary">Previous</button><span id="source-page-summary"></span><button id="sources-next" type="button" class="secondary">Next</button></div>
         </div>
       </section>
 
       <section id="employers" class="tab">
-        <div class="section-head"><div><h3>Employer directory</h3><p>Manage companies and career pages separately from source scanning. A company is actively scanned only when it has an enabled source.</p></div></div>
+        <div class="section-head"><div><p>Start with companies Job Radar is checking. Search the full directory when you want to add a career page.</p></div></div>
+        <div class="employer-scope" role="group" aria-label="Employer directory scope"><label><input type="radio" name="employer-scope" value="watching" checked> Being checked</label><label><input type="radio" name="employer-scope" value="all"> Full directory</label></div>
         <form id="employer-search-form" class="toolbar"><input id="employer-query" type="search" placeholder="Find an employer" aria-label="Search employers"><button id="employer-search" type="submit">Search</button></form>
         <div class="panel"><div id="employer-count" class="hint"></div><div id="employer-list" class="employer-grid"></div><div class="job-pagination employer-pagination"><button id="employers-prev" type="button">Previous</button><span id="employer-page-summary"></span><button id="employers-next" type="button">Next</button></div></div>
         <details class="panel"><summary>Add an employer</summary><form id="employer-form" class="form-grid"><label>Name<input name="name" required></label><label>Category<input name="category" value="custom"></label><label class="full">Career URL<input name="career_url" type="url"></label><button class="primary" type="submit">Add employer</button></form></details>

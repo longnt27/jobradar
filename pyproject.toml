@@ -16,6 +16,7 @@ dependencies = [
   "python-docx>=1.1",
   "python-multipart>=0.0.12",
   "pypdf>=5.0",
+  "pypdfium2>=4.30,<5",
   "reportlab>=4.2",
   "uvicorn>=0.30",
 ]
@@ -31,4 +32,3 @@ packages = ["job_radar"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-

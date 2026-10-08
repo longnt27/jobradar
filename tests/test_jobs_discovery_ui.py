@@ -74,8 +74,8 @@ def test_jobs_url_state_cards_and_page_scroll(tmp_path: Path) -> None:
                 assert page.get_by_role("link", name="Application page ↗").is_visible()
                 assert "Remote" in card.inner_text()
                 assert "Senior" in card.inner_text()
-                assert "Role" in card.inner_text()
-                assert "Location" in card.inner_text()
+                assert "Role" in page.locator("#job-detail").inner_text()
+                assert "Location" in page.locator("#job-detail").inner_text()
                 assert "ago" in card.inner_text() or "Yesterday" in card.inner_text()
                 page.get_by_role("heading", name="Senior AI Engineer").wait_for()
                 assert page.locator("#job-outcome-control").input_value() == "none"
@@ -90,6 +90,14 @@ def test_jobs_url_state_cards_and_page_scroll(tmp_path: Path) -> None:
                 page.get_by_role("heading", name="Senior AI Engineer").wait_for()
                 assert page.url == before
                 assert page.locator("#job-query").input_value() == "Senior"
+
+                app.state.db.execute("UPDATE vacancies SET analysis_status='pending' WHERE id=?", (first,))
+                page.reload()
+                page.get_by_role("heading", name="Senior AI Engineer").wait_for()
+                detail = page.locator("#job-detail").inner_text()
+                assert "Score pending" in detail
+                assert "91/100" not in detail
+                assert "Direct role fit" not in detail
 
                 page.locator("#job-sort").select_option("company")
                 page.wait_for_function("location.hash.includes('sort=company')")

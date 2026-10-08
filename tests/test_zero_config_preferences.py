@@ -225,9 +225,26 @@ def test_settings_ui_is_summary_first_with_explicit_auto_custom_controls() -> No
     assert 'id="search-intent-summary"' in html
     assert 'id="search-intent-advanced"' in html
     assert 'name="max_required_experience_years"' in html
-    assert 'name="mode_preferred_locations"' in html
-    assert 'data-reset-preference="max_required_experience_years"' in html
+    assert 'name="auto_preferred_locations" type="checkbox" role="switch"' in html
+    assert 'name="hard_experience" type="checkbox" role="switch"' in html
     assert 'id="job-fit"' in html and "Outside search" in html
     assert "preference_modes" in js
-    assert "/api/search-intent/reset/" in js
-    assert "Outside-search jobs stay stored" in js
+    assert "auto_${name}" in js
+    assert "Jobs outside your search are still available in Jobs" in js
+
+
+def test_auto_value_and_hard_constraint_are_independent() -> None:
+    intent = apply_auto_search_intent({
+        "preference_modes": {"role_families": "auto", "max_required_experience_years": "auto"},
+        "hard_constraints": {"role_family": True, "experience": False},
+    }, _profile(), as_of=AS_OF)
+    assert intent["role_families"] == ["AI Engineer"]
+    assert intent["hard_constraints"]["role_family"] is True
+    assert intent["max_required_experience_years"] == 2
+    assert intent["hard_constraints"]["experience"] is False
+    score, _, exclusions = finalize_match(
+        {"title": "AI Engineer", "company": "Example", "description": "Requires 5 years of experience."},
+        {"years_required": 5}, _profile(), _criteria(), intent,
+    )
+    assert score > 0
+    assert not any("Experience requirement" in reason for reason in exclusions)

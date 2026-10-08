@@ -22,7 +22,7 @@ cd jobradar
 ./install.sh
 ~~~
 
-The installer installs uv and Ollama if needed, installs the locked Python dependencies and Playwright Chromium, registers a macOS service that starts at login, waits for the app to respond, and opens Job Radar in your browser. Re-run `./install.sh` from the same checkout after pulling updates. The installer does not install or sign in to an AI drafting CLI; choose one during setup below. Google Chrome is needed only if you want LinkedIn or Facebook scanning.
+The installer installs uv, Tectonic (for the supplied LaTeX resume template), and Ollama if needed, installs the locked Python dependencies and Playwright Chromium, registers a macOS service that starts at login, waits for the app to respond, and opens Job Radar in your browser. Re-run `./install.sh` from the same checkout after pulling updates. The installer does not install or sign in to an AI drafting CLI; choose one during setup below. Google Chrome is needed only if you want LinkedIn or Facebook scanning.
 
 If the browser does not open, visit [http://127.0.0.1:8787](http://127.0.0.1:8787) yourself. The service runs on this Mac; that address is not a hosted website.
 

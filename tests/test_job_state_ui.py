@@ -119,12 +119,13 @@ def test_job_read_decision_application_and_outcome_are_independent(tmp_path: Pat
 
     shortlisted = client.post(f"/api/jobs/{job['id']}/decision", json={"decision": "shortlisted"})
     assert shortlisted.status_code == 200
-    assert client.get(f"/api/jobs/{job['id']}").json()["application_progress"] == "not_started"
+    assert client.get(f"/api/jobs/{job['id']}").json()["application_progress"] == "preparing"
 
     assert client.post(f"/api/jobs/{job['id']}/state", json={"state": "ready"}).status_code == 409
     assert client.post(f"/api/jobs/{job['id']}/state", json={"state": "applied"}).status_code == 409
 
     draft = prepare_draft(app.state.db, app.state.settings, job["id"], "template")
+    app.state.auto_apply_manager._set_status(job["id"], "needs_review", "Draft ready for review", draft["id"])
     prepared = client.get(f"/api/jobs/{job['id']}").json()
     assert prepared["decision_state"] == "shortlisted"
     assert prepared["application_progress"] == "draft_ready"

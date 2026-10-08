@@ -151,6 +151,7 @@ CREATE TABLE IF NOT EXISTS application_drafts (
   destination TEXT NOT NULL,
   resume_path TEXT,
   resume_hash TEXT,
+  project_refresh_error TEXT,
   warnings TEXT NOT NULL DEFAULT '[]',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -182,6 +183,7 @@ CREATE TABLE IF NOT EXISTS auto_application_attempts (
   requested_provider TEXT,
   preflight_action TEXT,
   prepare_anyway INTEGER NOT NULL DEFAULT 0,
+  retry_payload TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -274,9 +276,31 @@ class Database:
                     "INSERT INTO settings(key,value) VALUES('job_state_v2_migrated','true') "
                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
                 )
+            quarantined = conn.execute(
+                "SELECT value FROM settings WHERE key='linkedin_join_quarantine_v1'"
+            ).fetchone()
+            if not quarantined:
+                conn.execute(
+                    "UPDATE vacancies SET decision_state='ignored',state='ignored',"
+                    "analysis_status='dismissed',analysis_stage=NULL,analysis_error=NULL,"
+                    "score=NULL,score_detail=NULL "
+                    "WHERE title='Join LinkedIn' AND company='Unknown employer' "
+                    "AND description LIKE '%Password (6+ characters)%' "
+                    "AND description LIKE '%Agree & Join%' "
+                    "AND decision_state='undecided' AND seen_at IS NULL "
+                    "AND manual_applied_at IS NULL AND recruiting_outcome='none' "
+                    "AND NOT EXISTS(SELECT 1 FROM application_drafts d WHERE d.vacancy_id=vacancies.id) "
+                    "AND NOT EXISTS(SELECT 1 FROM submissions s WHERE s.vacancy_id=vacancies.id)"
+                )
+                conn.execute(
+                    "INSERT INTO settings(key,value) VALUES('linkedin_join_quarantine_v1','true')"
+                )
             conn.execute("CREATE INDEX IF NOT EXISTS idx_vacancies_decision ON vacancies(decision_state,snoozed_until,first_seen_at DESC)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_vacancies_seen ON vacancies(seen_at,first_seen_at DESC)")
             review_columns = {row[1] for row in conn.execute("PRAGMA table_info(auto_application_attempts)")}
+            draft_columns = {row[1] for row in conn.execute("PRAGMA table_info(application_drafts)")}
+            if "project_refresh_error" not in draft_columns:
+                conn.execute("ALTER TABLE application_drafts ADD COLUMN project_refresh_error TEXT")
             for name, definition in (
                 ("review_hash", "TEXT"),
                 ("telegram_status", "TEXT NOT NULL DEFAULT 'pending'"),
@@ -286,6 +310,7 @@ class Database:
                 ("requested_provider", "TEXT"),
                 ("preflight_action", "TEXT"),
                 ("prepare_anyway", "INTEGER NOT NULL DEFAULT 0"),
+                ("retry_payload", "TEXT"),
             ):
                 if name not in review_columns:
                     conn.execute(f"ALTER TABLE auto_application_attempts ADD COLUMN {name} {definition}")

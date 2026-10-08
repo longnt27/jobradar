@@ -7,6 +7,9 @@ URLs below are employer-operated sites or their linked recruiting platforms.
 from dataclasses import dataclass, field
 
 
+CAREER_SCAN_INTERVAL_MINUTES = 1440
+
+
 @dataclass(frozen=True)
 class CareerFeed:
     employer: str
@@ -56,7 +59,10 @@ CAREER_FEEDS: tuple[CareerFeed, ...] = (
     browser("MBV", "https://www.mbv.com.vn/tuyen-dung/co-hoi-nghe-nghiep", r"^/viec-lam/[^/?#]+$", listing_selector="a[href*='/viec-lam/']", description_selector="main"),
     html("VPBank", "https://vpbank.talent.vn/jobs?dept=3326", TALENT_JOB, max_results=100, max_pages=5, description_selector=".content-article, .article, article"),
     html("GPBank", "https://gpbank.talent.vn/jobs?dept=1538", TALENT_JOB, max_results=100, max_pages=4, description_selector=".content-article, .article, article"),
-    html("CMC Global", "https://cmcglobal.com.vn/career/", r"^/career/[^/?#]+/?$", max_pages=10, pagination="wordpress", max_results=120, description_selector="main"),
+    html("CMC Global", "https://cmcglobal.com.vn/career/", r"^/career/[^/?#]+/?$",
+         max_pages=10, pagination="wordpress", max_results=40, description_selector="main",
+         listing_card_class="__careers-post-wrapper", listing_title_selector="h3",
+         title_include=r"\b(?:AI|ML|LLM|NLP)\b|machine learning|computer vision|deep learning|data scien|generative"),
     html("CMC TS", "https://careers.cmcts.com.vn/", TALENT_JOB, max_results=100, description_selector=".content-article, article"),
     html("CMC Telecom", "https://cmctelecom.vn/danh-sach-tuyen-dung/", r"^/recruit/[^/?#]+/?$", description_selector=".recruitment-detail"),
     html("NTQ Solution", "https://career.ntq.com.vn/careers", r"^/career/[^/?#]+/?$", description_selector=".section-career-detail__job-content__description"),

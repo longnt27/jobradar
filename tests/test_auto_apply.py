@@ -42,6 +42,121 @@ def _wait_for_telegram_status(app, identifier: str, expected: str) -> dict:
     raise AssertionError(f"Telegram review did not reach {expected}: {row}")
 
 
+def test_failed_preparation_without_draft_sends_one_notice(tmp_path: Path, monkeypatch) -> None:
+    app = create_app(Settings(tmp_path))
+    job_id = _scored_job(app, "Unprepared Engineer", 88)
+    save_telegram(app.state.settings, {"token": "test-token", "chat_id": "123"})
+    app.state.db.execute(
+        "INSERT INTO auto_application_attempts(vacancy_id,status,telegram_status,detail,requested_by,created_at,updated_at) "
+        "VALUES(?,'needs_review','pending','Drafting failed','manual','2026-10-06','2026-10-06')",
+        (job_id,),
+    )
+    notices = []
+
+    async def send_notice(_settings, title, company):
+        notices.append((title, company))
+        return 42
+
+    monkeypatch.setattr("job_radar.auto_apply.send_preparation_notice", send_notice)
+    asyncio.run(app.state.auto_apply_manager.notify_preparation_issue(job_id))
+    asyncio.run(app.state.auto_apply_manager.notify_preparation_issue(job_id))
+    attempt = app.state.db.one("SELECT telegram_status,telegram_message_id FROM auto_application_attempts WHERE vacancy_id=?", (job_id,))
+    assert attempt == {"telegram_status": "sent", "telegram_message_id": 42}
+    assert notices == [("Unprepared Engineer", "Example")]
+
+
+def test_retry_all_ai_preparations_excludes_forms_needing_review(tmp_path: Path) -> None:
+    app = create_app(Settings(tmp_path))
+    quota_job = _scored_job(app, "Quota Engineer", 88)
+    form_job = _scored_job(app, "Form Engineer", 87)
+    for job_id, detail in ((quota_job, "AI drafting failed: codex quota reached"),
+                           (form_job, "Inspect every LinkedIn application step before sending")):
+        app.state.db.execute(
+            "INSERT INTO auto_application_attempts(vacancy_id,status,requested_by,detail,created_at,updated_at) "
+            "VALUES(?,'needs_review','automation',?,'2026-10-07','2026-10-07')",
+            (job_id, detail),
+        )
+    manager = app.state.auto_apply_manager
+    assert [item["vacancy_id"] for item in manager.failed_preparations()] == [quota_job]
+    assert manager.retry_failed_preparations() == 1
+    assert app.state.db.one("SELECT status,requested_by FROM auto_application_attempts WHERE vacancy_id=?", (quota_job,)) == {
+        "status": "queued", "requested_by": "manual"}
+    assert app.state.db.one("SELECT status FROM auto_application_attempts WHERE vacancy_id=?", (form_job,))["status"] == "needs_review"
+    with TestClient(app) as client:
+        failures = client.get("/api/ai/failures")
+    assert failures.status_code == 200
+    assert failures.json()["preparations"] == 0
+
+
+def test_retry_all_failed_ai_work_retries_saved_resume_updates(tmp_path: Path, monkeypatch) -> None:
+    app = create_app(Settings(tmp_path))
+    app.state.db.set_setting("profile", {"name": "Alex Example", "email": "alex@example.org",
+                                         "experience": [{"company": "Prior Co", "role": "Engineer", "dates": "2024-2026",
+                                                         "bullets": ["Built Python systems."]}]})
+    job_id = _scored_job(app, "Resume Retry Engineer", 88)
+    draft = prepare_draft(app.state.db, app.state.settings, job_id, "template")
+    app.state.db.execute("UPDATE application_drafts SET project_refresh_error='provider quota reached' WHERE id=?",
+                         (draft["id"],))
+    retried = []
+
+    def retry(db, _settings, draft_id):
+        retried.append(draft_id)
+        db.execute("UPDATE application_drafts SET project_refresh_error=NULL WHERE id=?", (draft_id,))
+
+    monkeypatch.setattr("job_radar.web.refresh_draft_projects", retry)
+    with TestClient(app) as client:
+        response = client.post("/api/ai/retry-failed")
+        assert response.status_code == 202
+        assert response.json()["queued"] == 1
+        for _ in range(50):
+            if client.get("/api/ai/failures").json()["draft_projects"] == 0:
+                break
+            time.sleep(.05)
+        assert client.get("/api/ai/failures").json()["draft_projects"] == 0
+    assert retried == [draft["id"]]
+
+
+def test_automation_status_counts_existing_jobs_without_per_job_database_reads(tmp_path: Path, monkeypatch) -> None:
+    app = create_app(Settings(tmp_path))
+    for index in range(40):
+        _scored_job(app, f"Existing Engineer {index}", 90)
+
+    db = app.state.db
+    reads = 0
+    original_one, original_all = db.one, db.all
+
+    def one(*args, **kwargs):
+        nonlocal reads
+        reads += 1
+        return original_one(*args, **kwargs)
+
+    def all(*args, **kwargs):
+        nonlocal reads
+        reads += 1
+        return original_all(*args, **kwargs)
+
+    monkeypatch.setattr(db, "one", one)
+    monkeypatch.setattr(db, "all", all)
+
+    status = app.state.auto_apply_manager.status()
+    assert status["eligible_existing"] == 40
+    assert status["highest_existing_score"] == 90
+    assert reads < 30
+
+
+def test_automation_summary_loads_without_candidate_preview(tmp_path: Path, monkeypatch) -> None:
+    app = create_app(Settings(tmp_path))
+    _scored_job(app, "Existing Engineer", 90)
+    def unexpected_preview(*_args, **_kwargs):
+        raise AssertionError("candidate preview should be deferred")
+    monkeypatch.setattr("job_radar.auto_apply.automation_eligibility", unexpected_preview)
+    with TestClient(app) as client:
+        summary = client.get("/api/auto-apply", params={"summary_only": True})
+    assert summary.status_code == 200
+    assert summary.json()["eligible_existing"] is None
+    assert "recent" in summary.json()
+
+
 def test_auto_apply_prepares_new_jobs_but_waits_for_approval(tmp_path: Path, monkeypatch) -> None:
     app = create_app(Settings(tmp_path))
     app.state.db.execute("UPDATE sources SET enabled=0")
