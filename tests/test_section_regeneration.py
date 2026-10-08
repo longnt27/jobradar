@@ -163,8 +163,10 @@ def test_message_regeneration_uses_verified_facebook_source_and_specific_job_evi
         return response_type.model_validate({
             "subject": "Ứng tuyển AI Engineer — Nguyễn Trung Long",
             "body": ("Kính gửi SETA,\n\nTôi thấy tin tuyển AI Engineer của công ty trên Facebook. "
-                     "Kinh nghiệm xây dựng pipeline tái dựng 3D từ đầu đến cuối tại VinSmart Future "
-                     "phù hợp với yêu cầu Computer Vision và Python. Mong anh/chị xem CV đính kèm.\n\n"
+                     "Tại VinSmart Future, tôi xây dựng pipeline tái dựng 3D từ đầu đến cuối. "
+                     "Dự án cá nhân CausClass dùng Python và PyTorch cho Computer Vision. "
+                     "Anh/chị vui lòng xem CV đính kèm để biết thêm chi tiết. "
+                     "Rất mong có cơ hội trao đổi sâu hơn về vị trí này với quý công ty.\n\n"
                      "Trân trọng,\nNguyễn Trung Long"),
         })
 
@@ -175,6 +177,8 @@ def test_message_regeneration_uses_verified_facebook_source_and_specific_job_evi
     assert "Python, PyTorch" in captured[0]
     assert "Built an end-to-end 3D reconstruction pipeline" in captured[0]
     assert "Do not use vague phrases such as related personal projects or projects related to AI" in captured[0]
+    assert "Put work experience and personal projects in separate sentences" in captured[0]
+    assert "Rất mong có cơ hội trao đổi" in captured[0]
     assert revised["resume_data"] == before["resume_data"]
     assert [change["section"] for change in revised["changes"]] == ["message"]
 
@@ -220,7 +224,7 @@ def test_other_sections_use_small_schema_and_preserve_reviewed_content(
     assert revised["evidence_ids"] == before["evidence_ids"]
     assert [change["section"] for change in revised["changes"]] == [section]
     if section == "message":
-        assert "three short sentences" in captured[0][0]
+        assert "four or five short sentences" in captured[0][0]
         assert "attached resume" in captured[0][0]
         assert revised["resume_data"] == before["resume_data"]
         assert revised["message_data"] != before["message_data"]

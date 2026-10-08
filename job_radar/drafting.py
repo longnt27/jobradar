@@ -160,16 +160,22 @@ def _job_for_drafting(db: Database, vacancy_id: str) -> dict | None:
 
 
 BRIEF_APPLICATION_MESSAGE = (
-    "Write the application message as a brief cover note: greeting, three short sentences, and sign-off, "
-    "preferably under 90 words. Use the verified job.posting_source.kind to say where you found the role: "
+    "Write the application message as a brief cover note: greeting, four or five short sentences, and sign-off, "
+    "preferably under 100 words. Use the verified job.posting_source.kind to say where you found the role: "
     "a Facebook post, LinkedIn posting, or company career page as applicable. If no source is known, say only "
     "that you saw the posting; never invent a source. When job.company is a generic label such as Facebook post, "
     "address the employer named in the posting title or description. "
     "Match one or two concrete job requirements to supported candidate evidence from a past role or project. "
+    "Put work experience and personal projects in separate sentences. Name the employer only in the work "
+    "experience sentence and explicitly identify a personal project as a personal project; never imply that "
+    "the project was part of that employer's work. "
     "Name a relevant project, method, or skill when it makes the fit clear; do not claim experience the evidence "
     "does not show, such as fine-tuning merely because a posting asks for it. "
     "Do not use vague phrases such as related personal projects or projects related to AI. "
-    "Ask the reader to check the attached resume for details. Do not repeat resume bullets or list many "
+    "End with a direct call to action: ask the reader to check the attached resume for details and say you "
+    "would welcome a chance to discuss the position further with the company. In Vietnamese, use natural "
+    "wording such as 'Anh/chị vui lòng xem CV đính kèm để biết thêm chi tiết. Rất mong có cơ hội trao đổi "
+    "sâu hơn về vị trí này với quý công ty.' Do not repeat resume bullets or list many "
     "metrics, technologies, or education details in the message. "
 )
 
