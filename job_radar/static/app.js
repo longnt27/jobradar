@@ -2582,10 +2582,10 @@ async function showApplication(id, preferredScreen = null) {
           <div class="metric-card-primary">
             <strong class="metric-score-value">${matchCompleted && job.score != null ? `${job.score}/100` : (draft.job_score != null ? `${draft.job_score}/100` : 'Score pending')}</strong>
           </div>
-          ${matchCompleted && job.strongest_signal ? `<p class="metric-signal"><strong>Strongest signal:</strong> ${escapeHtml(job.strongest_signal.reason)}</p>` : ''}
-          ${matchCompleted && job.main_gap ? `<p class="metric-signal"><strong>Main gap:</strong> ${escapeHtml(job.main_gap.reason)}</p>` : ''}
-          ${matchCompleted ? `<p class="metric-subtext">Evidence confidence: ${Math.max(0, 100 - Number(job.uncertainty || 0))}%</p>` : ''}
-          ${matchCompleted && job.missing_evidence?.length ? `<p class="metric-subtext">Missing evidence: ${escapeHtml(job.missing_evidence.join(', '))}</p>` : ''}
+          <div class="metric-source-meta">
+            ${matchCompleted ? `<p class="metric-signal"><strong>Evidence confidence:</strong> ${Math.max(0, 100 - Number(job.uncertainty || 0))}%</p>` : '<p class="hint">Review in progress</p>'}
+            ${matchCompleted && job.missing_evidence?.length ? `<p class="metric-subtext">Missing evidence: ${escapeHtml(job.missing_evidence.join(', '))}</p>` : ''}
+          </div>
         </div>
 
         <div class="metric-card surface-status">
