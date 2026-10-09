@@ -19,7 +19,7 @@ from typing import Any, AsyncContextManager
 from playwright.async_api import Browser, Page, Playwright, TimeoutError as PlaywrightTimeoutError, async_playwright
 
 from .db import Database
-from .desktop_handoff import frontmost_app_bundle, hide_chrome, return_to_job_radar
+from .desktop_handoff import activate_app, frontmost_app_bundle, hide_chrome, launch_background_browser, return_to_job_radar
 from .drafting import APPLICATION_FIT_PROMPT, _compose_application_message, _job_for_drafting, _job_language, get_draft, update_draft
 from .settings import Settings
 from .social_browser import chrome_executable
@@ -367,6 +367,7 @@ class ChatGPTInputManager:
         self.port: int | None = None
         self.watch_task: asyncio.Task | None = None
         self.login_task: asyncio.Task | None = None
+        self.frontmost_app: str | None = None
         self.state: str = "idle"
         self.error: str | None = None
 
@@ -465,24 +466,42 @@ class ChatGPTInputManager:
                     "--new-window",
                     url,
                 ])
-            for attempt in range(3):
-                process = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
+            process = None
+            if background and sys.platform == "darwin":
+                chrome_path = Path(chrome_executable())
+                if (
+                    chrome_path.parent.name == "MacOS"
+                    and chrome_path.parent.parent.name == "Contents"
+                    and chrome_path.parent.parent.parent.suffix == ".app"
+                ):
+                    app_bundle = str(chrome_path.parent.parent.parent)
+                    process = launch_background_browser(app_bundle, cmd[1:])
+
+            if process is None:
+                for attempt in range(3):
+                    process = subprocess.Popen(
+                        cmd,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                    self.process = process
+                    self.watch_task = asyncio.create_task(self._watch_process(process))
+                    await asyncio.sleep(.3)
+                    if process.poll() is None:
+                        if background and sys.platform == "darwin":
+                            hide_chrome()
+                            activate_app(self.frontmost_app)
+                        break
+                    if attempt < 2:
+                        await asyncio.sleep(0.7)
+                else:
+                    if self.process and self.process.poll() is not None:
+                        raise RuntimeError("Chrome closed before ChatGPT opened. Close other Job Radar Chrome windows and try again.")
+            else:
                 self.process = process
                 self.watch_task = asyncio.create_task(self._watch_process(process))
-                await asyncio.sleep(.3)
-                if process.poll() is None:
-                    if background and sys.platform == "darwin":
-                        hide_chrome()
-                    break
-                if attempt < 2:
-                    await asyncio.sleep(0.7)
-            else:
-                if self.process and self.process.poll() is not None:
-                    raise RuntimeError("Chrome closed before ChatGPT opened. Close other Job Radar Chrome windows and try again.")
+                if sys.platform == "darwin":
+                    activate_app(self.frontmost_app)
         except Exception:
             process = self.process
             if process and process.poll() is None:
@@ -542,6 +561,7 @@ class ChatGPTInputManager:
             await page.bring_to_front()
         elif sys.platform == "darwin":
             hide_chrome()
+            activate_app(self.frontmost_app)
         return page
 
     async def _watch_login(self) -> None:
@@ -682,6 +702,7 @@ class ChatGPTInputManager:
         return None
 
     async def enter(self, prompt: str, timeout: float = 60.0) -> dict[str, Any]:
+        self.frontmost_app = frontmost_app_bundle()
         async with self.priority_browser():
             try:
                 async with self.lock:
@@ -747,3 +768,6 @@ class ChatGPTInputManager:
                 return {"status": "failed", "detail": f"Could not enter the ChatGPT prompt: {str(error)[:180]}"}
             finally:
                 await self.stop()
+                if sys.platform == "darwin":
+                    activate_app(self.frontmost_app)
+                self.frontmost_app = None

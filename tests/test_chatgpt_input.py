@@ -467,6 +467,8 @@ def test_chatgpt_start_browser_background_and_temporary_chat(tmp_path: Path, mon
 
     monkeypatch.setattr("job_radar.chatgpt_handoff.chrome_executable", lambda: "/fake/chrome")
     monkeypatch.setattr("job_radar.chatgpt_handoff.hide_chrome", lambda: None)
+    monkeypatch.setattr("job_radar.chatgpt_handoff.activate_app", lambda _b: None)
+    monkeypatch.setattr("job_radar.chatgpt_handoff.launch_background_browser", lambda _b, _a: None)
     monkeypatch.setattr("job_radar.chatgpt_handoff.subprocess.Popen", fake_popen)
 
     async def scenario():
@@ -498,6 +500,41 @@ def test_chatgpt_start_browser_background_and_temporary_chat(tmp_path: Path, mon
 
         await manager.stop()
         assert not browser_lock.locked()
+
+    asyncio.run(scenario())
+
+
+def test_chatgpt_start_browser_uses_launch_background_browser_on_macos(tmp_path: Path, monkeypatch) -> None:
+    from job_radar.desktop_handoff import BackgroundProcess
+
+    fake_bg_proc = BackgroundProcess(99999)
+    captured_bundle = []
+    captured_args = []
+
+    def fake_launch(bundle, args):
+        captured_bundle.append(bundle)
+        captured_args.append(args)
+        return fake_bg_proc
+
+    monkeypatch.setattr("job_radar.chatgpt_handoff.chrome_executable",
+                        lambda: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+    monkeypatch.setattr("job_radar.chatgpt_handoff.launch_background_browser", fake_launch)
+    monkeypatch.setattr("job_radar.chatgpt_handoff.activate_app", lambda _b: None)
+
+    async def scenario():
+        browser_lock = asyncio.Lock()
+        manager = ChatGPTInputManager(Settings(tmp_path), browser_lock)
+
+        await manager._start_browser(background=True, temporary=True)
+        assert len(captured_bundle) == 1
+        assert captured_bundle[0] == "/Applications/Google Chrome.app"
+        assert manager.process is fake_bg_proc
+        assert browser_lock.locked()
+
+        # Stop releases lock and clears process
+        await manager.stop()
+        assert not browser_lock.locked()
+        assert manager.process is None
 
     asyncio.run(scenario())
 
