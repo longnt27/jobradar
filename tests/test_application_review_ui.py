@@ -59,6 +59,27 @@ def test_application_tab_reviews_regenerates_sends_and_shows_receipt(tmp_path: P
                 page.goto(f"http://127.0.0.1:{port}/#applications/{draft['id']}")
                 page.get_by_role("heading", name="Engineer").wait_for(timeout=5000)
                 assert page.get_by_role("button", name="Approve & send").is_visible()
+                page.get_by_text("Edit resume details", exact=True).click()
+                assert page.get_by_text("Edit LaTeX section", exact=True).count() == 0
+                item = page.locator('[data-experience-bullets="0"]')
+                assert item.input_value().startswith(r"\item ")
+                original_bullets = client.get(f"/api/applications/{draft['id']}").json()["resume_data"]["experience"][0]["bullets"]
+                page.locator("#draft-summary").fill("Revised Python engineer summary")
+                with page.expect_response(lambda response: response.url.endswith(f"/api/applications/{draft['id']}")
+                                          and response.request.method == "PATCH") as detail_response:
+                    page.get_by_role("button", name="Save changes").click()
+                assert detail_response.value.status == 200, detail_response.value.text()
+                page.locator("#application-dirty-state").get_by_text("Saved").wait_for()
+                assert client.get(f"/api/applications/{draft['id']}").json()["resume_data"]["experience"][0]["bullets"] == original_bullets
+                page.get_by_text("Edit resume details", exact=True).click()
+                item = page.locator('[data-experience-bullets="0"]')
+                item.fill(item.input_value().replace("Python systems", r"\textbf{Python systems}"))
+                with page.expect_response(lambda response: response.url.endswith(f"/api/applications/{draft['id']}")
+                                          and response.request.method == "PATCH") as saved_response:
+                    page.get_by_role("button", name="Save changes").click()
+                assert saved_response.value.status == 200, saved_response.value.text()
+                page.locator("#application-dirty-state").get_by_text("Saved").wait_for()
+                assert r"\textbf{Python systems}" in client.get(f"/api/applications/{draft['id']}").json()["resume_data"]["experience"][0]["bullets"][0]
                 assert page.get_by_label("Custom instructions").is_visible()
                 page.get_by_label("Custom instructions").fill("Emphasize production search")
                 page.locator("#regenerate-section").select_option("message")

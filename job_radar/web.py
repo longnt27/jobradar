@@ -52,6 +52,7 @@ from .search_intent import (apply_auto_search_intent, fit_summary, migrate_searc
                             normalize_search_intent, reset_search_preference, seniority_key)
 from .resume_import import parse_resume_template
 from .resume_extract import extract_resume
+from .resume_pdf import editable_bullet_lines
 from .seeds import seed
 from .settings import Settings
 from .scanner import ScanManager
@@ -1858,7 +1859,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             reasons = send_readiness(db, settings, draft)
             review = db.one("SELECT status,review_hash,telegram_status,telegram_error,requested_by,detail,prepare_anyway FROM auto_application_attempts WHERE draft_id=?", (draft_id,))
             latest = db.one("SELECT * FROM submissions WHERE draft_id=? ORDER BY sent_at DESC,id DESC LIMIT 1", (draft_id,))
-            return {**draft, "send_ready": not reasons, "send_blockers": reasons,
+            return {**draft, "resume_bullet_source": editable_bullet_lines(draft["resume_data"]),
+                    "send_ready": not reasons, "send_blockers": reasons,
                     "linkedin_automation_paused": bool(db.get_setting("linkedin_automation_paused", False)) if draft["job_source_kind"] == "linkedin" else False,
                     "review_status": review["status"] if review else None,
                     "review_hash": review["review_hash"] if review else None,

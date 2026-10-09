@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -23,6 +24,8 @@ _ESCAPES = {
     "#": r"\#", "_": r"\_", "{": r"\{", "}": r"\}",
     "~": r"\textasciitilde{}", "^": r"\textasciicircum{}",
 }
+_ITEM_COMMANDS = {"textbf", "textit", "emph", "underline", "textbackslash",
+                  "textasciitilde", "textasciicircum", "&", "%", "$", "#", "_", "{", "}"}
 
 
 def _fonts() -> tuple[str, str, str]:
@@ -62,6 +65,29 @@ def _link(url: object, label: object) -> str:
 
 def _bullet(value: object, phrases: list[str]) -> str:
     text = str(value or "")
+    if text.lstrip().startswith(r"\item"):
+        source = text.strip()
+        if not source.startswith(r"\item ") or "\n" in source or len(source) > 5000:
+            raise ValueError("Each LaTeX bullet must be one \\item line under 5,000 characters")
+        content = source[len(r"\item "):]
+        for command in re.findall(r"\\([A-Za-z]+|.)", content):
+            if command not in _ITEM_COMMANDS:
+                raise ValueError(f"Unsupported LaTeX command in bullet: \\{command}")
+        if re.search(r"(?<!\\)[%&#$_]", content):
+            raise ValueError("Escape LaTeX special characters in bullets, for example 95\\%")
+        depth = 0
+        for index, character in enumerate(content):
+            if index and content[index - 1] == "\\":
+                continue
+            if character == "{":
+                depth += 1
+            elif character == "}":
+                depth -= 1
+            if depth < 0:
+                break
+        if depth != 0:
+            raise ValueError("LaTeX bullet braces must be balanced")
+        return source
     phrase = next((p for p in phrases if p and p in text and p != text.strip()), None)
     if not phrase:
         return r"\item " + _tex(text)
@@ -72,6 +98,19 @@ def _bullet(value: object, phrases: list[str]) -> str:
 def _items(values: list[str], phrases: list[str] | None = None) -> str:
     lines = [_bullet(v, phrases or []) for v in values if str(v).strip()]
     return "\n".join([r"\begin{itemize}", *lines, r"\end{itemize}"]) if lines else ""
+
+
+def editable_bullet_lines(resume: dict) -> dict[str, list]:
+    """Return the exact LaTeX item lines shown in the resume detail editor."""
+    phrases = [str(p) for p in resume.get("bold_phrases") or [] if p]
+    return {
+        "experience": [[_bullet(value, phrases) for value in item.get("bullets") or []]
+                       for item in resume.get("experience") or []],
+        "projects": [[_bullet(value, [] if index == 0 else phrases)
+                      for index, value in enumerate(item.get("bullets") or [])]
+                     for item in resume.get("projects") or []],
+        "achievements": [_bullet(value, []) for value in resume.get("achievements") or []],
+    }
 
 
 def _body(resume: dict) -> str:

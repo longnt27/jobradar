@@ -2,7 +2,9 @@ from pathlib import Path
 
 from pypdf import PdfReader
 
-from job_radar.resume_pdf import _body, render_resume
+import pytest
+
+from job_radar.resume_pdf import _body, editable_bullet_lines, render_resume
 from job_radar.settings import Settings
 
 
@@ -31,3 +33,27 @@ def test_user_latex_template_keeps_vietnamese_text_and_escapes_resume_data(tmp_p
     assert "A&B" in text and "100%" in text
     assert "example/project_1" in text
     assert reader.pages[0].get("/Annots")
+
+
+def test_resume_bullets_accept_editable_latex_items(tmp_path: Path) -> None:
+    resume = {
+        "name": "Alex Example", "email": "alex@example.org",
+        "experience": [{"company": "Example Labs", "role": "Engineer", "dates": "2026",
+                        "bullets": [r"\item Built \textbf{Python systems} for search."]}],
+        "projects": [{"title": "Search", "bullets": ["Built a search index.",
+                      r"\item Reached \textbf{95\% recall} on reviewed data."]}],
+        "achievements": [r"\item Won a \textbf{programming award}."],
+    }
+    source = editable_bullet_lines(resume)
+    assert source["experience"][0] == [r"\item Built \textbf{Python systems} for search."]
+    assert source["projects"][0][0] == r"\item Built a search index."
+    assert r"\item Reached \textbf{95\% recall}" in _body(resume)
+    path, _ = render_resume(Settings(tmp_path), "items", resume)
+    extracted = PdfReader(path).pages[0].extract_text()
+    assert "Python systems" in extracted and "95% recall" in extracted
+    resume["experience"][0]["bullets"] = [r"\item \input{/etc/passwd}"]
+    with pytest.raises(ValueError, match="Unsupported LaTeX command"):
+        render_resume(Settings(tmp_path), "unsafe", resume)
+    resume["experience"][0]["bullets"] = [r"\item Reached 95% recall."]
+    with pytest.raises(ValueError, match="Escape LaTeX special characters"):
+        render_resume(Settings(tmp_path), "percent", resume)

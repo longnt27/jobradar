@@ -2446,6 +2446,7 @@ async function showApplication(id) {
   const formData = draft.form_data || {fields:[], answers:{}, attachments:{}};
   draft.form_data = formData;
   const projects = resume.projects || [];
+  const bulletSource = draft.resume_bullet_source || {experience:[], projects:[], achievements:[]};
   const recentChanges = applicationReviewChanges[id] || [];
   const linkedinManual = draft.job_source_kind === 'linkedin' && !['web','email','linkedin_easy_apply'].includes(destination.kind);
   const linkedinPaused = linkedinManual && draft.linkedin_automation_paused;
@@ -2507,13 +2508,14 @@ async function showApplication(id) {
     <section id="application-review-resume" class="application-review-section">
       <div class="section-head"><div><h3>Resume</h3><p class="hint">Review the PDF before approving this application.</p></div><a href="/api/applications/${id}/resume" target="_blank" rel="noopener noreferrer">Open PDF ↗</a></div>
       <div class="application-resume-preview"><button type="button" class="secondary" id="load-resume-preview" disabled>Loading preview…</button><div class="application-preview-pages" hidden></div></div>
-      <details class="application-cv-details"><summary>Edit CV details</summary><div class="application-cv-fields">
+      <details class="application-cv-details"><summary>Edit resume details</summary><div class="application-cv-fields">
+      <p class="hint">Bullet fields show the LaTeX item lines used in the PDF. To make words bold, wrap them in <code>&#92;textbf{...}</code>, then save. This edits the resume directly without using a model.</p>
       <div class="form-grid"><label>Name<input id="draft-name" data-draft-field value="${escapeHtml(resume.name || '')}"></label><label>Email<input id="draft-email" data-draft-field value="${escapeHtml(resume.email || '')}"></label><label>Phone<input id="draft-phone" data-draft-field value="${escapeHtml(resume.phone || '')}"></label><label>Links, one per line<textarea id="draft-links" data-draft-field rows="2">${escapeHtml((resume.links || []).join('\n'))}</textarea></label></div>
       <label>Professional summary<textarea id="draft-summary" data-draft-field rows="3">${escapeHtml(resume.summary || '')}</textarea></label>
-      <h4>Experience</h4>${(resume.experience || []).map((item, index) => `<div class="review-subsection surface-editable"><div class="form-grid"><label>Company<input data-experience-company="${index}" data-draft-field value="${escapeHtml(item.company || '')}"></label><label>Role<input data-experience-role="${index}" data-draft-field value="${escapeHtml(item.role || '')}"></label><label>Dates<input data-experience-dates="${index}" data-draft-field value="${escapeHtml(item.dates || '')}"></label></div><label>Bullets, one per line<textarea data-experience-bullets="${index}" data-draft-field rows="4">${escapeHtml((item.bullets || []).join('\n'))}</textarea></label></div>`).join('') || '<p class="hint">No previous positions in this draft.</p>'}
-      <h4>Selected projects</h4>${projects.map((project, index) => `<div class="review-subsection surface-editable"><div class="form-grid"><label>Title<input data-project-title="${index}" data-draft-field value="${escapeHtml(project.title || '')}"></label><label>Repository URL<input data-project-url="${index}" data-draft-field value="${escapeHtml(project.repository_url || '')}"></label><label>Technologies<input data-project-stack="${index}" data-draft-field value="${escapeHtml((project.tech_stack || []).join(', '))}"></label></div><label>Tailored bullets, one per line<textarea data-project-bullets="${index}" data-draft-field rows="4">${escapeHtml((project.bullets || []).join('\n'))}</textarea></label></div>`).join('') || '<p class="hint">No projects selected for this draft.</p>'}
+      <h4>Experience</h4>${(resume.experience || []).map((item, index) => `<div class="review-subsection surface-editable"><div class="form-grid"><label>Company<input data-experience-company="${index}" data-draft-field value="${escapeHtml(item.company || '')}"></label><label>Role<input data-experience-role="${index}" data-draft-field value="${escapeHtml(item.role || '')}"></label><label>Dates<input data-experience-dates="${index}" data-draft-field value="${escapeHtml(item.dates || '')}"></label></div><label>Experience bullets · LaTeX item lines<textarea class="resume-item-editor" data-experience-bullets="${index}" data-draft-field rows="4">${escapeHtml((bulletSource.experience?.[index] || []).join('\n'))}</textarea></label></div>`).join('') || '<p class="hint">No previous positions in this draft.</p>'}
+      <h4>Selected projects</h4>${projects.map((project, index) => `<div class="review-subsection surface-editable"><div class="form-grid"><label>Title<input data-project-title="${index}" data-draft-field value="${escapeHtml(project.title || '')}"></label><label>Repository URL<input data-project-url="${index}" data-draft-field value="${escapeHtml(project.repository_url || '')}"></label><label>Technologies<input data-project-stack="${index}" data-draft-field value="${escapeHtml((project.tech_stack || []).join(', '))}"></label></div><label>Project bullets · LaTeX item lines<textarea class="resume-item-editor" data-project-bullets="${index}" data-draft-field rows="4">${escapeHtml((bulletSource.projects?.[index] || []).join('\n'))}</textarea></label></div>`).join('') || '<p class="hint">No projects selected for this draft.</p>'}
       <h4>Education</h4>${(resume.education || []).map((item, index) => { const entry = typeof item === 'string' ? {school:item} : item; return `<div class="form-grid review-subsection surface-editable"><label>School<input data-education-school="${index}" data-draft-field value="${escapeHtml(entry.school || '')}"></label><label>Degree<input data-education-degree="${index}" data-draft-field value="${escapeHtml(entry.degree || '')}"></label><label>Dates<input data-education-dates="${index}" data-draft-field value="${escapeHtml(entry.dates || '')}"></label></div>`; }).join('') || '<p class="hint">No education in this draft.</p>'}
-      <label>Achievements, one per line<textarea id="draft-achievements" data-draft-field rows="3">${escapeHtml((resume.achievements || []).join('\n'))}</textarea></label>
+      <label>Achievement bullets · LaTeX item lines<textarea class="resume-item-editor" id="draft-achievements" data-draft-field rows="3">${escapeHtml((bulletSource.achievements || []).join('\n'))}</textarea></label>
       <label>Skills, one per line<textarea id="draft-skills" data-draft-field rows="3">${escapeHtml((resume.skills || []).join('\n'))}</textarea></label>
       <label>Skill groups, one per line as “Group: skills”<textarea id="draft-skill-groups" data-draft-field rows="3">${escapeHtml(Object.entries(resume.skill_groups || {}).map(([group, values]) => `${group}: ${Array.isArray(values) ? values.join(', ') : values}`).join('\n'))}</textarea></label>
       </div></details>
@@ -2708,6 +2710,15 @@ async function showApplication(id) {
 
 async function saveApplication(id, draft) {
   const lines = (value) => value.split('\n').map((x) => x.trim()).filter(Boolean);
+  const bulletSource = draft.resume_bullet_source || {experience:[], projects:[], achievements:[]};
+  const editedBullets = (value, source, originals) => {
+    const items = lines(value);
+    if (items.join('\n') === (source || []).join('\n')) return originals;
+    if (items.some((item) => !item.startsWith('\\item '))) {
+      throw new Error('Each LaTeX bullet line must start with \\item followed by its text.');
+    }
+    return items;
+  };
   const answers = {};
   document.querySelectorAll('[data-answer]').forEach((field) => {
     answers[field.dataset.answer] = ['radio','checkbox'].includes(field.type) && !field.checked ? '' : field.value;
@@ -2739,12 +2750,14 @@ async function saveApplication(id, draft) {
     company:document.querySelector(`[data-experience-company="${index}"]`).value,
     role:document.querySelector(`[data-experience-role="${index}"]`).value,
     dates:document.querySelector(`[data-experience-dates="${index}"]`).value,
-    bullets:lines(document.querySelector(`[data-experience-bullets="${index}"]`).value)}));
+    bullets:editedBullets(document.querySelector(`[data-experience-bullets="${index}"]`).value,
+      bulletSource.experience?.[index], item.bullets || [])}));
   const projects = (draft.resume_data.projects || []).map((project, index) => ({...project,
     title:document.querySelector(`[data-project-title="${index}"]`).value,
     repository_url:document.querySelector(`[data-project-url="${index}"]`).value,
     tech_stack:document.querySelector(`[data-project-stack="${index}"]`).value.split(',').map((x) => x.trim()).filter(Boolean),
-    bullets:lines(document.querySelector(`[data-project-bullets="${index}"]`).value)}));
+    bullets:editedBullets(document.querySelector(`[data-project-bullets="${index}"]`).value,
+      bulletSource.projects?.[index], project.bullets || [])}));
   const education = (draft.resume_data.education || []).map((item, index) => ({...(typeof item === 'string' ? {} : item),
     school:document.querySelector(`[data-education-school="${index}"]`).value,
     degree:document.querySelector(`[data-education-degree="${index}"]`).value,
@@ -2754,7 +2767,8 @@ async function saveApplication(id, draft) {
   }));
   const resume_data = {...draft.resume_data, name:$('#draft-name').value, email:$('#draft-email').value,
     phone:$('#draft-phone').value, links:lines($('#draft-links').value), summary:$('#draft-summary').value,
-    experience, projects, education, achievements:lines($('#draft-achievements').value),
+    experience, projects, education, achievements:editedBullets($('#draft-achievements').value,
+      bulletSource.achievements, draft.resume_data.achievements || []),
     skills:lines($('#draft-skills').value), skill_groups};
   const payload = {resume_data, message_data:{subject:$('#draft-subject').value, body:$('#draft-body').value}, form_data:{...draft.form_data, answers, attachments}, destination};
   return api(`/api/applications/${id}`, {method:'PATCH', body:JSON.stringify(payload)});

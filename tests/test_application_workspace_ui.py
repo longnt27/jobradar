@@ -155,7 +155,7 @@ def test_application_workspace_filters_reviews_and_confirms_send(tmp_path: Path,
                 page.get_by_role("button", name="Regenerate", exact=True).click()
                 assert page.locator("#regenerate-section option").all_text_contents() == [
                     "Professional summary", "Experience bullets", "Selected projects and bullets",
-                    "Education wording", "Achievements", "Skills", "Application email", "Full draft · uses more quota",
+                        "Education wording", "Achievements", "Skills", "Application experience and project fit", "Full draft · uses more quota",
                 ]
                 assert page.get_by_role("button", name="Form", exact=True).count() == 0
                 preview = page.locator('#application-review-resume img[alt="Resume page 1"]')

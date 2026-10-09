@@ -348,6 +348,7 @@ input,textarea,select{font-weight:400}
 .application-cv-fields{padding:4px 16px 18px;border-top:1px solid #dce6df}
 .application-cv-fields>label{display:block;margin-top:14px}
 .application-cv-fields>h4{margin:20px 0 10px}
+.resume-item-editor{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;line-height:1.5;tab-size:2}
 .job-original-actions{margin:12px 0 18px}
 .application-form-fields{display:grid;gap:14px}
 .application-form-field{padding:12px;border:1px solid #dfe7e2;border-radius:9px;background:#fbfcfb}
