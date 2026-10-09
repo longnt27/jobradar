@@ -18,7 +18,7 @@ from .drafting import draft_custom_answers, get_draft, package_hash
 from .mail_config import send_smtp_message, validated_smtp_config
 from .linkedin_application import inspect_linkedin_application, submit_easy_apply_dialog
 from .settings import Settings
-from .social_browser import chrome_context_options
+from .social_browser import chrome_context_options, clean_stale_chrome_lock
 
 
 def submission_attachment(row: dict, field_index: str) -> tuple[Path, str] | None:
@@ -130,7 +130,7 @@ async def _career_form_actions(page: Page) -> list[dict]:
         if (/join (our |the )?team|start (your )?(application|journey)|send (us )?your (cv|resume)|gửi hồ sơ|đăng ký ứng tuyển/i.test(hints)) score+=5;
         if (/continue|next step|proceed|register interest|i.m interested|im interested|interested in this/i.test(label)) score+=5;
         if (/\b(form|recruit|career|candidate)\b/i.test(href)) score+=2;
-        if (/sign.?in|log.?in|share|save|back|close|cancel|search|filter|subscribe|learn more|read more|powered by|privacy|terms/i.test(label)) score-=10;
+        if (/skip to|sign.?in|log.?in|share|save|back|close|cancel|search|filter|subscribe|learn more|read more|powered by|privacy|terms/i.test(label)) score-=10;
         if (score > 0) {
           node.setAttribute('data-job-radar-career-action', String(index));
           return {index,tag:node.tagName,label,href,score};
@@ -149,6 +149,13 @@ async def _open_application_form(page: Page, reviewed_opener: dict | None = None
         except ValueError:
             pass
     actions = await _career_form_actions(page)
+    if not actions:
+        try:
+            await page.wait_for_selector('a[href],button,[role=button]', timeout=4000)
+            await page.wait_for_timeout(1000)
+            actions = await _career_form_actions(page)
+        except Exception:
+            pass
     if reviewed_opener is not None:
         chosen_candidates = [action for action in actions if all(action.get(key) == reviewed_opener.get(key)
                              for key in ("index", "tag", "label", "href"))]
@@ -233,6 +240,10 @@ def _default_answer(field: dict, profile: dict, message: dict) -> str:
                          (r"notice.?period|start.?date", "notice_period"), (r"relocat", "relocation")):
         if re.search(pattern, text):
             return str(profile.get(key, ""))
+    if re.search(r"reason.*(leav|left|exit)", text):
+        return "Seeking career growth as an AI Engineer in a dynamic engineering team."
+    if re.search(r"country", text):
+        return str(profile.get("country") or "Vietnam")
     patterns = [
         (r"e.?mail", "email"), (r"phone|mobile|telephone", "phone"),
         (r"first.?name|given.?name", "first_name"), (r"last.?name|sur.?name|family.?name", "last_name"),
@@ -242,9 +253,13 @@ def _default_answer(field: dict, profile: dict, message: dict) -> str:
     for pattern, key in patterns:
         if re.search(pattern, text):
             if key == "first_name":
-                return str(profile.get("given_name", ""))
+                parts = profile.get("name", "").split()
+                return str(profile.get("given_name") or (parts[-1] if parts else ""))
             if key == "last_name":
-                return str(profile.get("family_name", ""))
+                parts = profile.get("name", "").split()
+                return str(profile.get("family_name") or (" ".join(parts[:-1]) if len(parts) > 1 else (parts[0] if parts else "")))
+            if key == "location":
+                return str(profile.get("location") or "Hanoi, Vietnam")
             if key in ("linkedin", "github"):
                 return next((link for link in profile.get("links", []) if key in link.casefold()), "")
             return str(profile.get(key, ""))
@@ -266,11 +281,14 @@ async def inspect_form(db: Database, settings: Settings, draft_id: str) -> dict:
     if is_linkedin_job_posting_url(destination["url"]):
         raise ValueError("A LinkedIn job posting is not an application form. Open its Apply button instead")
     found_email: str | None = None
+    structure: dict | None = None
+    clean_stale_chrome_lock(settings.browser_profile)
     async with async_playwright() as playwright:
         try:
             context = await playwright.chromium.launch_persistent_context(str(settings.browser_profile), headless=True, **chrome_context_options())
         except Exception as error:
             if "SingletonLock" in str(error) or "ProcessSingleton" in str(error):
+                clean_stale_chrome_lock(settings.browser_profile)
                 await asyncio.sleep(2.0)
                 context = await playwright.chromium.launch_persistent_context(str(settings.browser_profile), headless=True, **chrome_context_options())
             else:
@@ -281,16 +299,31 @@ async def inspect_form(db: Database, settings: Settings, draft_id: str) -> dict:
             try:
                 _, structure = await _open_application_form(page)
             except ValueError as err:
-                found_email = await _find_application_email(page)
-                if not found_email:
-                    raise err
+                gh_match = re.search(r"[?&](?:gh_jid|token)=(\d+)", page.url) or re.search(r"[?&](?:gh_jid|token)=(\d+)", destination["url"])
+                if gh_match:
+                    token = gh_match.group(1)
+                    board_match = re.search(r"job-boards\.greenhouse\.io/([a-zA-Z0-9_-]+)", page.url) or re.search(r"https?://(?:www\.)?([a-zA-Z0-9_-]+)\.", page.url)
+                    board = board_match.group(1) if board_match else (draft.get("company_name", "").casefold().replace(" ", "") or "company")
+                    embed_url = f"https://job-boards.greenhouse.io/embed/job_app?for={board}&token={token}"
+                    try:
+                        await page.goto(embed_url, wait_until="domcontentloaded", timeout=30000)
+                        _, structure = await _open_application_form(page)
+                        destination["url"] = embed_url
+                        db.execute("UPDATE application_drafts SET destination=?,updated_at=? WHERE id=?",
+                                   (json.dumps(destination, ensure_ascii=False), now(), draft_id))
+                    except Exception:
+                        pass
+                if not structure:
+                    found_email = await _find_application_email(page)
+                    if not found_email:
+                        raise err
         finally:
             await context.close()
     if found_email:
         return set_discovered_email_destination(db, draft_id, found_email, f"Recruitment email {found_email} discovered on employer page {destination['url']}.")
     profile = db.get_setting("profile", {})
     existing = draft["form_data"].get("answers", {})
-    answers = {str(field["index"]): existing.get(str(field["index"]), _default_answer(field, profile, draft["message_data"]))
+    answers = {str(field["index"]): (existing.get(str(field["index"])) or _default_answer(field, profile, draft["message_data"]))
                for field in structure["fields"] if field["type"] != "file"}
     if draft["provider"] != "template":
         cards = [card for card in draft["resume_data"].get("evidence", []) if card.get("id") in draft["evidence_ids"]]

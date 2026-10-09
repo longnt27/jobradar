@@ -1,9 +1,31 @@
-from __future__ import annotations
-
+import os
 import shutil
 from pathlib import Path
 
 from .db import Database
+
+
+def clean_stale_chrome_lock(profile_dir: Path | str) -> None:
+    profile = Path(profile_dir)
+    lock_file = profile / "SingletonLock"
+    if not lock_file.is_symlink() and not lock_file.exists():
+        return
+    try:
+        target = os.readlink(lock_file)
+        pid_str = target.rsplit("-", 1)[-1]
+        pid = int(pid_str)
+        try:
+            os.kill(pid, 0)
+            return
+        except OSError:
+            pass
+    except Exception:
+        pass
+    for name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+        try:
+            (profile / name).unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 SITES = ("linkedin", "facebook")

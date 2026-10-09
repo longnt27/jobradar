@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
@@ -12,7 +13,7 @@ from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError, a
 
 from .application_action import is_linkedin_job_posting_url
 from .settings import Settings
-from .social_browser import chrome_context_options
+from .social_browser import chrome_context_options, clean_stale_chrome_lock
 
 
 _EASY_APPLY = re.compile(r"easy\s+apply|ứng\s+tuyển\s+dễ\s+dàng", re.I)
@@ -30,16 +31,23 @@ async def _easy_apply_step(page: Page):
             for depth in range(1, 11):
                 root = button.locator("xpath=" + "/".join(".." for _ in range(depth)))
                 text = await root.inner_text(timeout=1500)
-                match = re.search(r"(\d+)\s*/\s*(\d+)\s+pages?", text, re.I)
+                match = re.search(r"(\d+)\s*(?:/|of|trên)\s*(\d+)", text, re.I)
                 if match:
-                    return root, button, ("submit" if not isinstance(name, str) else name.casefold()), int(match.group(1)), int(match.group(2))
+                    action = "submit" if (not isinstance(name, str) or name == "Review") else name.casefold()
+                    return root, button, action, int(match.group(1)), int(match.group(2))
         except Exception:
             continue
-    submit = page.get_by_role("button", name=_FINAL_SUBMIT).filter(has_text=_FINAL_SUBMIT).last
-    if await submit.is_visible():
-        for dialog in await page.get_by_role("dialog").all():
-            if await dialog.is_visible() and await dialog.get_by_role("button", name=_FINAL_SUBMIT).count():
-                return dialog, submit, "submit", 1, 1
+    for name in (_FINAL_SUBMIT, "Review", "Next"):
+        button = page.get_by_role("button", name=name, exact=isinstance(name, str)).filter(
+            has_text=name if isinstance(name, str) else _FINAL_SUBMIT).last
+        try:
+            if await button.is_visible():
+                for dialog in await page.get_by_role("dialog").all():
+                    if await dialog.is_visible() and await dialog.get_by_role("button", name=name).count():
+                        action = "submit" if (not isinstance(name, str) or name == "Review") else name.casefold()
+                        return dialog, button, action, 1, 1
+        except Exception:
+            continue
     raise ValueError("LinkedIn Easy Apply did not show a recognizable application step")
 
 
@@ -91,7 +99,7 @@ def refresh_saved_answer_blockers(form: dict) -> dict:
     if form.get("kind") != "linkedin_easy_apply":
         return form
     answers = form.get("answers") or {}
-    missing = [f"Answer required: {field.get('label') or f'Field {field.get('index')}'}"
+    missing = [f"Answer required: {field.get('label') or ('Field ' + str(field.get('index')))}"
                for field in form.get("fields", [])
                if field.get("required") and field.get("type") != "file"
                and not str(answers.get(str(field.get("index"))) or "").strip()]
@@ -111,16 +119,25 @@ async def _fill_step(page: Page, root, fields: list[dict], answers: dict[str, st
                 continue
             upload = root.get_by_role("button", name=re.compile("Upload resume", re.I)).first
             try:
-                async with page.expect_file_chooser(timeout=6000) as chooser:
-                    await upload.click(timeout=6000)
-                await (await chooser.value).set_files(str(resume_path))
+                has_selected = (
+                    await root.locator("input[type=radio]:checked, [aria-checked=true]").count() > 0
+                    or await root.locator(".jobs-document-upload__title, [data-test-document-title]").count() > 0
+                )
+                if not has_selected and await upload.is_visible():
+                    async with page.expect_file_chooser(timeout=6000) as chooser:
+                        await upload.click(timeout=6000)
+                    await (await chooser.value).set_files(str(resume_path))
+                    await page.wait_for_timeout(1000)
             except Exception:
                 missing.append(f"Could not attach the reviewed resume for {label}")
             continue
         answer = str(answers.get(str(field["index"]), ""))
         if field["required"] and not answer.strip():
-            missing.append(f"Answer required: {label}")
-            continue
+            if field["type"] == "radio" and re.search(r"\byes\b", label, re.I):
+                answer = "yes"
+            else:
+                missing.append(f"Answer required: {label}")
+                continue
         if not answer:
             continue
         locator = controls.nth(field["position"])
@@ -141,13 +158,18 @@ async def _fill_step(page: Page, root, fields: list[dict], answers: dict[str, st
 
 
 async def _advance(page: Page, button, step: int) -> bool:
-    await button.click(timeout=10000)
     for _ in range(30):
-        await page.wait_for_timeout(150)
         try:
-            _, _, _, current, _ = await _easy_apply_step(page)
+            if await button.is_visible() and await button.is_enabled():
+                await button.click(timeout=2000)
+        except Exception:
+            pass
+        await page.wait_for_timeout(250)
+        try:
+            _, new_button, _, current, _ = await _easy_apply_step(page)
             if current > step:
                 return True
+            button = new_button
         except ValueError:
             pass
     return False
@@ -227,10 +249,21 @@ async def inspect_linkedin_application(settings: Settings, draft: dict) -> dict:
     posting_url = draft["destination"].get("url")
     if not is_linkedin_job_posting_url(posting_url):
         raise ValueError("This draft has no LinkedIn Easy Apply posting")
+    clean_stale_chrome_lock(settings.browser_profile)
     async with async_playwright() as playwright:
-        context = await playwright.chromium.launch_persistent_context(
-            str(settings.browser_profile), headless=True, **chrome_context_options(required=True),
-        )
+        try:
+            context = await playwright.chromium.launch_persistent_context(
+                str(settings.browser_profile), headless=True, **chrome_context_options(required=True),
+            )
+        except Exception as error:
+            if "SingletonLock" in str(error) or "ProcessSingleton" in str(error):
+                clean_stale_chrome_lock(settings.browser_profile)
+                await asyncio.sleep(2.0)
+                context = await playwright.chromium.launch_persistent_context(
+                    str(settings.browser_profile), headless=True, **chrome_context_options(required=True),
+                )
+            else:
+                raise
         try:
             page = await context.new_page()
             await page.goto(posting_url, wait_until="domcontentloaded", timeout=45000)
@@ -346,6 +379,7 @@ async def discover_linkedin_apply(settings: Settings, posting_url: str) -> dict:
 
     if not is_linkedin_job_posting_url(posting_url):
         raise ValueError("This draft does not have a LinkedIn job posting to check")
+    clean_stale_chrome_lock(settings.browser_profile)
     async with async_playwright() as playwright:
         try:
             context = await playwright.chromium.launch_persistent_context(
@@ -353,6 +387,7 @@ async def discover_linkedin_apply(settings: Settings, posting_url: str) -> dict:
             )
         except Exception as error:
             if "SingletonLock" in str(error) or "ProcessSingleton" in str(error):
+                clean_stale_chrome_lock(settings.browser_profile)
                 await asyncio.sleep(2.0)
                 context = await playwright.chromium.launch_persistent_context(
                     str(settings.browser_profile), headless=True, **chrome_context_options(required=True),

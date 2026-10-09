@@ -551,42 +551,9 @@ class AutoApplyManager:
             self._set_status(job_id, "needs_review", "Choose an application drafting provider in My profile.")
             return
         draft = await asyncio.to_thread(prepare_draft, self.db, self.settings, job_id, provider, existing_draft_id)
-        if provider == "chatgpt_web":
-            if not self.chatgpt_input or not self.chatgpt_input.status().get("logged_in"):
-                self._set_status(
-                    job_id,
-                    "needs_review",
-                    "Starter draft created. Sign in to ChatGPT in Settings to complete drafting.",
-                    draft["id"],
-                )
-                await self.notify_review(draft["id"])
-                return
-            self._set_status(job_id, "preparing", "Drafting application in ChatGPT Web...", draft["id"])
-            try:
-                prompt = application_prompt(self.db, draft["id"], "all", "")
-                result = await self.chatgpt_input.enter(prompt)
-                if result.get("reply"):
-                    apply_chatgpt_reply(self.db, self.settings, draft["id"], "all", result["reply"], "")
-                    draft = get_draft(self.db, draft["id"])
-                else:
-                    if await self._record_failure(
-                        job_id,
-                        f"ChatGPT Web draft incomplete: {result.get('detail') or 'No reply received'}",
-                        draft["id"],
-                    ):
-                        return
-                    return
-            except Exception as error:
-                if await self._record_failure(
-                    job_id,
-                    f"ChatGPT Web drafting failed: {error}",
-                    draft["id"],
-                ):
-                    return
-                return
         self._set_status(job_id, "preparing", "Draft prepared; checking application details", draft["id"])
         if not manual and not self._still_eligible(job_id):
-            self._set_status(job_id, "needs_review", "Automatic preparation paused or job score changed.")
+            self._set_status(job_id, "needs_review", "Automatic preparation paused or job score changed.", draft["id"])
             return
         if draft.get("job_source_kind") == "linkedin" and draft["destination"].get("kind") not in {"web", "email"}:
             try:
@@ -625,6 +592,25 @@ class AutoApplyManager:
                     self.db.execute("UPDATE application_drafts SET form_data=?,updated_at=? WHERE id=?",
                                     (json.dumps(form_data, ensure_ascii=False), now(), draft["id"]))
                     draft = get_draft(self.db, draft["id"])
+        if provider == "chatgpt_web":
+            if not self.chatgpt_input or not self.chatgpt_input.status().get("logged_in"):
+                self._set_status(
+                    job_id,
+                    "awaiting_review" if not send_readiness(self.db, self.settings, draft) else "needs_review",
+                    "Starter draft created. Sign in to ChatGPT in Settings to complete drafting.",
+                    draft["id"],
+                )
+                await self.notify_review(draft["id"])
+                return
+            self._set_status(job_id, "preparing", "Drafting application in ChatGPT Web...", draft["id"])
+            try:
+                prompt = application_prompt(self.db, draft["id"], "all", "")
+                result = await self.chatgpt_input.enter(prompt)
+                if result.get("reply"):
+                    apply_chatgpt_reply(self.db, self.settings, draft["id"], "all", result["reply"], "")
+                    draft = get_draft(self.db, draft["id"])
+            except Exception as error:
+                log.warning("ChatGPT Web drafting for %s encountered: %s", job_id, error)
         blockers = send_readiness(self.db, self.settings, draft)
         if blockers:
             self._set_status(job_id, "needs_review", "; ".join(blockers), draft["id"])
