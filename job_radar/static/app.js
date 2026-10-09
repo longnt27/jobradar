@@ -2135,11 +2135,21 @@ async function loadApplications(selectedId = null, preferredScreen = null) {
   applicationsPages = result.pages;
   populateApplicationCompanyFilter([...new Set([...(result.companies || []), ...preparations.map((item) => item.company)])]);
   if (selectedId) {
-    activeApplicationId = selectedId;
+    if (applicationDrafts.some((draft) => draft.id === selectedId)) {
+      activeApplicationId = selectedId;
+    } else {
+      activeApplicationId = applicationDrafts[0]?.id || null;
+      if (location.hash.startsWith('#applications/')) {
+        history.replaceState({tab:'applications'}, '', activeApplicationId ? `#applications/${activeApplicationId}` : '#applications');
+      }
+    }
     activePreparationJobId = null;
     setApplicationWorkspaceView('drafts');
-  } else if (activeApplicationId && !applicationDrafts.some((draft) => draft.id === activeApplicationId)) {
-    activeApplicationId = null;
+  } else if (!activeApplicationId || !applicationDrafts.some((draft) => draft.id === activeApplicationId)) {
+    activeApplicationId = applicationDrafts[0]?.id || null;
+    if (location.hash.startsWith('#applications/')) {
+      history.replaceState({tab:'applications'}, '', activeApplicationId ? `#applications/${activeApplicationId}` : '#applications');
+    }
   }
   const completedPreparation = activePreparationJobId && applicationDrafts.find((draft) => draft.vacancy_id === activePreparationJobId);
   if (completedPreparation) {
@@ -2147,11 +2157,14 @@ async function loadApplications(selectedId = null, preferredScreen = null) {
     activeApplicationId = completedPreparation.id;
   }
   renderApplicationList(result.total);
-  if (selectedId) await showApplication(selectedId, preferredScreen);
+  if (activeApplicationId) await showApplication(activeApplicationId, preferredScreen);
   else if (completedPreparation) await showApplication(completedPreparation.id, preferredScreen);
   else if (activePreparationJobId) {
     const issue = applicationPreparations.find((item) => item.vacancy_id === activePreparationJobId);
     if (issue) showPreparationIssue(issue);
+  } else {
+    const detail = $('#application-detail');
+    if (detail) detail.innerHTML = '<div class="panel empty"><p>No application drafts to display.</p></div>';
   }
   clearTimeout(window.applicationPreparationPoll);
   if (applicationPreparations.some((item) => ['queued','preparing'].includes(item.status)) &&
@@ -2477,7 +2490,28 @@ async function showApplication(id, preferredScreen = null) {
     applicationList.scrollTop += offset - Math.max(0, (applicationList.clientHeight - selectedCard.clientHeight) / 2);
   }
 
-  const [draft, profile] = await Promise.all([api(`/api/applications/${id}`), api('/api/profile')]);
+  let draft, profile;
+  try {
+    [draft, profile] = await Promise.all([api(`/api/applications/${id}`), api('/api/profile')]);
+  } catch (error) {
+    if (error.status === 404) {
+      activeApplicationId = null;
+      if (location.hash.startsWith('#applications/')) {
+        history.replaceState({tab:'applications'}, '', '#applications');
+      }
+      if (applicationDrafts && applicationDrafts.length > 0) {
+        const next = applicationDrafts.find((d) => d.id !== id) || applicationDrafts[0];
+        if (next && next.id !== id) {
+          return await showApplication(next.id, preferredScreen);
+        }
+      }
+      const detail = $('#application-detail');
+      if (detail) detail.innerHTML = '<div class="panel empty"><p>This draft is no longer available.</p></div>';
+      renderApplicationList();
+      return;
+    }
+    throw error;
+  }
   const job = draft.job || await api(`/api/jobs/${draft.vacancy_id}`).catch(() => ({}));
   let currentScreen = preferredScreen || 'first-glance';
   activeApplicationScreen = currentScreen;

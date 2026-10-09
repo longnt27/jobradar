@@ -157,6 +157,9 @@ def resolve_application_action(db: Database, job: dict, *, observations: list[di
             ))
 
         apply_url = payload.get("apply_url")
+        if apply_url:
+            from .linkedin_application import unwrap_linkedin_redirect
+            apply_url = unwrap_linkedin_redirect(apply_url) or apply_url
         mail = _mailto(apply_url)
         if mail:
             candidates.append(_candidate(
@@ -199,6 +202,9 @@ def resolve_application_action(db: Database, job: dict, *, observations: list[di
             ))
 
     direct = job.get("apply_url")
+    if direct:
+        from .linkedin_application import unwrap_linkedin_redirect
+        direct = unwrap_linkedin_redirect(direct) or direct
     mail = _mailto(direct)
     if mail:
         candidates.append(_candidate(

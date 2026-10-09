@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, Field
 
 from .application_action import is_linkedin_job_posting_url, resolve_application_action, reviewed_application_action
+from .linkedin_application import unwrap_linkedin_redirect
 from .db import Database, new_id, now
 from .settings import Settings
 
@@ -1132,6 +1133,9 @@ def set_discovered_web_destination(db: Database, identifier: str, url: str) -> d
         raise ValueError("This application cannot be changed after a send attempt")
     if draft["destination"].get("kind") in {"web", "email"}:
         raise ValueError("This application already has a destination; review it before replacing it")
+    unwrapped = unwrap_linkedin_redirect(url)
+    if unwrapped:
+        url = unwrapped
     parts = urlsplit(url)
     if parts.scheme not in {"http", "https"} or not parts.hostname or is_linkedin_job_posting_url(url):
         raise ValueError("The Apply button did not open an external application form")
@@ -1139,6 +1143,25 @@ def set_discovered_web_destination(db: Database, identifier: str, url: str) -> d
         "kind": "web", "action_type": "web_form", "url": url,
         "provenance": "linkedin_apply_button", "confidence": "high",
         "evidence": "External destination opened from the LinkedIn posting's Apply control.",
+    }
+    warnings = [item for item in draft["warnings"] if item not in (DESTINATION_WARNING, LEGACY_DESTINATION_WARNING)]
+    db.execute(
+        "UPDATE application_drafts SET destination=?,form_data=?,warnings=?,status='draft',updated_at=? WHERE id=?",
+        (json.dumps(destination, ensure_ascii=False), json.dumps({"fields": [], "answers": {}, "attachments": {}}),
+         json.dumps(warnings, ensure_ascii=False), now(), identifier),
+    )
+    return get_draft(db, identifier)
+
+
+def set_discovered_email_destination(db: Database, identifier: str, email: str, evidence: str = "") -> dict:
+    """Record an application email discovered on the employer page."""
+    draft = get_draft(db, identifier)
+    if draft["status"] in {"sent", "submission_uncertain"}:
+        raise ValueError("This application cannot be changed after a send attempt")
+    destination = {
+        "kind": "email", "action_type": "email", "email": email,
+        "provenance": "employer_page_email", "confidence": "high",
+        "evidence": evidence or f"Recruitment email {email} discovered on employer page.",
     }
     warnings = [item for item in draft["warnings"] if item not in (DESTINATION_WARNING, LEGACY_DESTINATION_WARNING)]
     db.execute(

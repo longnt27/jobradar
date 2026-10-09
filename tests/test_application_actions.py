@@ -407,3 +407,114 @@ def test_conflicting_explicit_destinations_require_manual_review(tmp_path: Path)
     assert action["action_type"] == "manual"
     assert action["provenance"] == "conflicting_explicit_evidence"
     assert any("No verified application method" in warning for warning in draft["warnings"])
+
+
+def test_unwrap_linkedin_redirect() -> None:
+    from job_radar.linkedin_application import unwrap_linkedin_redirect
+
+    assert unwrap_linkedin_redirect(None) is None
+    assert unwrap_linkedin_redirect("https://www.linkedin.com/jobs/view/123") is None
+    assert unwrap_linkedin_redirect("https://example.org/apply") is None
+
+    wrapped_zoho = "https://www.linkedin.com/safety/go/?url=https%3A%2F%2Fvinfast.zohorecruit.com%2Fjobs%2FCareers%2F789%3Fsource%3DLinkedin&urlhash=abc"
+    assert unwrap_linkedin_redirect(wrapped_zoho) == "https://vinfast.zohorecruit.com/jobs/Careers/789?source=Linkedin"
+
+    wrapped_lever = "https://www.linkedin.com/safety/go?url=https%3A%2F%2Fjobs.lever.co%2Fbinance%2F123%2Fapply%3Fsource%3DLinkedIn"
+    assert unwrap_linkedin_redirect(wrapped_lever) == "https://jobs.lever.co/binance/123/apply?source=LinkedIn"
+
+    wrapped_internal = "https://www.linkedin.com/safety/go?url=https%3A%2F%2Fwww.linkedin.com%2Fin%2Fsomeone"
+    assert unwrap_linkedin_redirect(wrapped_internal) is None
+
+
+def test_linkedin_external_apply_unwraps_safety_redirect(tmp_path: Path) -> None:
+    wrapped = "https://www.linkedin.com/safety/go/?url=https%3A%2F%2Fjobs.lever.co%2Fexample%2Fabc123%3Fsource%3DLinkedIn&urlhash=abc"
+    draft = _prepare(tmp_path, "linkedin", ObservedJob(
+        "https://www.linkedin.com/jobs/view/201/", "AI Engineer", "Example",
+        "Deploy model systems.",
+        apply_url=wrapped,
+        raw_text="AI Engineer\nApply\nDeploy model systems.",
+    ))
+    action = draft["destination"]
+    assert action["action_type"] == "web_form"
+    assert action["url"] == "https://jobs.lever.co/example/abc123?source=LinkedIn"
+    assert action["provenance"] == "linkedin_external_apply"
+
+
+def test_open_application_form_handles_duplicate_apply_buttons(tmp_path: Path) -> None:
+    class DuplicateButtonHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path == "/apply-page":
+                body = b'<form action="/submitted" method="post"><label>Full name<input name="name" required></label><label>Resume<input type="file" name="cv" required></label><button type="submit">Apply</button></form>'
+            else:
+                body = b'''
+                <html><body>
+                <header><a href="/apply-page">APPLY NOW</a></header>
+                <main><p>Job details here.</p></main>
+                <footer><a href="/apply-page">APPLY NOW</a></footer>
+                </body></html>
+                '''
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), DuplicateButtonHandler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        url = f"http://127.0.0.1:{server.server_port}/job"
+        draft = _prepare(tmp_path, "career", ObservedJob(
+            url, "AI Engineer", "Example", "Work with AI", apply_url=url,
+        ))
+        app = create_app(Settings(tmp_path))
+        asyncio.run(inspect_form(app.state.db, app.state.settings, draft["id"]))
+        from job_radar.drafting import get_draft
+        updated = get_draft(app.state.db, draft["id"])
+        assert any(field["name"] == "name" for field in updated["form_data"]["fields"])
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
+def test_inspect_form_falls_back_to_discovered_email(tmp_path: Path) -> None:
+    class EmailOnlyHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = b'''
+            <html><body>
+            <main>
+              <h1>AI Engineer Opening</h1>
+              <p>We do not use an online form. Please submit your application and CV to <a href="mailto:careers@corp.example.org">careers@corp.example.org</a>.</p>
+            </main>
+            </body></html>
+            '''
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), EmailOnlyHandler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        url = f"http://127.0.0.1:{server.server_port}/careers/ai-eng"
+        draft = _prepare(tmp_path, "career", ObservedJob(
+            url, "AI Engineer", "Example", "Work with AI", apply_url=url,
+        ))
+        app = create_app(Settings(tmp_path))
+        asyncio.run(inspect_form(app.state.db, app.state.settings, draft["id"]))
+        from job_radar.drafting import get_draft
+        updated = get_draft(app.state.db, draft["id"])
+        assert updated["destination"]["kind"] == "email"
+        assert updated["destination"]["email"] == "careers@corp.example.org"
+        assert updated["destination"]["provenance"] == "employer_page_email"
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)

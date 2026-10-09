@@ -88,9 +88,35 @@ async def _form_structure(page: Page) -> dict:
             "signature": _field_signature(fields, metadata["action"], metadata["method"], metadata["enctype"]), "final_url": page.url}
 
 
+async def _dismiss_cookie_dialogs(page: Page) -> None:
+    cookie_selectors = [
+        'button:has-text("Accept all")',
+        'button:has-text("Accept All")',
+        'button:has-text("Accept Cookies")',
+        'button:has-text("Accept cookies")',
+        'button:has-text("Accept")',
+        'button:has-text("I agree")',
+        'button:has-text("Agree")',
+        'button:has-text("Đồng ý")',
+        'button:has-text("Chấp nhận")',
+        '.cookie-accept-btn',
+        '#onetrust-accept-btn-handler',
+        '[data-testid="cookie-accept"]',
+    ]
+    for sel in cookie_selectors:
+        try:
+            loc = page.locator(sel).first
+            if await loc.count() > 0 and await loc.is_visible():
+                await loc.click(timeout=1000)
+                await page.wait_for_timeout(300)
+                break
+        except Exception:
+            pass
+
+
 async def _career_form_actions(page: Page) -> list[dict]:
     return await page.evaluate(r"""() => {
-      const root = document.querySelector('main,[role=main]') || document.body;
+      const root = document.body || document.documentElement;
       const nodes = [...root.querySelectorAll('a[href],button,[role=button]')];
       return nodes.map((node,index) => {
         const box=node.getBoundingClientRect();
@@ -102,16 +128,21 @@ async def _career_form_actions(page: Page) -> list[dict]:
         let score=0;
         if (/apply|application|ứng tuyển|nộp hồ sơ|submit.{0,12}(cv|resume)|send.{0,12}(cv|resume)/i.test(hints)) score+=6;
         if (/join (our |the )?team|start (your )?(application|journey)|send (us )?your (cv|resume)|gửi hồ sơ|đăng ký ứng tuyển/i.test(hints)) score+=5;
-        if (/continue|next step|proceed|register interest|i.m interested/i.test(label)) score+=2;
+        if (/continue|next step|proceed|register interest|i.m interested|im interested|interested in this/i.test(label)) score+=5;
         if (/\b(form|recruit|career|candidate)\b/i.test(href)) score+=2;
-        if (/sign.?in|log.?in|share|save|back|close|cancel|search|filter|subscribe|learn more|read more/i.test(label)) score-=10;
-        return score>0 ? {index,tag:node.tagName,label,href,score} : null;
+        if (/sign.?in|log.?in|share|save|back|close|cancel|search|filter|subscribe|learn more|read more|powered by|privacy|terms/i.test(label)) score-=10;
+        if (score > 0) {
+          node.setAttribute('data-job-radar-career-action', String(index));
+          return {index,tag:node.tagName,label,href,score};
+        }
+        return null;
       }).filter(Boolean).sort((a,b)=>b.score-a.score);
     }""")
 
 
 async def _open_application_form(page: Page, reviewed_opener: dict | None = None) -> tuple[Page, dict]:
     """Follow a specific career-page action to a visible application form."""
+    await _dismiss_cookie_dialogs(page)
     if reviewed_opener is None:
         try:
             return page, await _form_structure(page)
@@ -119,32 +150,77 @@ async def _open_application_form(page: Page, reviewed_opener: dict | None = None
             pass
     actions = await _career_form_actions(page)
     if reviewed_opener is not None:
-        chosen = next((action for action in actions if all(action.get(key) == reviewed_opener.get(key)
-                        for key in ("index", "tag", "label", "href"))), None)
-        if chosen is None:
+        chosen_candidates = [action for action in actions if all(action.get(key) == reviewed_opener.get(key)
+                             for key in ("index", "tag", "label", "href"))]
+        if not chosen_candidates:
             raise ValueError("Application button changed after review; inspect the form again")
     else:
         if not actions or actions[0]["score"] < 2:
             raise ValueError("No application form or recognizable form-opening button was found")
-        top = actions[0]
-        ambiguous = [action for action in actions[1:] if action["score"] >= top["score"] - 1]
-        if ambiguous:
-            labels = ", ".join(repr(action["label"] or action["href"]) for action in [top, *ambiguous][:5])
-            raise ValueError(f"Multiple possible application buttons were found: {labels}. Choose the application page manually.")
-        chosen = top
-    root = page.locator("main,[role=main]").first if await page.locator("main,[role=main]").count() else page.locator("body")
-    opened: list[Page] = []
-    page.context.on("page", lambda new_page: opened.append(new_page))
-    await root.locator('a[href],button,[role="button"]').nth(chosen["index"]).click(timeout=12000)
-    for _ in range(30):
-        target = opened[-1] if opened else page
+        seen = set()
+        deduped = []
+        for a in actions:
+            key = (a["label"].casefold().strip(), a["href"])
+            if key not in seen:
+                seen.add(key)
+                deduped.append(a)
+        top_score = deduped[0]["score"]
+        chosen_candidates = [a for a in deduped if a["score"] >= top_score - 2][:3]
+
+    for chosen in chosen_candidates:
+        opened: list[Page] = []
+        page.context.on("page", lambda new_page: opened.append(new_page))
+        loc = page.locator(f'[data-job-radar-career-action="{chosen["index"]}"]').first
+        if await loc.count() == 0:
+            root = page.locator("main,[role=main]").first if await page.locator("main,[role=main]").count() else page.locator("body")
+            loc = root.locator('a[href],button,[role="button"]').nth(chosen["index"])
         try:
-            structure = await _form_structure(target)
-            structure["opener"] = {key: chosen[key] for key in ("index", "tag", "label", "href")}
-            return target, structure
-        except ValueError:
-            await page.wait_for_timeout(250)
-    raise ValueError(f"The {chosen['label'] or 'selected'} button did not open a recognizable application form")
+            await loc.click(timeout=8000, force=True)
+        except Exception:
+            try:
+                await loc.click(timeout=4000)
+            except Exception:
+                continue
+
+        for _ in range(24):
+            target = opened[-1] if opened else page
+            try:
+                structure = await _form_structure(target)
+                structure["opener"] = {key: chosen[key] for key in ("index", "tag", "label", "href")}
+                return target, structure
+            except ValueError:
+                await page.wait_for_timeout(250)
+
+    raise ValueError("The application button did not open a recognizable application form")
+
+
+async def _find_application_email(page: Page) -> str | None:
+    """Find contact or recruitment email on the employer page."""
+    mailtos = await page.evaluate(r"""() => {
+      const links = [...document.querySelectorAll('a[href^="mailto:"]')];
+      return links.map(l => l.href.replace(/^mailto:/i, '').split('?')[0].trim()).filter(Boolean);
+    }""")
+    for email in mailtos:
+        if re.search(r"support@|sales@|info@|privacy@|legal@|admin@|postmaster@", email, re.I):
+            continue
+        if re.search(r"recruitment|recruit|career|jobs|hr|talent|hiring|tuyendung|apply", email, re.I):
+            return email
+    try:
+        body = await page.locator("body").inner_text(timeout=5000)
+        emails = re.findall(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", body)
+        for email in emails:
+            if re.search(r"support@|sales@|info@|privacy@|legal@|admin@|postmaster@", email, re.I):
+                continue
+            idx = body.find(email)
+            if idx >= 0:
+                context = body[max(0, idx - 150):min(len(body), idx + len(email) + 150)]
+                if re.search(r"apply|application|cv|resume|hồ sơ|ứng tuyển|tuyển dụng|gửi về|send to", context, re.I):
+                    return email
+        if mailtos:
+            return mailtos[0]
+    except Exception:
+        pass
+    return None
 
 
 def _default_answer(field: dict, profile: dict, message: dict) -> str:
@@ -176,6 +252,8 @@ def _default_answer(field: dict, profile: dict, message: dict) -> str:
 
 
 async def inspect_form(db: Database, settings: Settings, draft_id: str) -> dict:
+    from .drafting import set_discovered_email_destination
+
     draft = get_draft(db, draft_id)
     destination = draft["destination"]
     if destination.get("kind") == "linkedin_easy_apply":
@@ -187,6 +265,7 @@ async def inspect_form(db: Database, settings: Settings, draft_id: str) -> dict:
         raise ValueError("Set a web application URL before inspecting a form")
     if is_linkedin_job_posting_url(destination["url"]):
         raise ValueError("A LinkedIn job posting is not an application form. Open its Apply button instead")
+    found_email: str | None = None
     async with async_playwright() as playwright:
         try:
             context = await playwright.chromium.launch_persistent_context(str(settings.browser_profile), headless=True, **chrome_context_options())
@@ -199,9 +278,16 @@ async def inspect_form(db: Database, settings: Settings, draft_id: str) -> dict:
         try:
             page = await context.new_page()
             await page.goto(destination["url"], wait_until="domcontentloaded", timeout=45000)
-            _, structure = await _open_application_form(page)
+            try:
+                _, structure = await _open_application_form(page)
+            except ValueError as err:
+                found_email = await _find_application_email(page)
+                if not found_email:
+                    raise err
         finally:
             await context.close()
+    if found_email:
+        return set_discovered_email_destination(db, draft_id, found_email, f"Recruitment email {found_email} discovered on employer page {destination['url']}.")
     profile = db.get_setting("profile", {})
     existing = draft["form_data"].get("answers", {})
     answers = {str(field["index"]): existing.get(str(field["index"]), _default_answer(field, profile, draft["message_data"]))

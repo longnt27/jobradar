@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError, async_playwright
 
@@ -245,7 +245,27 @@ async def inspect_linkedin_application(settings: Settings, draft: dict) -> dict:
             await context.close()
 
 
+def unwrap_linkedin_redirect(value: str | None) -> str | None:
+    """Extract destination URL from LinkedIn /safety/go or redirect wrappers."""
+    if not value:
+        return None
+    parts = urlsplit(value)
+    host = (parts.hostname or "").casefold()
+    if (host == "linkedin.com" or host.endswith(".linkedin.com")) and ("/safety/go" in parts.path or "/safety/redirect" in parts.path):
+        query = parse_qs(parts.query)
+        for key in ("url", "dest", "target", "redirect", "redir", "session_redirect"):
+            val = query.get(key, [None])[0]
+            if val:
+                decoded = unquote(val)
+                p = urlsplit(decoded)
+                if p.scheme in ("http", "https") and p.hostname and not (p.hostname.casefold() == "linkedin.com" or p.hostname.casefold().endswith(".linkedin.com")):
+                    return decoded
+    return None
+
+
 def _external_application_url(value: str | None) -> bool:
+    if unwrap_linkedin_redirect(value):
+        return True
     parts = urlsplit(value or "")
     host = (parts.hostname or "").casefold()
     return parts.scheme in {"http", "https"} and bool(host) and host != "linkedin.com" and not host.endswith(".linkedin.com")
@@ -269,6 +289,21 @@ async def find_linkedin_apply_control(page: Page) -> dict:
         const style = getComputedStyle(node);
         return box.width > 0 && box.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
       };
+      const isExternal = href => {
+        try {
+          const u = new URL(href);
+          const host = u.hostname.toLowerCase();
+          if (host !== 'linkedin.com' && !host.endsWith('.linkedin.com')) return true;
+          if (u.pathname.includes('/safety/go') || u.pathname.includes('/safety/redirect')) {
+            const dest = u.searchParams.get('url') || u.searchParams.get('dest') || u.searchParams.get('target');
+            if (dest) {
+              const du = new URL(dest);
+              return du.hostname.toLowerCase() !== 'linkedin.com' && !du.hostname.toLowerCase().endsWith('.linkedin.com');
+            }
+          }
+        } catch (_) {}
+        return false;
+      };
       const candidates = [...root.querySelectorAll('a[href],button')]
         .filter(node => visible(node) && !!(node.compareDocumentPosition(about) & Node.DOCUMENT_POSITION_FOLLOWING)).map(node => {
         const label = `${node.innerText || ''} ${node.getAttribute('aria-label') || ''}`.trim().replace(/\s+/g, ' ');
@@ -278,7 +313,7 @@ async def find_linkedin_apply_control(page: Page) -> dict:
         return {node, label, easy, apply, href};
       }).filter(item => item.easy || item.apply);
       const selected = candidates.find(item => item.easy) ||
-        candidates.find(item => item.href && !/linkedin\.com/i.test(new URL(item.href).hostname)) ||
+        candidates.find(item => item.href && isExternal(item.href)) ||
         candidates.find(item => /^apply\b|^ứng\s+tuyển/i.test(item.label)) || candidates[0];
       if (!selected) return {kind:'unknown', detail:'No Apply control was visible on this posting.'};
       if (selected.easy) return {kind:'linkedin_easy_apply', detail:'LinkedIn Easy Apply opens a multi-step popup.'};
@@ -336,8 +371,9 @@ async def discover_linkedin_apply(settings: Settings, posting_url: str) -> dict:
             _check_auth(page.url, await page.locator("body").inner_text(timeout=7000))
             if control["kind"] != "apply":
                 return control
-            if _external_application_url(control.get("url")):
-                return {"kind": "web", "url": control["url"], "detail": "External Apply link found on LinkedIn."}
+            external_url = unwrap_linkedin_redirect(control.get("url")) or (control.get("url") if _external_application_url(control.get("url")) else None)
+            if external_url:
+                return {"kind": "web", "url": external_url, "detail": "External Apply link found on LinkedIn."}
             opened: list[Page] = []
             context.on("page", lambda new_page: opened.append(new_page))
             try:
@@ -346,14 +382,17 @@ async def discover_linkedin_apply(settings: Settings, posting_url: str) -> dict:
                 if await linkedin_sign_in_dialog_visible(page):
                     return {"kind": "sign_in_required", "detail": "LinkedIn is covering Apply with a sign-in dialog. Sign in to LinkedIn in Job Radar's browser, then try again."}
                 return {"kind": "unknown", "detail": "LinkedIn's Apply control could not be opened. Open the posting to continue manually."}
-            await page.wait_for_timeout(900)
-            target = opened[-1] if opened else page
-            try:
-                await target.wait_for_load_state("domcontentloaded", timeout=15000)
-            except Exception:
-                pass
-            if _external_application_url(target.url):
-                return {"kind": "web", "url": target.url, "detail": "External Apply destination opened from LinkedIn."}
+            
+            target_url = None
+            for _ in range(20):
+                await asyncio.sleep(0.25)
+                target = opened[-1] if opened else page
+                target_url = unwrap_linkedin_redirect(target.url) or (target.url if _external_application_url(target.url) else None)
+                if target_url:
+                    break
+
+            if target_url:
+                return {"kind": "web", "url": target_url, "detail": "External Apply destination opened from LinkedIn."}
             return {"kind": "unknown", "detail": "Apply did not reveal a supported external application page. Open the posting to continue manually."}
         finally:
             await context.close()
