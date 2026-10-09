@@ -188,7 +188,14 @@ async def inspect_form(db: Database, settings: Settings, draft_id: str) -> dict:
     if is_linkedin_job_posting_url(destination["url"]):
         raise ValueError("A LinkedIn job posting is not an application form. Open its Apply button instead")
     async with async_playwright() as playwright:
-        context = await playwright.chromium.launch_persistent_context(str(settings.browser_profile), headless=True, **chrome_context_options())
+        try:
+            context = await playwright.chromium.launch_persistent_context(str(settings.browser_profile), headless=True, **chrome_context_options())
+        except Exception as error:
+            if "SingletonLock" in str(error) or "ProcessSingleton" in str(error):
+                await asyncio.sleep(2.0)
+                context = await playwright.chromium.launch_persistent_context(str(settings.browser_profile), headless=True, **chrome_context_options())
+            else:
+                raise
         try:
             page = await context.new_page()
             await page.goto(destination["url"], wait_until="domcontentloaded", timeout=45000)

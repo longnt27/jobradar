@@ -309,6 +309,8 @@ async def _collect_linkedin_search_results(page: Page, source: dict) -> list[Obs
                 job_url = f"https://www.linkedin.com/jobs/view/{job_id}/"
                 action = await page.evaluate(r"""() => {
                   const root = document.querySelector('.jobs-search__job-details--container, .job-details-jobs-unified-top-card__container, main') || document;
+                  const closed = /(?:no longer|not currently)\s+accepting\s+applications|không còn nhận đơn|hiện không nhận đơn/i.test(root.innerText);
+                  if (closed) return {closed: true, external: '', easy: false};
                   const controls = [...root.querySelectorAll('a[href],button')];
                   const external = controls.find(node =>
                     node.tagName === 'A' && /apply|ứng tuyển/i.test(`${node.innerText} ${node.getAttribute('aria-label') || ''}`) &&
@@ -316,8 +318,10 @@ async def _collect_linkedin_search_results(page: Page, source: dict) -> list[Obs
                   const easy = controls.some(node =>
                     node.tagName === 'BUTTON' && /easy\s+apply|ứng\s+tuyển\s+dễ\s+dàng/i.test(
                       `${node.innerText} ${node.getAttribute('aria-label') || ''}`));
-                  return {external: external?.href || '', easy};
+                  return {closed: false, external: external?.href || '', easy};
                 }""")
+                if action.get("closed"):
+                    continue
                 marker = "\nApplication control: LinkedIn Easy Apply" if action["easy"] else ""
                 jobs.append(ObservedJob(
                     url=job_url,

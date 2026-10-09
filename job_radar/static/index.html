@@ -257,6 +257,23 @@
             </div>
           </form>
         </dialog>
+
+        <dialog id="application-discard-confirm" class="confirm-dialog" aria-labelledby="application-discard-confirm-title">
+          <form method="dialog">
+            <h3 id="application-discard-confirm-title">Discard application draft?</h3>
+            <p>This draft will be permanently removed. The tailored resume and cover letter draft will be deleted.</p>
+            <div style="margin: 1rem 0;">
+              <label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal;cursor:pointer;">
+                <input type="checkbox" id="application-discard-ignore-job" checked>
+                <span>Also mark this job as <strong>Ignored</strong> (stale / not applying)</span>
+              </label>
+            </div>
+            <div class="actions">
+              <button type="submit" value="cancel" class="secondary">Cancel</button>
+              <button type="submit" value="confirm" class="danger">Discard draft</button>
+            </div>
+          </form>
+        </dialog>
       </section>
 
       <section id="settings" class="tab">

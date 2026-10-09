@@ -146,13 +146,9 @@ def test_application_workspace_filters_reviews_and_confirms_send(tmp_path: Path,
                 assert "is-selected" in (first_card.get_attribute("class") or "")
                 assert "Basic template" in page.locator("#application-detail").inner_text()
                 assert "local template; no model inference" not in page.locator("#application-detail").inner_text()
-                assert "Why this application was prepared" in page.locator("#application-detail").inner_text()
-                assert "the saved job" in page.locator("#application-detail").inner_text()
                 assert page.get_by_role("button", name="View job in Jobs").is_visible()
-
-                for section in ("Changes & risks", "Resume", "Email", "Regenerate"):
-                    assert page.get_by_role("button", name=section, exact=True).is_visible()
-                page.get_by_role("button", name="Regenerate", exact=True).click()
+                assert page.get_by_role("button", name="Next: Review package →").is_visible()
+                page.get_by_role("button", name="Next: Review package →").click()
                 assert page.locator("#regenerate-section option").all_text_contents() == [
                     "Professional summary", "Experience bullets", "Selected projects and bullets",
                         "Education wording", "Achievements", "Skills", "Application experience and project fit", "Full draft · uses more quota",
@@ -301,8 +297,8 @@ def test_application_workspace_static_contract() -> None:
     assert "renderApplicationFormField" in js
     assert "application-attachment-upload" in js
     assert "Resume page" in js
-    assert "const approved = await confirmApplicationSend(draft)" not in js
-    assert "What changed and what needs attention" in js
+    assert "My last activities with this application" in js
+    assert "btn-discard-draft" in js
     assert "Telegram review delivery" in js
     assert "Regenerate selected section" in js
     assert 'id="edit-draft"' not in js

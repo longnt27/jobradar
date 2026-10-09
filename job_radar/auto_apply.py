@@ -13,6 +13,7 @@ from typing import AsyncContextManager, Callable
 import httpx
 from playwright.async_api import Error as PlaywrightError
 
+from .application_action import is_linkedin_job_posting_url
 from .apply import inspect_form, send_application, send_readiness
 from .automation_policy import (
     automation_eligibility,
@@ -24,6 +25,7 @@ from .automation_policy import (
 from .chatgpt_handoff import application_prompt, apply_chatgpt_reply
 from .db import Database, new_id, now
 from .drafting import get_draft, prepare_draft, regenerate_draft, set_discovered_linkedin_destination, set_discovered_web_destination, set_unavailable_linkedin_destination
+from .job_inbox import set_decision
 from .linkedin_application import discover_linkedin_apply
 from .notifications import telegram_config, telegram_mode_enabled, telegram_quiet_now
 from .preparation import preparation_preflight
@@ -456,6 +458,28 @@ class AutoApplyManager:
         if existing:
             self._set_status(job_id, "needs_review", "An application draft already exists. Review it before sending.", existing["id"])
             return
+        source = self.db.one(
+            "SELECT o.url,s.kind FROM vacancy_observations vo "
+            "JOIN observations o ON o.id=vo.observation_id "
+            "JOIN sources s ON s.id=o.source_id WHERE vo.vacancy_id=? "
+            "ORDER BY CASE s.kind WHEN 'career' THEN 0 WHEN 'linkedin' THEN 1 ELSE 2 END,"
+            "o.first_seen_at,o.id LIMIT 1",
+            (job_id,),
+        )
+        if source and source["kind"] == "linkedin" and is_linkedin_job_posting_url(source.get("url")):
+            try:
+                async with self.browser_lock:
+                    action = await discover_linkedin_apply(self.settings, source["url"])
+                if action.get("kind") == "closed":
+                    set_decision(self.db, job_id, "ignored", reason="Posting closed on LinkedIn")
+                    self._set_status(job_id, "skipped", f"Job posting closed on LinkedIn: {action.get('detail', '')}")
+                    return
+                elif action.get("kind") == "already_applied":
+                    self._set_status(job_id, "skipped", f"Already applied on LinkedIn: {action.get('detail', '')}")
+                    return
+            except Exception as error:
+                log.debug("Pre-draft LinkedIn check for %s: %s", job_id, error)
+
         provider = attempt["requested_provider"] if manual else self.db.get_setting("profile", {}).get("drafting_provider", "")
         if not provider:
             self._set_status(job_id, "needs_review", "Choose an application drafting provider in My profile.")
@@ -500,7 +524,7 @@ class AutoApplyManager:
         if not manual and not self._still_eligible(job_id):
             self._set_status(job_id, "needs_review", "Automatic preparation paused or job score changed.")
             return
-        if manual and draft.get("job_source_kind") == "linkedin" and draft["destination"].get("kind") not in {"web", "email"}:
+        if draft.get("job_source_kind") == "linkedin" and draft["destination"].get("kind") not in {"web", "email"}:
             try:
                 async with self.browser_lock:
                     action = await discover_linkedin_apply(self.settings, draft["job_posting_url"])
@@ -510,6 +534,13 @@ class AutoApplyManager:
                     draft = set_discovered_linkedin_destination(self.db, draft["id"])
                 elif action["kind"] in {"closed", "already_applied"}:
                     draft = set_unavailable_linkedin_destination(self.db, draft["id"], action["detail"])
+                    if action["kind"] == "closed":
+                        set_decision(self.db, job_id, "ignored", reason="Posting closed on LinkedIn")
+                        self._set_status(job_id, "skipped", f"Job posting closed on LinkedIn: {action['detail']}", draft["id"])
+                        return
+                    if action["kind"] == "already_applied":
+                        self._set_status(job_id, "skipped", f"Already applied on LinkedIn: {action['detail']}", draft["id"])
+                        return
             except (ValueError, RuntimeError, PlaywrightError) as error:
                 self._set_status(job_id, "needs_review", f"Application button inspection needs attention: {error}", draft["id"])
                 await self.notify_review(draft["id"])

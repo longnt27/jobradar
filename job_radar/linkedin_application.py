@@ -259,7 +259,8 @@ async def find_linkedin_apply_control(page: Page) -> dict:
       const about = headings.find(node => node.textContent.trim() === 'About the job');
       if (!about) return {kind:'unknown', detail:'The selected job details have not loaded yet.'};
       const selectedText = root.innerText.split('About the job')[0];
-      if (/no longer accepting applications/i.test(selectedText))
+      const closedRegex = /(?:no longer|not currently)\s+accepting\s+applications|không còn nhận đơn|hiện không nhận đơn/i;
+      if (closedRegex.test(selectedText) || closedRegex.test(root.innerText))
         return {kind:'closed', detail:'This LinkedIn posting is no longer accepting applications.'};
       if (/applied on company site|you applied|application submitted/i.test(selectedText))
         return {kind:'already_applied', detail:'LinkedIn shows this posting as already applied. Verify its status before another send.'};
@@ -311,9 +312,18 @@ async def discover_linkedin_apply(settings: Settings, posting_url: str) -> dict:
     if not is_linkedin_job_posting_url(posting_url):
         raise ValueError("This draft does not have a LinkedIn job posting to check")
     async with async_playwright() as playwright:
-        context = await playwright.chromium.launch_persistent_context(
-            str(settings.browser_profile), headless=True, **chrome_context_options(required=True),
-        )
+        try:
+            context = await playwright.chromium.launch_persistent_context(
+                str(settings.browser_profile), headless=True, **chrome_context_options(required=True),
+            )
+        except Exception as error:
+            if "SingletonLock" in str(error) or "ProcessSingleton" in str(error):
+                await asyncio.sleep(2.0)
+                context = await playwright.chromium.launch_persistent_context(
+                    str(settings.browser_profile), headless=True, **chrome_context_options(required=True),
+                )
+            else:
+                raise
         try:
             page = await context.new_page()
             await page.goto(posting_url, wait_until="domcontentloaded", timeout=45000)

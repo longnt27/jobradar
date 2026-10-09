@@ -1980,6 +1980,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
 
+    @app.delete("/api/applications/{draft_id}")
+    def delete_application(draft_id: str, ignore_job: bool = Query(default=False)):
+        try:
+            draft = get_draft(db, draft_id)
+        except KeyError as error:
+            raise HTTPException(404, str(error)) from error
+        if draft["status"] == "sent" or db.one(
+            "SELECT 1 FROM submissions WHERE draft_id=? AND status IN "
+            "('sent_confirmed','submitted_confirmed','submitted_unconfirmed','sending') LIMIT 1",
+            (draft_id,),
+        ):
+            raise HTTPException(422, "Sent applications cannot be deleted")
+        vacancy_id = draft["vacancy_id"]
+        resume_path = draft.get("resume_path")
+        if resume_path:
+            try:
+                Path(resume_path).unlink(missing_ok=True)
+            except OSError:
+                pass
+        db.execute(
+            "UPDATE auto_application_attempts SET status='skipped', draft_id=NULL, "
+            "detail='Application draft removed by you', updated_at=? WHERE draft_id=? OR vacancy_id=?",
+            (now(), draft_id, vacancy_id),
+        )
+        db.execute("DELETE FROM telegram_review_prompts WHERE draft_id=?", (draft_id,))
+        db.execute("DELETE FROM application_drafts WHERE id=?", (draft_id,))
+        if ignore_job:
+            set_decision(db, vacancy_id, "ignored", reason="Draft discarded by you")
+        auto_apply_manager.wake()
+        return {"deleted": True, "draft_id": draft_id, "vacancy_id": vacancy_id, "job_ignored": ignore_job}
+
     def draft_resume_path(draft_id: str) -> Path:
         row = db.one("SELECT resume_path FROM application_drafts WHERE id=?", (draft_id,))
         if not row:
@@ -2089,6 +2120,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         inspection_error = str(error)
                 elif action["kind"] in {"closed", "already_applied"}:
                     draft = set_unavailable_linkedin_destination(db, draft_id, action["detail"])
+                    if action["kind"] == "closed":
+                        set_decision(db, draft["vacancy_id"], "ignored", reason="Posting closed on LinkedIn")
+                        db.execute(
+                            "UPDATE auto_application_attempts SET status='skipped', detail=?, updated_at=? WHERE vacancy_id=?",
+                            (f"Job posting closed on LinkedIn: {action['detail']}", now(), draft["vacancy_id"]),
+                        )
             if action["kind"] in {"web", "linkedin_easy_apply", "closed", "already_applied"}:
                 db.set_setting("linkedin_automation_paused", False)
                 await auto_apply_manager.notify_review(draft_id, deliver_telegram=False)

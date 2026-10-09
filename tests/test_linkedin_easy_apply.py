@@ -202,6 +202,14 @@ def test_related_job_apply_is_not_used_for_selected_posting() -> None:
                   <h2>About the job</h2></article><aside><h2>More jobs</h2><button>Easy Apply</button></aside></main>''')
                 action = await find_linkedin_apply_control(page)
                 assert action["kind"] == "closed"
+                await page.set_content('''<main><article><h1>Closed job</h1><p>Not currently accepting applications</p>
+                  <h2>About the job</h2></article></main>''')
+                action = await find_linkedin_apply_control(page)
+                assert action["kind"] == "closed"
+                await page.set_content('''<main><article><h1>Vietnamese Closed job</h1><p>Hiện không nhận đơn</p>
+                  <h2>About the job</h2></article></main>''')
+                action = await find_linkedin_apply_control(page)
+                assert action["kind"] == "closed"
                 await page.set_content('''<main><article><h1>Already sent</h1><p>Applied on company site</p>
                   <h2>About the job</h2></article><aside><button>Easy Apply</button></aside></main>''')
                 action = await find_linkedin_apply_control(page)

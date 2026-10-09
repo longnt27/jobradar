@@ -1030,7 +1030,7 @@ async function showJob(id, pin = false, loadedJob = null) {
               : 'No application has been prepared or recorded yet.';
   const detailDecisionActions = job.decision_state === 'undecided'
     ? `<button type="button" class="secondary" data-detail-decision="shortlisted">Shortlist</button><button type="button" class="secondary" data-detail-decision="later">Later · 3d</button><button type="button" class="danger" data-detail-decision="ignored">Ignore</button>`
-    : `<button type="button" class="secondary" data-detail-decision="undecided">Back to inbox</button>`;
+    : `<button type="button" class="secondary" data-detail-decision="undecided">Back to inbox</button>${job.decision_state !== 'ignored' ? '<button type="button" class="danger" data-detail-decision="ignored">Ignore</button>' : ''}`;
   const manualAppliedAction = job.application_progress === 'applied_external'
     ? '<button type="button" class="text-button" id="job-manual-applied" data-applied="false">Undo external applied mark</button>'
     : !['applied','attention'].includes(job.application_progress)
@@ -2417,7 +2417,17 @@ function showPreparationIssue(item) {
     <div class="actions">
       ${item.retryable ? '<button type="button" class="primary" data-retry-preparation>Retry preparation</button>' : ''}
       <button type="button" class="secondary" data-preparation-job>View job in Jobs</button>
+      <button type="button" class="secondary danger" data-ignore-preparation>Ignore job</button>
     </div>`;
+  detail.querySelector('[data-ignore-preparation]')?.addEventListener('click', async () => {
+    try {
+      await api(`/api/jobs/${item.vacancy_id}/decision`, {method:'POST', body:JSON.stringify({decision:'ignored', reason:'Preparation dismissed'})});
+      notice('Job marked as ignored.', false);
+      activePreparationJobId = null;
+      detail.innerHTML = '<div class="panel empty"><p>Job marked as ignored.</p></div>';
+      await loadApplications();
+    } catch (error) { notice(error.message, true); }
+  });
   detail.querySelector('[data-preparation-job]').addEventListener('click', () =>
     openApplicationJob(item.vacancy_id).catch((error) => notice(error.message, true)));
   detail.querySelector('[data-retry-preparation]')?.addEventListener('click', async (event) => {
@@ -2531,12 +2541,15 @@ async function showApplication(id, preferredScreen = null) {
       <div>
         <p class="eyebrow" id="application-screen-eyebrow">APPLICATION · ${currentScreen === 'package' ? 'PACKAGE' : 'FIRST GLANCE'}</p>
         <h2>${escapeHtml(draft.job_title)}</h2>
-        <p class="item-meta">${escapeHtml(draft.company)}${job.location ? ` · ${escapeHtml(job.location)}` : (draft.job_location ? ` · ${escapeHtml(draft.job_location)}` : '')}${job.work_mode ? ` · ${escapeHtml(job.work_mode)}` : (draft.job_work_mode ? ` · ${escapeHtml(draft.job_work_mode)}` : '')}</p>
+        <p class="item-meta">${escapeHtml(draft.company)}${job.location ? ` · ${escapeHtml(job.location)}` : (draft.job_location ? ` · ${escapeHtml(draft.job_location)}` : '')} · ${escapeHtml(providerLabel(draft.provider_mode))}${job.work_mode ? ` · ${escapeHtml(job.work_mode)}` : (draft.job_work_mode ? ` · ${escapeHtml(draft.job_work_mode)}` : '')}</p>
       </div>
-      <span class="status-badge status-badge--${reviewTone}">${escapeHtml(applicationReviewLabel(draft))}</span>
+      <div class="application-header-actions" style="display:flex;align-items:center;gap:0.75rem;">
+        <span class="status-badge status-badge--${reviewTone}">${escapeHtml(applicationReviewLabel(draft))}</span>
+        ${!sent ? `<button type="button" class="text-button danger" id="btn-discard-draft" title="Delete this application draft">Discard draft</button>` : ''}
+      </div>
     </div>
 
-    <nav class="application-screen-nav" aria-label="Application review screens">
+    <nav class="application-screen-nav application-review-nav" aria-label="Application review screens">
       <button type="button" data-app-screen="first-glance" aria-current="${currentScreen === 'first-glance'}">
         <span class="screen-step-num">1</span>
         <div class="screen-step-text"><strong>First glance</strong><small>Job match &amp; history</small></div>
@@ -2602,6 +2615,7 @@ async function showApplication(id, preferredScreen = null) {
           <div class="metric-source-meta">
             <p class="metric-signal"><strong>Source type:</strong> ${escapeHtml(preferredSighting?.kind || draft.job_source_kind || 'web')}</p>
             <p class="metric-subtext">First seen ${relativeWhen(preferredSighting?.first_seen_at || job.first_seen_at || draft.created_at)}</p>
+            <button type="button" class="text-button" id="btn-view-job-in-jobs" style="margin-top:0.35rem;padding:0;">View job in Jobs</button>
           </div>
         </div>
       </div>
@@ -2660,8 +2674,7 @@ async function showApplication(id, preferredScreen = null) {
         <label>Body<textarea id="draft-body" data-draft-field rows="10">${escapeHtml(message.body || '')}</textarea></label>
       </section>` : ''}
 
-      ${['web','linkedin_easy_apply'].includes(destination.kind) ? `
-      <section id="application-review-form" class="application-review-section">
+      <section id="application-review-form" class="application-review-section" ${['web','linkedin_easy_apply'].includes(destination.kind) ? '' : 'hidden'}>
         <div class="section-head">
           <div>
             <h3>Form answers and attachments</h3>
@@ -2682,7 +2695,7 @@ async function showApplication(id, preferredScreen = null) {
         </div>` : ''}
         ${formData.inspection_blockers?.length ? applicationAlert('warning', 'More answers needed to inspect every step', formData.inspection_blockers) : ''}
         <div class="application-form-fields">${(formData.fields || []).map((field) => renderApplicationFormField(field, draft)).join('') || '<p class="empty">No form fields inspected yet.</p>'}</div>
-      </section>` : ''}
+      </section>
 
       <div class="application-destination surface-editable">
         <div class="section-head">
@@ -2725,6 +2738,7 @@ async function showApplication(id, preferredScreen = null) {
         <span id="application-outcome" class="hint" role="status" aria-live="polite" ${currentScreen === 'package' ? '' : 'hidden'}></span>
       </div>
       <div class="actions">
+        ${!sent ? `<button type="button" class="secondary danger" id="btn-sticky-discard-draft">Discard draft</button>` : ''}
         <button type="button" class="primary" id="btn-next-to-package" ${currentScreen === 'first-glance' ? '' : 'hidden'}>Next: Review package →</button>
         <button id="save-draft" class="secondary" disabled ${currentScreen === 'package' ? '' : 'hidden'}>Save changes</button>
         <button id="send-draft" class="primary" ${canSend ? '' : 'disabled'} ${currentScreen === 'package' ? '' : 'hidden'}>${sent ? escapeHtml(draft.latest_submission?.outcome?.label || 'Sent') : 'Approve &amp; send'}</button>
@@ -2954,6 +2968,46 @@ async function showApplication(id, preferredScreen = null) {
   });
   detail.querySelector('#btn-next-to-package')?.addEventListener('click', () => switchScreen('package'));
   detail.querySelector('#btn-sticky-back-first-glance')?.addEventListener('click', () => switchScreen('first-glance'));
+  detail.querySelector('#btn-view-job-in-jobs')?.addEventListener('click', () => {
+    openApplicationJob(draft.vacancy_id).catch((error) => notice(error.message, true));
+  });
+
+  const handleDiscard = async () => {
+    if (sent) return;
+    const dialog = $('#application-discard-confirm');
+    const ignoreCheckbox = $('#application-discard-ignore-job');
+    if (ignoreCheckbox) ignoreCheckbox.checked = true;
+
+    let confirmed = false;
+    if (dialog && typeof dialog.showModal === 'function') {
+      confirmed = await new Promise((resolve) => {
+        const onClose = () => {
+          dialog.removeEventListener('close', onClose);
+          resolve(dialog.returnValue === 'confirm');
+        };
+        dialog.addEventListener('close', onClose);
+        dialog.showModal();
+      });
+    } else {
+      confirmed = window.confirm('Discard this application draft?');
+    }
+
+    if (!confirmed) return;
+
+    const ignoreJob = ignoreCheckbox ? ignoreCheckbox.checked : false;
+    try {
+      await api(`/api/applications/${id}?ignore_job=${ignoreJob}`, {method:'DELETE'});
+      notice(ignoreJob ? 'Draft discarded and job marked as ignored.' : 'Application draft discarded.', false);
+      activeApplicationId = null;
+      detail.innerHTML = '<div class="panel empty"><p>Draft discarded.</p></div>';
+      await loadApplications();
+    } catch (error) {
+      notice(error.message, true);
+    }
+  };
+
+  detail.querySelector('#btn-discard-draft')?.addEventListener('click', handleDiscard);
+  detail.querySelector('#btn-sticky-discard-draft')?.addEventListener('click', handleDiscard);
 
   if (sent || uncertain) {
     detail.querySelectorAll('[data-draft-field],#regenerate-draft,#chatgpt-input,#save-draft,#send-draft,#inspect-form-inline').forEach((control) => { control.disabled = true; });

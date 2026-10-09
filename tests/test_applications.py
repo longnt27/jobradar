@@ -417,3 +417,55 @@ def test_targeted_message_regeneration_preserves_resume_and_reports_diff(tmp_pat
     assert "I built Python systems at Prior" in revised["message_data"]["body"]
     assert revised["message_data"]["body"].startswith("Dear Example hiring team,")
     assert [change["section"] for change in revised["changes"]] == ["message"]
+
+
+def test_delete_application_draft(tmp_path: Path) -> None:
+    client = TestClient(create_app(Settings(tmp_path)))
+    profile = client.get("/api/profile").json()
+    profile.update({
+        "name": "Alex Example", "email": "alex@example.org",
+        "experience": [{"company": "Prior", "role": "Engineer", "dates": "2024-2026", "bullets": ["Built Python systems."]}],
+    })
+    client.put("/api/profile", json=profile)
+    job = client.post("/api/jobs/import", json={
+        "company": "Discard Co", "title": "Software Engineer",
+        "description": "Python developer role.",
+    }).json()
+    draft = prepare_draft(client.app.state.db, client.app.state.settings, job["id"], "template")
+    draft_id = draft["id"]
+    assert client.get(f"/api/applications/{draft_id}").status_code == 200
+
+    # Discard with ignore_job=True
+    resp = client.delete(f"/api/applications/{draft_id}?ignore_job=true")
+    assert resp.status_code == 200
+    assert resp.json()["deleted"] is True
+    assert resp.json()["job_ignored"] is True
+
+    # Draft should no longer exist
+    assert client.get(f"/api/applications/{draft_id}").status_code == 404
+
+    # Job should be ignored
+    job_detail = client.get(f"/api/jobs/{job['id']}").json()
+    assert job_detail["decision_state"] == "ignored"
+
+
+def test_delete_application_draft_sent_forbidden(tmp_path: Path) -> None:
+    client = TestClient(create_app(Settings(tmp_path)))
+    profile = client.get("/api/profile").json()
+    profile.update({
+        "name": "Alex Example", "email": "alex@example.org",
+        "experience": [{"company": "Prior", "role": "Engineer", "dates": "2024-2026", "bullets": ["Built Python systems."]}],
+    })
+    client.put("/api/profile", json=profile)
+    job = client.post("/api/jobs/import", json={
+        "company": "Sent Co", "title": "Lead Engineer",
+        "description": "Leadership role.",
+    }).json()
+    draft = prepare_draft(client.app.state.db, client.app.state.settings, job["id"], "template")
+    draft_id = draft["id"]
+    # Simulate sent status
+    client.app.state.db.execute("UPDATE application_drafts SET status='sent' WHERE id=?", (draft_id,))
+    resp = client.delete(f"/api/applications/{draft_id}")
+    assert resp.status_code == 422
+    assert "Sent applications cannot be deleted" in resp.text
+
