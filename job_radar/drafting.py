@@ -1072,7 +1072,10 @@ def update_draft(db: Database, settings: Settings, identifier: str, updates: dic
         merged["form_data"] = refresh_saved_answer_blockers(merged["form_data"])
     if not merged["resume_data"].get("name") or not merged["message_data"].get("body"):
         raise ValueError("Resume name and application message are required")
-    path, digest = render_resume(settings, identifier, merged["resume_data"])
+    if merged["resume_data"] == draft["resume_data"] and Path(draft["resume_path"]).is_file():
+        path, digest = draft["resume_path"], draft["resume_hash"]
+    else:
+        path, digest = render_resume(settings, identifier, merged["resume_data"])
     warnings = [item for item in draft["warnings"] if item not in (DESTINATION_WARNING, LEGACY_DESTINATION_WARNING)
                 and not item.startswith("Enter a valid application ")
                 and not item.startswith("A LinkedIn job posting URL is not an application form")]

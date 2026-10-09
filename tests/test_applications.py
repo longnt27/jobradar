@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from job_radar.drafting import ModelDraft, prepare_draft, regenerate_draft
 from job_radar.settings import Settings
 from job_radar.apply import _default_answer
+from job_radar.notifications import save_telegram
 from job_radar.web import create_app
 
 
@@ -42,6 +43,27 @@ def test_email_send_is_explicit_and_duplicate_protected(tmp_path: Path, monkeypa
     assert len(client.get("/api/submissions").json()) == 1
     snapshot = json.loads(client.get("/api/submissions").json()[0]["package_data"])
     assert snapshot["message_data"]["body"] == draft["message_data"]["body"]
+
+
+def test_web_message_save_reuses_resume_and_does_not_notify_telegram(tmp_path: Path, monkeypatch) -> None:
+    client = TestClient(create_app(Settings(tmp_path)))
+    draft = _prepared(client, "https://example.org/apply")
+    before = client.get(f"/api/applications/{draft['id']}").json()
+    save_telegram(client.app.state.settings, {"token": "test-token", "chat_id": "123"})
+
+    def unexpected(*_args, **_kwargs):
+        raise AssertionError("Message-only web save must not render a PDF or deliver Telegram")
+
+    monkeypatch.setattr("job_radar.drafting.render_resume", unexpected)
+    monkeypatch.setattr("job_radar.auto_apply.send_review_packet", unexpected)
+    response = client.patch(f"/api/applications/{draft['id']}", json={
+        "message_data": {**before["message_data"], "body": "Updated application message."}})
+    assert response.status_code == 200, response.text
+    saved = response.json()
+    assert saved["resume_path"] == before["resume_path"]
+    assert saved["resume_hash"] == before["resume_hash"]
+    assert saved["message_data"]["body"] == "Updated application message."
+    assert client.get(f"/api/applications/{draft['id']}").json()["telegram_status"] == "web_only"
 
 
 def test_manual_application_is_registered_for_review_and_edit_refreshes_version(tmp_path: Path) -> None:

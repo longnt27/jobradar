@@ -2606,8 +2606,14 @@ async function showApplication(id) {
   const saveButton = $('#save-draft');
   const sendButton = $('#send-draft');
   const inspectButton = $('#inspect-draft');
+  const dirtySections = new Set();
   const markDirty = (field) => {
     if (sent || uncertain) return;
+    const section = ['draft-subject','draft-body'].includes(field.id) ? 'message_data'
+      : ['draft-destination-kind','draft-destination'].includes(field.id) ? 'destination'
+      : ['answer','attachment','attachmentFile'].some((key) => Object.hasOwn(field.dataset, key)) ? 'form_data'
+      : 'resume_data';
+    dirtySections.add(section);
     dirtyState.textContent = 'Unsaved changes';
     dirtyState.className = 'status-badge status-badge--warning';
     saveButton.disabled = false;
@@ -2653,9 +2659,27 @@ async function showApplication(id) {
 
   $('#save-draft').addEventListener('click', async (event) => {
     const button = beginPending(event.currentTarget, 'Saving…');
+    let savedInline = false;
     try {
-      const saved = await saveApplication(id, draft);
-      await loadApplications(id);
+      const messageOnly = dirtySections.size === 1 && dirtySections.has('message_data');
+      const saved = await saveApplication(id, draft, dirtySections);
+      if (messageOnly) {
+        Object.assign(draft, saved);
+        dirtySections.clear();
+        dirtyState.textContent = 'Saved';
+        dirtyState.className = 'status-badge status-badge--neutral';
+        sendButton.disabled = !(saved.send_ready && saved.review_status === 'awaiting_review');
+        $('#application-outcome').textContent = '';
+        const badge = detail.querySelector('.application-review-header .status-badge');
+        if (badge) {
+          badge.textContent = applicationReviewLabel(saved);
+          badge.className = `status-badge status-badge--${applicationReviewTone(saved)}`;
+        }
+        detail.querySelectorAll('.is-dirty').forEach((field) => field.classList.remove('is-dirty'));
+        savedInline = true;
+      } else {
+        await loadApplications(id);
+      }
       notice(saved.form_data?.kind === 'linkedin_easy_apply' && !saved.form_data.complete
         ? saved.form_data.inspection_blockers?.length
           ? 'Answers saved. Complete the remaining required fields, then inspect again.'
@@ -2664,14 +2688,17 @@ async function showApplication(id) {
     } catch(error) {
       notice(error.message, true);
     } finally {
-      if (button.isConnected) endPending(button);
+      if (button.isConnected) {
+        endPending(button);
+        if (savedInline) button.disabled = true;
+      }
     }
   });
 
   $('#inspect-draft').addEventListener('click', async (event) => {
     const button = beginPending(event.currentTarget, 'Inspecting…');
     try {
-      if (!saveButton.disabled) await saveApplication(id, draft);
+      if (!saveButton.disabled) await saveApplication(id, draft, dirtySections);
       await api(`/api/applications/${id}/inspect`, {method:'POST'});
       await loadApplications(id);
       notice('Application form inspected.');
@@ -2708,69 +2735,80 @@ async function showApplication(id) {
   }
 }
 
-async function saveApplication(id, draft) {
+async function saveApplication(id, draft, dirtySections) {
+  if (!dirtySections.size) return draft;
   const lines = (value) => value.split('\n').map((x) => x.trim()).filter(Boolean);
-  const bulletSource = draft.resume_bullet_source || {experience:[], projects:[], achievements:[]};
-  const editedBullets = (value, source, originals) => {
-    const items = lines(value);
-    if (items.join('\n') === (source || []).join('\n')) return originals;
-    if (items.some((item) => !item.startsWith('\\item '))) {
-      throw new Error('Each LaTeX bullet line must start with \\item followed by its text.');
-    }
-    return items;
-  };
-  const answers = {};
-  document.querySelectorAll('[data-answer]').forEach((field) => {
-    answers[field.dataset.answer] = ['radio','checkbox'].includes(field.type) && !field.checked ? '' : field.value;
-  });
-  const attachments = {};
-  for (const select of document.querySelectorAll('[data-attachment]')) {
-    const index = select.dataset.attachment;
-    const file = document.querySelector(`[data-attachment-file="${index}"]`).files[0];
-    if (file && select.value === 'uploaded') {
-      const body = new FormData();
-      body.append('file', file);
-      attachments[index] = await api(`/api/applications/${id}/attachments`, {method:'POST', body});
-    } else if (select.value === 'uploaded') {
-      attachments[index] = draft.form_data.attachments?.[index];
-    } else if (select.value) {
-      attachments[index] = {kind:select.value};
-    }
+  const payload = {};
+  if (dirtySections.has('message_data')) {
+    payload.message_data = {subject:$('#draft-subject').value, body:$('#draft-body').value};
   }
-  const kind = $('#draft-destination-kind').value;
-  const value = $('#draft-destination').value.trim();
-  const editedDestination = kind === 'email' ? {kind, email:value} : {kind, url:value};
-  const originalValue = draft.destination.url || draft.destination.email || '';
-  const sameDestination = kind === draft.destination.kind && value === originalValue;
-  const destination = sameDestination
-    ? {...draft.destination, ...editedDestination}
-    : {...editedDestination, action_type:kind === 'email' ? 'email' : kind === 'web' ? 'web_form' : kind === 'linkedin_easy_apply' ? 'linkedin_easy_apply' : 'manual',
-       provenance:'manual_override', confidence:'user_confirmed', evidence:'Destination edited during application review'};
-  const experience = (draft.resume_data.experience || []).map((item, index) => ({...item,
-    company:document.querySelector(`[data-experience-company="${index}"]`).value,
-    role:document.querySelector(`[data-experience-role="${index}"]`).value,
-    dates:document.querySelector(`[data-experience-dates="${index}"]`).value,
-    bullets:editedBullets(document.querySelector(`[data-experience-bullets="${index}"]`).value,
-      bulletSource.experience?.[index], item.bullets || [])}));
-  const projects = (draft.resume_data.projects || []).map((project, index) => ({...project,
-    title:document.querySelector(`[data-project-title="${index}"]`).value,
-    repository_url:document.querySelector(`[data-project-url="${index}"]`).value,
-    tech_stack:document.querySelector(`[data-project-stack="${index}"]`).value.split(',').map((x) => x.trim()).filter(Boolean),
-    bullets:editedBullets(document.querySelector(`[data-project-bullets="${index}"]`).value,
-      bulletSource.projects?.[index], project.bullets || [])}));
-  const education = (draft.resume_data.education || []).map((item, index) => ({...(typeof item === 'string' ? {} : item),
-    school:document.querySelector(`[data-education-school="${index}"]`).value,
-    degree:document.querySelector(`[data-education-degree="${index}"]`).value,
-    dates:document.querySelector(`[data-education-dates="${index}"]`).value}));
-  const skill_groups = Object.fromEntries(lines($('#draft-skill-groups').value).map((line) => {
-    const colon = line.indexOf(':'); return colon < 0 ? [line, ''] : [line.slice(0, colon).trim(), line.slice(colon + 1).trim()];
-  }));
-  const resume_data = {...draft.resume_data, name:$('#draft-name').value, email:$('#draft-email').value,
-    phone:$('#draft-phone').value, links:lines($('#draft-links').value), summary:$('#draft-summary').value,
-    experience, projects, education, achievements:editedBullets($('#draft-achievements').value,
-      bulletSource.achievements, draft.resume_data.achievements || []),
-    skills:lines($('#draft-skills').value), skill_groups};
-  const payload = {resume_data, message_data:{subject:$('#draft-subject').value, body:$('#draft-body').value}, form_data:{...draft.form_data, answers, attachments}, destination};
+  if (dirtySections.has('form_data')) {
+    const answers = {};
+    document.querySelectorAll('[data-answer]').forEach((field) => {
+      answers[field.dataset.answer] = ['radio','checkbox'].includes(field.type) && !field.checked ? '' : field.value;
+    });
+    const attachments = {};
+    for (const select of document.querySelectorAll('[data-attachment]')) {
+      const index = select.dataset.attachment;
+      const file = document.querySelector(`[data-attachment-file="${index}"]`).files[0];
+      if (file && select.value === 'uploaded') {
+        const body = new FormData();
+        body.append('file', file);
+        attachments[index] = await api(`/api/applications/${id}/attachments`, {method:'POST', body});
+      } else if (select.value === 'uploaded') {
+        attachments[index] = draft.form_data.attachments?.[index];
+      } else if (select.value) {
+        attachments[index] = {kind:select.value};
+      }
+    }
+    payload.form_data = {...draft.form_data, answers, attachments};
+  }
+  if (dirtySections.has('destination')) {
+    const kind = $('#draft-destination-kind').value;
+    const value = $('#draft-destination').value.trim();
+    const editedDestination = kind === 'email' ? {kind, email:value} : {kind, url:value};
+    const originalValue = draft.destination.url || draft.destination.email || '';
+    const sameDestination = kind === draft.destination.kind && value === originalValue;
+    payload.destination = sameDestination
+      ? {...draft.destination, ...editedDestination}
+      : {...editedDestination, action_type:kind === 'email' ? 'email' : kind === 'web' ? 'web_form' : kind === 'linkedin_easy_apply' ? 'linkedin_easy_apply' : 'manual',
+         provenance:'manual_override', confidence:'user_confirmed', evidence:'Destination edited during application review'};
+  }
+  if (dirtySections.has('resume_data')) {
+    const bulletSource = draft.resume_bullet_source || {experience:[], projects:[], achievements:[]};
+    const editedBullets = (value, source, originals) => {
+      const items = lines(value);
+      if (items.join('\n') === (source || []).join('\n')) return originals;
+      if (items.some((item) => !item.startsWith('\\item '))) {
+        throw new Error('Each LaTeX bullet line must start with \\item followed by its text.');
+      }
+      return items;
+    };
+    const experience = (draft.resume_data.experience || []).map((item, index) => ({...item,
+      company:document.querySelector(`[data-experience-company="${index}"]`).value,
+      role:document.querySelector(`[data-experience-role="${index}"]`).value,
+      dates:document.querySelector(`[data-experience-dates="${index}"]`).value,
+      bullets:editedBullets(document.querySelector(`[data-experience-bullets="${index}"]`).value,
+        bulletSource.experience?.[index], item.bullets || [])}));
+    const projects = (draft.resume_data.projects || []).map((project, index) => ({...project,
+      title:document.querySelector(`[data-project-title="${index}"]`).value,
+      repository_url:document.querySelector(`[data-project-url="${index}"]`).value,
+      tech_stack:document.querySelector(`[data-project-stack="${index}"]`).value.split(',').map((x) => x.trim()).filter(Boolean),
+      bullets:editedBullets(document.querySelector(`[data-project-bullets="${index}"]`).value,
+        bulletSource.projects?.[index], project.bullets || [])}));
+    const education = (draft.resume_data.education || []).map((item, index) => ({...(typeof item === 'string' ? {} : item),
+      school:document.querySelector(`[data-education-school="${index}"]`).value,
+      degree:document.querySelector(`[data-education-degree="${index}"]`).value,
+      dates:document.querySelector(`[data-education-dates="${index}"]`).value}));
+    const skill_groups = Object.fromEntries(lines($('#draft-skill-groups').value).map((line) => {
+      const colon = line.indexOf(':'); return colon < 0 ? [line, ''] : [line.slice(0, colon).trim(), line.slice(colon + 1).trim()];
+    }));
+    payload.resume_data = {...draft.resume_data, name:$('#draft-name').value, email:$('#draft-email').value,
+      phone:$('#draft-phone').value, links:lines($('#draft-links').value), summary:$('#draft-summary').value,
+      experience, projects, education, achievements:editedBullets($('#draft-achievements').value,
+        bulletSource.achievements, draft.resume_data.achievements || []),
+      skills:lines($('#draft-skills').value), skill_groups};
+  }
   return api(`/api/applications/${id}`, {method:'PATCH', body:JSON.stringify(payload)});
 }
 function bindRepositoryButtons(container) {

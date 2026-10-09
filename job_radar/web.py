@@ -1889,9 +1889,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def edit_application(draft_id: str, updates: dict[str, Any] = Body(...)):
         require_editable_application(draft_id)
         try:
-            draft = await asyncio.to_thread(update_draft, db, settings, draft_id, updates)
-            await auto_apply_manager.notify_review(draft_id)
-            return draft
+            await asyncio.to_thread(update_draft, db, settings, draft_id, updates)
+            await auto_apply_manager.notify_review(draft_id, deliver_telegram=False)
+            return application(draft_id)
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
         except ValueError as error:
@@ -1967,7 +1967,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 draft = await inspect_form(db, settings, draft_id)
             if draft["destination"].get("kind") == "linkedin_easy_apply":
                 db.set_setting("linkedin_automation_paused", False)
-            await auto_apply_manager.notify_review(draft_id)
+            await auto_apply_manager.notify_review(draft_id, deliver_telegram=False)
             return draft
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
@@ -2008,7 +2008,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     draft = set_unavailable_linkedin_destination(db, draft_id, action["detail"])
             if action["kind"] in {"web", "linkedin_easy_apply", "closed", "already_applied"}:
                 db.set_setting("linkedin_automation_paused", False)
-                await auto_apply_manager.notify_review(draft_id)
+                await auto_apply_manager.notify_review(draft_id, deliver_telegram=False)
             return {"action": action, "draft": draft, "inspection_error": inspection_error}
         except KeyError as error:
             raise HTTPException(404, str(error)) from error

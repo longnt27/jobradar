@@ -79,7 +79,22 @@ def test_application_tab_reviews_regenerates_sends_and_shows_receipt(tmp_path: P
                     page.get_by_role("button", name="Save changes").click()
                 assert saved_response.value.status == 200, saved_response.value.text()
                 page.locator("#application-dirty-state").get_by_text("Saved").wait_for()
-                assert r"\textbf{Python systems}" in client.get(f"/api/applications/{draft['id']}").json()["resume_data"]["experience"][0]["bullets"][0]
+                saved = client.get(f"/api/applications/{draft['id']}").json()
+                assert r"\textbf{Python systems}" in saved["resume_data"]["experience"][0]["bullets"][0]
+                resume_hash = saved["resume_hash"]
+                page.locator('#application-review-resume img[alt="Resume page 1"]').wait_for()
+                resume_requests = []
+                page.on("request", lambda request: resume_requests.append(request.url)
+                        if f"/api/applications/{draft['id']}/resume/preview" in request.url else None)
+                page.locator("#draft-body").fill("I am interested in this role. Please review my attached resume.")
+                with page.expect_response(lambda response: response.url.endswith(f"/api/applications/{draft['id']}")
+                                          and response.request.method == "PATCH") as message_response:
+                    page.get_by_role("button", name="Save changes").click()
+                assert message_response.value.status == 200, message_response.value.text()
+                assert set(message_response.value.request.post_data_json) == {"message_data"}
+                page.locator("#application-dirty-state").get_by_text("Saved").wait_for()
+                assert client.get(f"/api/applications/{draft['id']}").json()["resume_hash"] == resume_hash
+                assert not resume_requests
                 assert page.get_by_label("Custom instructions").is_visible()
                 page.get_by_label("Custom instructions").fill("Emphasize production search")
                 page.locator("#regenerate-section").select_option("message")
