@@ -133,6 +133,14 @@ def application_prompt(db: Database, draft_id: str, section: str, instruction: s
             "complementary supported results in the second bullet. Keep repository links and at most five skill "
             "categories. Write resume text in English. "
         )
+    elif section == "summary":
+        rules += (
+            "Write a high-level, cohesive professional summary under 450 characters in English (2 to 3 sentences). "
+            "Highlight role identity, competitive programming background, core technologies (Python, PyTorch, Linux), "
+            "and relevant technical domains aligned with the target role, with experience building end-to-end AI pipelines "
+            "and integrating practical solutions. Do NOT cite hyper-specific benchmark metrics (like PCC, F1, PSNR, SSIM), "
+            "test scores, dataset names, or project names in the summary. "
+        )
     else:
         rules += "Write resume text in English and revise only the requested section. "
     return (
