@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from job_radar.auto_apply import AutoApplyManager, _safe_attachments
-from job_radar.drafting import ModelDraft, prepare_draft
+from job_radar.drafting import ModelDraft, get_draft, prepare_draft
 from job_radar.ingest import ObservedJob, ingest
 from job_radar.mail_config import save_smtp
 from job_radar.notifications import save_telegram
@@ -130,6 +130,43 @@ def test_browser_wait_timeout_restores_review_without_submission(tmp_path: Path,
     assert app.state.db.one("SELECT status FROM auto_application_attempts WHERE draft_id=?", (draft["id"],)) == {
         "status": "awaiting_review"}
     assert app.state.db.one("SELECT id FROM submissions WHERE draft_id=?", (draft["id"],)) is None
+
+
+def test_approve_allows_application_with_updated_package_hash(tmp_path: Path, monkeypatch) -> None:
+    app = create_app(Settings(tmp_path))
+    app.state.db.set_setting("profile", {"name": "Alex Example", "email": "alex@example.org",
+                                         "experience": [{"company": "Prior Co", "role": "Engineer", "dates": "2024-2026",
+                                                         "bullets": ["Built Python systems."]}]})
+    manager = app.state.auto_apply_manager
+    job_id = _scored_job(app, "Approval Revision Engineer", 88)
+    queued = manager.queue_manual(job_id, "codex", prepare_anyway=True)
+    assert queued["status"] == "queued"
+    asyncio.run(manager._process(job_id))
+    draft_id = app.state.db.one("SELECT id FROM application_drafts WHERE vacancy_id=?", (job_id,))["id"]
+    draft = get_draft(app.state.db, draft_id)
+    manager.register_review(draft)
+
+    # Simulate draft update that changes package_hash without review_hash having synced yet
+    stale_review_hash = "stale-hash-123456"
+    app.state.db.execute("UPDATE auto_application_attempts SET status='awaiting_review',review_hash=? WHERE draft_id=?",
+                         (stale_review_hash, draft["id"]))
+    monkeypatch.setattr("job_radar.auto_apply.send_readiness", lambda *_args: [])
+
+    sent_called = False
+    async def fake_send_app(*_args, **_kwargs):
+        nonlocal sent_called
+        sent_called = True
+        return {"status": "sent_confirmed", "receipt": "Accepted"}
+
+    monkeypatch.setattr("job_radar.auto_apply.send_application", fake_send_app)
+
+    # Approve with the current draft's package_hash
+    result = asyncio.run(manager.approve(draft["id"], draft["package_hash"]))
+    assert sent_called is True
+    assert result["status"] == "sent_confirmed"
+    attempt = app.state.db.one("SELECT status,review_hash FROM auto_application_attempts WHERE draft_id=?", (draft["id"],))
+    assert attempt["status"] == "sent"
+    assert attempt["review_hash"] == draft["package_hash"]
 
 
 def test_retry_all_failed_ai_work_retries_saved_resume_updates(tmp_path: Path, monkeypatch) -> None:

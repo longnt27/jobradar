@@ -2107,6 +2107,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if result.get("reply"):
             try:
                 apply_chatgpt_reply(db, settings, draft_id, payload.section, result["reply"])
+                await auto_apply_manager.notify_review(draft_id, deliver_telegram=False)
                 result["detail"] = "Answer received from ChatGPT and applied to this application."
             except Exception as error:
                 log.warning("Could not apply ChatGPT reply to %s: %s", draft_id, error)

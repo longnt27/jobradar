@@ -730,21 +730,24 @@ class AutoApplyManager:
             raise
 
     async def approve(self, draft_id: str, expected_hash: str) -> dict:
-        attempt = self.db.one("SELECT * FROM auto_application_attempts WHERE draft_id=?", (draft_id,))
-        if not attempt or attempt["status"] != "awaiting_review":
-            raise ValueError("This application is not awaiting review")
         draft = get_draft(self.db, draft_id)
-        if expected_hash != attempt["review_hash"] or expected_hash != draft["package_hash"]:
+        if expected_hash != draft["package_hash"]:
             raise ValueError("Application changed since review. Review the current draft first")
+        attempt = self.db.one("SELECT * FROM auto_application_attempts WHERE draft_id=?", (draft_id,))
+        if not attempt:
+            self._set_status(draft["vacancy_id"], "awaiting_review", "Application prepared for review.", draft_id)
+            attempt = self.db.one("SELECT * FROM auto_application_attempts WHERE draft_id=?", (draft_id,))
+        if attempt["status"] not in ("awaiting_review", "needs_review"):
+            raise ValueError("This application is not awaiting review")
         blockers = send_readiness(self.db, self.settings, draft)
         if blockers:
             self._set_status(attempt["vacancy_id"], "needs_review", "; ".join(blockers), draft_id)
             raise ValueError("; ".join(blockers))
         with self.db.connection() as conn:
             claimed = conn.execute(
-                "UPDATE auto_application_attempts SET status='sending',detail='Approval received.',updated_at=? "
-                "WHERE draft_id=? AND status='awaiting_review' AND review_hash=?",
-                (now(), draft_id, expected_hash),
+                "UPDATE auto_application_attempts SET status='sending',detail='Approval received.',review_hash=?,updated_at=? "
+                "WHERE draft_id=? AND status IN ('awaiting_review', 'needs_review')",
+                (expected_hash, now(), draft_id),
             ).rowcount
         if not claimed:
             raise ValueError("This application is already being sent or has changed")
