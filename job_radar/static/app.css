@@ -410,9 +410,10 @@ label.is-dirty::after{content:"Unsaved";position:absolute;right:8px;top:7px;padd
 .application-debug{margin:4px 0 18px;padding:10px 0;border-top:1px solid #e2eae5}
 .application-debug summary{font-size:12px;color:#5e756c}
 .application-debug .hint{margin:10px 0 0}
-.application-sticky-actions{position:sticky;bottom:0;z-index:6;display:flex;align-items:center;justify-content:space-between;gap:16px;margin:0 -22px;padding:13px 22px;border-top:1px solid #cadbd0;background:rgba(255,255,255,.96);backdrop-filter:blur(10px);box-shadow:0 -10px 25px rgba(16,37,42,.08)}
-.application-sticky-actions>div:first-child{display:flex;align-items:center;gap:10px;min-width:0}
-.application-sticky-actions .actions{margin:0;flex:none}
+.application-sticky-actions{position:sticky;bottom:0;z-index:6;display:flex;align-items:center;justify-content:space-between;gap:16px;margin:0 -22px;padding:12px 22px;border-top:1px solid #cadbd0;background:rgba(255,255,255,.96);backdrop-filter:blur(10px);box-shadow:0 -10px 25px rgba(16,37,42,.08)}
+.application-sticky-actions [hidden]{display:none!important}
+.application-sticky-left{display:flex;align-items:center;gap:10px;min-width:0}
+.application-sticky-actions .actions{margin:0;flex:none;display:flex;align-items:center;gap:10px}
 #application-outcome{margin:0}
 #send-draft.primary{background:#155f41;border-color:#155f41}
 #send-draft.primary:not(:disabled){box-shadow:0 3px 10px rgba(21,95,65,.18)}
@@ -430,7 +431,7 @@ label.is-dirty::after{content:"Unsaved";position:absolute;right:8px;top:7px;padd
 @media(max-width:1050px){
   .application-toolbar{grid-template-columns:repeat(2,minmax(0,1fr))}
   .applications-workspace{grid-template-columns:minmax(240px,.8fr) minmax(0,1.2fr)}
-  .application-sticky-actions{align-items:stretch;flex-direction:column;gap:8px}
+  .application-sticky-actions{align-items:center;flex-direction:row;justify-content:space-between;gap:12px}
   .application-sticky-actions .actions{justify-content:flex-end;flex-wrap:wrap}
 }
 @media(max-width:900px){
@@ -447,10 +448,11 @@ label.is-dirty::after{content:"Unsaved";position:absolute;right:8px;top:7px;padd
   .application-overview-grid{grid-template-columns:1fr}
   .application-review-header{display:block}
   .application-review-header>.status-badge{margin:8px 0 0}
-  .application-sticky-actions{align-items:stretch;flex-direction:column}
-  .application-sticky-actions>div:first-child{justify-content:space-between}
-  .application-sticky-actions .actions{width:100%;display:grid;grid-template-columns:1fr 1fr}
+  .application-sticky-actions{align-items:stretch;flex-direction:column;gap:10px;padding:10px 16px}
+  .application-sticky-left{display:flex;align-items:center;justify-content:space-between;width:100%}
+  .application-sticky-actions .actions{width:100%;display:grid;grid-template-columns:1fr 1fr;gap:8px}
   .application-sticky-actions .actions #send-draft{grid-column:1/-1}
+  .application-sticky-actions .actions #btn-next-to-package{grid-column:1/-1}
   .application-resume-preview iframe{height:62vh}
 }
 

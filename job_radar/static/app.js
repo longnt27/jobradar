@@ -2718,18 +2718,16 @@ async function showApplication(id, preferredScreen = null) {
     </div>
 
     <div class="application-sticky-actions">
-      <div id="sticky-first-glance-controls" ${currentScreen === 'first-glance' ? '' : 'hidden'}>
-        <span class="status-badge status-badge--${reviewTone}">${escapeHtml(applicationReviewLabel(draft))}</span>
-      </div>
-      <div id="sticky-package-controls-left" ${currentScreen === 'package' ? '' : 'hidden'}>
-        <button type="button" class="secondary" id="btn-sticky-back-first-glance">← Back to First glance</button>
-        <span id="application-dirty-state" class="status-badge status-badge--neutral">Saved</span>
-        <span id="application-outcome" class="hint" role="status" aria-live="polite"></span>
+      <div class="application-sticky-left">
+        <span id="sticky-first-glance-badge" class="status-badge status-badge--${reviewTone}" ${currentScreen === 'first-glance' ? '' : 'hidden'}>${escapeHtml(applicationReviewLabel(draft))}</span>
+        <button type="button" class="secondary" id="btn-sticky-back-first-glance" ${currentScreen === 'package' ? '' : 'hidden'}>← Back to First glance</button>
+        <span id="application-dirty-state" class="status-badge status-badge--neutral" ${currentScreen === 'package' ? '' : 'hidden'}>Saved</span>
+        <span id="application-outcome" class="hint" role="status" aria-live="polite" ${currentScreen === 'package' ? '' : 'hidden'}></span>
       </div>
       <div class="actions">
         <button type="button" class="primary" id="btn-next-to-package" ${currentScreen === 'first-glance' ? '' : 'hidden'}>Next: Review package →</button>
         <button id="save-draft" class="secondary" disabled ${currentScreen === 'package' ? '' : 'hidden'}>Save changes</button>
-        <button id="send-draft" class="primary" ${canSend ? '' : 'disabled'} ${(currentScreen === 'package' || sent) ? '' : 'hidden'}>${sent ? escapeHtml(draft.latest_submission?.outcome?.label || 'Sent') : 'Approve &amp; send'}</button>
+        <button id="send-draft" class="primary" ${canSend ? '' : 'disabled'} ${currentScreen === 'package' ? '' : 'hidden'}>${sent ? escapeHtml(draft.latest_submission?.outcome?.label || 'Sent') : 'Approve &amp; send'}</button>
       </div>
     </div>`;
 
@@ -2934,16 +2932,20 @@ async function showApplication(id, preferredScreen = null) {
       firstGlanceEl.hidden = screen !== 'first-glance';
       packageEl.hidden = screen !== 'package';
     }
-    const stickyFG = detail.querySelector('#sticky-first-glance-controls');
-    const stickyPkgLeft = detail.querySelector('#sticky-package-controls-left');
-    const stickyNext = detail.querySelector('#btn-next-to-package');
+    const fgBadge = detail.querySelector('#sticky-first-glance-badge');
+    const backBtn = detail.querySelector('#btn-sticky-back-first-glance');
+    const dirtyBadge = detail.querySelector('#application-dirty-state');
+    const outcomeEl = detail.querySelector('#application-outcome');
+    const nextBtn = detail.querySelector('#btn-next-to-package');
     const saveBtn = detail.querySelector('#save-draft');
     const sendBtn = detail.querySelector('#send-draft');
-    if (stickyFG) stickyFG.hidden = screen !== 'first-glance';
-    if (stickyPkgLeft) stickyPkgLeft.hidden = screen !== 'package';
-    if (stickyNext) stickyNext.hidden = screen !== 'first-glance';
+    if (fgBadge) fgBadge.hidden = screen !== 'first-glance';
+    if (backBtn) backBtn.hidden = screen !== 'package';
+    if (dirtyBadge) dirtyBadge.hidden = screen !== 'package';
+    if (outcomeEl) outcomeEl.hidden = screen !== 'package';
+    if (nextBtn) nextBtn.hidden = screen !== 'first-glance';
     if (saveBtn) saveBtn.hidden = screen !== 'package';
-    if (sendBtn) sendBtn.hidden = screen !== 'package' && !sent;
+    if (sendBtn) sendBtn.hidden = screen !== 'package';
     scrollNodeIntoView(detail, {block:'start'});
   };
 
