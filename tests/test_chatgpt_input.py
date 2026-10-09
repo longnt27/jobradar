@@ -79,3 +79,41 @@ def test_chatgpt_login_button_opens_shared_browser_profile(tmp_path: Path, monke
     response = client.post("/api/chatgpt/login")
     assert response.status_code == 200
     assert response.json()["status"] == "opened"
+
+
+def test_settings_select_chatgpt_web_without_calling_cli_for_new_draft(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("job_radar.web.chrome_executable", lambda: "/fake/chrome")
+    app = create_app(Settings(tmp_path))
+    client = TestClient(app)
+    profile = client.get("/api/profile").json()
+    profile.update({"name": "Alex Example", "email": "alex@example.org",
+                    "experience": [{"company": "Prior Co", "role": "Engineer", "dates": "2024–2026",
+                                    "bullets": ["Built Python search systems."]}]})
+    assert client.put("/api/profile", json=profile).status_code == 200
+    app.state.db.set_setting("auto_apply", {"enabled": True})
+    saved = client.put("/api/profile/provider", json={"provider": "chatgpt_web"})
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["automatic_drafts_paused"] is True
+    assert app.state.auto_apply_manager.config()["enabled"] is False
+    setup = client.get("/api/setup").json()
+    assert setup["selected_provider"] == "chatgpt_web"
+    assert setup["capabilities"]["automatic_drafts"]["ready"] is False
+
+    def no_cli(*_args, **_kwargs):
+        raise AssertionError("A CLI model must not run in ChatGPT Web mode")
+
+    monkeypatch.setattr("job_radar.drafting._run_provider", no_cli)
+    job = client.post("/api/jobs/import", json={"company": "Example", "title": "Search Engineer",
+        "description": "Build Python search systems.", "apply_url": "https://example.org/apply"}).json()
+    draft = prepare_draft(app.state.db, app.state.settings, job["id"], "chatgpt_web")
+    assert draft["provider"] == "chatgpt_web"
+    assert any("starter draft" in warning for warning in draft["warnings"])
+
+    next_job = client.post("/api/jobs/import", json={"company": "Another Co", "title": "Python Engineer",
+        "description": "Build Python APIs for search products.", "apply_url": "https://example.org/second"}).json()
+    queued = app.state.auto_apply_manager.queue_manual(next_job["id"], "chatgpt_web", prepare_anyway=True)
+    assert queued["status"] == "queued"
+    asyncio.run(app.state.auto_apply_manager._process(next_job["id"]))
+    attempt = app.state.db.one("SELECT status,draft_id FROM auto_application_attempts WHERE vacancy_id=?", (next_job["id"],))
+    assert attempt["status"] == "needs_review"
+    assert attempt["draft_id"]

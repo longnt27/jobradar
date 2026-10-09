@@ -19,6 +19,7 @@ from .settings import Settings
 
 PROVIDERS = {
     "template": "local template; no model inference",
+    "chatgpt_web": "ChatGPT Web browser handoff; reply reviewed manually",
     "codex_local": "local inference through Codex OSS",
     "codex": "remote inference through local Codex CLI",
     "agy": "remote inference through local Antigravity CLI",
@@ -271,6 +272,8 @@ def _ensure_english_resume(provider: str, resume: dict) -> dict:
     if isinstance(skill_groups, dict):
         slots.extend((skill_groups, key, True) for key in skill_groups if _VIETNAMESE_MARKS.search(key))
     if not slots:
+        return resume
+    if provider == "chatgpt_web":
         return resume
     if provider == "template":
         raise ValueError("Choose an AI drafting provider to translate Vietnamese resume details into English")
@@ -654,6 +657,8 @@ def prepare_draft(db: Database, settings: Settings, vacancy_id: str, provider: s
         card["details"] = json.loads(card["details"])
     if not cards and not profile.get("experience"):
         raise ValueError("Add a previous position or approve a GitHub project before preparing an application")
+    if custom_prompt and provider == "chatgpt_web":
+        raise ValueError("Use the ChatGPT Web prompt handoff, then copy approved text into this application")
     if custom_prompt and provider == "template":
         raise ValueError("Choose an AI drafting provider to regenerate with custom instructions")
     previous = get_draft(db, draft_id) if draft_id else None
@@ -663,12 +668,13 @@ def prepare_draft(db: Database, settings: Settings, vacancy_id: str, provider: s
         if draft_id else None)
     if previous and (previous["vacancy_id"] != vacancy_id or previous["status"] in ("sent", "submission_uncertain") or previous_submission):
         raise ValueError("This application cannot be regenerated after a submission attempt")
-    model = (_template(job, profile, cards) if provider == "template" else
+    browser_handoff = provider == "chatgpt_web"
+    model = (_template(job, profile, cards) if provider in {"template", "chatgpt_web"} else
              _run_provider(provider, job, profile, cards, custom_prompt) if custom_prompt else
              _run_provider(provider, job, profile, cards))
-    if provider != "template":
+    if provider not in {"template", "chatgpt_web"}:
         model = _fit_in_job_language(provider, job, model)
-    selected, projects = _selected_resume_projects(job, cards, model, provider)
+    selected, projects = _selected_resume_projects(job, cards, model, "template" if browser_handoff else provider)
     resume = _resume_from_model(profile, model, selected, projects, provider)
     message = _compose_application_message(job, profile, model.fit_text)
     destination = resolve_application_action(db, job)
@@ -677,7 +683,9 @@ def prepare_draft(db: Database, settings: Settings, vacancy_id: str, provider: s
     warnings = []
     if warning := _destination_warning(destination):
         warnings.append(warning)
-    if provider != "template":
+    if browser_handoff:
+        warnings.append("This is a starter draft. Review the ChatGPT Web reply and copy approved text into the application before sending.")
+    elif provider != "template":
         warnings.append("Review AI wording for factual accuracy before sending.")
     identifier = draft_id or new_id()
     resume_path, resume_hash = render_resume(settings, identifier, resume)
@@ -711,8 +719,8 @@ def refresh_draft_projects(db: Database, settings: Settings, draft_id: str) -> d
         card["details"] = json.loads(card["details"])
     provider = previous["provider"]
     try:
-        model = _template(job, profile, cards) if provider == "template" else _run_provider(provider, job, profile, cards)
-        selected, projects = _selected_resume_projects(job, cards, model, provider)
+        model = _template(job, profile, cards) if provider in {"template", "chatgpt_web"} else _run_provider(provider, job, profile, cards)
+        selected, projects = _selected_resume_projects(job, cards, model, "template" if provider == "chatgpt_web" else provider)
         resume = {**previous["resume_data"], "projects": projects, "evidence": selected}
         resume["bold_phrases"] = _model_bold_phrases(model, resume)
         path, digest = render_resume(settings, draft_id, resume)
@@ -746,15 +754,17 @@ def refresh_draft_content(db: Database, settings: Settings, draft_id: str,
     for card in cards:
         card["details"] = json.loads(card["details"])
     provider = previous["provider"]
+    if provider == "chatgpt_web" and custom_prompt:
+        raise ValueError("Use the ChatGPT Web prompt handoff, then copy approved text into this application")
     try:
-        model = (_template(job, profile, cards) if provider == "template" else
+        model = (_template(job, profile, cards) if provider in {"template", "chatgpt_web"} else
                  _run_provider(provider, job, profile, cards, custom_prompt) if custom_prompt else
                  _run_provider(provider, job, profile, cards))
         if required_project_ids and tuple(model.selected_evidence_ids) != required_project_ids:
             raise ValueError("The drafting model did not select the requested projects in the requested order")
-        if provider != "template":
+        if provider not in {"template", "chatgpt_web"}:
             model = _fit_in_job_language(provider, job, model)
-        selected, projects = _selected_resume_projects(job, cards, model, provider)
+        selected, projects = _selected_resume_projects(job, cards, model, "template" if provider == "chatgpt_web" else provider)
         resume = _resume_from_model(profile, model, selected, projects, provider)
         message = _compose_application_message(job, profile, model.fit_text)
         path, digest = render_resume(settings, draft_id, resume)
@@ -938,6 +948,8 @@ def regenerate_draft(db: Database, settings: Settings, draft_id: str, prompt: st
     if section not in {"all", "summary", "experience", "projects", "education", "achievements", "skills", "message"}:
         raise ValueError("Choose a resume section, application email, or the full draft")
     previous = get_draft(db, draft_id)
+    if previous["provider"] == "chatgpt_web":
+        raise ValueError("Use the ChatGPT Web prompt handoff, then copy approved text into this application")
     before = _section_snapshot(previous)
     if section == "all":
         revised = prepare_draft(db, settings, previous["vacancy_id"], previous["provider"], draft_id, prompt.strip())

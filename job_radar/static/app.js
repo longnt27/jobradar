@@ -1353,6 +1353,7 @@ const PROVIDER_LABELS = {
   codex_local:'Codex OSS + Ollama',
   agy:'Antigravity CLI',
   claude:'Claude Code CLI',
+  chatgpt_web:'ChatGPT Web',
 };
 
 function providerLabel(provider) {
@@ -1366,6 +1367,7 @@ function providerAvailability(setup) {
     codex_local:Boolean(setup.providers?.codex && setup.providers?.ollama),
     agy:Boolean(setup.providers?.agy),
     claude:Boolean(setup.providers?.claude),
+    chatgpt_web:Boolean(setup.providers?.chatgpt_web),
   };
 }
 
@@ -1384,7 +1386,7 @@ function configureProviderSelect(select, setup, preferred = '') {
     if (!option.value) return;
     option.disabled = !availability[option.value];
   });
-  if (preferred && availability[preferred]) select.value = preferred;
+  if (preferred && availability[preferred] && [...select.options].some((option) => option.value === preferred)) select.value = preferred;
   else if (!availability[select.value]) select.value = '';
   return availability;
 }
@@ -1402,6 +1404,7 @@ function renderProviderAvailability(availability) {
     codex_local:'Requires both Codex CLI and Ollama on this Mac.',
     agy:'Install and sign in to Antigravity CLI.',
     claude:'Install and sign in to Claude Code CLI.',
+    chatgpt_web:'Install Google Chrome to use the saved social browser profile.',
   };
   const missing = Object.entries(availability).filter(([, ready]) => !ready);
   $('#provider-availability').innerHTML = missing.length
@@ -1549,10 +1552,11 @@ async function loadSettings() {
   renderSearchIntentForm(intent);
   renderPreferenceSuggestions(suggestions);
   const availability = {codex:setup.providers.codex, codex_local:setup.providers.codex && setup.providers.ollama,
-    agy:setup.providers.agy, claude:setup.providers.claude};
+    agy:setup.providers.agy, claude:setup.providers.claude, chatgpt_web:setup.providers.chatgpt_web};
   const providerForm = $('#provider-form');
   providerForm.querySelectorAll('option[value]').forEach((option) => { if (option.value) option.disabled = !availability[option.value]; });
   providerForm.elements.provider.value = profile.drafting_provider || '';
+  $('#chatgpt-web-setup').hidden = providerForm.elements.provider.value !== 'chatgpt_web';
   renderProviderAvailability(availability);
   const modelCount = Number(Boolean(profile.drafting_provider)) + Number(Boolean(setup.matching.model));
   setStepStatus('#provider-status', modelCount === 2 ? 'Both configured' : modelCount ? '1 of 2 configured' : 'Choose models', modelCount === 2 ? '' : 'warning');
@@ -1849,6 +1853,7 @@ function providerLabel(value) {
     codex_local:'Codex OSS · local',
     agy:'Antigravity CLI',
     claude:'Claude Code',
+    chatgpt_web:'ChatGPT Web',
     template:'Basic template',
     'local template; no model inference':'Basic template',
     'local inference through Codex OSS':'Codex OSS · local',
@@ -2439,7 +2444,8 @@ async function showApplication(id) {
     applicationList.scrollTop += offset - Math.max(0, (applicationList.clientHeight - selectedCard.clientHeight) / 2);
   }
 
-  const draft = await api(`/api/applications/${id}`);
+  const [draft, profile] = await Promise.all([api(`/api/applications/${id}`), api('/api/profile')]);
+  const webGenerator = profile.drafting_provider === 'chatgpt_web' || draft.provider === 'chatgpt_web';
   const resume = draft.resume_data || {};
   const message = draft.message_data || {};
   const destination = draft.destination || {kind:'manual', action_type:'unknown'};
@@ -2536,14 +2542,13 @@ async function showApplication(id) {
 
     <section id="application-review-regenerate" class="application-review-section">
       <h3>Regenerate only what needs work</h3>
-      <p class="hint">Choose one section to revise. With your saved provider, resume changes update the PDF. For the application email, AI rewrites only the experience and project fit paragraph.</p>
-      <label>Generator for this section<select id="regenerate-generator"><option value="saved">${escapeHtml(providerLabel(draft.provider))} · update this application</option><option value="chatgpt_web">ChatGPT Web · review reply in browser</option></select></label>
-      <label>Section<select id="regenerate-section"><option value="summary">Professional summary</option><option value="experience">Experience bullets</option><option value="projects">Selected projects and bullets</option><option value="education">Education wording</option><option value="achievements">Achievements</option><option value="skills">Skills</option>${destination.kind === 'email' ? '<option value="message">Application experience and project fit</option>' : ''}<option value="all">Full draft · uses more quota</option></select></label>
+      <p class="hint">${webGenerator ? 'ChatGPT Web enters the prompt in your saved Chrome browser. Review its reply and copy approved text into the application.' : 'Choose one section to revise. Resume changes update the PDF. For the application email, AI rewrites only the experience and project fit paragraph.'}</p>
+      <label>Section<select id="regenerate-section"><option value="summary">Professional summary</option><option value="experience">Experience bullets</option><option value="projects">Selected projects and bullets</option><option value="education">Education wording</option><option value="achievements">Achievements</option><option value="skills">Skills</option>${destination.kind === 'email' ? '<option value="message">Application experience and project fit</option>' : ''}<option value="all" ${draft.provider === 'chatgpt_web' ? 'selected' : ''}>${webGenerator ? 'Full resume draft' : 'Full draft · uses more quota'}</option></select></label>
       <label>Custom instructions<textarea id="regenerate-prompt" rows="3" placeholder="Example: make the summary shorter and emphasize production search work"></textarea></label>
-      <div class="actions"><button id="regenerate-draft" class="secondary" ${draft.provider === 'template' || sent || uncertain ? 'disabled' : ''}>Regenerate selected section</button><button id="chatgpt-login" class="secondary" type="button" hidden>Log in to ChatGPT</button><button id="chatgpt-input" class="secondary" ${sent || uncertain ? 'disabled' : ''} hidden>Enter prompt in ChatGPT</button></div>
-      <p id="chatgpt-note" class="hint" hidden>Log in through Job Radar’s Chrome browser, the same profile used for LinkedIn and Facebook. Job Radar enters the prompt there. Review the reply, paste approved text into the application’s editable fields, and save. Close that browser window when finished so scheduled checks can resume.</p>
+      <div class="actions"><button id="regenerate-draft" class="secondary" ${webGenerator ? 'hidden' : ''} ${draft.provider === 'template' || sent || uncertain ? 'disabled' : ''}>Regenerate selected section</button><button id="chatgpt-input" class="secondary" ${webGenerator ? '' : 'hidden'} ${sent || uncertain ? 'disabled' : ''}>Enter prompt in ChatGPT</button></div>
+      ${webGenerator ? '<p class="hint">Use the Log in to ChatGPT button in Settings → AI models if needed. Close the Chrome window when finished so scheduled checks can resume.</p>' : ''}
       ${sent ? '<p class="hint">This application has been sent. Its reviewed message and resume are preserved in the submission receipt above.</p>' : ''}
-      ${draft.provider === 'template' ? '<p class="hint">This draft used the basic template. Create a new draft with an AI provider to regenerate it with instructions.</p>' : ''}
+      ${draft.provider === 'template' && !webGenerator ? '<p class="hint">This draft used the basic template. Create a new draft with an AI provider to regenerate it with instructions.</p>' : ''}
     </section>
 
     <details class="application-debug"><summary>Activity and technical details</summary><p class="hint">Telegram review delivery: ${escapeHtml(draft.telegram_status || 'Not configured')}${draft.telegram_error ? ` · ${escapeHtml(draft.telegram_error)}` : ''}</p><p class="hint">Package fingerprint: <span class="mono">${escapeHtml(draft.package_hash.slice(0, 16))}</span></p></details>
@@ -2657,23 +2662,6 @@ async function showApplication(id) {
     } finally {
       if (button.isConnected) endPending(button);
     }
-  });
-
-  $('#regenerate-generator').addEventListener('change', (event) => {
-    const web = event.target.value === 'chatgpt_web';
-    $('#regenerate-draft').hidden = web;
-    $('#chatgpt-login').hidden = !web;
-    $('#chatgpt-input').hidden = !web;
-    $('#chatgpt-note').hidden = !web;
-  });
-
-  $('#chatgpt-login').addEventListener('click', async (event) => {
-    const button = beginPending(event.currentTarget, 'Opening Chrome…');
-    try {
-      const result = await api('/api/chatgpt/login', {method:'POST', body:'{}'});
-      notice(result.detail);
-    } catch(error) { notice(error.message, true); }
-    finally { if (button.isConnected) endPending(button); }
   });
 
   $('#chatgpt-input').addEventListener('click', async (event) => {
@@ -3348,11 +3336,26 @@ $('#provider-form').addEventListener('submit', async (event) => {
   const pendingButton = beginPending(event.submitter || event.target.querySelector('button[type="submit"]'), 'Saving…');
   try {
     const provider = event.target.elements.provider.value;
-    await api('/api/profile/provider', {method:'PUT', body:JSON.stringify({provider})});
+    const result = await api('/api/profile/provider', {method:'PUT', body:JSON.stringify({provider})});
     await loadSettings();
-    notice('Application writing provider saved.');
+    notice(result.automatic_drafts_paused
+      ? 'ChatGPT Web saved. Automatic drafts paused; prepare jobs manually and review the browser reply.'
+      : 'Application writing provider saved.');
   } catch(error) { notice(error.message, true); }
   finally { endPending(pendingButton); }
+});
+
+$('#provider-form').elements.provider.addEventListener('change', (event) => {
+  $('#chatgpt-web-setup').hidden = event.target.value !== 'chatgpt_web';
+});
+
+$('#chatgpt-web-login').addEventListener('click', async (event) => {
+  const button = beginPending(event.currentTarget, 'Opening Chrome…');
+  try {
+    const result = await api('/api/chatgpt/login', {method:'POST', body:'{}'});
+    notice(result.detail);
+  } catch(error) { notice(error.message, true); }
+  finally { endPending(button); }
 });
 
 $('#pdf-resume-form').addEventListener('submit', async (event) => {

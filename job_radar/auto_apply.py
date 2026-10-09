@@ -456,7 +456,13 @@ class AutoApplyManager:
         if not provider:
             self._set_status(job_id, "needs_review", "Choose an application drafting provider in My profile.")
             return
+        if provider == "chatgpt_web" and not manual:
+            self._set_status(job_id, "needs_review", "ChatGPT Web needs a manual browser handoff. Open this job to prepare its application.")
+            return
         draft = await asyncio.to_thread(prepare_draft, self.db, self.settings, job_id, provider)
+        if provider == "chatgpt_web":
+            self._set_status(job_id, "needs_review", "Starter draft created. Enter its prompt in ChatGPT Web, then copy approved text into the application.", draft["id"])
+            return
         self._set_status(job_id, "preparing", "Draft prepared; checking application details", draft["id"])
         if not manual and not self._still_eligible(job_id):
             self._set_status(job_id, "needs_review", "Automatic preparation paused or job score changed.")

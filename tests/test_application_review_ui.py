@@ -12,7 +12,11 @@ from job_radar.web import create_app
 
 
 def test_application_tab_reviews_regenerates_sends_and_shows_receipt(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("job_radar.web.chrome_executable", lambda: "/fake/chrome")
     app = create_app(Settings(tmp_path))
+    async def fake_chatgpt_login():
+        return {"status": "opened", "detail": "ChatGPT opened in shared Chrome"}
+    monkeypatch.setattr(app.state.chatgpt_input, "open_login", fake_chatgpt_login)
     app.state.db.execute("UPDATE sources SET enabled=0")
     app.state.db.set_setting("profile", {"name": "Alex Example", "email": "alex@example.org",
         "experience": [{"company": "Prior Co", "role": "Engineer", "dates": "2024–2026", "bullets": ["Built Python systems."]}],
@@ -96,11 +100,21 @@ def test_application_tab_reviews_regenerates_sends_and_shows_receipt(tmp_path: P
                 assert client.get(f"/api/applications/{draft['id']}").json()["resume_hash"] == resume_hash
                 assert not resume_requests
                 assert page.get_by_label("Custom instructions").is_visible()
-                page.get_by_label("Generator for this section").select_option("chatgpt_web")
+                page.locator('.sidebar [data-tab="settings"]').click()
+                page.locator('#provider-form select[name="provider"]').select_option('chatgpt_web')
                 assert page.get_by_role("button", name="Log in to ChatGPT").is_visible()
-                assert page.get_by_role("button", name="Enter prompt in ChatGPT").is_visible()
+                with page.expect_response(lambda response: response.url.endswith('/api/chatgpt/login') and response.status == 200):
+                    page.get_by_role("button", name="Log in to ChatGPT").click()
+                with page.expect_response(lambda response: response.url.endswith('/api/profile/provider') and response.request.method == 'PUT'):
+                    page.get_by_role("button", name="Save provider").click()
+                assert client.get('/api/profile').json()['drafting_provider'] == 'chatgpt_web'
+                page.goto(f"http://127.0.0.1:{port}/#applications/{draft['id']}")
+                page.get_by_role("button", name="Enter prompt in ChatGPT").wait_for()
                 assert not page.get_by_role("button", name="Regenerate selected section").is_visible()
-                page.get_by_label("Generator for this section").select_option("saved")
+                assert page.locator('#regenerate-generator').count() == 0
+                assert client.put('/api/profile/provider', json={'provider':'codex'}).status_code == 200
+                page.reload()
+                page.get_by_label("Custom instructions").wait_for()
                 page.get_by_label("Custom instructions").fill("Emphasize production search")
                 page.locator("#regenerate-section").select_option("message")
                 page.get_by_role("button", name="Regenerate selected section").click()

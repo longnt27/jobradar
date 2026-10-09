@@ -58,7 +58,7 @@ from .seeds import seed
 from .settings import Settings
 from .scanner import ScanManager
 from .service import service_path
-from .social_browser import social_login_at
+from .social_browser import chrome_executable, social_login_at
 from .work_queue import work_queue
 
 
@@ -150,7 +150,7 @@ class ResumeImportInput(BaseModel):
 
 
 class ProviderInput(BaseModel):
-    provider: Literal["codex_local", "codex", "agy", "claude"]
+    provider: Literal["codex_local", "codex", "agy", "claude", "chatgpt_web"]
 
 
 class MatchingModelInput(BaseModel):
@@ -195,7 +195,7 @@ class RepositoryInput(BaseModel):
 
 
 class PrepareInput(BaseModel):
-    provider: Literal["template", "codex_local", "codex", "agy", "claude"] | None = None
+    provider: Literal["template", "codex_local", "codex", "agy", "claude", "chatgpt_web"] | None = None
     prepare_anyway: bool = False
 
 
@@ -292,6 +292,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def provider_available(provider: str) -> bool:
         if provider == "template":
             return True
+        if provider == "chatgpt_web":
+            try:
+                chrome_executable()
+                return True
+            except ValueError:
+                return False
         command = "codex" if provider.startswith("codex") else provider
         return bool(shutil.which(command)) and (provider != "codex_local" or bool(shutil.which("ollama")))
 
@@ -302,6 +308,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not provider_available(provider):
             raise HTTPException(422, f"{provider} is not available on this Mac; change it in Settings")
         return provider
+
+    def configured_project_provider() -> str:
+        provider = configured_provider()
+        return "template" if provider == "chatgpt_web" else provider
 
     def save_profile(profile: dict[str, Any]) -> None:
         previous = db.get_setting("profile", {})
@@ -466,6 +476,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             smtp_configured=smtp_ready,
         )
         availability = {name: bool(shutil.which(name)) for name in ("codex", "agy", "claude", "ollama")}
+        availability["chatgpt_web"] = provider_available("chatgpt_web")
         return {
             "profile_complete": bool(profile.get("name") and profile.get("email")),
             "selected_provider": provider,
@@ -491,7 +502,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "matching": match_manager.status(),
             "service_installed": service_path().exists(),
             "providers": availability,
-            "provider_processing": {name: provider_processing(name) for name in ("codex_local", "codex", "agy", "claude")},
+            "provider_processing": {name: provider_processing(name) for name in ("codex_local", "codex", "agy", "claude", "chatgpt_web")},
             "capabilities": capabilities,
         }
 
@@ -759,9 +770,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def put_profile(profile: dict[str, Any] = Body(...)):
         if not isinstance(profile.get("name", ""), str) or not isinstance(profile.get("skills", []), list):
             raise HTTPException(422, "Profile must include a name and skills list")
-        if profile.get("drafting_provider") and profile["drafting_provider"] not in {"codex_local", "codex", "agy", "claude"}:
+        if profile.get("drafting_provider") and profile["drafting_provider"] not in {"codex_local", "codex", "agy", "claude", "chatgpt_web"}:
             raise HTTPException(422, "Unsupported drafting provider")
         save_profile(profile)
+        if profile.get("drafting_provider") == "chatgpt_web" and auto_apply_manager.config()["enabled"]:
+            auto_apply_manager.configure(False)
         return profile
 
     @app.put("/api/profile/provider")
@@ -771,7 +784,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         profile = db.get_setting("profile", {})
         profile["drafting_provider"] = payload.provider
         save_profile(profile)
-        return {"provider": payload.provider, "mode": PROVIDERS[payload.provider]}
+        automatic_drafts_paused = False
+        if payload.provider == "chatgpt_web" and auto_apply_manager.config()["enabled"]:
+            auto_apply_manager.configure(False)
+            automatic_drafts_paused = True
+        return {"provider": payload.provider, "mode": PROVIDERS[payload.provider],
+                "automatic_drafts_paused": automatic_drafts_paused}
 
     @app.post("/api/profile/resume/pdf")
     async def import_pdf_resume(file: UploadFile = File(...), provider: str = Form("")):
@@ -1525,6 +1543,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         for card in failed_project_briefs():
             try:
                 provider = card["provider"] or db.get_setting("profile", {}).get("drafting_provider", "codex")
+                if provider == "chatgpt_web":
+                    provider = "template"
                 await asyncio.to_thread(generate_project_content, db, card["id"], provider)
             except Exception:
                 log.exception("Project brief retry failed for %s", card["id"])
@@ -1558,6 +1578,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def configure_auto_apply(payload: AutoApplyInput):
         if payload.enabled:
             profile = db.get_setting("profile", {})
+            if profile.get("drafting_provider") == "chatgpt_web":
+                raise HTTPException(409, "ChatGPT Web uses a manual browser handoff. Choose a CLI provider for automatic drafts.")
             if not db.get_setting("matching_model", ""):
                 raise HTTPException(409, "Choose a local matching model in My profile first")
             if not profile.get("drafting_provider") or not provider_available(profile["drafting_provider"]):
@@ -1680,7 +1702,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/repositories/inspect")
     def inspect_repo(payload: RepositoryInput):
         try:
-            provider = payload.provider or configured_provider()
+            provider = payload.provider or configured_project_provider()
             if provider not in PROVIDERS:
                 raise ValueError("Unsupported provider")
             result = inspect_repository(db, settings, str(payload.url))
@@ -1696,7 +1718,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/evidence/{evidence_id}/generate")
     def generate_project(evidence_id: str, payload: ProjectGenerationInput):
         try:
-            provider = payload.provider or configured_provider()
+            provider = payload.provider or configured_project_provider()
             result = generate_project_content(db, evidence_id, provider)
             result["processing"] = provider_processing(provider)
             return result

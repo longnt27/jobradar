@@ -6,13 +6,14 @@ from typing import Any
 
 PROVIDER_LABELS = {
     "template": "Local template",
+    "chatgpt_web": "ChatGPT Web",
     "codex_local": "Codex OSS + Ollama",
     "codex": "Codex CLI",
     "agy": "Antigravity CLI",
     "claude": "Claude Code CLI",
 }
 
-REMOTE_PROVIDERS = {"codex", "agy", "claude"}
+REMOTE_PROVIDERS = {"codex", "agy", "claude", "chatgpt_web"}
 
 
 def provider_processing(provider: str) -> dict[str, Any]:
@@ -28,6 +29,8 @@ def provider_processing(provider: str) -> dict[str, Any]:
         }
     if provider == "template":
         destination = "Processed locally with deterministic templates; no AI model receives the data."
+    elif provider == "chatgpt_web":
+        destination = "Job Radar enters the prompt in ChatGPT Web. Review the reply there and copy approved text into the application."
     elif provider == "codex_local":
         destination = "Processed locally through Codex OSS and Ollama; resume and application text stay on this Mac."
     else:
@@ -35,7 +38,7 @@ def provider_processing(provider: str) -> dict[str, Any]:
     return {
         "provider": provider,
         "label": PROVIDER_LABELS.get(provider, provider),
-        "mode": "remote" if remote else "local",
+        "mode": "browser_handoff" if provider == "chatgpt_web" else "remote" if remote else "local",
         "destination": destination,
         "remote": remote,
     }
@@ -60,7 +63,7 @@ def capability_readiness(
     has_evidence = has_experience or approved_projects > 0
     provider = str(profile.get("drafting_provider") or "")
     preparation_ready = bool(has_identity and has_evidence and provider and provider_is_available)
-    automatic_drafts_ready = bool(preparation_ready and matching_model)
+    automatic_drafts_ready = bool(preparation_ready and matching_model and provider != "chatgpt_web")
 
     return {
         "discovery": {
@@ -96,7 +99,8 @@ def capability_readiness(
             "label": "Automatic draft preparation ready" if automatic_drafts_ready else "Automatic drafts optional",
             "missing": [] if automatic_drafts_ready else (
                 ([] if preparation_ready else ["application preparation"]) +
-                ([] if matching_model else ["local matching model"])
+                ([] if matching_model else ["local matching model"]) +
+                (["an automated drafting provider"] if provider == "chatgpt_web" else [])
             ),
         },
         "review_delivery": {
