@@ -25,3 +25,16 @@ def return_to_job_radar(bundle: str | None, port: int) -> None:
     result = subprocess.run(command, capture_output=True, timeout=5, check=False)
     if result.returncode and bundle:
         subprocess.run(["open", url], capture_output=True, timeout=5, check=False)
+
+
+def hide_chrome() -> None:
+    try:
+        subprocess.run(
+            ["osascript", "-e", 'tell application "System Events" to set visible of process "Google Chrome" to false'],
+            capture_output=True,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+

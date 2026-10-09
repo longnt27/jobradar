@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import re
 import shutil
 import socket
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import time
 from collections.abc import Callable
@@ -17,7 +19,7 @@ from typing import Any, AsyncContextManager
 from playwright.async_api import Browser, Page, Playwright, TimeoutError as PlaywrightTimeoutError, async_playwright
 
 from .db import Database
-from .desktop_handoff import frontmost_app_bundle, return_to_job_radar
+from .desktop_handoff import frontmost_app_bundle, hide_chrome, return_to_job_radar
 from .drafting import APPLICATION_FIT_PROMPT, _compose_application_message, _job_for_drafting, _job_language, get_draft, update_draft
 from .settings import Settings
 from .social_browser import chrome_executable
@@ -25,9 +27,17 @@ from .social_browser import chrome_executable
 
 SECTIONS = {"all", "summary", "experience", "projects", "education", "achievements", "skills", "message"}
 COMPOSER = "#prompt-textarea, [data-testid='composer-input'], div[contenteditable='true'][role='textbox'], .ProseMirror[contenteditable='true']"
-ASSISTANT_MESSAGE = "[data-message-author-role='assistant'], article[data-testid*='assistant'], .agent-turn, [data-testid*='conversation-turn-assistant']"
+ASSISTANT_MESSAGE = (
+    "[data-message-author-role='assistant'], "
+    "[class*='DilResponseRoot'], "
+    "[class*='MarkdownRoot'], "
+    ".markdown, "
+    "article[data-testid*='assistant'], "
+    ".agent-turn, "
+    "[data-testid*='conversation-turn-assistant']"
+)
 STOP_BUTTON = "button[data-testid='stop-button'], button[aria-label='Stop generating'], button[aria-label='Stop streaming'], button[data-testid*='stop']"
-COPY_BUTTON = "button[data-testid='copy-turn-action-button'], button[aria-label='Copy'], [data-testid*='copy']"
+COPY_BUTTON = "button[aria-label='Copy'], button[data-testid='copy-turn-action-button'], [data-testid*='copy']"
 SEND_BUTTON = "button[data-testid='send-button'], button[aria-label='Send prompt'], button[aria-label='Send message'], button[data-testid*='send'], button[aria-label*='Send']"
 STREAMING_INDICATOR = ".result-streaming, [data-is-streaming='true'], .streaming-element"
 CHROME_EPOCH_OFFSET = 11644473600
@@ -136,7 +146,7 @@ def application_prompt(db: Database, draft_id: str, section: str, instruction: s
 
 def clean_reply_text(raw: str) -> str:
     text = raw.strip()
-    match = re.match(r"^```(?:[a-zA-Z0-9_-]+)?\n(.*)\n```$", text, re.DOTALL)
+    match = re.match(r"^```(?:[a-zA-Z0-9_-]+)?\s*\n?(.*?)\n?```$", text, re.DOTALL)
     if match:
         text = match.group(1).strip()
     text = re.sub(
@@ -420,7 +430,7 @@ class ChatGPTInputManager:
             await self.watch_task
             self.watch_task = None
 
-    async def _start_browser(self) -> None:
+    async def _start_browser(self, background: bool = False, temporary: bool = True) -> None:
         if self.process and self.process.poll() is None:
             return
         try:
@@ -433,18 +443,40 @@ class ChatGPTInputManager:
             with socket.socket() as listener:
                 listener.bind(("127.0.0.1", 0))
                 self.port = listener.getsockname()[1]
+            url = "https://chatgpt.com/?temporary-chat=true" if temporary else "https://chatgpt.com/"
+            cmd = [
+                chrome_executable(),
+                f"--user-data-dir={self.settings.browser_profile}",
+                "--profile-directory=Default",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--remote-debugging-address=127.0.0.1",
+                f"--remote-debugging-port={self.port}",
+            ]
+            if background:
+                cmd.extend([
+                    "--window-position=-2400,-2400",
+                    "--window-size=1280,800",
+                    "--new-window",
+                    url,
+                ])
+            else:
+                cmd.extend([
+                    "--new-window",
+                    url,
+                ])
             for attempt in range(3):
                 process = subprocess.Popen(
-                    [chrome_executable(), f"--user-data-dir={self.settings.browser_profile}",
-                     "--profile-directory=Default", "--no-first-run", "--no-default-browser-check",
-                     "--remote-debugging-address=127.0.0.1", f"--remote-debugging-port={self.port}",
-                     "--new-window", "https://chatgpt.com/"],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
                 )
                 self.process = process
                 self.watch_task = asyncio.create_task(self._watch_process(process))
                 await asyncio.sleep(.3)
                 if process.poll() is None:
+                    if background and sys.platform == "darwin":
+                        hide_chrome()
                     break
                 if attempt < 2:
                     await asyncio.sleep(0.7)
@@ -460,8 +492,8 @@ class ChatGPTInputManager:
             self._release_browser_lock()
             raise
 
-    async def _new_page(self) -> Page:
-        await self._start_browser()
+    async def _new_page(self, background: bool = False, temporary: bool = True) -> Page:
+        await self._start_browser(background=background, temporary=temporary)
         if not self.browser or not self.browser.is_connected():
             if self.playwright:
                 await self.playwright.stop()
@@ -487,9 +519,29 @@ class ChatGPTInputManager:
                 raise
         if not self.browser.contexts:
             raise RuntimeError("Chrome profile is unavailable. Close the ChatGPT window and try again.")
-        page = await self.browser.contexts[0].new_page()
-        await page.goto("https://chatgpt.com/", wait_until="domcontentloaded", timeout=30000)
-        await page.bring_to_front()
+        context = self.browser.contexts[0]
+        page = context.pages[0] if context.pages else await context.new_page()
+        target_url = "https://chatgpt.com/?temporary-chat=true" if temporary else "https://chatgpt.com/"
+        needs_nav = False
+        if page.url == "about:blank":
+            needs_nav = True
+        elif temporary and not page.url.startswith("https://chatgpt.com/?temporary-chat="):
+            needs_nav = True
+        elif not temporary and not page.url.startswith("https://chatgpt.com"):
+            needs_nav = True
+
+        if needs_nav:
+            await page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
+        else:
+            try:
+                await page.wait_for_load_state("domcontentloaded", timeout=15000)
+            except Exception:
+                pass
+
+        if not background:
+            await page.bring_to_front()
+        elif sys.platform == "darwin":
+            hide_chrome()
         return page
 
     async def _watch_login(self) -> None:
@@ -535,7 +587,7 @@ class ChatGPTInputManager:
                 try:
                     self.state = "opening"
                     self.error = None
-                    await self._start_browser()
+                    await self._start_browser(background=False, temporary=False)
                     self.state = "open"
                     if not self.login_task or self.login_task.done():
                         self.login_task = asyncio.create_task(self._watch_login())
@@ -553,29 +605,26 @@ class ChatGPTInputManager:
         loop = asyncio.get_event_loop()
         start_time = loop.time()
         appearance_timeout = min(timeout, 20.0)
-        assistant_locator = None
+        assistant_found = False
 
         while loop.time() - start_time < appearance_timeout:
             try:
                 current_count = await page.locator(ASSISTANT_MESSAGE).count()
-                if current_count > initial_count:
-                    assistant_locator = page.locator(ASSISTANT_MESSAGE).nth(current_count - 1)
-                    break
-                elif current_count > 0 and initial_count == 0:
-                    assistant_locator = page.locator(ASSISTANT_MESSAGE).last
+                if current_count > initial_count or (current_count > 0 and initial_count == 0):
+                    assistant_found = True
                     break
             except Exception:
                 pass
             await asyncio.sleep(0.1)
 
-        if not assistant_locator:
+        if not assistant_found:
             try:
                 if await page.locator(ASSISTANT_MESSAGE).count() > 0:
-                    assistant_locator = page.locator(ASSISTANT_MESSAGE).last
+                    assistant_found = True
             except Exception:
                 pass
 
-        if not assistant_locator:
+        if not assistant_found:
             return None
 
         last_text = ""
@@ -599,19 +648,19 @@ class ChatGPTInputManager:
 
             has_copy = False
             try:
-                copy_btn = assistant_locator.locator(COPY_BUTTON).first
-                if await copy_btn.is_visible():
+                copy_locator = page.locator(COPY_BUTTON)
+                if await copy_locator.count() > 0 and await copy_locator.last.is_visible():
                     has_copy = True
             except Exception:
                 pass
 
             text = ""
             try:
-                md = assistant_locator.locator(".markdown").first
-                if await md.count() > 0:
-                    text = (await md.inner_text()).strip()
+                md_locator = page.locator("[class*='MarkdownRoot'], .markdown")
+                if await md_locator.count() > 0:
+                    text = (await md_locator.last.inner_text()).strip()
                 else:
-                    text = (await assistant_locator.inner_text()).strip()
+                    text = (await page.locator(ASSISTANT_MESSAGE).last.inner_text()).strip()
             except Exception:
                 pass
 
@@ -634,15 +683,22 @@ class ChatGPTInputManager:
 
     async def enter(self, prompt: str, timeout: float = 60.0) -> dict[str, Any]:
         async with self.priority_browser():
-            async with self.lock:
-                page = None
-                try:
-                    page = await self._new_page()
+            try:
+                async with self.lock:
+                    try:
+                        sig = inspect.signature(self._new_page)
+                        accepts_args = bool(sig.parameters)
+                    except Exception:
+                        accepts_args = True
+                    page = await (self._new_page(background=True, temporary=True) if accepts_args else self._new_page())
                     composer = page.locator(COMPOSER).first
                     try:
                         await composer.wait_for(state="visible", timeout=15000)
                     except PlaywrightTimeoutError:
-                        return {"status": "sign_in_required", "detail": "Sign in to ChatGPT in the opened Chrome window, then try again."}
+                        return {
+                            "status": "sign_in_required",
+                            "detail": "Sign in to ChatGPT in Settings > Drafting provider, then try again.",
+                        }
 
                     initial_assistant_count = 0
                     try:
@@ -683,9 +739,11 @@ class ChatGPTInputManager:
                         }
                     return {
                         "status": "entered",
-                        "detail": "Prompt entered in ChatGPT. Review the conversation in the opened Chrome window.",
+                        "detail": "Prompt entered in ChatGPT, but no response was received.",
                         "reply": None,
                         "answer": None,
                     }
-                except Exception as error:
-                    return {"status": "failed", "detail": f"Could not enter the ChatGPT prompt: {str(error)[:180]}"}
+            except Exception as error:
+                return {"status": "failed", "detail": f"Could not enter the ChatGPT prompt: {str(error)[:180]}"}
+            finally:
+                await self.stop()

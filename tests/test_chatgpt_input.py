@@ -64,7 +64,7 @@ def test_chatgpt_input_fills_and_submits_composer_without_reading_reply(tmp_path
                     return page
 
                 manager._new_page = fake_new_page
-                result = await manager.enter("Draft this application")
+                result = await manager.enter("Draft this application", timeout=0.5)
                 assert result["status"] == "entered"
                 assert await page.evaluate("window.submitted") == "Draft this application"
             finally:
@@ -394,6 +394,137 @@ def test_chatgpt_input_uses_priority_browser(tmp_path: Path) -> None:
         result = await manager.enter("prompt")
         assert "Stop after browser start" in result["detail"]
         assert priority_entered is True
+
+    asyncio.run(scenario())
+
+
+def test_chatgpt_input_receives_reply_from_modern_dom(tmp_path: Path) -> None:
+    async def scenario():
+        manager = ChatGPTInputManager(Settings(tmp_path), asyncio.Lock())
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(headless=True)
+            try:
+                page = await browser.new_page()
+                await page.set_content("""
+                    <div id='prompt-textarea' role='textbox' contenteditable='true'></div>
+                    <script>
+                    window.submitted = '';
+                    document.querySelector('#prompt-textarea').addEventListener('keydown', e => {
+                        if (e.key === 'Enter') {
+                            window.submitted = e.target.textContent;
+                            e.preventDefault();
+                            const assistant = document.createElement('div');
+                            assistant.className = 'agent-turn DilResponseRoot_abc123';
+                            assistant.innerHTML = '<div class="MarkdownRoot_xyz456"><p>Modern ChatGPT generated reply.</p></div>' +
+                                '<button aria-label="Copy">Copy</button>';
+                            document.body.appendChild(assistant);
+                        }
+                    });
+                    </script>
+                """)
+
+                async def fake_new_page(background=False, temporary=True):
+                    return page
+
+                manager._new_page = fake_new_page
+                result = await manager.enter("Draft this application", timeout=5.0)
+                assert result["status"] == "entered"
+                assert result.get("reply") == "Modern ChatGPT generated reply."
+                assert "answer received" in result["detail"].lower()
+                assert await page.evaluate("window.submitted") == "Draft this application"
+            finally:
+                await browser.close()
+
+    asyncio.run(scenario())
+
+
+def test_chatgpt_start_browser_background_and_temporary_chat(tmp_path: Path, monkeypatch) -> None:
+    class FakeProcess:
+        def __init__(self, args, **_kwargs):
+            self.args = args
+            self.finished = threading.Event()
+
+        def poll(self):
+            return 0 if self.finished.is_set() else None
+
+        def wait(self, timeout=None):
+            if not self.finished.wait(timeout):
+                raise subprocess.TimeoutExpired(self.args, timeout)
+            return 0
+
+        def terminate(self):
+            self.finished.set()
+
+        def kill(self):
+            self.finished.set()
+
+    processes = []
+
+    def fake_popen(args, **kwargs):
+        process = FakeProcess(args, **kwargs)
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr("job_radar.chatgpt_handoff.chrome_executable", lambda: "/fake/chrome")
+    monkeypatch.setattr("job_radar.chatgpt_handoff.hide_chrome", lambda: None)
+    monkeypatch.setattr("job_radar.chatgpt_handoff.subprocess.Popen", fake_popen)
+
+    async def scenario():
+        browser_lock = asyncio.Lock()
+        manager = ChatGPTInputManager(Settings(tmp_path), browser_lock)
+
+        # 1. Background launch with temporary chat
+        await manager._start_browser(background=True, temporary=True)
+        assert len(processes) == 1
+        args = processes[0].args
+        assert "--window-position=-2400,-2400" in args
+        assert "--window-size=1280,800" in args
+        assert "https://chatgpt.com/?temporary-chat=true" in args
+        assert browser_lock.locked()
+
+        await manager.stop()
+        assert not browser_lock.locked()
+        assert manager.process is None
+
+        # 2. Foreground launch for login (temporary=False)
+        processes.clear()
+        result = await manager.open_login()
+        assert result["status"] == "opened"
+        assert len(processes) == 1
+        login_args = processes[0].args
+        assert "--window-position=-2400,-2400" not in login_args
+        assert "https://chatgpt.com/" in login_args
+        assert "https://chatgpt.com/?temporary-chat=true" not in login_args
+
+        await manager.stop()
+        assert not browser_lock.locked()
+
+    asyncio.run(scenario())
+
+
+def test_chatgpt_enter_stops_browser_on_completion(tmp_path: Path) -> None:
+    async def scenario():
+        browser_lock = asyncio.Lock()
+        manager = ChatGPTInputManager(Settings(tmp_path), browser_lock)
+        stop_called = False
+
+        original_stop = manager.stop
+
+        async def tracking_stop():
+            nonlocal stop_called
+            stop_called = True
+            await original_stop()
+
+        manager.stop = tracking_stop
+
+        async def fake_new_page(background=False, temporary=True):
+            raise RuntimeError("Fake failure to test cleanup")
+
+        manager._new_page = fake_new_page
+        result = await manager.enter("Draft")
+        assert result["status"] == "failed"
+        assert stop_called is True
+        assert not browser_lock.locked()
 
     asyncio.run(scenario())
 
