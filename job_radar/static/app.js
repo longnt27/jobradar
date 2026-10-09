@@ -2548,58 +2548,62 @@ async function showApplication(id, preferredScreen = null) {
     </nav>
 
     <div id="screen-first-glance" class="application-screen-view" ${currentScreen === 'first-glance' ? '' : 'hidden'}>
-      <section id="application-review-overview" class="application-review-section">
-        <h3>${sent ? 'Application sent' : 'What changed and what needs attention'}</h3>
+      <section id="application-review-overview" class="application-activity-section surface-status">
+        <div class="section-head">
+          <div>
+            <h3>${sent ? 'Application sent' : 'My last activities with this application'}</h3>
+            <p class="hint">${sent ? 'Submission record and delivery confirmation' : 'Status, attention items, and recent application activity'}</p>
+          </div>
+          <div class="activity-header-badges">
+            <span class="status-badge status-badge--${reviewTone}">${escapeHtml(applicationReviewLabel(draft))}</span>
+            <span class="pill muted">${escapeHtml(destination.kind === 'email' ? 'Email package' : ['web','linkedin_easy_apply'].includes(destination.kind) ? 'Form package' : 'Manual handoff')}</span>
+          </div>
+        </div>
+
+        <div class="activity-destination-note">
+          <small>Destination: <strong>${escapeHtml(applicationActionLabel(destination))}</strong> · ${escapeHtml(actionTarget)}</small>
+        </div>
+
         ${sent ? renderSubmissionProof(draft.latest_submission, true) : ''}
         ${applicationAlert('danger', 'Sending is blocked', blockers)}
         ${applicationAlert('warning', 'Review before sending', warnings)}
-      </section>
 
-      <div class="application-overview-grid">
-        <div class="application-status-card surface-status">
-          <strong>Application State</strong>
-          <span>${escapeHtml(applicationReviewLabel(draft))}</span>
-          <small>${escapeHtml(destination.kind === 'email' ? 'Email + resume PDF' : ['web','linkedin_easy_apply'].includes(destination.kind) ? 'Form answers + resume PDF' : 'Manual handoff package')}</small>
-        </div>
-        <div class="application-status-card surface-status">
-          <strong>Destination</strong>
-          <span>${escapeHtml(applicationActionLabel(destination))}</span>
-          <small>${escapeHtml(actionTarget)}</small>
-        </div>
-      </div>
-
-      <section class="application-activity-section surface-status">
-        <div class="section-head">
-          <div>
-            <h3>My last activities with this application</h3>
-            <p class="hint">Recent status updates, drafts, notifications, and submission events.</p>
-          </div>
-        </div>
         <div class="activity-timeline">
           ${activitiesHtml}
         </div>
       </section>
 
-      <section class="job-originality-section review-section">
-        <div class="section-head">
-          <div>
-            <h3>Job originality</h3>
-            <p class="hint">Discovered sources and original job listing links.</p>
+      <div class="overview-metrics-row">
+        <div class="metric-card surface-status">
+          <div class="metric-card-head">
+            <span class="eyebrow">MATCH SCORE</span>
+            <span class="status-badge status-badge--${matchCompleted ? fitClassTone(job.fit_class) : 'neutral'}">${escapeHtml(matchCompleted ? fitClassLabel(job.fit_class) : 'Review in progress')}</span>
+          </div>
+          <div class="metric-card-primary">
+            <strong class="metric-score-value">${matchCompleted && job.score != null ? `${job.score}/100` : (draft.job_score != null ? `${draft.job_score}/100` : 'Score pending')}</strong>
+          </div>
+          ${matchCompleted && job.strongest_signal ? `<p class="metric-signal"><strong>Strongest signal:</strong> ${escapeHtml(job.strongest_signal.reason)}</p>` : ''}
+          ${matchCompleted && job.main_gap ? `<p class="metric-signal"><strong>Main gap:</strong> ${escapeHtml(job.main_gap.reason)}</p>` : ''}
+          ${matchCompleted ? `<p class="metric-subtext">Evidence confidence: ${Math.max(0, 100 - Number(job.uncertainty || 0))}%</p>` : ''}
+          ${matchCompleted && job.missing_evidence?.length ? `<p class="metric-subtext">Missing evidence: ${escapeHtml(job.missing_evidence.join(', '))}</p>` : ''}
+        </div>
+
+        <div class="metric-card surface-status">
+          <div class="metric-card-head">
+            <span class="eyebrow">JOB ORIGINALITY</span>
+            ${sightings.length > 1 ? `<span class="pill muted">Seen on ${sightings.length - 1} other source${sightings.length - 1 === 1 ? '' : 's'}</span>` : '<span class="pill muted">Single source</span>'}
+          </div>
+          <div class="metric-card-primary">
+            ${originalPostingUrl
+              ? `<a class="metric-source-link button-link" href="${escapeHtml(originalPostingUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(preferredSighting?.name || 'Original posting')} ↗</a>`
+              : `<strong class="metric-source-name">${escapeHtml(preferredSighting?.name || draft.job_source_kind || 'Original source')}</strong>`
+            }
+          </div>
+          <div class="metric-source-meta">
+            <p class="metric-signal"><strong>Source type:</strong> ${escapeHtml(preferredSighting?.kind || draft.job_source_kind || 'web')}</p>
+            <p class="metric-subtext">First seen ${relativeWhen(preferredSighting?.first_seen_at || job.first_seen_at || draft.created_at)}</p>
           </div>
         </div>
-        ${originalPostingUrl ? `<div class="job-original-actions"><a class="button-link" href="${escapeHtml(originalPostingUrl)}" target="_blank" rel="noopener noreferrer">Open original posting ↗</a></div>` : '<p class="hint">No direct original link recorded.</p>'}
-        ${links ? `<div class="job-sightings"><div class="job-sightings-head"><strong>Seen on ${sightings.length} source${sightings.length === 1 ? '' : 's'}</strong><span class="hint">${sightings.length > 1 ? `Job Radar combined ${sightings.length} sightings so you only review this role once.` : 'One source has reported this role.'}</span></div>${links}</div>` : ''}
-      </section>
-
-      <div class="match-summary-card surface-status">
-        <div>
-          <span class="status-badge status-badge--${matchCompleted ? fitClassTone(job.fit_class) : 'neutral'}">${escapeHtml(matchCompleted ? fitClassLabel(job.fit_class) : 'Review in progress')}</span>
-          <strong>${matchCompleted && job.score != null ? `${job.score}/100` : (draft.job_score != null ? `${draft.job_score}/100` : 'Score pending')}</strong>
-        </div>
-        ${matchCompleted && job.strongest_signal ? `<p><strong>Strongest signal:</strong> ${escapeHtml(job.strongest_signal.reason)}</p>` : ''}
-        ${matchCompleted && job.main_gap ? `<p><strong>Main gap:</strong> ${escapeHtml(job.main_gap.reason)}</p>` : ''}
-        ${matchCompleted ? `<p><strong>Evidence confidence:</strong> ${Math.max(0, 100 - Number(job.uncertainty || 0))}%</p>` : ''}
-        ${matchCompleted && job.missing_evidence?.length ? `<p><strong>Missing evidence:</strong> ${escapeHtml(job.missing_evidence.join(', '))}</p>` : ''}
       </div>
 
       ${renderJobAnalysis(job, score)}
@@ -2608,10 +2612,6 @@ async function showApplication(id, preferredScreen = null) {
         <summary>Original job description</summary>
         <div class="description">${formatDescription(job.description || draft.job_description)}</div>
       </details>
-
-      <div class="screen-footer-action">
-        <button type="button" class="primary button-large" id="btn-next-to-package">Next: Review package →</button>
-      </div>
     </div>
 
     <div id="screen-package" class="application-screen-view" ${currentScreen === 'package' ? '' : 'hidden'}>
@@ -2727,7 +2727,7 @@ async function showApplication(id, preferredScreen = null) {
         <span id="application-outcome" class="hint" role="status" aria-live="polite"></span>
       </div>
       <div class="actions">
-        <button type="button" class="primary" id="btn-sticky-next-to-package" ${currentScreen === 'first-glance' ? '' : 'hidden'}>Next: Review package →</button>
+        <button type="button" class="primary" id="btn-next-to-package" ${currentScreen === 'first-glance' ? '' : 'hidden'}>Next: Review package →</button>
         <button id="save-draft" class="secondary" disabled ${currentScreen === 'package' ? '' : 'hidden'}>Save changes</button>
         <button id="send-draft" class="primary" ${canSend ? '' : 'disabled'} ${(currentScreen === 'package' || sent) ? '' : 'hidden'}>${sent ? escapeHtml(draft.latest_submission?.outcome?.label || 'Sent') : 'Approve &amp; send'}</button>
       </div>
@@ -2936,7 +2936,7 @@ async function showApplication(id, preferredScreen = null) {
     }
     const stickyFG = detail.querySelector('#sticky-first-glance-controls');
     const stickyPkgLeft = detail.querySelector('#sticky-package-controls-left');
-    const stickyNext = detail.querySelector('#btn-sticky-next-to-package');
+    const stickyNext = detail.querySelector('#btn-next-to-package');
     const saveBtn = detail.querySelector('#save-draft');
     const sendBtn = detail.querySelector('#send-draft');
     if (stickyFG) stickyFG.hidden = screen !== 'first-glance';
@@ -2951,7 +2951,6 @@ async function showApplication(id, preferredScreen = null) {
     btn.addEventListener('click', () => switchScreen(btn.dataset.appScreen));
   });
   detail.querySelector('#btn-next-to-package')?.addEventListener('click', () => switchScreen('package'));
-  detail.querySelector('#btn-sticky-next-to-package')?.addEventListener('click', () => switchScreen('package'));
   detail.querySelector('#btn-sticky-back-first-glance')?.addEventListener('click', () => switchScreen('first-glance'));
 
   if (sent || uncertain) {

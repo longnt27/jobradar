@@ -133,7 +133,7 @@ def test_application_tab_reviews_regenerates_sends_and_shows_receipt(tmp_path: P
                 page.get_by_role("button", name="Approve & send").click()
                 page.locator("#application-review-overview").get_by_role("heading", name="Application sent").wait_for()
                 assert sent == [draft["id"]]
-                assert page.locator("#application-review-overview").get_by_text("SMTP accepted message").is_visible()
+                assert page.locator("#application-review-overview").get_by_text("SMTP accepted message").first.is_visible()
                 overview = page.locator("#application-review-overview")
                 assert overview.get_by_text("Review before sending").count() == 0
                 assert overview.get_by_text("Sending is blocked").count() == 0
