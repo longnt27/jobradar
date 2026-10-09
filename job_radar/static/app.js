@@ -327,7 +327,11 @@ async function loadSetup() {
     alertForm.elements.quiet_end.value = telegramNotifications.quiet_end || '';
     alertForm.dataset.initialized = 'true';
   }
-  if ((['opening', 'open'].includes(data.browser.state) || data.matching.download_state === 'downloading') && $('#settings').classList.contains('active')) window.setupPoll = setTimeout(() => loadSetup().catch((error) => notice(error.message, true)), 2000);
+  if ((['opening', 'open'].includes(data.browser.state) || ['opening', 'open'].includes(data.chatgpt?.state) || data.matching.download_state === 'downloading') && $('#settings').classList.contains('active')) {
+    window.setupPoll = setTimeout(() => loadSetup().then(async (latest) => {
+      if (latest?.chatgpt?.state === 'saved') await loadSettings();
+    }).catch((error) => notice(error.message, true)), 2000);
+  }
   return data;
 }
 
@@ -1556,7 +1560,19 @@ async function loadSettings() {
   const providerForm = $('#provider-form');
   providerForm.querySelectorAll('option[value]').forEach((option) => { if (option.value) option.disabled = !availability[option.value]; });
   providerForm.elements.provider.value = profile.drafting_provider || '';
-  $('#chatgpt-web-setup').hidden = providerForm.elements.provider.value !== 'chatgpt_web';
+  const isChatGpt = providerForm.elements.provider.value === 'chatgpt_web';
+  const chatgptSetup = $('#chatgpt-web-setup');
+  chatgptSetup.hidden = !isChatGpt;
+  const chatgptLoggedIn = Boolean(setup.chatgpt?.logged_in || setup.chatgpt_logged_in);
+  const chatgptHint = chatgptSetup.querySelector('.hint');
+  const chatgptBtn = $('#chatgpt-web-login');
+  if (chatgptLoggedIn) {
+    if (chatgptHint) chatgptHint.innerHTML = '<strong>✓ Signed in to ChatGPT.</strong> Job Radar enters prompts and receives replies automatically. Automatic background drafting is paused in this mode.';
+    if (chatgptBtn) chatgptBtn.textContent = 'Open ChatGPT in Chrome';
+  } else {
+    if (chatgptHint) chatgptHint.textContent = 'Click Log in to ChatGPT to open Chrome and sign in. Job Radar will detect your login automatically. Automatic drafting pauses in this mode.';
+    if (chatgptBtn) chatgptBtn.textContent = 'Log in to ChatGPT';
+  }
   renderProviderAvailability(availability);
   const modelCount = Number(Boolean(profile.drafting_provider)) + Number(Boolean(setup.matching.model));
   setStepStatus('#provider-status', modelCount === 2 ? 'Both configured' : modelCount ? '1 of 2 configured' : 'Choose models', modelCount === 2 ? '' : 'warning');
@@ -2545,8 +2561,7 @@ async function showApplication(id) {
       <p class="hint">${webGenerator ? 'ChatGPT Web enters the prompt in your saved Chrome browser and automatically receives its reply to revise this application.' : 'Choose one section to revise. Resume changes update the PDF. For the application email, AI rewrites only the experience and project fit paragraph.'}</p>
       <label>Section<select id="regenerate-section"><option value="summary">Professional summary</option><option value="experience">Experience bullets</option><option value="projects">Selected projects and bullets</option><option value="education">Education wording</option><option value="achievements">Achievements</option><option value="skills">Skills</option>${destination.kind === 'email' ? '<option value="message">Application experience and project fit</option>' : ''}<option value="all" ${draft.provider === 'chatgpt_web' ? 'selected' : ''}>${webGenerator ? 'Full resume draft' : 'Full draft · uses more quota'}</option></select></label>
       <label>Custom instructions<textarea id="regenerate-prompt" rows="3" placeholder="Example: make the summary shorter and emphasize production search work"></textarea></label>
-      <div class="actions"><button id="regenerate-draft" class="secondary" ${webGenerator ? 'hidden' : ''} ${draft.provider === 'template' || sent || uncertain ? 'disabled' : ''}>Regenerate selected section</button><button id="chatgpt-input" class="secondary" ${webGenerator ? '' : 'hidden'} ${sent || uncertain ? 'disabled' : ''}>Enter prompt in ChatGPT</button></div>
-      ${webGenerator ? '<p class="hint">Use the Log in to ChatGPT button in Settings → AI models if needed. Close the Chrome window when finished so scheduled checks can resume.</p>' : ''}
+      <div class="actions"><button id="regenerate-draft" class="secondary" ${webGenerator ? 'hidden' : ''} ${draft.provider === 'template' || sent || uncertain ? 'disabled' : ''}>Regenerate selected section</button><button id="chatgpt-input" class="secondary" ${webGenerator ? '' : 'hidden'} ${sent || uncertain ? 'disabled' : ''}>Regenerate selected section</button></div>
       ${sent ? '<p class="hint">This application has been sent. Its reviewed message and resume are preserved in the submission receipt above.</p>' : ''}
       ${draft.provider === 'template' && !webGenerator ? '<p class="hint">This draft used the basic template. Create a new draft with an AI provider to regenerate it with instructions.</p>' : ''}
     </section>
@@ -2666,17 +2681,21 @@ async function showApplication(id) {
 
   $('#chatgpt-input').addEventListener('click', async (event) => {
     if (dirtySections.size) { notice('Save your application changes before sending its context to ChatGPT.', true); return; }
-    const button = beginPending(event.currentTarget, 'Waiting for ChatGPT…');
+    const button = beginPending(event.currentTarget, 'Regenerating…');
+    showApplicationRegenerating(id);
     try {
+      const section = $('#regenerate-section').value;
       const result = await api(`/api/applications/${id}/chatgpt-input`, {
         method:'POST',
-        body:JSON.stringify({section:$('#regenerate-section').value, instruction:$('#regenerate-prompt').value.trim()}),
+        body:JSON.stringify({section, instruction:$('#regenerate-prompt').value.trim()}),
       });
-      if (result.reply || result.answer) {
-        await loadApplications(id);
-      }
-      notice(result.detail, result.status !== 'entered' && result.status !== 'received');
-    } catch(error) { notice(error.message, true); }
+      await loadApplications(id);
+      notice(result.detail || (section === 'all' ? 'New draft prepared for review.' : 'Selected section regenerated. Untouched content was preserved.'),
+        result.status !== 'entered' && result.status !== 'received');
+    } catch(error) {
+      try { await loadApplications(id); } catch (refreshError) { console.warn('Could not refresh application status', refreshError); }
+      notice(error.message, true);
+    }
     finally { if (button.isConnected) endPending(button); }
   });
 
@@ -3356,6 +3375,10 @@ $('#chatgpt-web-login').addEventListener('click', async (event) => {
   const button = beginPending(event.currentTarget, 'Opening Chrome…');
   try {
     const result = await api('/api/chatgpt/login', {method:'POST', body:'{}'});
+    if (result.status === 'already_logged_in' || result.status === 'saved' || result.logged_in) {
+      $('#provider-form').elements.provider.value = 'chatgpt_web';
+      await loadSettings();
+    }
     notice(result.detail);
   } catch(error) { notice(error.message, true); }
   finally { endPending(button); }

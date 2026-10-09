@@ -293,3 +293,108 @@ def test_apply_chatgpt_reply_handles_various_sections(tmp_path: Path) -> None:
         "Published conference paper",
     ]
 
+
+def test_chatgpt_logged_in_detection_from_cookie_store(tmp_path: Path) -> None:
+    from job_radar.chatgpt_handoff import CHROME_EPOCH_OFFSET, chatgpt_logged_in
+    import sqlite3
+    import time
+
+    profile = tmp_path / "browser-profile"
+    cookies_dir = profile / "Default"
+    cookies_dir.mkdir(parents=True)
+    cookies_db = cookies_dir / "Cookies"
+
+    # 1. No cookies file -> False
+    assert chatgpt_logged_in(profile) is False
+
+    # 2. Cookies file with unexpired session token -> True
+    conn = sqlite3.connect(cookies_db)
+    conn.execute("""
+        CREATE TABLE cookies (
+            host_key TEXT, name TEXT, path TEXT, value TEXT,
+            expires_utc INTEGER, is_secure INTEGER, has_expires INTEGER
+        )
+    """)
+    current_chrome = int((time.time() + CHROME_EPOCH_OFFSET) * 1_000_000)
+    conn.execute(
+        "INSERT INTO cookies VALUES ('.chatgpt.com', '__Secure-next-auth.session-token.0', '/', 'token_val', ?, 1, 1)",
+        (current_chrome + 10_000_000,),
+    )
+    conn.commit()
+    conn.close()
+
+    assert chatgpt_logged_in(profile) is True
+
+    # 3. Expired token -> False
+    conn = sqlite3.connect(cookies_db)
+    conn.execute(
+        "UPDATE cookies SET expires_utc=?",
+        (current_chrome - 10_000_000,),
+    )
+    conn.commit()
+    conn.close()
+
+    assert chatgpt_logged_in(profile) is False
+
+
+def test_chatgpt_open_login_auto_detects_already_logged_in_and_sets_provider(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("job_radar.web.chrome_executable", lambda: "/fake/chrome")
+    settings = Settings(tmp_path)
+    app = create_app(settings)
+    client = TestClient(app)
+
+    # Mock chatgpt_logged_in to True
+    monkeypatch.setattr("job_radar.chatgpt_handoff.chatgpt_logged_in", lambda _p: True)
+
+    # Initial provider is not chatgpt_web
+    profile = client.get("/api/profile").json()
+    assert profile.get("drafting_provider") != "chatgpt_web"
+
+    # Calling login endpoint auto-detects and saves provider
+    res = client.post("/api/chatgpt/login")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "already_logged_in"
+    assert data["logged_in"] is True
+
+    # Profile in DB now has chatgpt_web
+    updated_profile = client.get("/api/profile").json()
+    assert updated_profile["drafting_provider"] == "chatgpt_web"
+
+    # Setup endpoint reports chatgpt_logged_in
+    setup = client.get("/api/setup").json()
+    assert setup["chatgpt_logged_in"] is True
+    assert setup["chatgpt"]["logged_in"] is True
+
+    # Status endpoint works
+    status = client.get("/api/chatgpt/status").json()
+    assert status["logged_in"] is True
+
+
+def test_chatgpt_input_uses_priority_browser(tmp_path: Path) -> None:
+    from contextlib import asynccontextmanager
+    priority_entered = False
+
+    @asynccontextmanager
+    async def fake_priority():
+        nonlocal priority_entered
+        priority_entered = True
+        yield
+
+    settings = Settings(tmp_path)
+    browser_lock = asyncio.Lock()
+    manager = ChatGPTInputManager(settings, browser_lock, priority_browser=fake_priority)
+
+    async def scenario():
+        # Mock _new_page to avoid opening real chrome
+        async def fake_new_page():
+            raise RuntimeError("Stop after browser start")
+
+        manager._new_page = fake_new_page
+        result = await manager.enter("prompt")
+        assert "Stop after browser start" in result["detail"]
+        assert priority_entered is True
+
+    asyncio.run(scenario())
+
+

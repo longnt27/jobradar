@@ -3,24 +3,72 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import shutil
 import socket
+import sqlite3
 import subprocess
-from typing import Any
+import tempfile
+import time
+from collections.abc import Callable
+from contextlib import asynccontextmanager, closing
+from pathlib import Path
+from typing import Any, AsyncContextManager
 
 from playwright.async_api import Browser, Page, Playwright, TimeoutError as PlaywrightTimeoutError, async_playwright
 
 from .db import Database
+from .desktop_handoff import frontmost_app_bundle, return_to_job_radar
 from .drafting import APPLICATION_FIT_PROMPT, _compose_application_message, _job_for_drafting, _job_language, get_draft, update_draft
 from .settings import Settings
 from .social_browser import chrome_executable
 
 
 SECTIONS = {"all", "summary", "experience", "projects", "education", "achievements", "skills", "message"}
-COMPOSER = "#prompt-textarea, [data-testid='composer-input'], [contenteditable='true'][role='textbox'], .ProseMirror[contenteditable='true']"
+COMPOSER = "#prompt-textarea, [data-testid='composer-input'], div[contenteditable='true'][role='textbox'], .ProseMirror[contenteditable='true']"
 ASSISTANT_MESSAGE = "[data-message-author-role='assistant'], article[data-testid*='assistant'], .agent-turn, [data-testid*='conversation-turn-assistant']"
 STOP_BUTTON = "button[data-testid='stop-button'], button[aria-label='Stop generating'], button[aria-label='Stop streaming'], button[data-testid*='stop']"
 COPY_BUTTON = "button[data-testid='copy-turn-action-button'], button[aria-label='Copy'], [data-testid*='copy']"
+SEND_BUTTON = "button[data-testid='send-button'], button[aria-label='Send prompt'], button[aria-label='Send message'], button[data-testid*='send'], button[aria-label*='Send']"
 STREAMING_INDICATOR = ".result-streaming, [data-is-streaming='true'], .streaming-element"
+CHROME_EPOCH_OFFSET = 11644473600
+
+
+def chatgpt_logged_in(profile: Path) -> bool:
+    """Check if Chrome's saved profile has an active ChatGPT session cookie."""
+    cookies = profile / "Default" / "Cookies"
+    if not cookies.is_file():
+        return False
+    current_chrome = int((time.time() + CHROME_EPOCH_OFFSET) * 1_000_000)
+    try:
+        with tempfile.TemporaryDirectory(prefix="job-radar-cookies-") as td:
+            snapshot = Path(td) / "Cookies"
+            shutil.copyfile(cookies, snapshot)
+            journal = profile / "Default" / "Cookies-journal"
+            if journal.is_file():
+                try:
+                    shutil.copyfile(journal, Path(td) / "Cookies-journal")
+                except OSError:
+                    pass
+            with closing(sqlite3.connect(snapshot)) as conn:
+                row = conn.execute(
+                    """
+                    SELECT host_key, name, expires_utc, has_expires
+                    FROM cookies
+                    WHERE (host_key LIKE '%chatgpt.com' OR host_key LIKE '%openai.com')
+                      AND name LIKE '__Secure-next-auth.session-token%'
+                      AND (has_expires = 0 OR expires_utc = 0 OR expires_utc > ?)
+                    LIMIT 1
+                    """,
+                    (current_chrome,),
+                ).fetchone()
+                return bool(row)
+    except (OSError, sqlite3.DatabaseError):
+        return False
+
+
+@asynccontextmanager
+async def _no_browser_priority():
+    yield
 
 
 def application_prompt(db: Database, draft_id: str, section: str, instruction: str) -> str:
@@ -290,16 +338,42 @@ def apply_chatgpt_reply(db: Database, settings: Settings, draft_id: str, section
 class ChatGPTInputManager:
     """Enter a prompt in a visible, locally signed-in ChatGPT browser and receive its reply."""
 
-    def __init__(self, settings: Settings, browser_lock: asyncio.Lock):
+    def __init__(
+        self,
+        settings: Settings,
+        browser_lock: asyncio.Lock,
+        priority_browser: Callable[[], AsyncContextManager[None]] | None = None,
+        db: Database | None = None,
+    ):
         self.settings = settings
         self.lock = asyncio.Lock()
         self.browser_lock = browser_lock
+        self.priority_browser = priority_browser or _no_browser_priority
+        self.db = db
         self.owns_browser_lock = False
         self.playwright: Playwright | None = None
         self.browser: Browser | None = None
         self.process: subprocess.Popen | None = None
         self.port: int | None = None
         self.watch_task: asyncio.Task | None = None
+        self.login_task: asyncio.Task | None = None
+        self.state: str = "idle"
+        self.error: str | None = None
+
+    def status(self) -> dict[str, Any]:
+        logged_in = chatgpt_logged_in(self.settings.browser_profile)
+        state = self.state if self.state in ("opening", "open", "failed") else ("saved" if logged_in else "idle")
+        return {
+            "logged_in": logged_in,
+            "state": state,
+            "error": self.error,
+        }
+
+    def mark_provider_chatgpt_web(self) -> None:
+        if self.db:
+            profile = self.db.get_setting("profile", {})
+            profile["drafting_provider"] = "chatgpt_web"
+            self.db.set_setting("profile", profile)
 
     def _release_browser_lock(self) -> None:
         if self.owns_browser_lock:
@@ -314,6 +388,13 @@ class ChatGPTInputManager:
             self._release_browser_lock()
 
     async def stop(self) -> None:
+        if self.login_task and not self.login_task.done():
+            self.login_task.cancel()
+            try:
+                await self.login_task
+            except asyncio.CancelledError:
+                pass
+            self.login_task = None
         async with self.lock:
             if self.browser:
                 try:
@@ -352,18 +433,24 @@ class ChatGPTInputManager:
             with socket.socket() as listener:
                 listener.bind(("127.0.0.1", 0))
                 self.port = listener.getsockname()[1]
-            process = subprocess.Popen(
-                [chrome_executable(), f"--user-data-dir={self.settings.browser_profile}",
-                 "--profile-directory=Default", "--no-first-run", "--no-default-browser-check",
-                 "--remote-debugging-address=127.0.0.1", f"--remote-debugging-port={self.port}",
-                 "--new-window", "https://chatgpt.com/"],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
-            self.process = process
-            self.watch_task = asyncio.create_task(self._watch_process(process))
-            await asyncio.sleep(.3)
-            if process.poll() is not None:
-                raise RuntimeError("Chrome closed before ChatGPT opened. Close other Job Radar Chrome windows and try again.")
+            for attempt in range(3):
+                process = subprocess.Popen(
+                    [chrome_executable(), f"--user-data-dir={self.settings.browser_profile}",
+                     "--profile-directory=Default", "--no-first-run", "--no-default-browser-check",
+                     "--remote-debugging-address=127.0.0.1", f"--remote-debugging-port={self.port}",
+                     "--new-window", "https://chatgpt.com/"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+                self.process = process
+                self.watch_task = asyncio.create_task(self._watch_process(process))
+                await asyncio.sleep(.3)
+                if process.poll() is None:
+                    break
+                if attempt < 2:
+                    await asyncio.sleep(0.7)
+            else:
+                if self.process and self.process.poll() is not None:
+                    raise RuntimeError("Chrome closed before ChatGPT opened. Close other Job Radar Chrome windows and try again.")
         except Exception:
             process = self.process
             if process and process.poll() is None:
@@ -405,18 +492,67 @@ class ChatGPTInputManager:
         await page.bring_to_front()
         return page
 
-    async def open_login(self) -> dict[str, str]:
-        async with self.lock:
+    async def _watch_login(self) -> None:
+        return_app = frontmost_app_bundle()
+        try:
+            while self.process and self.process.poll() is None:
+                ready = await asyncio.to_thread(chatgpt_logged_in, self.settings.browser_profile)
+                if ready:
+                    break
+                await asyncio.sleep(1)
+            else:
+                ready = await asyncio.to_thread(chatgpt_logged_in, self.settings.browser_profile)
+                if not ready:
+                    self.state = "failed"
+                    self.error = "Chrome closed before sign-in completed."
+                    return
+            self.mark_provider_chatgpt_web()
+            self.state = "saved"
+            await self.stop()
             try:
-                await self._start_browser()
-                return {"status": "opened", "detail": "ChatGPT opened in Chrome. Complete any security verification and sign in there, then return here."}
-            except Exception as error:
-                return {"status": "failed", "detail": f"Could not open ChatGPT: {str(error)[:180]}"}
+                await asyncio.to_thread(return_to_job_radar, return_app, self.settings.port)
+            except Exception:
+                pass
+        except asyncio.CancelledError:
+            self.state = "idle"
+            raise
+        except Exception as error:
+            self.state = "failed"
+            self.error = str(error)
+
+    async def open_login(self) -> dict[str, Any]:
+        if chatgpt_logged_in(self.settings.browser_profile):
+            self.mark_provider_chatgpt_web()
+            self.state = "saved"
+            return {
+                "status": "already_logged_in",
+                "logged_in": True,
+                "detail": "Signed in to ChatGPT. ChatGPT Web is now your drafting provider.",
+            }
+
+        async with self.priority_browser():
+            async with self.lock:
+                try:
+                    self.state = "opening"
+                    self.error = None
+                    await self._start_browser()
+                    self.state = "open"
+                    if not self.login_task or self.login_task.done():
+                        self.login_task = asyncio.create_task(self._watch_login())
+                    return {
+                        "status": "opened",
+                        "logged_in": False,
+                        "detail": "ChatGPT opened in Chrome. Complete any security verification and sign in there, then return here.",
+                    }
+                except Exception as error:
+                    self.state = "failed"
+                    self.error = str(error)[:180]
+                    return {"status": "failed", "detail": f"Could not open ChatGPT: {str(error)[:180]}"}
 
     async def _receive_reply(self, page: Page, initial_count: int = 0, timeout: float = 60.0) -> str | None:
         loop = asyncio.get_event_loop()
         start_time = loop.time()
-        appearance_timeout = min(timeout, 3.0)
+        appearance_timeout = min(timeout, 20.0)
         assistant_locator = None
 
         while loop.time() - start_time < appearance_timeout:
@@ -497,37 +633,59 @@ class ChatGPTInputManager:
         return None
 
     async def enter(self, prompt: str, timeout: float = 60.0) -> dict[str, Any]:
-        async with self.lock:
-            try:
-                page = await self._new_page()
-                composer = page.locator(COMPOSER).first
+        async with self.priority_browser():
+            async with self.lock:
+                page = None
                 try:
-                    await composer.wait_for(state="visible", timeout=12000)
-                except PlaywrightTimeoutError:
-                    return {"status": "sign_in_required", "detail": "Sign in to ChatGPT in the opened Chrome window, then try again."}
+                    page = await self._new_page()
+                    composer = page.locator(COMPOSER).first
+                    try:
+                        await composer.wait_for(state="visible", timeout=15000)
+                    except PlaywrightTimeoutError:
+                        return {"status": "sign_in_required", "detail": "Sign in to ChatGPT in the opened Chrome window, then try again."}
 
-                initial_assistant_count = 0
-                try:
-                    initial_assistant_count = await page.locator(ASSISTANT_MESSAGE).count()
-                except Exception:
-                    pass
+                    initial_assistant_count = 0
+                    try:
+                        initial_assistant_count = await page.locator(ASSISTANT_MESSAGE).count()
+                    except Exception:
+                        pass
 
-                await composer.fill(prompt)
-                await composer.press("Enter")
+                    await composer.fill(prompt)
+                    try:
+                        await composer.dispatch_event("input")
+                    except Exception:
+                        pass
 
-                reply = await self._receive_reply(page, initial_count=initial_assistant_count, timeout=timeout)
-                if reply:
+                    send_btn = page.locator(SEND_BUTTON).first
+                    submitted = False
+                    try:
+                        if await send_btn.is_visible() and await send_btn.is_enabled():
+                            await send_btn.click()
+                            submitted = True
+                    except Exception:
+                        pass
+
+                    if not submitted:
+                        await composer.press("Enter")
+                        try:
+                            if await send_btn.is_visible() and await send_btn.is_enabled():
+                                await send_btn.click()
+                        except Exception:
+                            pass
+
+                    reply = await self._receive_reply(page, initial_count=initial_assistant_count, timeout=timeout)
+                    if reply:
+                        return {
+                            "status": "entered",
+                            "detail": "Prompt entered and answer received from ChatGPT.",
+                            "reply": reply,
+                            "answer": reply,
+                        }
                     return {
                         "status": "entered",
-                        "detail": "Prompt entered and answer received from ChatGPT.",
-                        "reply": reply,
-                        "answer": reply,
+                        "detail": "Prompt entered in ChatGPT. Review the conversation in the opened Chrome window.",
+                        "reply": None,
+                        "answer": None,
                     }
-                return {
-                    "status": "entered",
-                    "detail": "Prompt entered in ChatGPT. Review the conversation in the opened Chrome window.",
-                    "reply": None,
-                    "answer": None,
-                }
-            except Exception as error:
-                return {"status": "failed", "detail": f"Could not enter the ChatGPT prompt: {str(error)[:180]}"}
+                except Exception as error:
+                    return {"status": "failed", "detail": f"Could not enter the ChatGPT prompt: {str(error)[:180]}"}

@@ -256,7 +256,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     auto_apply_manager = AutoApplyManager(db, settings, scan_manager.browser_lock, scan_manager.priority_browser)
     match_manager = MatchManager(db, settings, auto_apply_manager)
     login_manager = BrowserLoginManager(db, settings, scan_manager.browser_lock, scan_manager.queue_due)
-    chatgpt_input = ChatGPTInputManager(settings, scan_manager.browser_lock)
+    chatgpt_input = ChatGPTInputManager(settings, scan_manager.browser_lock, scan_manager.priority_browser, db=db)
     ai_retry_task: asyncio.Task | None = None
 
     @asynccontextmanager
@@ -477,6 +477,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         availability = {name: bool(shutil.which(name)) for name in ("codex", "agy", "claude", "ollama")}
         availability["chatgpt_web"] = provider_available("chatgpt_web")
+        chatgpt_status = chatgpt_input.status()
+        availability["chatgpt_web_logged_in"] = chatgpt_status["logged_in"]
         return {
             "profile_complete": bool(profile.get("name") and profile.get("email")),
             "selected_provider": provider,
@@ -485,6 +487,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "linkedin_searches": db.one("SELECT COUNT(*) AS count FROM sources WHERE kind='linkedin' AND enabled=1")["count"],
             "linkedin_automation_paused": bool(db.get_setting("linkedin_automation_paused", False)),
             "browser": login_manager.status(),
+            "chatgpt": chatgpt_status,
+            "chatgpt_logged_in": chatgpt_status["logged_in"],
             "smtp_configured": smtp_ready,
             "smtp_host": mail.get("host", ""),
             "smtp_port": mail.get("port", 587),
@@ -2108,6 +2112,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 log.warning("Could not apply ChatGPT reply to %s: %s", draft_id, error)
                 result["detail"] = f"Answer received from ChatGPT. Review or copy into the application: {result['reply'][:120]}"
         return result
+
+    @app.get("/api/chatgpt/status")
+    def get_chatgpt_status():
+        return chatgpt_input.status()
 
     @app.post("/api/chatgpt/login")
     async def open_chatgpt_login():

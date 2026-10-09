@@ -109,8 +109,9 @@ def test_application_tab_reviews_regenerates_sends_and_shows_receipt(tmp_path: P
                     page.get_by_role("button", name="Save provider").click()
                 assert client.get('/api/profile').json()['drafting_provider'] == 'chatgpt_web'
                 page.goto(f"http://127.0.0.1:{port}/#applications/{draft['id']}")
-                page.get_by_role("button", name="Enter prompt in ChatGPT").wait_for()
-                assert not page.get_by_role("button", name="Regenerate selected section").is_visible()
+                page.locator("#chatgpt-input").wait_for()
+                assert page.locator("#chatgpt-input").inner_text().strip() == "Regenerate selected section"
+                assert page.locator("#regenerate-draft").is_hidden()
                 assert page.locator('#regenerate-generator').count() == 0
                 assert client.put('/api/profile/provider', json={'provider':'codex'}).status_code == 200
                 page.reload()
