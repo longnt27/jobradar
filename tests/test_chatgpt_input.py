@@ -294,6 +294,101 @@ def test_apply_chatgpt_reply_handles_various_sections(tmp_path: Path) -> None:
     ]
 
 
+def test_apply_chatgpt_reply_handles_projects_json_and_markdown(tmp_path: Path) -> None:
+    from job_radar.drafting import update_draft
+    settings = Settings(tmp_path)
+    client = TestClient(create_app(settings))
+    db = client.app.state.db
+
+    profile = client.get("/api/profile").json()
+    profile.update({"name": "Alex Example", "email": "alex@example.org"})
+    assert client.put("/api/profile", json=profile).status_code == 200
+    assert client.post("/api/positions", json={"company": "Prior Co", "role": "Engineer",
+        "dates": "2024–2026", "bullets": ["Built Python search systems."]}).status_code == 201
+
+    p_wham = client.post("/api/evidence", json={"kind": "project", "title": "WHAM on iPhone",
+        "claim": "On-device 3D human pose reconstruction",
+        "repository_url": "https://github.com/longnt27/whamoniphone"}).json()["id"]
+    assert client.patch(f"/api/evidence/{p_wham}", json={
+        "approved": True,
+        "details": {
+            "tech_stack": ["Core ML", "PyTorch", "Swift"],
+            "bullets": ["Built on-device 3D human-motion reconstruction.", "Measured PA-MPJPE of 51.80 mm."],
+            "results": [{"id": "r1"}],
+        }
+    }).status_code == 200
+
+    p_khanh = client.post("/api/evidence", json={"kind": "project", "title": "Khanh Scanner: Color-Preserving iOS Document Scanner",
+        "claim": "Document scanner pipeline",
+        "repository_url": "https://github.com/longnt27/khanh-scanner"}).json()["id"]
+    assert client.patch(f"/api/evidence/{p_khanh}", json={
+        "approved": True,
+        "details": {
+            "tech_stack": ["iOS", "VisionKit"],
+            "bullets": ["Built iOS document scanner.", "Preserved blue signatures and red stamps."],
+            "results": [{"id": "r1"}],
+        }
+    }).status_code == 200
+
+    p_caus = client.post("/api/evidence", json={"kind": "project", "title": "CausClass: Auditable Classroom Behavior Analysis",
+        "claim": "Classroom behavior analysis",
+        "repository_url": "https://github.com/longnt27/CausClass"}).json()["id"]
+    assert client.patch(f"/api/evidence/{p_caus}", json={
+        "approved": True,
+        "details": {
+            "tech_stack": ["Python", "PyTorch", "YOLO"],
+            "bullets": ["Built classroom analysis pipeline.", "Raised recall to 0.8745."],
+            "results": [{"id": "r1"}],
+        }
+    }).status_code == 200
+
+    job = client.post("/api/jobs/import", json={"company": "Example", "title": "Search Engineer",
+        "description": "Build Python search systems.", "apply_url": "https://example.org/apply"}).json()
+    draft = prepare_draft(db, settings, job["id"], "template")
+
+    initial_resume = {**draft["resume_data"], "projects": [
+        {"id": p_caus, "title": "CausClass: Auditable Classroom Behavior Analysis", "repository_url": "https://github.com/longnt27/CausClass",
+         "tech_stack": ["Python"], "bullets": ["Built classroom analysis pipeline.", "Raised recall to 0.8745."]},
+        {"id": p_khanh, "title": "Khanh Scanner: Color-Preserving iOS Document Scanner", "repository_url": "https://github.com/longnt27/khanh-scanner",
+         "tech_stack": ["iOS"], "bullets": ["Built iOS document scanner.", "Preserved blue signatures."]},
+    ]}
+    draft = update_draft(db, settings, draft["id"], {"resume_data": initial_resume})
+    assert any(p["id"] == p_khanh for p in draft["resume_data"]["projects"])
+    assert not any(p["id"] == p_wham for p in draft["resume_data"]["projects"])
+
+    # 1. Test applying markdown reply replacing khanhscanner with whamoniphone
+    md_reply = (
+        "Certainly! Here is the revised project:\n\n"
+        "### WHAM on iPhone\n"
+        "- Built on-device 3D human-motion reconstruction from video.\n"
+        "- Measured camera-relative PA-MPJPE of 51.80 mm on 3DPW.\n"
+    )
+    updated = apply_chatgpt_reply(db, settings, draft["id"], "projects", md_reply, instruction="change khanhscanner to whamoniphone")
+    project_titles = [p["title"] for p in updated["resume_data"]["projects"]]
+    assert "WHAM on iPhone" in project_titles
+    assert "Khanh Scanner: Color-Preserving iOS Document Scanner" not in project_titles
+    assert updated["resume_data"]["projects"][1]["bullets"] == [
+        "Built on-device 3D human-motion reconstruction from video.",
+        "Measured camera-relative PA-MPJPE of 51.80 mm on 3DPW.",
+    ]
+
+    # 2. Test applying JSON reply wrapped in markdown fences
+    json_reply = (
+        "Here are the updated projects in JSON format:\n\n"
+        "```json\n"
+        "[\n"
+        '  {"id": "' + p_caus + '", "title": "CausClass: Auditable Classroom Behavior Analysis", "bullets": ["Updated CausClass 1", "Updated CausClass 2"]},\n'
+        '  {"id": "' + p_khanh + '", "title": "Khanh Scanner: Color-Preserving iOS Document Scanner", "bullets": ["Updated Khanh 1", "Updated Khanh 2"]}\n'
+        "]\n"
+        "```\n\n"
+        "Let me know if you need anything else!"
+    )
+    updated2 = apply_chatgpt_reply(db, settings, draft["id"], "projects", json_reply, instruction="re-add khanh scanner")
+    project_titles2 = [p["title"] for p in updated2["resume_data"]["projects"]]
+    assert "Khanh Scanner: Color-Preserving iOS Document Scanner" in project_titles2
+    assert updated2["resume_data"]["projects"][1]["bullets"] == ["Updated Khanh 1", "Updated Khanh 2"]
+
+
 def test_chatgpt_logged_in_detection_from_cookie_store(tmp_path: Path) -> None:
     from job_radar.chatgpt_handoff import CHROME_EPOCH_OFFSET, chatgpt_logged_in
     import sqlite3

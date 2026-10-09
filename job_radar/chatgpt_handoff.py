@@ -133,6 +133,18 @@ def application_prompt(db: Database, draft_id: str, section: str, instruction: s
             "complementary supported results in the second bullet. Keep repository links and at most five skill "
             "categories. Write resume text in English. "
         )
+        if section == "projects":
+            rules += (
+                "Return the revised projects as a JSON array or object with a 'projects' list: "
+                '[{"id": "<approved_project_id>", "title": "<project_title>", "repository_url": "<url>", '
+                '"tech_stack": ["Skill 1", "Skill 2"], "bullets": ["<what/how bullet>", "<measured results bullet>"]}]. '
+                "Use exact IDs and titles from approved_projects in the context. "
+            )
+        elif section == "all":
+            rules += (
+                "Return the revised resume as a JSON object with keys: summary, experience, projects, education, achievements, skills, skill_groups. "
+                "For projects, format as a list of objects with id, title, repository_url, tech_stack, and bullets. "
+            )
     elif section == "summary":
         rules += (
             "Write a high-level, cohesive professional summary under 450 characters in English (2 to 3 sentences). "
@@ -152,13 +164,58 @@ def application_prompt(db: Database, draft_id: str, section: str, instruction: s
     )
 
 
+def _normalize_key(s: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(s).lower())
+
+
+def _extract_json_or_none(text: str) -> Any | None:
+    if not text or not text.strip():
+        return None
+    cleaned = text.strip()
+    try:
+        return json.loads(cleaned)
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    fence_matches = re.findall(r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned, re.IGNORECASE)
+    for block in fence_matches:
+        try:
+            return json.loads(block.strip())
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    start_bracket = cleaned.find("[")
+    end_bracket = cleaned.rfind("]")
+    if start_bracket != -1 and end_bracket > start_bracket:
+        try:
+            return json.loads(cleaned[start_bracket : end_bracket + 1])
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    start_brace = cleaned.find("{")
+    end_brace = cleaned.rfind("}")
+    if start_brace != -1 and end_brace > start_brace:
+        try:
+            return json.loads(cleaned[start_brace : end_brace + 1])
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    return None
+
+
 def clean_reply_text(raw: str) -> str:
     text = raw.strip()
+    text = re.sub(
+        r"^(?:Here (?:is|are) (?:the )?(?:revised )?[^\n:]+:\s*|Certainly! [^\n:]*:\s*|Sure, [^\n:]*:\s*|Here you go:?\s*)",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    ).strip()
     match = re.match(r"^```(?:[a-zA-Z0-9_-]+)?\s*\n?(.*?)\n?```$", text, re.DOTALL)
     if match:
         text = match.group(1).strip()
     text = re.sub(
-        r"^(?:Here is (?:the )?revised [^\n:]+:\s*|Certainly! Here is [^\n:]+:\s*|Sure, here is [^\n:]+:\s*)",
+        r"^(?:Here (?:is|are) (?:the )?(?:revised )?[^\n:]+:\s*|Certainly! [^\n:]*:\s*|Sure, [^\n:]*:\s*)",
         "",
         text,
         flags=re.IGNORECASE,
@@ -166,14 +223,77 @@ def clean_reply_text(raw: str) -> str:
     return text
 
 
+def _find_card(
+    cards: list[dict],
+    identifier: str | None = None,
+    title: str | None = None,
+    url: str | None = None,
+    text: str | None = None,
+) -> dict | None:
+    if identifier:
+        clean_id = str(identifier).strip()
+        for card in cards:
+            if card["id"] == clean_id:
+                return card
+
+    if url:
+        clean_url = _normalize_key(str(url))
+        if clean_url:
+            for card in cards:
+                card_url = _normalize_key(str(card.get("repository_url") or ""))
+                if card_url and (clean_url in card_url or card_url in clean_url):
+                    return card
+
+    candidates = [c for c in [title, text, identifier] if c]
+    for candidate in candidates:
+        norm_cand = _normalize_key(candidate)
+        if not norm_cand:
+            continue
+        for card in cards:
+            if card["id"] in candidate:
+                return card
+            card_title = card.get("title") or ""
+            norm_card_title = _normalize_key(card_title)
+            prefix = re.split(r"[:\—\-]", card_title)[0].strip()
+            norm_prefix = _normalize_key(prefix)
+            card_repo_slug = _normalize_key(str(card.get("repository_url") or "").rstrip("/").split("/")[-1])
+
+            if norm_prefix and (norm_prefix in norm_cand or norm_cand in norm_prefix):
+                return card
+            if norm_card_title and (norm_card_title in norm_cand or norm_cand in norm_card_title):
+                return card
+            if card_repo_slug and (card_repo_slug in norm_cand or norm_cand in card_repo_slug):
+                return card
+
+    return None
+
+
+def _card_to_project_dict(card: dict, custom_bullets: list[str] | None = None, tech_stack: list[str] | None = None) -> dict:
+    details = json.loads(card.get("details") or "{}") if isinstance(card.get("details"), str) else (card.get("details") or {})
+    bullets = [b.strip() for b in custom_bullets] if custom_bullets else []
+    bullets = [b for b in bullets if b]
+    if not bullets:
+        bullets = details.get("bullets") or ([card["claim"]] if card.get("claim") else [])
+    bullets = bullets[:2] if len(bullets) >= 2 else bullets
+    stack = tech_stack or details.get("tech_stack", [])
+    if isinstance(stack, str):
+        stack = [s.strip() for s in stack.split(",") if s.strip()]
+    return {
+        "id": card["id"],
+        "title": card["title"],
+        "repository_url": card.get("repository_url") or "",
+        "tech_stack": list(stack)[:5],
+        "result_ids": [r.get("id") for r in details.get("results", []) if isinstance(r, dict) and "id" in r][:2],
+        "bullets": bullets,
+    }
+
+
 def _apply_summary_reply(draft: dict, reply: str, db: Database, settings: Settings) -> dict:
-    text = clean_reply_text(reply)
-    try:
-        data = json.loads(text)
-        if isinstance(data, dict) and "summary" in data:
-            text = str(data["summary"]).strip()
-    except (json.JSONDecodeError, ValueError):
-        pass
+    data = _extract_json_or_none(reply)
+    if isinstance(data, dict) and "summary" in data:
+        text = str(data["summary"]).strip()
+    else:
+        text = clean_reply_text(reply)
     resume = {**draft["resume_data"], "summary": text}
     return update_draft(db, settings, draft["id"], {"resume_data": resume})
 
@@ -181,17 +301,14 @@ def _apply_summary_reply(draft: dict, reply: str, db: Database, settings: Settin
 def _apply_message_reply(draft: dict, reply: str, db: Database, settings: Settings) -> dict:
     job = _job_for_drafting(db, draft["vacancy_id"])
     profile = db.get_setting("profile", {})
+    data = _extract_json_or_none(reply)
     text = clean_reply_text(reply)
-    try:
-        data = json.loads(text)
-        if isinstance(data, dict):
-            if "body" in data:
-                subject = data.get("subject") or draft["message_data"].get("subject", "")
-                return update_draft(db, settings, draft["id"], {"message_data": {"subject": subject, "body": str(data["body"]).strip()}})
-            if "fit" in data:
-                text = str(data["fit"]).strip()
-    except (json.JSONDecodeError, ValueError):
-        pass
+    if isinstance(data, dict):
+        if "body" in data:
+            subject = data.get("subject") or draft["message_data"].get("subject", "")
+            return update_draft(db, settings, draft["id"], {"message_data": {"subject": subject, "body": str(data["body"]).strip()}})
+        if "fit" in data:
+            text = str(data["fit"]).strip()
 
     if text.startswith("Subject:"):
         lines = text.split("\n", 1)
@@ -214,15 +331,18 @@ def _apply_experience_reply(draft: dict, reply: str, db: Database, settings: Set
     text = clean_reply_text(reply)
     resume = {**draft["resume_data"]}
     current_exp = list(resume.get("experience", []))
-    try:
-        data = json.loads(text)
+    data = _extract_json_or_none(reply)
+    applied = False
+    if data is not None:
         if isinstance(data, list):
             if data and isinstance(data[0], dict) and "bullets" in data[0]:
                 for idx, pos in enumerate(data):
                     if idx < len(current_exp):
                         current_exp[idx] = {**current_exp[idx], "bullets": [str(b).strip() for b in pos.get("bullets", [])]}
+                applied = True
             elif data and isinstance(data[0], str) and current_exp:
                 current_exp[0] = {**current_exp[0], "bullets": [str(b).strip() for b in data]}
+                applied = True
         elif isinstance(data, dict):
             positions = data.get("positions", [])
             for item in positions:
@@ -230,7 +350,8 @@ def _apply_experience_reply(draft: dict, reply: str, db: Database, settings: Set
                     idx = item.get("index", 0)
                     if isinstance(idx, int) and 0 <= idx < len(current_exp):
                         current_exp[idx] = {**current_exp[idx], "bullets": [str(b).strip() for b in item["bullets"]]}
-    except (json.JSONDecodeError, ValueError):
+                        applied = True
+    if not applied:
         lines = [line.lstrip("-*• \t").strip() for line in text.splitlines() if line.strip()]
         if lines and current_exp:
             current_exp[0] = {**current_exp[0], "bullets": lines}
@@ -242,15 +363,15 @@ def _apply_achievements_reply(draft: dict, reply: str, db: Database, settings: S
     text = clean_reply_text(reply)
     resume = {**draft["resume_data"]}
     bullets = []
-    try:
-        data = json.loads(text)
+    data = _extract_json_or_none(reply)
+    if data is not None:
         if isinstance(data, list):
             bullets = [str(x).strip() for x in data if str(x).strip()]
         elif isinstance(data, dict):
             items = data.get("achievements", [])
             if isinstance(items, list):
                 bullets = [str(x).strip() for x in items if str(x).strip()]
-    except (json.JSONDecodeError, ValueError):
+    if not bullets:
         bullets = [line.lstrip("-*• \t").strip() for line in text.splitlines() if line.strip()]
     if bullets:
         resume["achievements"] = bullets
@@ -261,8 +382,8 @@ def _apply_achievements_reply(draft: dict, reply: str, db: Database, settings: S
 def _apply_skills_reply(draft: dict, reply: str, db: Database, settings: Settings) -> dict:
     text = clean_reply_text(reply)
     resume = {**draft["resume_data"]}
-    try:
-        data = json.loads(text)
+    data = _extract_json_or_none(reply)
+    if data is not None:
         if isinstance(data, dict):
             if "skill_groups" in data and isinstance(data["skill_groups"], dict):
                 resume["skill_groups"] = data["skill_groups"]
@@ -274,8 +395,6 @@ def _apply_skills_reply(draft: dict, reply: str, db: Database, settings: Setting
         elif isinstance(data, list):
             resume["skills"] = [str(s).strip() for s in data if str(s).strip()]
             return update_draft(db, settings, draft["id"], {"resume_data": resume})
-    except (json.JSONDecodeError, ValueError):
-        pass
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if lines:
         resume["skills"] = lines
@@ -284,56 +403,182 @@ def _apply_skills_reply(draft: dict, reply: str, db: Database, settings: Setting
 
 
 def _apply_education_reply(draft: dict, reply: str, db: Database, settings: Settings) -> dict:
-    text = clean_reply_text(reply)
     resume = {**draft["resume_data"]}
-    try:
-        data = json.loads(text)
-        if isinstance(data, list):
-            resume["education"] = data
-            return update_draft(db, settings, draft["id"], {"resume_data": resume})
-        elif isinstance(data, dict) and "education" in data:
-            resume["education"] = data["education"]
-            return update_draft(db, settings, draft["id"], {"resume_data": resume})
-    except (json.JSONDecodeError, ValueError):
-        pass
+    data = _extract_json_or_none(reply)
+    if isinstance(data, list):
+        resume["education"] = data
+        return update_draft(db, settings, draft["id"], {"resume_data": resume})
+    elif isinstance(data, dict) and "education" in data:
+        resume["education"] = data["education"]
+        return update_draft(db, settings, draft["id"], {"resume_data": resume})
     return draft
 
 
-def _apply_projects_reply(draft: dict, reply: str, db: Database, settings: Settings) -> dict:
-    text = clean_reply_text(reply)
-    resume = {**draft["resume_data"]}
-    try:
-        data = json.loads(text)
-        if isinstance(data, list):
-            resume["projects"] = data
-            return update_draft(db, settings, draft["id"], {"resume_data": resume})
-        elif isinstance(data, dict) and "projects" in data:
-            resume["projects"] = data["projects"]
-            return update_draft(db, settings, draft["id"], {"resume_data": resume})
-    except (json.JSONDecodeError, ValueError):
-        pass
+def _apply_projects_reply(draft: dict, reply: str, db: Database, settings: Settings, instruction: str = "") -> dict:
+    cards = db.all(
+        "SELECT e.id, e.title, e.claim, e.details, r.url AS repository_url "
+        "FROM evidence e LEFT JOIN repository_snapshots r ON r.id=e.repository_id "
+        "WHERE e.approved=1 AND e.kind='project' ORDER BY e.created_at DESC"
+    )
+    current_projects = list(draft.get("resume_data", {}).get("projects", []))
+    extracted = _extract_json_or_none(reply)
+    new_projects = []
+
+    if extracted is not None:
+        raw_items = []
+        if isinstance(extracted, list):
+            raw_items = extracted
+        elif isinstance(extracted, dict):
+            if "projects" in extracted and isinstance(extracted["projects"], list):
+                raw_items = extracted["projects"]
+            elif "selected_projects" in extracted and isinstance(extracted["selected_projects"], list):
+                raw_items = extracted["selected_projects"]
+            elif any(k in extracted for k in ("id", "title", "name", "bullets")):
+                raw_items = [extracted]
+
+        for item in raw_items:
+            if isinstance(item, dict):
+                card = _find_card(cards, item.get("id"), item.get("title") or item.get("name"), item.get("repository_url"))
+                b = item.get("bullets")
+                if isinstance(b, str):
+                    bullets = [x.strip() for x in b.splitlines() if x.strip()]
+                elif isinstance(b, list):
+                    bullets = [str(x).strip() for x in b if str(x).strip()]
+                else:
+                    bullets = []
+                if card:
+                    new_projects.append(_card_to_project_dict(card, bullets, item.get("tech_stack")))
+                elif item.get("title") or item.get("name"):
+                    new_projects.append({
+                        "id": item.get("id", ""),
+                        "title": item.get("title") or item.get("name"),
+                        "repository_url": item.get("repository_url", ""),
+                        "tech_stack": item.get("tech_stack", []),
+                        "bullets": bullets,
+                    })
+            elif isinstance(item, str):
+                card = _find_card(cards, text=item)
+                if card:
+                    new_projects.append(_card_to_project_dict(card))
+
+    if not new_projects:
+        lines = [line.strip() for line in reply.splitlines()]
+        current_card = None
+        current_bullets = []
+        current_stack = []
+
+        def flush():
+            nonlocal current_card, current_bullets, current_stack
+            if current_card:
+                new_projects.append(_card_to_project_dict(current_card, current_bullets, current_stack))
+                current_bullets = []
+                current_stack = []
+                current_card = None
+
+        for line in lines:
+            if not line:
+                continue
+            cleaned = re.sub(r"^[#\*\d\.\-\s]+", "", line).strip()
+            cleaned = re.sub(r"[:\*\)]+$", "", cleaned).strip()
+            card = _find_card(cards, text=cleaned) if len(cleaned) <= 100 else None
+            is_header = card and (
+                line.startswith(("#", "**"))
+                or re.match(r"^\d+\.", line)
+                or card["title"].lower().startswith(cleaned.lower())
+                or cleaned.lower() in card["title"].lower()
+            )
+            if is_header:
+                flush()
+                current_card = card
+            elif current_card:
+                if re.match(r"^[-*•\\]", line):
+                    bullet = re.sub(r"^[-*•\s\\]*(?:item\s*)?", "", line).strip()
+                    if bullet:
+                        current_bullets.append(bullet)
+                elif line.lower().startswith(("tech stack:", "technologies:", "tools:")):
+                    stack_str = line.split(":", 1)[1].strip()
+                    current_stack = [s.strip() for s in stack_str.split(",") if s.strip()]
+                elif not line.startswith("http") and len(line) > 10:
+                    current_bullets.append(line)
+
+        flush()
+
+    if not new_projects:
+        for text_source in (reply, instruction):
+            card = _find_card(cards, text=text_source)
+            if card and not any(p.get("id") == card["id"] for p in current_projects):
+                new_projects.append(_card_to_project_dict(card))
+                break
+
+    if not new_projects:
+        return draft
+
+    if len(new_projects) >= 3 or (len(new_projects) >= len(current_projects) and len(new_projects) > 1):
+        final_projects = new_projects[:3]
+    else:
+        merged = [dict(p) for p in current_projects]
+        for np in new_projects:
+            idx = next((i for i, p in enumerate(merged) if p.get("id") == np["id"] or p.get("title") == np["title"]), None)
+            if idx is not None:
+                merged[idx] = np
+            else:
+                replace_idx = None
+                if instruction:
+                    norm_inst = _normalize_key(instruction)
+                    for i, p in enumerate(merged):
+                        card = _find_card(cards, p.get("id"), p.get("title"), p.get("repository_url"))
+                        if card:
+                            prefix = _normalize_key(re.split(r"[:\—\-]", card["title"])[0])
+                            slug = _normalize_key(str(card.get("repository_url") or "").rstrip("/").split("/")[-1])
+                            if (prefix and prefix in norm_inst) or (slug and slug in norm_inst):
+                                replace_idx = i
+                                break
+                if replace_idx is not None:
+                    merged[replace_idx] = np
+                elif len(merged) < 3:
+                    merged.append(np)
+                else:
+                    merged[-1] = np
+        final_projects = merged
+
+    resume = {**draft["resume_data"], "projects": final_projects}
+    return update_draft(db, settings, draft["id"], {"resume_data": resume})
+
+
+def _apply_all_reply(draft: dict, reply: str, db: Database, settings: Settings, instruction: str = "") -> dict:
+    data = _extract_json_or_none(reply)
+    if isinstance(data, dict):
+        resume = {**draft["resume_data"]}
+        cards = db.all(
+            "SELECT e.id, e.title, e.claim, e.details, r.url AS repository_url "
+            "FROM evidence e LEFT JOIN repository_snapshots r ON r.id=e.repository_id "
+            "WHERE e.approved=1 AND e.kind='project' ORDER BY e.created_at DESC"
+        )
+        for key in ("summary", "experience", "education", "achievements", "skills", "skill_groups"):
+            if key in data:
+                resume[key] = data[key]
+        if "projects" in data and isinstance(data["projects"], list):
+            projects = []
+            for item in data["projects"]:
+                if isinstance(item, dict):
+                    card = _find_card(cards, item.get("id"), item.get("title") or item.get("name"), item.get("repository_url"))
+                    bullets = item.get("bullets", [])
+                    if isinstance(bullets, str):
+                        bullets = [x.strip() for x in bullets.splitlines() if x.strip()]
+                    if card:
+                        projects.append(_card_to_project_dict(card, bullets, item.get("tech_stack")))
+                    else:
+                        projects.append(item)
+            if projects:
+                resume["projects"] = projects[:3]
+        updates = {"resume_data": resume}
+        if "message_data" in data and isinstance(data["message_data"], dict):
+            updates["message_data"] = data["message_data"]
+        return update_draft(db, settings, draft["id"], updates)
     return draft
 
 
-def _apply_all_reply(draft: dict, reply: str, db: Database, settings: Settings) -> dict:
-    text = clean_reply_text(reply)
-    try:
-        data = json.loads(text)
-        if isinstance(data, dict):
-            resume = {**draft["resume_data"]}
-            for key in ("summary", "experience", "projects", "education", "achievements", "skills", "skill_groups"):
-                if key in data:
-                    resume[key] = data[key]
-            updates = {"resume_data": resume}
-            if "message_data" in data and isinstance(data["message_data"], dict):
-                updates["message_data"] = data["message_data"]
-            return update_draft(db, settings, draft["id"], updates)
-    except (json.JSONDecodeError, ValueError):
-        pass
-    return draft
-
-
-def apply_chatgpt_reply(db: Database, settings: Settings, draft_id: str, section: str, reply: str) -> dict:
+def apply_chatgpt_reply(db: Database, settings: Settings, draft_id: str, section: str, reply: str, instruction: str = "") -> dict:
     draft = get_draft(db, draft_id)
     if not reply or not reply.strip():
         return draft
@@ -348,9 +593,17 @@ def apply_chatgpt_reply(db: Database, settings: Settings, draft_id: str, section
         "all": _apply_all_reply,
     }
     handler = handlers.get(section)
-    if handler:
-        return handler(draft, reply, db, settings)
-    return draft
+    if not handler:
+        raise ValueError(f"Unknown application section {section}")
+    sig = inspect.signature(handler)
+    if "instruction" in sig.parameters:
+        updated = handler(draft, reply, db, settings, instruction=instruction)
+    else:
+        updated = handler(draft, reply, db, settings)
+
+    if updated.get("package_hash") == draft.get("package_hash"):
+        raise ValueError("No changes were applied from ChatGPT response")
+    return updated
 
 
 class ChatGPTInputManager:
