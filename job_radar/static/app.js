@@ -2542,7 +2542,7 @@ async function showApplication(id) {
 
     <section id="application-review-regenerate" class="application-review-section">
       <h3>Regenerate only what needs work</h3>
-      <p class="hint">${webGenerator ? 'ChatGPT Web enters the prompt in your saved Chrome browser. Review its reply and copy approved text into the application.' : 'Choose one section to revise. Resume changes update the PDF. For the application email, AI rewrites only the experience and project fit paragraph.'}</p>
+      <p class="hint">${webGenerator ? 'ChatGPT Web enters the prompt in your saved Chrome browser and automatically receives its reply to revise this application.' : 'Choose one section to revise. Resume changes update the PDF. For the application email, AI rewrites only the experience and project fit paragraph.'}</p>
       <label>Section<select id="regenerate-section"><option value="summary">Professional summary</option><option value="experience">Experience bullets</option><option value="projects">Selected projects and bullets</option><option value="education">Education wording</option><option value="achievements">Achievements</option><option value="skills">Skills</option>${destination.kind === 'email' ? '<option value="message">Application experience and project fit</option>' : ''}<option value="all" ${draft.provider === 'chatgpt_web' ? 'selected' : ''}>${webGenerator ? 'Full resume draft' : 'Full draft · uses more quota'}</option></select></label>
       <label>Custom instructions<textarea id="regenerate-prompt" rows="3" placeholder="Example: make the summary shorter and emphasize production search work"></textarea></label>
       <div class="actions"><button id="regenerate-draft" class="secondary" ${webGenerator ? 'hidden' : ''} ${draft.provider === 'template' || sent || uncertain ? 'disabled' : ''}>Regenerate selected section</button><button id="chatgpt-input" class="secondary" ${webGenerator ? '' : 'hidden'} ${sent || uncertain ? 'disabled' : ''}>Enter prompt in ChatGPT</button></div>
@@ -2666,13 +2666,16 @@ async function showApplication(id) {
 
   $('#chatgpt-input').addEventListener('click', async (event) => {
     if (dirtySections.size) { notice('Save your application changes before sending its context to ChatGPT.', true); return; }
-    const button = beginPending(event.currentTarget, 'Opening ChatGPT…');
+    const button = beginPending(event.currentTarget, 'Waiting for ChatGPT…');
     try {
       const result = await api(`/api/applications/${id}/chatgpt-input`, {
         method:'POST',
         body:JSON.stringify({section:$('#regenerate-section').value, instruction:$('#regenerate-prompt').value.trim()}),
       });
-      notice(result.detail, result.status !== 'entered');
+      if (result.reply || result.answer) {
+        await loadApplications(id);
+      }
+      notice(result.detail, result.status !== 'entered' && result.status !== 'received');
     } catch(error) { notice(error.message, true); }
     finally { if (button.isConnected) endPending(button); }
   });

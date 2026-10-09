@@ -26,7 +26,7 @@ from .discovery import merge_reason_label, source_coverage, split_observation, s
 from .apply import inspect_form, send_application, send_readiness, submission_attachment, submission_record, submission_resume_path
 from .auto_apply import AutoApplyManager
 from .browser_login import BrowserLoginManager
-from .chatgpt_handoff import ChatGPTInputManager, application_prompt
+from .chatgpt_handoff import ChatGPTInputManager, application_prompt, apply_chatgpt_reply
 from .capabilities import capability_readiness, provider_processing
 from .drafting import PROVIDERS, get_draft, prepare_draft, refresh_draft_projects, set_discovered_linkedin_destination, set_discovered_web_destination, set_unavailable_linkedin_destination, update_draft
 from .evidence import generate_project_content, inspect_repository
@@ -2100,6 +2100,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         result = await chatgpt_input.enter(prompt)
         if result["status"] == "failed":
             raise HTTPException(503, result["detail"])
+        if result.get("reply"):
+            try:
+                apply_chatgpt_reply(db, settings, draft_id, payload.section, result["reply"])
+                result["detail"] = "Answer received from ChatGPT and applied to this application."
+            except Exception as error:
+                log.warning("Could not apply ChatGPT reply to %s: %s", draft_id, error)
+                result["detail"] = f"Answer received from ChatGPT. Review or copy into the application: {result['reply'][:120]}"
         return result
 
     @app.post("/api/chatgpt/login")

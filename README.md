@@ -2,101 +2,196 @@
 
 # Job Radar
 
-Job Radar finds jobs, analyzes how well they fit your experience, and prepares tailored applications for your review. It runs as a browser interface on your Mac, keeps its database and browser sessions locally, and continues scanning in the background after you close the tab.
+> **"Recruiters are using AI to filter candidates. Let us use AI to filter employers."**
 
-**Platform:** macOS · **Local address:** [http://127.0.0.1:8787](http://127.0.0.1:8787) · **Sending rule:** an application is sent only when you choose **Approve & send** in Job Radar or approve its current draft in Telegram.
+For years, recruiting teams have deployed automated ATS parsers, AI keyword scrapers, and algorithmic screening bots to filter candidate resumes before a human ever looks at them. Candidates spend hours tailoring applications, writing cover letters, and parsing dense corporate job descriptions, only to be rejected by an automated filter in thirty seconds.
 
-## Install
+**Job Radar flips the script.**
 
-You need a Mac and an internet connection for installation and job collection. From a checkout of this repository, run one installer command:
+Job Radar turns your Mac into your personal, autonomous recruiting radar. It monitors job boards, LinkedIn searches, Facebook groups, and company career portals around the clock. It runs local AI models to strip away corporate buzzwords, ruthlessly checks hard eligibility constraints, evaluates qualitative fit against your verified experience, and prepares fully tailored resumes and application packages for your review.
 
-~~~sh
+Everything runs on your Mac. Your profile, credentials, sessions, and data stay on your machine. And most importantly: **nothing is ever sent without your explicit review and one-click authorization.**
+
+---
+
+**Platform:** macOS · **Local address:** [http://127.0.0.1:8787](http://127.0.0.1:8787) · **Core rule:** Applications are submitted only when you choose **Approve & send** in Job Radar or approve a draft via Telegram.
+
+---
+
+## Key Capabilities
+
+- **Autonomous Multi-Source Sourcing:** Continuously scans 43+ direct company career portals, LinkedIn job search feeds, and curated Facebook recruiting groups every 4 hours.
+- **Local AI Match Scoring:** Uses a local Ollama model to evaluate real role fit, required/preferred skills, experience depth, and work mode without leaking your data to third parties.
+- **Hard Constraints & Intent Filtering:** Filter by seniority levels, role families, preferred/excluded employers, salary minimums, negative keywords, and location constraints (e.g., Hanoi only or Remote).
+- **Evidence-Grounded Resume Tailoring:** Connect your GitHub to inspect public repositories, generate verified project contribution cards, and selectively map proven results to matching vacancies.
+- **Flexible AI Drafting Engine:**
+  - **ChatGPT Web:** Automated browser handoff through your authenticated Chrome profile—Job Radar fills the prompt, sends the message, **automatically receives the generated answer**, and updates the resume PDF preview.
+  - **CLI Engines:** Non-interactive, scriptable drafting through **Codex CLI**, **Antigravity CLI** (`agy`), or **Claude Code CLI** (`claude`).
+  - **Local OSS Inference:** Fully offline drafting using Codex OSS paired with local **Ollama** models.
+  - **Deterministic Local Templates:** Fast, template-based drafting without any AI model calls.
+- **Granular Section Regeneration:** Regenerate only the sections that need work—summary, experience bullets, selected projects, skills, education, or email cover message.
+- **Universal Application Dispatch:**
+  - Direct employer email applications via SMTP (with tailored PDF attachments).
+  - External ATS web forms with multi-step field inspection and auto-population.
+  - LinkedIn Easy Apply discovery and form step validation.
+- **Telegram Mobile Review:** Receive review packets with the tailored PDF directly on your phone, with instant **Approve & send**, **Edit**, and **Regenerate** inline buttons.
+- **Recruiting Pipeline Tracking:** Track decision stages (Shortlisted, Later, Ignored) and interview outcomes (Interview, Offer, Rejected) across all applications.
+
+---
+
+## Installation
+
+### Requirements
+- **OS:** macOS (Apple Silicon or Intel).
+- **Dependencies:** Google Chrome (for LinkedIn/Facebook scans and ChatGPT Web), Internet connection.
+- The installer automatically manages `uv`, `Tectonic` (for LaTeX resume rendering), and `Ollama` (for local matching models).
+
+### 1-Line Setup
+From a clone of this repository, run:
+
+```sh
 ./install.sh
-~~~
+```
 
 If you do not have the repository yet:
 
-~~~sh
+```sh
 git clone git@github.com:longnt27/jobradar.git
 cd jobradar
 ./install.sh
-~~~
+```
 
-The installer installs uv, Tectonic (for the supplied LaTeX resume template), and Ollama if needed, installs the locked Python dependencies and Playwright Chromium, registers a macOS service that starts at login, waits for the app to respond, and opens Job Radar in your browser. Re-run `./install.sh` from the same checkout after pulling updates. The installer does not install or sign in to an AI drafting CLI; choose one during setup below. Google Chrome is needed only if you want LinkedIn or Facebook scanning.
+The installer will:
+1. Install `uv`, `Tectonic`, and `Ollama` if missing.
+2. Install locked Python dependencies and Playwright Chromium.
+3. Register a persistent macOS background service that starts on login.
+4. Launch Job Radar and open [http://127.0.0.1:8787](http://127.0.0.1:8787) in your browser.
 
-If the browser does not open, visit [http://127.0.0.1:8787](http://127.0.0.1:8787) yourself. The service runs on this Mac; that address is not a hosted website.
+> [!NOTE]
+> The app runs locally on your Mac; `127.0.0.1:8787` is a local loopback server, not an external hosted website.
 
-## Set up your profile
+---
 
-Open **My profile** and work through its numbered steps. You can return to any step later. The first two steps enable tailored resumes and local job scores; the connection steps are optional.
+## Setup Guide
 
-1. **Set up AI models.** Choose an application writing provider and a separate local job matching model in this step. Install and sign in to one supported drafting CLI before selecting it: Codex CLI, Antigravity CLI, or Claude Code CLI. Codex OSS uses the `codex` CLI with Ollama for local inference. Remote providers receive the resume text and job details needed for drafting. For matching, select an installed Ollama text model or download the recommended small model. Job Radar extracts requirements; its model judges qualitative fit, while rules calculate experience, location, work mode and posting freshness. The weighted score and any hard exclusion appear in the job breakdown. The Jobs screen shows **Analyzing** until a score is ready and lets you retry or dismiss failed analyses. Scores are aids to review, not hiring probabilities.
-2. **Import your resume.** Upload a text-based PDF and click **Extract resume details**. You can also paste the supported LaTeX resume layout. Review the extracted information: open **Personal details** for contact information, education and skills, and **Work history** for previous positions. These are separate editing screens. GitHub projects are added separately; importing a resume does not select projects for you.
-3. **Connect LinkedIn and Facebook, if wanted.** Use the separate sign-in buttons. Sign in through the regular Chrome window that Job Radar opens. It detects completion, closes that window and reuses the saved session for later scans. If a session expires, the app shows a sign-in-again prompt and pauses scans for that site. Add groups later from **Job sources** by pasting a Facebook group URL; Job Radar gets its name from the page when available or derives a label from the link. Company career feeds work without these accounts.
-4. **Connect Telegram, if wanted.** Create a bot with [BotFather](https://t.me/BotFather), send the bot a private message, enter its token and use **Find my chat ID**. After a qualifying draft is ready, Telegram receives one message: a short job title and score caption, plus a review PDF containing the original job description, application message or form details, and the exact tailored CV. **Approve & send**, **Edit**, and **Regenerate** buttons are attached to that message. Keep the bot token private.
-5. **Connect email, if wanted.** For Gmail, enable [Google 2-Step Verification](https://support.google.com/accounts/answer/185839?hl=en), [create an app password](https://support.google.com/accounts/answer/185833?hl=en), and click **Use Gmail settings**. Check the full Gmail address in **SMTP username** and **From address**, paste the app password in **Password or app password**, then save. The preset uses `smtp.gmail.com` and port `465`. Use the app password, not your normal Google password. Click **Send test email** after saving; Job Radar sends a short test to the saved From address. Check your inbox or spam folder. Other SMTP providers can be entered manually. Email settings are needed to send email applications; web forms do not need them.
+Open **My profile** and complete the setup steps:
 
-The app saves these choices. **Configured** means settings are saved. **SMTP accepted** means the mail server accepted the latest test, but you should check your inbox to confirm delivery. Saving or removing email settings clears the previous test result.
+### 1. Set Up AI Models
+- **Local Matching Model:** Choose an installed Ollama model (e.g., `qwen2.5:7b` or `llama3.2`) to evaluate qualitative job fit and extract vacancy requirements locally. You can download recommended models directly from the UI.
+- **Drafting Provider:** Choose how your resumes and cover messages will be written:
+  - **ChatGPT Web:** Connects directly to [chatgpt.com](https://chatgpt.com) using your saved Chrome browser profile. Click **Log in to ChatGPT** to sign in once. Job Radar enters the prompt, waits for ChatGPT to generate the response, receives the answer, and applies it to your draft automatically.
+  - **Codex CLI / Antigravity CLI / Claude Code CLI:** Fast terminal CLI tools running on your Mac.
+  - **Codex OSS + Ollama:** 100% private local drafting on your machine.
+  - **Local template:** Deterministic drafting without LLM inference.
 
-## Find and review jobs
+### 2. Import Your Resume
+- Upload an existing text-based PDF or paste LaTeX source code.
+- Review and refine **Personal details** (contact information, education, skills) and **Work history** (roles, dates, and LaTeX item bullet points).
 
-- **Home** shows your next steps, counts and up to six running, waiting, or failed work items. Open **Queue** from the sidebar or Home to see all background work in one place.
-- **Queue** shows active and waiting company/social scans, local job extraction and scoring, and application draft preparation. Each lane updates automatically and runs independently. A job can enter analysis after a scan finds it, then draft preparation after its score meets your saved threshold. Click a queue item to open its source, job, or draft. LinkedIn and Facebook scans share a browser and run in order; local analysis runs two jobs concurrently, while drafts process one job at a time.
-- **Jobs** shows postings in 25-job pages, their original source links, extracted facts, fit scores, and the local analysis queue. Open a job to read its full description and requirements. You can also paste a job description with **Add a job from a description**. Spoken languages are shown only when the posting names a human language. Salary range shows exact pay text when stated in the title or description; it is informational and does not affect the score. Freshness uses the job's published date; without one, it receives a neutral score. Role, required skills, preferred skills, experience, responsibilities, location, work mode, education, and freshness carry 20%, 19%, 5%, 18%, 15%, 12%, 5%, 4%, and 2% of the score respectively. An explicit requirement for more than two years of experience, a mid level or higher title, a mandatory advanced degree missing from the profile, or a work location outside Hanoi without remote work sets the score to zero. A failed analysis can be dismissed from **Needs attention** without removing its job; it stays dismissed until you explicitly retry it.
-  The local analysis runs in the background with two workers. Jobs that fail a hard eligibility rule still get their facts extracted, then receive a zero score without an extra qualitative model call. A matching-rule version change queues saved jobs for fresh extraction and scoring automatically; dismissed failures stay dismissed.
-- **Job sources** is the place to add and scan feeds. **Automatic every 4 hours** controls future scans; **Scan now** queues a source immediately, even if its automatic schedule is off. **Scan all unscanned** queues every enabled source without a successful scan and moves those sources ahead of already scanned sources. LinkedIn and Facebook use one signed-in browser, so their searches run in order and may take time. Each source's main job count credits a job only to the first source that found it; **postings checked in latest scan** shows the scan's raw coverage, including overlap. Add a Facebook group or LinkedIn search by pasting its link; Job Radar fills in the name. Open **Employers** from this tab for the broader company directory; an employer is actively scanned only when it has an enabled source. Add its direct career page from the employer card.
+### 3. Add Verified GitHub Projects
+- In **My profile → GitHub projects**, enter your GitHub username or paste a repository link.
+- Let your chosen provider inspect repository files and commit history to draft an evidence brief with measurable achievements, technical contributions, and tech stacks.
+- Review and click **Approve**. Only approved project cards are eligible to be woven into your tailored resume bullets.
 
-The app includes [43 direct company career feeds](CAREER_FEEDS.md), which are checked on a four-hour schedule, plus nine default LinkedIn searches: one per job title, with no location variants. These searches require sign-in. Existing installs retire their old location variants while keeping previously found jobs and crediting them to the corresponding title search. You can add Facebook groups and further direct career pages. For Facebook posts, Job Radar also reads Google Doc job descriptions linked in comments by the original poster when the document is publicly readable. The [employer directory](EMPLOYER_SCOPE.md) is larger than the active feed list; an employer entry alone does not mean its jobs are being collected. A completed empty scan means the adapter found no matching posting at that time.
+### 4. Connect Job Sources
+- **Company Career Feeds:** 43 high-signal company career portals ([CAREER_FEEDS.md](CAREER_FEEDS.md)) are preconfigured and scanned every 4 hours.
+- **LinkedIn & Facebook:** Click **Sign in to LinkedIn** or **Sign in to Facebook** in Profile. Job Radar opens a dedicated Chrome session for you to sign in once, preserves authentication cookies, and reuses the session for automated background scans.
+- Paste additional Facebook group URLs or custom career page URLs in **Job sources** anytime.
 
-## Add projects and prepare an application
+### 5. Connect Review Channels (Optional)
+- **Telegram Bot:** Create a bot via [@BotFather](https://t.me/BotFather), enter your token, and click **Find my chat ID**. When a job qualifies for an application, Telegram receives a review message with the exact compiled PDF resume and action buttons.
+- **Email (SMTP):** If sending email applications, configure your SMTP server (e.g., Gmail using an App Password). Click **Send test email** to verify delivery.
 
-1. In **My profile → GitHub projects**, enter your GitHub username to browse public repositories, or paste a repository URL. Select a repository and let the chosen provider draft a project description from its files and history. Review and approve the description before Job Radar can use it in a resume or job match. Confirm the claims describe your own contribution.
-2. Open a job in **Jobs** and click **Prepare application**. The drafting provider selects relevant approved projects, adapts their resume bullets to the job, and prepares an English CV PDF plus an email message or form answers. For Vietnamese postings, the application message and free-text form answers are written in Vietnamese; the CV stays in English. Previous jobs remain in the Experience section of the resume.
-3. Open the draft in **Applications**. Check the job, destination, resume PDF, project bullets, message, attachments and any form answers. Use **Edit details** or **Regenerate draft** with your own instructions, then save and review the updated PDF. Use **Inspect form** for a web application when available.
-4. Click **Approve & send** only after the saved package is correct. Email applications use the SMTP settings in My profile. Supported single-page forms can be filled and submitted through the browser. Missing destinations or required answers appear as blockers. Job Radar records the result and guards against duplicate sends when the outcome is uncertain.
+---
 
-In **Applications → Automatic draft preparation**, you can enable drafting for jobs whose completed score is **at least** your chosen threshold (80 by default). To process jobs already found, save the enabled setting, then click **Include existing jobs**. Jobs still being analyzed are queued and checked when their scores are ready; jobs below the minimum are skipped. Jobs with an existing draft or submission are excluded. Each draft still waits for your review and approval; enabling this feature does not send applications automatically. If Telegram is configured, it receives the one-message review PDF only after preparation finishes. Editing a draft invalidates its earlier Telegram approval button and sends an updated review.
+## Day-to-Day Workflow
 
-## Keep it running, update, or remove the service
+```mermaid
+flowchart LR
+    A["Job Feeds\n(Careers, LinkedIn, FB)"] --> B["Local AI Scorer\n(Ollama)"]
+    B --> C{"Match Score\n>= Threshold?"}
+    C -- No --> D["Triage in Jobs Inbox\n(Shortlist / Later / Ignore)"]
+    C -- Yes --> E["Draft Preparation\n(ChatGPT Web / CLI / Local)"]
+    E --> F["Review Screen / Telegram\n(Inspect, Edit, Regenerate)"]
+    F --> G["Approve & Send\n(Email / Web Form / Easy Apply)"]
+```
 
-Job Radar starts at macOS login after installation. Keep the checkout in place: the service runs the Python environment installed there. To open the interface later, visit [http://127.0.0.1:8787](http://127.0.0.1:8787).
+### 1. Triaging the Jobs Feed
+- Navigate to **Jobs** to see all detected vacancies with live match scores, role fit summaries, detected salaries, and freshness indicators.
+- **Search Intent & Constraints:** Set custom preferences under Search Intent (role families, maximum years of experience, Hanoi or Remote preferences, negative keywords). Postings violating hard rules receive an instant score of 0.
+- **Quick Decisions:** Triage jobs with **Shortlist**, **Save for later** (snoozes for 7 days), or **Ignore**.
 
-| Task | Command from the checkout |
+### 2. Preparing and Reviewing Applications
+- **Automatic Draft Preparation:** Turn on **Auto-apply** with a score threshold (e.g. 80+). When a strong match appears, Job Radar selects the top matching projects, writes targeted bullet points, translates Vietnamese postings to appropriate email messages, and renders the PDF resume.
+- **Manual Preparation:** Click **Prepare application** on any job at any time.
+
+### 3. Reviewing, Inspecting, and Regenerating
+Open any draft under **Applications**:
+- **Resume Preview:** Inspect the rendered PDF page-by-page. Click **Edit resume details** to tweak LaTeX lines directly with instant PDF re-rendering.
+- **Regenerate Sections:** Use the **Regenerate** tab to rewrite only what needs improvement (`summary`, `experience`, `projects`, `skills`, `message`, or `all`).
+  - When using **ChatGPT Web**, clicking **Enter prompt in ChatGPT** opens ChatGPT, sends your context and instructions, streams the response, and **automatically receives and applies the answer** back to the draft and PDF!
+- **Inspect Form:** For web applications or LinkedIn Easy Apply, click **Inspect form** to discover all required inputs, attachments, and questions before submitting.
+
+### 4. Authorizing Submission
+- Review destination, package fingerprint, and blockers.
+- Click **Approve & send** (or tap Approve on Telegram).
+- Job Radar sends the email via SMTP or automates form submission in the background, logging verified receipts and confirmation screenshots.
+- Track outcomes as **Interview**, **Offer**, or **Rejected** in the submission history.
+
+---
+
+## Service Management & CLI Commands
+
+The background service automatically runs in the background. Manage it from the repository checkout:
+
+| Action | Command |
 | --- | --- |
-| Apply an updated checkout and restart the service | `./install.sh` |
-| Restart the service without reinstalling dependencies | `.venv/bin/job-radar install-service` |
-| Stop and remove the login service | `.venv/bin/job-radar uninstall-service` |
-| Run the app in the foreground for debugging | `.venv/bin/job-radar serve` |
+| Update repository and restart service | `./install.sh` |
+| Restart background service | `.venv/bin/job-radar install-service` |
+| Stop and remove macOS background service | `.venv/bin/job-radar uninstall-service` |
+| Run app in foreground (debug / logs) | `.venv/bin/job-radar serve` |
+| Run test suite | `.venv/bin/pytest -v` |
 
-The default data directory is `~/Library/Application Support/JobRadar`. It contains the SQLite database, saved Chrome profile, generated PDFs, SMTP and Telegram settings, and service logs. Removing the login service does **not** delete that data. The installer also leaves installed dependencies in the checkout.
+### Data Storage & Paths
+All data is stored locally in `~/Library/Application Support/JobRadar`:
+- `job_radar.db`: SQLite database holding vacancies, drafts, and submissions.
+- `browser_profile/`: Dedicated Google Chrome profile for social and ChatGPT sessions.
+- `artifacts/`: Compiled LaTeX resume PDFs and submission receipts.
+- `service.log` / `service.stderr.log`: Background runner logs.
 
-Set `JOB_RADAR_DATA_DIR` or `JOB_RADAR_PORT` when running `./install.sh` to change the persistent data directory or local port. The installer writes those values into the service definition. To use the new port later, open `http://127.0.0.1:<port>`.
+To customize directories or ports:
+```sh
+JOB_RADAR_PORT=9000 JOB_RADAR_DATA_DIR=~/Documents/JobRadar ./install.sh
+```
+
+---
 
 ## Troubleshooting
 
-| Symptom | What to check |
+| Issue | Resolution |
 | --- | --- |
-| The app does not open after installation | Check `~/Library/Application Support/JobRadar/service.stderr.log`, then re-run `./install.sh`. If you set `JOB_RADAR_DATA_DIR`, look for the log there instead. |
-| Jobs stay at **Analyzing** or show failures | Make sure Ollama is running and the selected model is installed. Open **Jobs → Local job analysis** to retry failed jobs; change the model in **My profile** if needed. |
-| A company has no visible jobs | Check **Job sources** for an enabled feed and its last scan result. The employer directory includes leads without feeds. Open the original career page to compare results. |
-| LinkedIn or Facebook needs sign-in again | Open **My profile → Connect LinkedIn and Facebook** and sign in again for the affected site using Chrome. |
-| Gmail rejects the password | Use a Google app password after enabling 2-Step Verification. Some managed or protected Google accounts do not offer app passwords; see [Google's instructions](https://support.google.com/accounts/answer/185833?hl=en). |
-| A form cannot be sent | Open its application draft, inspect the form and fill missing required answers. Multi-step forms, CAPTCHA and changed site fields may need manual completion on the original posting. |
+| **Interface does not open** | Check `~/Library/Application Support/JobRadar/service.stderr.log` or run `.venv/bin/job-radar serve` in the terminal to inspect errors. |
+| **Jobs stuck on "Analyzing"** | Ensure Ollama is running (`ollama serve`) and the matching model selected in **My profile** is downloaded. |
+| **ChatGPT Web sign-in required** | In **My profile → Set up AI models**, select ChatGPT Web and click **Log in to ChatGPT** to sign in to your OpenAI account in Chrome. |
+| **LinkedIn / Facebook session expired** | Open **My profile → Connect LinkedIn and Facebook** and sign in again in the opened Chrome window. |
+| **Gmail rejects SMTP login** | Enable 2-Step Verification on your Google account and generate an **App Password**. Normal account passwords will be rejected by Google. |
+| **Form submission blocked** | Click **Inspect form** on the application review screen and fill any missing required fields or custom questions. |
 
-## Data and limitations
+---
 
-Job Radar listens on `127.0.0.1` and has no separate login screen. Keep it on your Mac; do not expose its port to a network. SMTP and Telegram credentials are saved in local files with owner-only permissions. The database, browser sessions and generated artifacts are also local, but they are **not encrypted by Job Radar**. Back up the data directory if you need to preserve your profile and drafts.
+## Privacy & Security
 
-The selected remote AI provider may receive resume text, job descriptions and approved project facts when it drafts content. Telegram receives the draft and PDF when you enable that connection. Local job matching uses Ollama on your Mac. Repository inspection reads selected files and history without running repository code.
+- **Local-First Architecture:** Job Radar binds to `127.0.0.1`. It has no tracking, telemetry, or external cloud backend.
+- **Strict Human-in-the-Loop:** Automated processes stop at the draft review stage. Submission requires explicit authorization.
+- **Credential Storage:** Bot tokens, SMTP passwords, and browser cookies are stored on your local disk with standard user permissions.
+- **Repository Safety:** Repository inspection inspects files and commit history statically; it never executes third-party code.
 
-Career sites can change, and the supported adapters do not cover every posting or application form. Always check the original listing and your generated application before sending.
+---
 
-## Development
+## References
 
-The app requires Python 3.12 or newer. The installer uses the checked-in `uv.lock` for repeatable dependency installation. To run the test suite from the checkout:
-
-~~~sh
-uv run --extra dev pytest -x -vv
-~~~
-
-Useful implementation references: [feed catalog](job_radar/feed_catalog.py), [collectors](job_radar/collectors.py), [local analysis](job_radar/local_analysis.py), and [web app](job_radar/web.py).
+- [Direct Career Feeds Catalog](CAREER_FEEDS.md)
+- [Employer Directory & Scope](EMPLOYER_SCOPE.md)
+- [ChatGPT Web Browser Integration](job_radar/chatgpt_handoff.py)
+- [Local Job Analysis & Scoring](job_radar/local_analysis.py)
+- [Web Application & API](job_radar/web.py)
