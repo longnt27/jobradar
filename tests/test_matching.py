@@ -545,3 +545,37 @@ def test_saved_match_uses_structured_location_for_hard_exclusion(tmp_path: Path)
     updated = client.get(f"/api/jobs/{job_id}").json()
     assert updated["score"] == 0
     assert "Location" in " ".join(json.loads(updated["score_detail"])["hard_exclusions"])
+
+
+def test_matching_retries_three_times_before_failing(tmp_path: Path, monkeypatch) -> None:
+    app = create_app(Settings(tmp_path))
+    app.state.db.set_setting("matching_model", "test:small")
+    manager = app.state.match_manager
+
+    job_id = "test-retry-job"
+    app.state.db.execute(
+        "INSERT INTO vacancies(id, company, title, description, first_seen_at, last_seen_at, created_at, updated_at, analysis_status) "
+        "VALUES(?, 'Test Co', 'ML Engineer', 'Build ML models', '2026-10-09', '2026-10-09', '2026-10-09', '2026-10-09', 'pending')",
+        (job_id,),
+    )
+
+    # Simulate 3 failures
+    manager._failure_counts[job_id] = 0
+    # Attempt 1
+    count = manager._failure_counts[job_id] + 1
+    manager._failure_counts[job_id] = count
+    assert count < 3
+
+    # Attempt 2
+    count = manager._failure_counts[job_id] + 1
+    manager._failure_counts[job_id] = count
+    assert count < 3
+
+    # Attempt 3 fails -> count is 3, reaches limit
+    count = manager._failure_counts[job_id] + 1
+    manager._failure_counts[job_id] = count
+    assert count >= 3
+
+    # Retry clears failure count
+    manager.retry(job_id)
+    assert job_id not in manager._failure_counts

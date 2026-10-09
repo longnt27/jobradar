@@ -247,6 +247,22 @@ def _compose_application_message(job: dict, profile: dict, fit: str) -> dict:
     qualifications = " ".join(part for part in (education, fit) if part)
     body = "\n\n".join((greeting, opening, qualifications, action, closing))
     if not _brief_message(body):
+        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", fit) if s.strip()]
+        while not _brief_message(body) and len(sentences) > 1:
+            sentences.pop()
+            trimmed_fit = " ".join(sentences)
+            qualifications = " ".join(part for part in (education, trimmed_fit) if part)
+            body = "\n\n".join((greeting, opening, qualifications, action, closing))
+        if not _brief_message(body) and sentences:
+            fit_words = sentences[0].split()
+            while not _brief_message(body) and len(fit_words) > 8:
+                fit_words.pop()
+                trimmed_fit = " ".join(fit_words).rstrip(" ,;:-")
+                if not trimmed_fit.endswith((".", "!", "?")):
+                    trimmed_fit += "."
+                qualifications = " ".join(part for part in (education, trimmed_fit) if part)
+                body = "\n\n".join((greeting, opening, qualifications, action, closing))
+    if not _brief_message(body):
         raise ValueError("The application message is too long; shorten the candidate-fit text and retry")
     return {"subject": subject, "body": body}
 

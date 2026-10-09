@@ -2067,11 +2067,13 @@ function renderApplicationList(total = applicationsTotal) {
   }
   list.innerHTML = preparations.map((item) => {
     const selected = item.vacancy_id === activePreparationJobId;
-    const tone = ['credits','failed','quota'].includes(item.category) ? 'danger' : 'warning';
+    const inProgress = ['queued', 'preparing'].includes(item.status);
+    const tone = ['credits','failed','quota'].includes(item.category) ? 'danger' : inProgress ? 'info' : 'warning';
+    const statusNote = item.status === 'queued' ? 'Queued in background' : item.status === 'preparing' ? 'Preparing draft' : 'No draft yet';
     return `<button type="button" class="item clickable application-card surface-action ${selected ? 'is-selected' : ''}" data-preparation="${item.vacancy_id}" aria-pressed="${selected ? 'true' : 'false'}">
       <div class="item-title">${escapeHtml(item.job_title)}</div>
       <div class="application-card-status"><span class="status-badge status-badge--${tone}">${escapeHtml(item.label)}</span></div>
-      <div class="item-meta">${escapeHtml(item.company)} · ${item.score} match · No draft yet</div>
+      <div class="item-meta">${escapeHtml(item.company)} · ${item.score} match · ${statusNote}</div>
       <div class="item-meta">Updated ${when(item.updated_at)}</div>
     </button>`;
   }).join('') + applicationDrafts.map((draft) => {
@@ -2407,15 +2409,17 @@ function showPreparationIssue(item) {
   activePreparationJobId = item.vacancy_id;
   renderApplicationList();
   const detail = $('#application-detail');
-  const tone = ['credits','failed','quota'].includes(item.category) ? 'danger' : 'warning';
+  const inProgress = ['queued', 'preparing'].includes(item.status);
+  const tone = ['credits','failed','quota'].includes(item.category) ? 'danger' : inProgress ? 'info' : 'warning';
+  const alertTitle = item.status === 'queued' ? 'Preparation queued' : item.status === 'preparing' ? 'Preparation in progress' : 'No draft was created';
   detail.innerHTML = `<div class="application-review-header">
       <div><p class="eyebrow">APPLICATION PREPARATION</p><h2>${escapeHtml(item.job_title)}</h2><p class="item-meta">${escapeHtml(item.company)} · ${item.score} match</p></div>
       <span class="status-badge status-badge--${tone}">${escapeHtml(item.label)}</span>
     </div>
-    <div class="application-alert application-alert--${tone}"><strong>No draft was created</strong><p>${escapeHtml(item.reason)}</p></div>
+    <div class="application-alert application-alert--${tone}"><strong>${escapeHtml(alertTitle)}</strong><p>${escapeHtml(item.reason)}</p></div>
     <p class="hint">${item.provider ? `Drafting with ${escapeHtml(providerLabel(item.provider))}. ` : ''}No application has been sent.</p>
     <div class="actions">
-      ${item.retryable ? '<button type="button" class="primary" data-retry-preparation>Retry preparation</button>' : ''}
+      ${inProgress ? `<button type="button" class="primary" disabled aria-busy="true">${item.status === 'queued' ? 'Queued in background' : 'Preparing in background'}</button>` : (item.retryable ? '<button type="button" class="primary" data-retry-preparation>Retry preparation</button>' : '')}
       <button type="button" class="secondary" data-preparation-job>View job in Jobs</button>
       <button type="button" class="secondary danger" data-ignore-preparation>Ignore job</button>
     </div>`;

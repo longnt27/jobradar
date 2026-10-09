@@ -34,6 +34,7 @@ class MatchManager:
         self.service_error: str | None = None
         self.wake_event = asyncio.Event()
         self.loop: asyncio.AbstractEventLoop | None = None
+        self._failure_counts: dict[str, int] = {}
 
     def status(self) -> dict:
         counts = {row["analysis_status"]: row["count"] for row in self.db.all(
@@ -78,6 +79,7 @@ class MatchManager:
         return selected
 
     def invalidate_all(self) -> None:
+        self._failure_counts.clear()
         if not self.db.get_setting("matching_model", ""):
             return
         self.db.execute("UPDATE vacancies SET analysis_status='pending',analysis_stage=NULL,analysis_error=NULL WHERE analysis_status NOT IN ('pending','dismissed')")
@@ -95,12 +97,14 @@ class MatchManager:
             raise ValueError("Choose a local job matching model in My profile first")
         if not self.db.one("SELECT id FROM vacancies WHERE id=?", (vacancy_id,)):
             raise KeyError("Job not found")
+        self._failure_counts.pop(vacancy_id, None)
         self.db.execute("UPDATE vacancies SET analysis_status='pending',analysis_stage=NULL,analysis_error=NULL WHERE id=?", (vacancy_id,))
         self._wake()
 
     def dismiss_failure(self, vacancy_id: str) -> None:
         if not self.db.one("SELECT id FROM vacancies WHERE id=?", (vacancy_id,)):
             raise KeyError("Job not found")
+        self._failure_counts.pop(vacancy_id, None)
         with self.db.connection() as conn:
             changed = conn.execute(
                 "UPDATE vacancies SET analysis_status='dismissed',analysis_stage=NULL,analysis_error=NULL,score=NULL,score_detail=NULL "
@@ -117,6 +121,7 @@ class MatchManager:
     def retry_failed(self) -> int:
         if not self.db.get_setting("matching_model", ""):
             raise ValueError("Choose a local job matching model in My profile first")
+        self._failure_counts.clear()
         with self.db.connection() as conn:
             count = conn.execute(
                 "UPDATE vacancies SET analysis_status='pending',analysis_stage=NULL,analysis_error=NULL WHERE analysis_status='failed'"
@@ -230,8 +235,10 @@ class MatchManager:
                     ).rowcount
                 if not changed:
                     self.db.execute("UPDATE vacancies SET analysis_status='pending',analysis_stage=NULL WHERE id=? AND analysis_status='running'", (job["id"],))
-                elif self.auto_apply:
-                    self.auto_apply.wake()
+                else:
+                    self._failure_counts.pop(job["id"], None)
+                    if self.auto_apply:
+                        self.auto_apply.wake()
             except asyncio.CancelledError:
                 self.db.execute("UPDATE vacancies SET analysis_status='pending',analysis_stage=NULL WHERE id=? AND analysis_status='running'", (job["id"],))
                 raise
@@ -241,6 +248,16 @@ class MatchManager:
                 await asyncio.sleep(15)
             except Exception as error:
                 log.warning("Local analysis failed for job %s: %s", job["id"], error)
-                self.db.execute("UPDATE vacancies SET analysis_status='failed',analysis_stage=NULL,analysis_error=? WHERE id=? AND analysis_status='running'",
-                                (str(error)[:240], job["id"]))
+                count = self._failure_counts.get(job["id"], 0) + 1
+                self._failure_counts[job["id"]] = count
+                if count < 3:
+                    self.db.execute(
+                        "UPDATE vacancies SET analysis_status='pending',analysis_stage=NULL,analysis_error=? WHERE id=? AND analysis_status='running'",
+                        (f"Retrying (attempt {count}/3): {str(error)[:180]}", job["id"]),
+                    )
+                else:
+                    self.db.execute(
+                        "UPDATE vacancies SET analysis_status='failed',analysis_stage=NULL,analysis_error=? WHERE id=? AND analysis_status='running'",
+                        (f"Failed after 3 attempts: {str(error)[:200]}", job["id"]),
+                    )
             await asyncio.sleep(0.1)

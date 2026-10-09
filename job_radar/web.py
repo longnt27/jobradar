@@ -1812,7 +1812,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             clauses.append("NOT EXISTS(SELECT 1 FROM submissions s WHERE s.draft_id=d.id AND s.status IN ('sent_confirmed','submitted_confirmed','submitted_unconfirmed','sending'))")
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
         base = (" FROM application_drafts d JOIN vacancies v ON v.id=d.vacancy_id "
-                "LEFT JOIN auto_application_attempts a ON a.draft_id=d.id")
+                "LEFT JOIN auto_application_attempts a ON a.vacancy_id=d.vacancy_id")
         total = db.one("SELECT COUNT(*) AS count" + base + where, tuple(params))["count"]
         pages = max(1, (total + page_size - 1) // page_size)
         page = min(page, pages)
@@ -1863,9 +1863,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         for row in rows:
             detail = (row["detail"] or "").casefold()
             if row["status"] == "queued":
-                category, label, reason = "queued", "Queued", "Application preparation is waiting to start."
+                if "retrying" in detail:
+                    category, label, reason = "queued", "Retrying", row["detail"]
+                else:
+                    category, label, reason = "queued", "Queued", "Application preparation is queued in the background."
             elif row["status"] == "preparing":
-                category, label, reason = "preparing", "Preparing", "The application draft is being created."
+                category, label, reason = "preparing", "Preparing", (row["detail"] or "The application draft is being created.")
             elif row["status"] == "needs_confirmation":
                 category, label, reason = "method", "Application method needed", "Confirm how to apply before creating a draft."
             elif re.search(r"out of credits|insufficient credits|credit balance", detail):
@@ -1873,7 +1876,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             elif re.search(r"quota|rate limit|usage limit", detail):
                 category, label, reason = "quota", "AI limit reached", "The AI provider hit a usage limit before creating a draft. Retry when the limit resets."
             else:
-                category, label, reason = "failed", "Draft failed", "Application preparation stopped before a draft was created. Retry to try again."
+                category, label, reason = "failed", "Draft failed", (row["detail"] or "Application preparation stopped before a draft was created. Retry to try again.")
             issues.append({
                 "vacancy_id": row["vacancy_id"], "job_title": row["job_title"],
                 "company": row["company"], "score": row["score"], "status": row["status"],
@@ -1894,7 +1897,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             draft = get_draft(db, draft_id)
             reasons = send_readiness(db, settings, draft)
-            review = db.one("SELECT status,review_hash,telegram_status,telegram_error,requested_by,detail,prepare_anyway,updated_at,created_at FROM auto_application_attempts WHERE draft_id=?", (draft_id,))
+            review = db.one("SELECT status,review_hash,telegram_status,telegram_error,requested_by,detail,prepare_anyway,updated_at,created_at FROM auto_application_attempts WHERE vacancy_id=?", (draft["vacancy_id"],))
             latest = db.one("SELECT * FROM submissions WHERE draft_id=? ORDER BY sent_at DESC,id DESC LIMIT 1", (draft_id,))
             job_data = None
             try:

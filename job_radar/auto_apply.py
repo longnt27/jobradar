@@ -271,7 +271,7 @@ class AutoApplyManager:
             if existing["requested_by"] != "manual":
                 self.db.execute(
                     "UPDATE auto_application_attempts SET requested_by='manual',requested_provider=?,"
-                    "preflight_action=?,prepare_anyway=?,detail='Queued by you for application preparation',"
+                    "preflight_action=?,prepare_anyway=?,retry_count=0,detail='Queued by you for application preparation',"
                     "updated_at=? WHERE vacancy_id=?",
                     (
                         provider,
@@ -307,13 +307,13 @@ class AutoApplyManager:
         self.db.execute(
             "INSERT INTO auto_application_attempts("
             "vacancy_id,status,draft_id,review_hash,telegram_status,detail,requested_by,"
-            "requested_provider,preflight_action,prepare_anyway,created_at,updated_at"
-            ") VALUES(?,'queued',NULL,NULL,'pending',?,'manual',?,?,?, ?,?) "
+            "requested_provider,preflight_action,prepare_anyway,retry_count,created_at,updated_at"
+            ") VALUES(?,'queued',NULL,NULL,'pending',?,'manual',?,?,?, 0, ?,?) "
             "ON CONFLICT(vacancy_id) DO UPDATE SET status='queued',draft_id=NULL,review_hash=NULL,"
             "telegram_status='pending',telegram_error=NULL,telegram_message_id=NULL,detail=excluded.detail,"
             "requested_by='manual',requested_provider=excluded.requested_provider,"
             "preflight_action=excluded.preflight_action,prepare_anyway=excluded.prepare_anyway,"
-            "updated_at=excluded.updated_at",
+            "retry_count=0,updated_at=excluded.updated_at",
             (
                 job_id,
                 "Queued by you for application preparation",
@@ -335,6 +335,7 @@ class AutoApplyManager:
         return self.db.all(
             "SELECT vacancy_id,detail FROM auto_application_attempts a WHERE status='needs_review' "
             "AND draft_id IS NULL AND (detail LIKE 'AI drafting failed:%' "
+            "OR detail LIKE 'Preparation failed after 3 attempts:%' "
             "OR detail LIKE '% preparation stopped: % drafting failed:%' "
             "OR detail LIKE '% preparation stopped: % returned an invalid draft:%') "
             "AND NOT EXISTS(SELECT 1 FROM application_drafts d WHERE d.vacancy_id=a.vacancy_id) "
@@ -346,7 +347,7 @@ class AutoApplyManager:
         for item in failures:
             self.db.execute(
                 "UPDATE auto_application_attempts SET status='queued',requested_by='manual',"
-                "detail='Retry requested after AI drafting failed',telegram_status='pending',updated_at=? "
+                "detail='Retry requested after AI drafting failed',telegram_status='pending',retry_count=0,updated_at=? "
                 "WHERE vacancy_id=? AND status='needs_review' AND draft_id IS NULL",
                 (now(), item["vacancy_id"]),
             )
@@ -402,6 +403,70 @@ class AutoApplyManager:
             (status, detail[:1000], draft_id, now(), job_id),
         )
 
+    def _cleanup_incomplete_draft(self, vacancy_id: str, draft_id: str | None = None) -> None:
+        target_id = draft_id
+        if not target_id:
+            row = self.db.one("SELECT id FROM application_drafts WHERE vacancy_id=?", (vacancy_id,))
+            if row:
+                target_id = row["id"]
+        if not target_id:
+            return
+        sub = self.db.one("SELECT id FROM submissions WHERE draft_id=?", (target_id,))
+        if sub:
+            return
+        self.db.execute("DELETE FROM telegram_review_prompts WHERE draft_id=?", (target_id,))
+        self.db.execute("UPDATE auto_application_attempts SET draft_id=NULL WHERE vacancy_id=?", (vacancy_id,))
+        self.db.execute("DELETE FROM application_drafts WHERE id=?", (target_id,))
+
+    async def _record_failure(self, job_id: str, error_detail: str, draft_id: str | None = None) -> bool:
+        attempt = self.db.one(
+            "SELECT retry_count, requested_by FROM auto_application_attempts WHERE vacancy_id=?",
+            (job_id,),
+        )
+        current_count = int((attempt or {}).get("retry_count") or 0)
+        if current_count < 3:
+            new_count = current_count + 1
+            self._cleanup_incomplete_draft(job_id, draft_id)
+            self.db.execute(
+                "INSERT INTO auto_application_attempts("
+                "vacancy_id,status,retry_count,draft_id,review_hash,detail,created_at,updated_at"
+                ") VALUES(?,'queued',?,NULL,NULL,?,?,?) "
+                "ON CONFLICT(vacancy_id) DO UPDATE SET "
+                "status='queued',retry_count=excluded.retry_count,draft_id=NULL,review_hash=NULL,"
+                "detail=excluded.detail,updated_at=excluded.updated_at",
+                (
+                    job_id,
+                    new_count,
+                    f"Retrying preparation (attempt {new_count}/3): {error_detail[:500]}",
+                    now(),
+                    now(),
+                ),
+            )
+            self.wake()
+            return True
+        else:
+            self.db.execute(
+                "INSERT INTO auto_application_attempts("
+                "vacancy_id,status,retry_count,draft_id,review_hash,detail,created_at,updated_at"
+                ") VALUES(?,'needs_review',?,?,NULL,?,?,?) "
+                "ON CONFLICT(vacancy_id) DO UPDATE SET "
+                "status='needs_review',retry_count=excluded.retry_count,draft_id=COALESCE(excluded.draft_id,auto_application_attempts.draft_id),"
+                "detail=excluded.detail,updated_at=excluded.updated_at",
+                (
+                    job_id,
+                    current_count,
+                    draft_id,
+                    f"Preparation failed after 3 attempts: {error_detail[:500]}",
+                    now(),
+                    now(),
+                ),
+            )
+            if draft_id:
+                await self.notify_review(draft_id)
+            else:
+                await self.notify_preparation_issue(job_id)
+            return False
+
     def register_review(self, draft: dict) -> None:
         self.db.execute(
             "INSERT INTO auto_application_attempts(vacancy_id,status,draft_id,detail,created_at,updated_at) "
@@ -455,9 +520,10 @@ class AutoApplyManager:
             self._set_status(job_id, "needs_review", "An application submission already exists for this job.")
             return
         existing = self.db.one("SELECT id FROM application_drafts WHERE vacancy_id=? LIMIT 1", (job_id,))
-        if existing:
+        if existing and not manual:
             self._set_status(job_id, "needs_review", "An application draft already exists. Review it before sending.", existing["id"])
             return
+        existing_draft_id = existing["id"] if (existing and manual) else None
         source = self.db.one(
             "SELECT o.url,s.kind FROM vacancy_observations vo "
             "JOIN observations o ON o.id=vo.observation_id "
@@ -484,7 +550,7 @@ class AutoApplyManager:
         if not provider:
             self._set_status(job_id, "needs_review", "Choose an application drafting provider in My profile.")
             return
-        draft = await asyncio.to_thread(prepare_draft, self.db, self.settings, job_id, provider)
+        draft = await asyncio.to_thread(prepare_draft, self.db, self.settings, job_id, provider, existing_draft_id)
         if provider == "chatgpt_web":
             if not self.chatgpt_input or not self.chatgpt_input.status().get("logged_in"):
                 self._set_status(
@@ -503,22 +569,20 @@ class AutoApplyManager:
                     apply_chatgpt_reply(self.db, self.settings, draft["id"], "all", result["reply"], "")
                     draft = get_draft(self.db, draft["id"])
                 else:
-                    self._set_status(
+                    if await self._record_failure(
                         job_id,
-                        "needs_review",
                         f"ChatGPT Web draft incomplete: {result.get('detail') or 'No reply received'}",
                         draft["id"],
-                    )
-                    await self.notify_review(draft["id"])
+                    ):
+                        return
                     return
             except Exception as error:
-                self._set_status(
+                if await self._record_failure(
                     job_id,
-                    "needs_review",
                     f"ChatGPT Web drafting failed: {error}",
                     draft["id"],
-                )
-                await self.notify_review(draft["id"])
+                ):
+                    return
                 return
         self._set_status(job_id, "preparing", "Draft prepared; checking application details", draft["id"])
         if not manual and not self._still_eligible(job_id):
@@ -542,16 +606,16 @@ class AutoApplyManager:
                         self._set_status(job_id, "skipped", f"Already applied on LinkedIn: {action['detail']}", draft["id"])
                         return
             except (ValueError, RuntimeError, PlaywrightError) as error:
-                self._set_status(job_id, "needs_review", f"Application button inspection needs attention: {error}", draft["id"])
-                await self.notify_review(draft["id"])
+                if await self._record_failure(job_id, f"Application button inspection needs attention: {error}", draft["id"]):
+                    return
                 return
         if draft["destination"].get("kind") in {"web", "linkedin_easy_apply"}:
             try:
                 async with self.browser_lock:
                     draft = await inspect_form(self.db, self.settings, draft["id"])
             except (ValueError, RuntimeError, PlaywrightError) as error:
-                self._set_status(job_id, "needs_review", f"Form inspection needs attention: {error}", draft["id"])
-                await self.notify_review(draft["id"])
+                if await self._record_failure(job_id, f"Form inspection needs attention: {error}", draft["id"]):
+                    return
                 return
             if draft["destination"].get("kind") == "web":
                 attachments = {**draft["form_data"].get("attachments", {}),
@@ -570,6 +634,7 @@ class AutoApplyManager:
             self._set_status(job_id, "needs_review", "Automatic preparation paused or job score changed.", draft["id"])
             return
         self._set_status(job_id, "awaiting_review", "Review the complete application before approving.", draft["id"])
+        self.db.execute("UPDATE auto_application_attempts SET retry_count=0 WHERE vacancy_id=?", (job_id,))
         await self.notify_review(draft["id"])
 
     @staticmethod
@@ -1105,14 +1170,14 @@ class AutoApplyManager:
                 "SELECT a.vacancy_id AS id,a.requested_by FROM auto_application_attempts a "
                 "JOIN vacancies v ON v.id=a.vacancy_id "
                 "WHERE a.status='queued' AND a.requested_by='manual' "
-                "ORDER BY a.created_at ASC LIMIT 1"
+                "ORDER BY a.retry_count ASC, a.created_at ASC LIMIT 1"
             )
             if not queued and config["enabled"] and daily_room:
                 queued = self.db.one(
                     "SELECT a.vacancy_id AS id,a.requested_by FROM auto_application_attempts a "
                     "JOIN vacancies v ON v.id=a.vacancy_id "
                     "WHERE a.status='queued' AND a.requested_by='automation' "
-                    "AND v.analysis_status='done' ORDER BY a.created_at ASC LIMIT 1"
+                    "AND v.analysis_status='done' ORDER BY a.retry_count ASC, a.created_at ASC LIMIT 1"
                 )
 
             job = queued
@@ -1180,12 +1245,9 @@ class AutoApplyManager:
                 log.exception("%s application preparation failed for %s", label, job_id)
                 provider_failure = isinstance(error, RuntimeError) and (
                     "drafting failed" in str(error) or "invalid draft" in str(error))
-                self._set_status(
-                    job_id,
-                    "needs_review",
-                    (f"AI drafting failed: {str(error)[:800]}" if provider_failure else
-                     f"{label} preparation stopped: {str(error)[:800]}"),
-                )
+                error_msg = (f"AI drafting failed: {str(error)[:800]}" if provider_failure else
+                             f"{label} preparation stopped: {str(error)[:800]}")
+                await self._record_failure(job_id, error_msg)
             provider = (request or {}).get("requested_provider") or self.db.get_setting("profile", {}).get("drafting_provider", "")
             has_more = bool(
                 self.db.one("SELECT 1 FROM auto_application_attempts WHERE status='queued' LIMIT 1")

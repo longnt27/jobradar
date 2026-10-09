@@ -472,3 +472,70 @@ def test_auto_apply_submits_complete_web_form(tmp_path: Path) -> None:
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+def test_failed_preparation_retries_three_times_before_giving_up(tmp_path: Path) -> None:
+    app = create_app(Settings(tmp_path))
+    job_id = _scored_job(app, "Retry Test Engineer", 90)
+    manager = app.state.auto_apply_manager
+
+    # 1st failure: retries as attempt 1/3
+    res1 = asyncio.run(manager._record_failure(job_id, "API timeout"))
+    assert res1 is True
+    row1 = app.state.db.one("SELECT status, retry_count, detail FROM auto_application_attempts WHERE vacancy_id=?", (job_id,))
+    assert row1["status"] == "queued"
+    assert row1["retry_count"] == 1
+    assert "Retrying preparation (attempt 1/3)" in row1["detail"]
+
+    # 2nd failure: retries as attempt 2/3
+    res2 = asyncio.run(manager._record_failure(job_id, "API timeout"))
+    assert res2 is True
+    row2 = app.state.db.one("SELECT status, retry_count, detail FROM auto_application_attempts WHERE vacancy_id=?", (job_id,))
+    assert row2["status"] == "queued"
+    assert row2["retry_count"] == 2
+    assert "Retrying preparation (attempt 2/3)" in row2["detail"]
+
+    # 3rd failure: retries as attempt 3/3
+    res3 = asyncio.run(manager._record_failure(job_id, "API timeout"))
+    assert res3 is True
+    row3 = app.state.db.one("SELECT status, retry_count, detail FROM auto_application_attempts WHERE vacancy_id=?", (job_id,))
+    assert row3["status"] == "queued"
+    assert row3["retry_count"] == 3
+    assert "Retrying preparation (attempt 3/3)" in row3["detail"]
+
+    # 4th failure: exceeds 3 retries, marks needs_review
+    res4 = asyncio.run(manager._record_failure(job_id, "API timeout"))
+    assert res4 is False
+    row4 = app.state.db.one("SELECT status, retry_count, detail FROM auto_application_attempts WHERE vacancy_id=?", (job_id,))
+    assert row4["status"] == "needs_review"
+    assert row4["retry_count"] == 3
+    assert "Preparation failed after 3 attempts" in row4["detail"]
+
+    # Manual queue resets retry_count to 0
+    manager.queue_manual(job_id, "template")
+    row5 = app.state.db.one("SELECT status, retry_count FROM auto_application_attempts WHERE vacancy_id=?", (job_id,))
+    assert row5["status"] == "queued"
+    assert row5["retry_count"] == 0
+
+
+def test_compose_application_message_trims_long_titles() -> None:
+    from job_radar.drafting import _compose_application_message
+    job = {
+        "title": "MB Trainee - AI Engineer (Fresher, Intern) - Trung tâm AI - Khối Công nghệ thông tin",
+        "company": "MB Bank",
+        "description": "Tuyển dụng AI Engineer tại Hà Nội.",
+        "posting_source": {"kind": "career"},
+    }
+    profile = {
+        "name": "Nguyễn Văn A",
+        "education": [{"school": "Đại học Bách khoa Hà Nội", "degree": "Kỹ sư Công nghệ thông tin", "dates": "2020 - 2024"}],
+    }
+    fit = (
+        "Tôi từng làm việc ở vị trí Applied AI Trainee / Team Lead tại Vingroup - AI Thuc Chien Program. "
+        "Tôi cũng có các dự án cá nhân trong những lĩnh vực liên quan đến thị giác máy tính và học sâu."
+    )
+    result = _compose_application_message(job, profile, fit)
+    assert result["subject"]
+    assert "MB Bank" in result["body"]
+    assert len(result["body"].split()) <= 130
+    assert len(result["body"]) <= 1000
