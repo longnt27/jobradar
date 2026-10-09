@@ -26,6 +26,7 @@ from .discovery import merge_reason_label, source_coverage, split_observation, s
 from .apply import inspect_form, send_application, send_readiness, submission_attachment, submission_record, submission_resume_path
 from .auto_apply import AutoApplyManager
 from .browser_login import BrowserLoginManager
+from .chatgpt_handoff import ChatGPTInputManager, application_prompt
 from .capabilities import capability_readiness, provider_processing
 from .drafting import PROVIDERS, get_draft, prepare_draft, refresh_draft_projects, set_discovered_linkedin_destination, set_discovered_web_destination, set_unavailable_linkedin_destination, update_draft
 from .evidence import generate_project_content, inspect_repository
@@ -207,6 +208,11 @@ class RegenerateInput(BaseModel):
     section: Literal["all", "summary", "experience", "projects", "education", "achievements", "skills", "message"] = "all"
 
 
+class ChatGPTInput(BaseModel):
+    instruction: str = Field(default="", max_length=2000)
+    section: Literal["all", "summary", "experience", "projects", "education", "achievements", "skills", "message"] = "all"
+
+
 class SmtpInput(BaseModel):
     host: str = Field(min_length=2)
     port: Literal[465, 587] = 587
@@ -250,6 +256,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     auto_apply_manager = AutoApplyManager(db, settings, scan_manager.browser_lock, scan_manager.priority_browser)
     match_manager = MatchManager(db, settings, auto_apply_manager)
     login_manager = BrowserLoginManager(db, settings, scan_manager.browser_lock, scan_manager.queue_due)
+    chatgpt_input = ChatGPTInputManager(settings, scan_manager.browser_lock)
     ai_retry_task: asyncio.Task | None = None
 
     @asynccontextmanager
@@ -268,6 +275,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 except asyncio.CancelledError:
                     pass
             await login_manager.stop()
+            await chatgpt_input.stop()
             await auto_apply_manager.stop()
             await match_manager.stop()
             await scan_manager.stop()
@@ -279,6 +287,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.match_manager = match_manager
     app.state.auto_apply_manager = auto_apply_manager
     app.state.login_manager = login_manager
+    app.state.chatgpt_input = chatgpt_input
 
     def provider_available(provider: str) -> bool:
         if provider == "template":
@@ -2056,6 +2065,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404, str(error)) from error
         except (ValueError, RuntimeError) as error:
             raise HTTPException(422, str(error)) from error
+
+    @app.post("/api/applications/{draft_id}/chatgpt-input")
+    async def enter_chatgpt_prompt(draft_id: str, payload: ChatGPTInput):
+        require_editable_application(draft_id)
+        try:
+            prompt = application_prompt(db, draft_id, payload.section, payload.instruction)
+        except KeyError as error:
+            raise HTTPException(404, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+        result = await chatgpt_input.enter(prompt)
+        if result["status"] == "failed":
+            raise HTTPException(503, result["detail"])
+        return result
+
+    @app.post("/api/chatgpt/login")
+    async def open_chatgpt_login():
+        result = await chatgpt_input.open_login()
+        if result["status"] == "failed":
+            raise HTTPException(503, result["detail"])
+        return result
 
     @app.get("/api/submissions/page")
     def submissions_page(

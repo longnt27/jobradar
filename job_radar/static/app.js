@@ -2536,10 +2536,12 @@ async function showApplication(id) {
 
     <section id="application-review-regenerate" class="application-review-section">
       <h3>Regenerate only what needs work</h3>
-      <p class="hint">Choose one section to use a smaller model request. Resume changes update the PDF. For the application email, AI rewrites only the experience and project fit paragraph.</p>
+      <p class="hint">Choose one section to revise. With your saved provider, resume changes update the PDF. For the application email, AI rewrites only the experience and project fit paragraph.</p>
+      <label>Generator for this section<select id="regenerate-generator"><option value="saved">${escapeHtml(providerLabel(draft.provider))} · update this application</option><option value="chatgpt_web">ChatGPT Web · review reply in browser</option></select></label>
       <label>Section<select id="regenerate-section"><option value="summary">Professional summary</option><option value="experience">Experience bullets</option><option value="projects">Selected projects and bullets</option><option value="education">Education wording</option><option value="achievements">Achievements</option><option value="skills">Skills</option>${destination.kind === 'email' ? '<option value="message">Application experience and project fit</option>' : ''}<option value="all">Full draft · uses more quota</option></select></label>
       <label>Custom instructions<textarea id="regenerate-prompt" rows="3" placeholder="Example: make the summary shorter and emphasize production search work"></textarea></label>
-      <div class="actions"><button id="regenerate-draft" class="secondary" ${draft.provider === 'template' || sent || uncertain ? 'disabled' : ''}>Regenerate selected section</button></div>
+      <div class="actions"><button id="regenerate-draft" class="secondary" ${draft.provider === 'template' || sent || uncertain ? 'disabled' : ''}>Regenerate selected section</button><button id="chatgpt-login" class="secondary" type="button" hidden>Log in to ChatGPT</button><button id="chatgpt-input" class="secondary" ${sent || uncertain ? 'disabled' : ''} hidden>Enter prompt in ChatGPT</button></div>
+      <p id="chatgpt-note" class="hint" hidden>Log in through Job Radar’s Chrome browser, the same profile used for LinkedIn and Facebook. Job Radar enters the prompt there. Review the reply, paste approved text into the application’s editable fields, and save. Close that browser window when finished so scheduled checks can resume.</p>
       ${sent ? '<p class="hint">This application has been sent. Its reviewed message and resume are preserved in the submission receipt above.</p>' : ''}
       ${draft.provider === 'template' ? '<p class="hint">This draft used the basic template. Create a new draft with an AI provider to regenerate it with instructions.</p>' : ''}
     </section>
@@ -2655,6 +2657,36 @@ async function showApplication(id) {
     } finally {
       if (button.isConnected) endPending(button);
     }
+  });
+
+  $('#regenerate-generator').addEventListener('change', (event) => {
+    const web = event.target.value === 'chatgpt_web';
+    $('#regenerate-draft').hidden = web;
+    $('#chatgpt-login').hidden = !web;
+    $('#chatgpt-input').hidden = !web;
+    $('#chatgpt-note').hidden = !web;
+  });
+
+  $('#chatgpt-login').addEventListener('click', async (event) => {
+    const button = beginPending(event.currentTarget, 'Opening Chrome…');
+    try {
+      const result = await api('/api/chatgpt/login', {method:'POST', body:'{}'});
+      notice(result.detail);
+    } catch(error) { notice(error.message, true); }
+    finally { if (button.isConnected) endPending(button); }
+  });
+
+  $('#chatgpt-input').addEventListener('click', async (event) => {
+    if (dirtySections.size) { notice('Save your application changes before sending its context to ChatGPT.', true); return; }
+    const button = beginPending(event.currentTarget, 'Opening ChatGPT…');
+    try {
+      const result = await api(`/api/applications/${id}/chatgpt-input`, {
+        method:'POST',
+        body:JSON.stringify({section:$('#regenerate-section').value, instruction:$('#regenerate-prompt').value.trim()}),
+      });
+      notice(result.detail, result.status !== 'entered');
+    } catch(error) { notice(error.message, true); }
+    finally { if (button.isConnected) endPending(button); }
   });
 
   $('#save-draft').addEventListener('click', async (event) => {

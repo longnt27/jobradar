@@ -96,6 +96,11 @@ def test_application_tab_reviews_regenerates_sends_and_shows_receipt(tmp_path: P
                 assert client.get(f"/api/applications/{draft['id']}").json()["resume_hash"] == resume_hash
                 assert not resume_requests
                 assert page.get_by_label("Custom instructions").is_visible()
+                page.get_by_label("Generator for this section").select_option("chatgpt_web")
+                assert page.get_by_role("button", name="Log in to ChatGPT").is_visible()
+                assert page.get_by_role("button", name="Enter prompt in ChatGPT").is_visible()
+                assert not page.get_by_role("button", name="Regenerate selected section").is_visible()
+                page.get_by_label("Generator for this section").select_option("saved")
                 page.get_by_label("Custom instructions").fill("Emphasize production search")
                 page.locator("#regenerate-section").select_option("message")
                 page.get_by_role("button", name="Regenerate selected section").click()
