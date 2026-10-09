@@ -1160,7 +1160,7 @@ class AutoApplyManager:
                 self.db.one("SELECT 1 FROM auto_application_attempts WHERE status='queued' LIMIT 1")
                 or (config["enabled"] and daily_room and self._next_automatic_candidate(config))
             )
-            if provider == "chatgpt_web" and requested_by == "automation" and has_more:
+            if provider == "chatgpt_web" and has_more:
                 delay = getattr(self, "chatgpt_delay", 60.0)
                 self.wake_event.clear()
                 try:
