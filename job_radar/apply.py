@@ -218,7 +218,11 @@ async def inspect_form(db: Database, settings: Settings, draft_id: str) -> dict:
             warnings = [*draft["warnings"], f"Form answer drafting failed: {str(error)[:200]}"]
             db.execute("UPDATE application_drafts SET warnings=? WHERE id=?", (json.dumps(warnings), draft_id))
     structure["answers"] = answers
-    structure["attachments"] = draft["form_data"].get("attachments", {}) if draft["form_data"].get("signature") == structure["signature"] else {}
+    attachments = draft["form_data"].get("attachments", {}) if draft["form_data"].get("signature") == structure["signature"] else {}
+    for field in structure["fields"]:
+        if field["type"] == "file" and str(field["index"]) not in attachments:
+            attachments[str(field["index"])] = {"kind": "resume"}
+    structure["attachments"] = attachments
     structure["destination_url"] = destination["url"]
     db.execute("UPDATE application_drafts SET form_data=?,updated_at=? WHERE id=?",
                (json.dumps(structure, ensure_ascii=False), now(), draft_id))
@@ -419,9 +423,6 @@ def send_readiness(db: Database, settings: Settings, draft: dict) -> list[str]:
         form = draft["form_data"]
         if not form.get("signature") or form.get("destination_url") != draft["destination"].get("url"):
             reasons.append("Inspect this application form before sending")
-        else:
-            if any(field["type"] == "file" for field in form.get("fields", [])) and form.get("enctype") != "multipart/form-data":
-                reasons.append("This form cannot upload files; check the application page before sending")
             required_radios = {}
             for field in form.get("fields", []):
                 if field["type"] == "file":
@@ -590,8 +591,6 @@ async def send_application(db: Database, settings: Settings, draft_id: str, expe
     if draft["destination"]["kind"] == "email":
         _validated_smtp_config(settings)
     elif draft["destination"]["kind"] == "web" and draft["form_data"].get("fields"):
-        if any(field["type"] == "file" for field in draft["form_data"]["fields"]) and draft["form_data"].get("enctype") != "multipart/form-data":
-            raise ValueError("This form cannot upload files; check the application page before sending")
         for field in draft["form_data"]["fields"]:
             if field["type"] == "file":
                 _reviewed_attachment(settings, draft, field)

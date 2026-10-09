@@ -2549,7 +2549,6 @@ async function showApplication(id, preferredScreen = null) {
       </div>
       <div class="application-header-actions" style="display:flex;align-items:center;gap:0.75rem;">
         <span class="status-badge status-badge--${reviewTone}">${escapeHtml(applicationReviewLabel(draft))}</span>
-        ${!sent ? `<button type="button" class="text-button danger" id="btn-discard-draft" title="Delete this application draft">Discard draft</button>` : ''}
       </div>
     </div>
 
@@ -2572,7 +2571,6 @@ async function showApplication(id, preferredScreen = null) {
             <p class="hint">${sent ? 'Submission record and delivery confirmation' : 'Status, attention items, and recent application activity'}</p>
           </div>
           <div class="activity-header-badges">
-            <span class="status-badge status-badge--${reviewTone}">${escapeHtml(applicationReviewLabel(draft))}</span>
             <span class="pill muted">${escapeHtml(destination.kind === 'email' ? 'Email package' : ['web','linkedin_easy_apply'].includes(destination.kind) ? 'Form package' : 'Manual handoff')}</span>
           </div>
         </div>
@@ -2736,7 +2734,6 @@ async function showApplication(id, preferredScreen = null) {
 
     <div class="application-sticky-actions">
       <div class="application-sticky-left">
-        <span id="sticky-first-glance-badge" class="status-badge status-badge--${reviewTone}" ${currentScreen === 'first-glance' ? '' : 'hidden'}>${escapeHtml(applicationReviewLabel(draft))}</span>
         <button type="button" class="secondary" id="btn-sticky-back-first-glance" ${currentScreen === 'package' ? '' : 'hidden'}>← Back to First glance</button>
         <span id="application-dirty-state" class="status-badge status-badge--neutral" ${currentScreen === 'package' ? '' : 'hidden'}>Saved</span>
         <span id="application-outcome" class="hint" role="status" aria-live="polite" ${currentScreen === 'package' ? '' : 'hidden'}></span>
@@ -2950,14 +2947,12 @@ async function showApplication(id, preferredScreen = null) {
       firstGlanceEl.hidden = screen !== 'first-glance';
       packageEl.hidden = screen !== 'package';
     }
-    const fgBadge = detail.querySelector('#sticky-first-glance-badge');
     const backBtn = detail.querySelector('#btn-sticky-back-first-glance');
     const dirtyBadge = detail.querySelector('#application-dirty-state');
     const outcomeEl = detail.querySelector('#application-outcome');
     const nextBtn = detail.querySelector('#btn-next-to-package');
     const saveBtn = detail.querySelector('#save-draft');
     const sendBtn = detail.querySelector('#send-draft');
-    if (fgBadge) fgBadge.hidden = screen !== 'first-glance';
     if (backBtn) backBtn.hidden = screen !== 'package';
     if (dirtyBadge) dirtyBadge.hidden = screen !== 'package';
     if (outcomeEl) outcomeEl.hidden = screen !== 'package';
@@ -2998,10 +2993,9 @@ async function showApplication(id, preferredScreen = null) {
 
     if (!confirmed) return;
 
-    const ignoreJob = ignoreCheckbox ? ignoreCheckbox.checked : false;
     try {
-      await api(`/api/applications/${id}?ignore_job=${ignoreJob}`, {method:'DELETE'});
-      notice(ignoreJob ? 'Draft discarded and job marked as ignored.' : 'Application draft discarded.', false);
+      await api(`/api/applications/${id}?ignore_job=true`, {method:'DELETE'});
+      notice('Application draft discarded and job marked as ignored.', false);
       activeApplicationId = null;
       detail.innerHTML = '<div class="panel empty"><p>Draft discarded.</p></div>';
       await loadApplications();
@@ -3010,7 +3004,6 @@ async function showApplication(id, preferredScreen = null) {
     }
   };
 
-  detail.querySelector('#btn-discard-draft')?.addEventListener('click', handleDiscard);
   detail.querySelector('#btn-sticky-discard-draft')?.addEventListener('click', handleDiscard);
 
   if (sent || uncertain) {

@@ -1984,7 +1984,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(422, str(error)) from error
 
     @app.delete("/api/applications/{draft_id}")
-    def delete_application(draft_id: str, ignore_job: bool = Query(default=False)):
+    def delete_application(draft_id: str, ignore_job: bool = Query(default=True)):
         try:
             draft = get_draft(db, draft_id)
         except KeyError as error:
