@@ -21,6 +21,7 @@ from .automation_policy import (
     daily_review_notifications_used,
     normalize_automation_policy,
 )
+from .chatgpt_handoff import application_prompt, apply_chatgpt_reply
 from .db import Database, new_id, now
 from .drafting import get_draft, prepare_draft, regenerate_draft, set_discovered_linkedin_destination, set_discovered_web_destination, set_unavailable_linkedin_destination
 from .linkedin_application import discover_linkedin_apply
@@ -64,11 +65,14 @@ def _safe_attachments(fields: list[dict]) -> dict[str, dict]:
 
 class AutoApplyManager:
     def __init__(self, db: Database, settings: Settings, browser_lock: asyncio.Lock,
-                 priority_browser: Callable[[], AsyncContextManager[None]] | None = None):
+                 priority_browser: Callable[[], AsyncContextManager[None]] | None = None,
+                 chatgpt_input: Any | None = None):
         self.db = db
         self.settings = settings
         self.browser_lock = browser_lock
         self.priority_browser = priority_browser or _no_browser_priority
+        self.chatgpt_input = chatgpt_input
+        self.chatgpt_delay: float = 60.0
         self.task: asyncio.Task | None = None
         self.telegram_task: asyncio.Task | None = None
         self.wake_event = asyncio.Event()
@@ -456,13 +460,42 @@ class AutoApplyManager:
         if not provider:
             self._set_status(job_id, "needs_review", "Choose an application drafting provider in My profile.")
             return
-        if provider == "chatgpt_web" and not manual:
-            self._set_status(job_id, "needs_review", "ChatGPT Web needs a manual browser handoff. Open this job to prepare its application.")
-            return
         draft = await asyncio.to_thread(prepare_draft, self.db, self.settings, job_id, provider)
         if provider == "chatgpt_web":
-            self._set_status(job_id, "needs_review", "Starter draft created. Enter its prompt in ChatGPT Web, then copy approved text into the application.", draft["id"])
-            return
+            if not self.chatgpt_input or not self.chatgpt_input.status().get("logged_in"):
+                self._set_status(
+                    job_id,
+                    "needs_review",
+                    "Starter draft created. Sign in to ChatGPT in Settings to complete drafting.",
+                    draft["id"],
+                )
+                await self.notify_review(draft["id"])
+                return
+            self._set_status(job_id, "preparing", "Drafting application in ChatGPT Web...", draft["id"])
+            try:
+                prompt = application_prompt(self.db, draft["id"], "all", "")
+                result = await self.chatgpt_input.enter(prompt)
+                if result.get("reply"):
+                    apply_chatgpt_reply(self.db, self.settings, draft["id"], "all", result["reply"], "")
+                    draft = get_draft(self.db, draft["id"])
+                else:
+                    self._set_status(
+                        job_id,
+                        "needs_review",
+                        f"ChatGPT Web draft incomplete: {result.get('detail') or 'No reply received'}",
+                        draft["id"],
+                    )
+                    await self.notify_review(draft["id"])
+                    return
+            except Exception as error:
+                self._set_status(
+                    job_id,
+                    "needs_review",
+                    f"ChatGPT Web drafting failed: {error}",
+                    draft["id"],
+                )
+                await self.notify_review(draft["id"])
+                return
         self._set_status(job_id, "preparing", "Draft prepared; checking application details", draft["id"])
         if not manual and not self._still_eligible(job_id):
             self._set_status(job_id, "needs_review", "Automatic preparation paused or job score changed.")
@@ -1122,4 +1155,17 @@ class AutoApplyManager:
                     (f"AI drafting failed: {str(error)[:800]}" if provider_failure else
                      f"{label} preparation stopped: {str(error)[:800]}"),
                 )
-            await asyncio.sleep(0.1)
+            provider = (request or {}).get("requested_provider") or self.db.get_setting("profile", {}).get("drafting_provider", "")
+            has_more = bool(
+                self.db.one("SELECT 1 FROM auto_application_attempts WHERE status='queued' LIMIT 1")
+                or (config["enabled"] and daily_room and self._next_automatic_candidate(config))
+            )
+            if provider == "chatgpt_web" and requested_by == "automation" and has_more:
+                delay = getattr(self, "chatgpt_delay", 60.0)
+                self.wake_event.clear()
+                try:
+                    await asyncio.wait_for(self.wake_event.wait(), timeout=delay)
+                except asyncio.TimeoutError:
+                    pass
+            else:
+                await asyncio.sleep(0.1)

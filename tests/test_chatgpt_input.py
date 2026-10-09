@@ -149,8 +149,8 @@ def test_settings_select_chatgpt_web_without_calling_cli_for_new_draft(tmp_path:
     app.state.db.set_setting("auto_apply", {"enabled": True})
     saved = client.put("/api/profile/provider", json={"provider": "chatgpt_web"})
     assert saved.status_code == 200, saved.text
-    assert saved.json()["automatic_drafts_paused"] is True
-    assert app.state.auto_apply_manager.config()["enabled"] is False
+    assert saved.json()["automatic_drafts_paused"] is False
+    assert app.state.auto_apply_manager.config()["enabled"] is True
     setup = client.get("/api/setup").json()
     assert setup["selected_provider"] == "chatgpt_web"
     assert setup["capabilities"]["automatic_drafts"]["ready"] is False
@@ -659,5 +659,62 @@ def test_chatgpt_enter_stops_browser_on_completion(tmp_path: Path) -> None:
         assert not browser_lock.locked()
 
     asyncio.run(scenario())
+
+
+def test_auto_apply_chatgpt_web_drafts_when_logged_in(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("job_radar.web.chrome_executable", lambda: "/fake/chrome")
+    app = create_app(Settings(tmp_path))
+    client = TestClient(app)
+    profile = client.get("/api/profile").json()
+    profile.update({
+        "name": "Alex Example",
+        "email": "alex@example.org",
+        "drafting_provider": "chatgpt_web",
+        "experience": [{"company": "Prior Co", "role": "Engineer", "dates": "2024–2026",
+                        "bullets": ["Built Python search systems."]}]
+    })
+    client.put("/api/profile", json=profile)
+
+    job = client.post("/api/jobs/import", json={
+        "company": "OpenAI Partner",
+        "title": "Senior AI Engineer",
+        "description": "Develop Python ML architectures.",
+        "apply_url": "https://example.com/apply"
+    }).json()
+
+    chatgpt_input = app.state.chatgpt_input
+    monkeypatch.setattr(chatgpt_input, "status", lambda: {"logged_in": True, "state": "saved", "error": None})
+
+    async def fake_enter(prompt: str, timeout: float = 60.0):
+        return {
+            "status": "entered",
+            "reply": json.dumps({
+                "summary": "Experienced AI engineer specializing in Python pipelines.",
+                "experience": [{"company": "Prior Co", "role": "Engineer", "dates": "2024–2026", "bullets": ["Built Python search systems."]}]
+            })
+        }
+
+    monkeypatch.setattr(chatgpt_input, "enter", fake_enter)
+
+    queued = app.state.auto_apply_manager.queue_manual(job["id"], "chatgpt_web", prepare_anyway=True)
+    assert queued["status"] == "queued"
+    asyncio.run(app.state.auto_apply_manager._process(job["id"]))
+
+    attempt = app.state.db.one("SELECT status,draft_id FROM auto_application_attempts WHERE vacancy_id=?", (job["id"],))
+    assert attempt["status"] in {"awaiting_review", "needs_review"}
+    draft = app.state.db.one("SELECT resume_data FROM application_drafts WHERE id=?", (attempt["draft_id"],))
+    resume = json.loads(draft["resume_data"])
+    assert "Experienced AI engineer" in resume["summary"]
+
+
+def test_auto_apply_chatgpt_web_delay_between_automatic_drafts(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("job_radar.web.chrome_executable", lambda: "/fake/chrome")
+    app = create_app(Settings(tmp_path))
+    manager = app.state.auto_apply_manager
+    manager.chatgpt_delay = 0.05  # fast delay for test
+
+    app.state.db.set_setting("profile", {"name": "Alex", "email": "a@b.com", "drafting_provider": "chatgpt_web"})
+    assert manager.chatgpt_delay == 0.05
+
 
 

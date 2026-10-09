@@ -261,10 +261,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             rescore_vacancies(db, profile, migrated_intent)
     clean_saved_analysis(db)
     scan_manager = ScanManager(db, settings)
-    auto_apply_manager = AutoApplyManager(db, settings, scan_manager.browser_lock, scan_manager.priority_browser)
+    chatgpt_input = ChatGPTInputManager(settings, scan_manager.browser_lock, scan_manager.priority_browser, db=db)
+    auto_apply_manager = AutoApplyManager(
+        db, settings, scan_manager.browser_lock, scan_manager.priority_browser, chatgpt_input=chatgpt_input
+    )
     match_manager = MatchManager(db, settings, auto_apply_manager)
     login_manager = BrowserLoginManager(db, settings, scan_manager.browser_lock, scan_manager.queue_due)
-    chatgpt_input = ChatGPTInputManager(settings, scan_manager.browser_lock, scan_manager.priority_browser, db=db)
     ai_retry_task: asyncio.Task | None = None
 
     @asynccontextmanager
@@ -785,8 +787,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if profile.get("drafting_provider") and profile["drafting_provider"] not in {"codex_local", "codex", "agy", "claude", "chatgpt_web"}:
             raise HTTPException(422, "Unsupported drafting provider")
         save_profile(profile)
-        if profile.get("drafting_provider") == "chatgpt_web" and auto_apply_manager.config()["enabled"]:
-            auto_apply_manager.configure(False)
         return profile
 
     @app.put("/api/profile/provider")
@@ -796,12 +796,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         profile = db.get_setting("profile", {})
         profile["drafting_provider"] = payload.provider
         save_profile(profile)
-        automatic_drafts_paused = False
-        if payload.provider == "chatgpt_web" and auto_apply_manager.config()["enabled"]:
-            auto_apply_manager.configure(False)
-            automatic_drafts_paused = True
         return {"provider": payload.provider, "mode": PROVIDERS[payload.provider],
-                "automatic_drafts_paused": automatic_drafts_paused}
+                "automatic_drafts_paused": False}
 
     @app.post("/api/profile/resume/pdf")
     async def import_pdf_resume(file: UploadFile = File(...), provider: str = Form("")):
@@ -1590,8 +1586,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def configure_auto_apply(payload: AutoApplyInput):
         if payload.enabled:
             profile = db.get_setting("profile", {})
-            if profile.get("drafting_provider") == "chatgpt_web":
-                raise HTTPException(409, "ChatGPT Web uses a manual browser handoff. Choose a CLI provider for automatic drafts.")
             if not db.get_setting("matching_model", ""):
                 raise HTTPException(409, "Choose a local matching model in My profile first")
             if not profile.get("drafting_provider") or not provider_available(profile["drafting_provider"]):

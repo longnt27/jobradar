@@ -63,7 +63,7 @@ def capability_readiness(
     has_evidence = has_experience or approved_projects > 0
     provider = str(profile.get("drafting_provider") or "")
     preparation_ready = bool(has_identity and has_evidence and provider and provider_is_available)
-    automatic_drafts_ready = bool(preparation_ready and matching_model and provider != "chatgpt_web")
+    automatic_drafts_ready = bool(preparation_ready and matching_model)
 
     return {
         "discovery": {
@@ -99,8 +99,7 @@ def capability_readiness(
             "label": "Automatic draft preparation ready" if automatic_drafts_ready else "Automatic drafts optional",
             "missing": [] if automatic_drafts_ready else (
                 ([] if preparation_ready else ["application preparation"]) +
-                ([] if matching_model else ["local matching model"]) +
-                (["an automated drafting provider"] if provider == "chatgpt_web" else [])
+                ([] if matching_model else ["local matching model"])
             ),
         },
         "review_delivery": {
