@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import socket
+import subprocess
 
-from playwright.async_api import BrowserContext, Page, Playwright, TimeoutError as PlaywrightTimeoutError, async_playwright
+from playwright.async_api import Browser, Page, Playwright, TimeoutError as PlaywrightTimeoutError, async_playwright
 
 from .db import Database
 from .drafting import APPLICATION_FIT_PROMPT, _job_for_drafting, _job_language, get_draft
 from .settings import Settings
-from .social_browser import chrome_context_options
+from .social_browser import chrome_executable
 
 
 SECTIONS = {"all", "summary", "experience", "projects", "education", "achievements", "skills", "message"}
@@ -87,48 +89,111 @@ class ChatGPTInputManager:
         self.browser_lock = browser_lock
         self.owns_browser_lock = False
         self.playwright: Playwright | None = None
-        self.context: BrowserContext | None = None
+        self.browser: Browser | None = None
+        self.process: subprocess.Popen | None = None
+        self.port: int | None = None
+        self.watch_task: asyncio.Task | None = None
 
-    def _browser_closed(self) -> None:
-        self.context = None
+    def _release_browser_lock(self) -> None:
         if self.owns_browser_lock:
             self.owns_browser_lock = False
             self.browser_lock.release()
 
+    async def _watch_process(self, process: subprocess.Popen) -> None:
+        await asyncio.to_thread(process.wait)
+        if self.process is process:
+            self.process = None
+            self.port = None
+            self._release_browser_lock()
+
     async def stop(self) -> None:
         async with self.lock:
-            if self.context:
+            if self.browser:
                 try:
-                    await self.context.close()
+                    await self.browser.close()
                 except Exception:
                     pass
-            self._browser_closed()
+                self.browser = None
             if self.playwright:
                 await self.playwright.stop()
                 self.playwright = None
+            process = self.process
+            if process and process.poll() is None:
+                process.terminate()
+                try:
+                    await asyncio.to_thread(process.wait, timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    await asyncio.to_thread(process.wait, timeout=5)
+            self.process = None
+            self.port = None
+            self._release_browser_lock()
+        if self.watch_task:
+            await self.watch_task
+            self.watch_task = None
+
+    async def _start_browser(self) -> None:
+        if self.process and self.process.poll() is None:
+            return
+        try:
+            await asyncio.wait_for(self.browser_lock.acquire(), timeout=15)
+        except asyncio.TimeoutError as error:
+            raise RuntimeError("Chrome is busy checking job sources. Try again shortly.") from error
+        self.owns_browser_lock = True
+        try:
+            self.settings.ensure_dirs()
+            with socket.socket() as listener:
+                listener.bind(("127.0.0.1", 0))
+                self.port = listener.getsockname()[1]
+            process = subprocess.Popen(
+                [chrome_executable(), f"--user-data-dir={self.settings.browser_profile}",
+                 "--profile-directory=Default", "--no-first-run", "--no-default-browser-check",
+                 "--remote-debugging-address=127.0.0.1", f"--remote-debugging-port={self.port}",
+                 "--new-window", "https://chatgpt.com/"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            self.process = process
+            self.watch_task = asyncio.create_task(self._watch_process(process))
+            await asyncio.sleep(.3)
+            if process.poll() is not None:
+                raise RuntimeError("Chrome closed before ChatGPT opened. Close other Job Radar Chrome windows and try again.")
+        except Exception:
+            process = self.process
+            if process and process.poll() is None:
+                process.terminate()
+            self.process = None
+            self.port = None
+            self._release_browser_lock()
+            raise
 
     async def _new_page(self) -> Page:
-        if not self.context:
+        await self._start_browser()
+        if not self.browser or not self.browser.is_connected():
             if self.playwright:
                 await self.playwright.stop()
                 self.playwright = None
-            await self.browser_lock.acquire()
-            self.owns_browser_lock = True
             try:
                 self.playwright = await async_playwright().start()
-                self.context = await self.playwright.chromium.launch_persistent_context(
-                    str(self.settings.browser_profile),
-                    headless=False,
-                    **chrome_context_options(required=True),
-                )
-                self.context.on("close", lambda *_: self._browser_closed())
+                for _ in range(20):
+                    try:
+                        self.browser = await self.playwright.chromium.connect_over_cdp(
+                            f"http://127.0.0.1:{self.port}", timeout=1000,
+                        )
+                        break
+                    except Exception:
+                        if not self.process or self.process.poll() is not None:
+                            raise RuntimeError("The ChatGPT Chrome window closed. Open it again from Settings.")
+                        await asyncio.sleep(.25)
+                if not self.browser:
+                    raise RuntimeError("Could not connect to the ChatGPT Chrome window. Close it and try again.")
             except Exception:
                 if self.playwright:
                     await self.playwright.stop()
                     self.playwright = None
-                self._browser_closed()
                 raise
-        page = await self.context.new_page()
+        if not self.browser.contexts:
+            raise RuntimeError("Chrome profile is unavailable. Close the ChatGPT window and try again.")
+        page = await self.browser.contexts[0].new_page()
         await page.goto("https://chatgpt.com/", wait_until="domcontentloaded", timeout=30000)
         await page.bring_to_front()
         return page
@@ -136,8 +201,8 @@ class ChatGPTInputManager:
     async def open_login(self) -> dict[str, str]:
         async with self.lock:
             try:
-                await self._new_page()
-                return {"status": "opened", "detail": "ChatGPT opened in Job Radar's Chrome browser. Sign in there, then return here."}
+                await self._start_browser()
+                return {"status": "opened", "detail": "ChatGPT opened in Chrome. Complete any security verification and sign in there, then return here."}
             except Exception as error:
                 return {"status": "failed", "detail": f"Could not open ChatGPT: {str(error)[:180]}"}
 

@@ -1,4 +1,6 @@
 import asyncio
+import subprocess
+import threading
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -79,6 +81,54 @@ def test_chatgpt_login_button_opens_shared_browser_profile(tmp_path: Path, monke
     response = client.post("/api/chatgpt/login")
     assert response.status_code == 200
     assert response.json()["status"] == "opened"
+
+
+def test_chatgpt_login_uses_normal_chrome_until_sign_in_is_complete(tmp_path: Path, monkeypatch) -> None:
+    class FakeProcess:
+        def __init__(self, args, **_kwargs):
+            self.args = args
+            self.finished = threading.Event()
+
+        def poll(self):
+            return 0 if self.finished.is_set() else None
+
+        def wait(self, timeout=None):
+            if not self.finished.wait(timeout):
+                raise subprocess.TimeoutExpired(self.args, timeout)
+            return 0
+
+        def terminate(self):
+            self.finished.set()
+
+        def kill(self):
+            self.finished.set()
+
+    processes = []
+
+    def fake_popen(args, **kwargs):
+        process = FakeProcess(args, **kwargs)
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr("job_radar.chatgpt_handoff.chrome_executable", lambda: "/fake/chrome")
+    monkeypatch.setattr("job_radar.chatgpt_handoff.subprocess.Popen", fake_popen)
+
+    async def scenario():
+        browser_lock = asyncio.Lock()
+        manager = ChatGPTInputManager(Settings(tmp_path), browser_lock)
+        result = await manager.open_login()
+        assert result["status"] == "opened"
+        assert len(processes) == 1
+        args = processes[0].args
+        assert f"--user-data-dir={manager.settings.browser_profile}" in args
+        assert any(arg.startswith("--remote-debugging-port=") for arg in args)
+        assert not any(arg.startswith(("--enable-automation", "--remote-debugging-pipe", "--no-sandbox")) for arg in args)
+        assert manager.playwright is None
+        assert browser_lock.locked()
+        await manager.stop()
+        assert not browser_lock.locked()
+
+    asyncio.run(scenario())
 
 
 def test_settings_select_chatgpt_web_without_calling_cli_for_new_draft(tmp_path: Path, monkeypatch) -> None:
