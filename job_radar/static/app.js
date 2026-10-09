@@ -2086,7 +2086,8 @@ function renderApplicationList(total = applicationsTotal) {
     </button>`;
   }).join('');
   list.querySelectorAll('[data-application]').forEach((node) => node.addEventListener('click', async () => {
-    await showApplication(node.dataset.application);
+    activeApplicationScreen = 'first-glance';
+    await showApplication(node.dataset.application, 'first-glance');
     if (window.matchMedia('(max-width: 900px)').matches) scrollNodeIntoView($('#application-detail'), {block:'start'});
     $('#application-detail').focus({preventScroll:true});
   }));
@@ -2112,7 +2113,7 @@ function showApplicationRegenerating(id) {
   if (packageStatus) packageStatus.textContent = 'Regenerating';
 }
 
-async function loadApplications(selectedId = null) {
+async function loadApplications(selectedId = null, preferredScreen = null) {
   bindApplicationWorkspace();
   const query = new URLSearchParams({
     page: applicationsPage,
@@ -2144,8 +2145,8 @@ async function loadApplications(selectedId = null) {
     activeApplicationId = completedPreparation.id;
   }
   renderApplicationList(result.total);
-  if (selectedId) await showApplication(selectedId);
-  else if (completedPreparation) await showApplication(completedPreparation.id);
+  if (selectedId) await showApplication(selectedId, preferredScreen);
+  else if (completedPreparation) await showApplication(completedPreparation.id, preferredScreen);
   else if (activePreparationJobId) {
     const issue = applicationPreparations.find((item) => item.vacancy_id === activePreparationJobId);
     if (issue) showPreparationIssue(issue);
@@ -2446,7 +2447,9 @@ function showPreparationIssue(item) {
   detail.focus({preventScroll:true});
 }
 
-async function showApplication(id) {
+let activeApplicationScreen = 'first-glance';
+
+async function showApplication(id, preferredScreen = null) {
   if ($('#applications').classList.contains('active') && location.hash !== `#applications/${id}`) history.replaceState({tab:'applications'}, '', `#applications/${id}`);
   setApplicationWorkspaceView('drafts');
   activeApplicationId = id;
@@ -2461,6 +2464,10 @@ async function showApplication(id) {
   }
 
   const [draft, profile] = await Promise.all([api(`/api/applications/${id}`), api('/api/profile')]);
+  const job = draft.job || await api(`/api/jobs/${draft.vacancy_id}`).catch(() => ({}));
+  let currentScreen = preferredScreen || 'first-glance';
+  activeApplicationScreen = currentScreen;
+
   const webGenerator = profile.drafting_provider === 'chatgpt_web' || draft.provider === 'chatgpt_web';
   const resume = draft.resume_data || {};
   const message = draft.message_data || {};
@@ -2492,92 +2499,240 @@ async function showApplication(id) {
   const actionTarget = applicationActionTarget(destination);
   const detail = $('#application-detail');
 
-  detail.innerHTML = `<div class="application-review-header">
-      <div><p class="eyebrow">APPLICATION REVIEW</p><h2>${escapeHtml(draft.job_title)}</h2><p class="item-meta">${escapeHtml(draft.company)} · ${escapeHtml(providerLabel(draft.provider_mode || draft.provider))}</p></div>
+  const sightings = job.observations || [];
+  const preferredSighting = sightings[0] || null;
+  const originalPostingUrl = draft.job_posting_url || (preferredSighting?.url && /^https?:\/\//i.test(preferredSighting.url) ? preferredSighting.url : null);
+  const links = sightings.length ? sightings.map((source) =>
+    `<div class="job-sighting" data-sighting-id="${source.id}"><div><a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(source.name)}</a> <span class="pill muted">${escapeHtml(source.kind)}</span> ${preferredSighting?.id === source.id ? '<span class="status-badge status-badge--success">Preferred source</span>' : ''}<small>${escapeHtml(source.merge_reason_label || '')} · first seen ${relativeWhen(source.first_seen_at)}</small></div></div>`
+  ).join('') : '';
+
+  const score = job.score_detail ? (typeof job.score_detail === 'string' ? JSON.parse(job.score_detail) : job.score_detail) : (draft.job_score_detail || null);
+  const matchCompleted = (job.analysis_status || draft.job_analysis_status) === 'done';
+
+  const activitiesList = draft.activities || [];
+  const activitiesHtml = (recentChanges.length ? `
+    <div class="activity-item">
+      <span class="activity-item-badge activity-item-badge--warning">Regenerated</span>
+      <div class="activity-item-content">
+        <strong>Revised section: ${escapeHtml(recentChanges.map(c => c.section).join(', '))}</strong>
+        <small>Only this section was rewritten. Other sections preserved their reviewed text.</small>
+      </div>
+    </div>` : '') + (activitiesList.length ? activitiesList.map((item) => `
+    <div class="activity-item">
+      <span class="activity-item-badge activity-item-badge--${item.tone || 'info'}">${escapeHtml(item.label)}</span>
+      <div class="activity-item-content">
+        <strong>${escapeHtml(item.detail || item.label)}</strong>
+        <small>${relativeWhen(item.created_at)} · <span ${exactTimeTitle(item.created_at)}>${when(item.created_at)}</span></small>
+      </div>
+    </div>`).join('') : `<p class="hint">Application draft created ${relativeWhen(draft.created_at)}.</p>`);
+
+  detail.innerHTML = `
+    <div class="application-review-header">
+      <div>
+        <p class="eyebrow" id="application-screen-eyebrow">APPLICATION · ${currentScreen === 'package' ? 'PACKAGE' : 'FIRST GLANCE'}</p>
+        <h2>${escapeHtml(draft.job_title)}</h2>
+        <p class="item-meta">${escapeHtml(draft.company)}${job.location ? ` · ${escapeHtml(job.location)}` : (draft.job_location ? ` · ${escapeHtml(draft.job_location)}` : '')}${job.work_mode ? ` · ${escapeHtml(job.work_mode)}` : (draft.job_work_mode ? ` · ${escapeHtml(draft.job_work_mode)}` : '')}</p>
+      </div>
       <span class="status-badge status-badge--${reviewTone}">${escapeHtml(applicationReviewLabel(draft))}</span>
     </div>
-    <nav class="application-review-nav" aria-label="Application review sections">
-      <button type="button" data-review-target="application-review-resume" aria-label="Resume" aria-current="true"><strong>Resume</strong><small>Review PDF</small></button>
-      <button type="button" data-review-target="application-review-overview" aria-label="${sent ? 'Submission' : 'Changes &amp; risks'}"><strong>${sent ? 'Submission' : 'Changes &amp; risks'}</strong><small>${sent ? 'Send receipt' : 'What needs attention'}</small></button>
-      ${destination.kind === 'email' ? '<button type="button" data-review-target="application-review-message" aria-label="Email"><strong>Email</strong><small>Review message</small></button>' : ''}
-      ${['web','linkedin_easy_apply'].includes(destination.kind) ? '<button type="button" data-review-target="application-review-form" aria-label="Form"><strong>Form</strong><small>Review answers</small></button>' : ''}
-      <button type="button" data-review-target="application-review-regenerate" aria-label="Regenerate"><strong>Regenerate</strong><small>Revise draft</small></button>
+
+    <nav class="application-screen-nav" aria-label="Application review screens">
+      <button type="button" data-app-screen="first-glance" aria-current="${currentScreen === 'first-glance'}">
+        <span class="screen-step-num">1</span>
+        <div class="screen-step-text"><strong>First glance</strong><small>Job match &amp; history</small></div>
+      </button>
+      <button type="button" data-app-screen="package" aria-current="${currentScreen === 'package'}">
+        <span class="screen-step-num">2</span>
+        <div class="screen-step-text"><strong>Package</strong><small>Resume &amp; submission</small></div>
+      </button>
     </nav>
 
-    <section id="application-review-overview" class="application-review-section">
-      <h3>${sent ? 'Application sent' : 'What changed and what needs attention'}</h3>
-      ${sent ? renderSubmissionProof(draft.latest_submission, true) : `<div class="application-preparation-reason surface-status"><strong>Why this application was prepared</strong><p>${escapeHtml(applicationPreparationExplanation(draft))}</p><button type="button" class="secondary" id="view-application-job">View job in Jobs</button></div>`}
-      ${!sent && (linkedinManual || destination.kind === 'linkedin_easy_apply') ? `<div class="application-method-guidance surface-status"><strong>${destination.kind === 'linkedin_easy_apply' ? 'LinkedIn Easy Apply' : 'Check how to apply on LinkedIn'}</strong><p>${destination.kind === 'linkedin_easy_apply' ? 'Review every form answer below. Inspect form reads the current LinkedIn steps without submitting. Approve &amp; send opens the same posting and sends only if those steps still match.' : linkedinPaused ? 'Scheduled LinkedIn checks are paused after an account activity warning. You can inspect this saved posting now that you have signed in.' : 'Check what the posting’s application button opens, then review the discovered form.'}</p>${draft.job_posting_url && /^https?:\/\//i.test(draft.job_posting_url) ? `<a class="button-link" href="${escapeHtml(draft.job_posting_url)}" target="_blank" rel="noopener noreferrer">Open LinkedIn posting ↗</a>` : ''}${linkedinManual ? '<button type="button" class="secondary" id="discover-linkedin-apply">Check application button</button>' : ''}<p class="hint">Some forms have several pages and ask for details that are not in your profile. Add any missing answers here, save, then inspect again. Nothing is sent until you choose Approve &amp; send.</p></div>` : ''}
-      ${applicationAlert('danger', 'Sending is blocked', blockers)}
-      ${applicationAlert('warning', 'Review before sending', warnings)}
-      ${!sent && recentChanges.length ? `<div class="application-change-list"><strong>Changed by your last regeneration</strong>${recentChanges.map((change) => `<div class="application-change-item"><span class="status-badge status-badge--warning">${escapeHtml(change.section)}</span><small>Only this section changed. Untouched sections kept their reviewed content.</small></div>`).join('')}</div>` : ''}
+    <div id="screen-first-glance" class="application-screen-view" ${currentScreen === 'first-glance' ? '' : 'hidden'}>
+      <section id="application-review-overview" class="application-review-section">
+        <h3>${sent ? 'Application sent' : 'What changed and what needs attention'}</h3>
+        ${sent ? renderSubmissionProof(draft.latest_submission, true) : ''}
+        ${applicationAlert('danger', 'Sending is blocked', blockers)}
+        ${applicationAlert('warning', 'Review before sending', warnings)}
+      </section>
+
       <div class="application-overview-grid">
-        <div class="application-status-card surface-status"><strong>Package</strong><span>${escapeHtml(applicationReviewLabel(draft))}</span><small>${escapeHtml(destination.kind === 'email' ? 'Email + resume PDF' : ['web','linkedin_easy_apply'].includes(destination.kind) ? 'Form answers + reviewed attachments' : 'Manual handoff package')}</small></div>
-        <div class="application-status-card surface-status"><strong>Destination</strong><span>${escapeHtml(applicationActionLabel(destination))}</span><small>${escapeHtml(actionTarget)}</small></div>
+        <div class="application-status-card surface-status">
+          <strong>Application State</strong>
+          <span>${escapeHtml(applicationReviewLabel(draft))}</span>
+          <small>${escapeHtml(destination.kind === 'email' ? 'Email + resume PDF' : ['web','linkedin_easy_apply'].includes(destination.kind) ? 'Form answers + resume PDF' : 'Manual handoff package')}</small>
+        </div>
+        <div class="application-status-card surface-status">
+          <strong>Destination</strong>
+          <span>${escapeHtml(applicationActionLabel(destination))}</span>
+          <small>${escapeHtml(actionTarget)}</small>
+        </div>
       </div>
-      ${!sent ? renderSubmissionProof(draft.latest_submission, true) : ''}
+
+      <section class="application-activity-section surface-status">
+        <div class="section-head">
+          <div>
+            <h3>My last activities with this application</h3>
+            <p class="hint">Recent status updates, drafts, notifications, and submission events.</p>
+          </div>
+        </div>
+        <div class="activity-timeline">
+          ${activitiesHtml}
+        </div>
+      </section>
+
+      <section class="job-originality-section review-section">
+        <div class="section-head">
+          <div>
+            <h3>Job originality</h3>
+            <p class="hint">Discovered sources and original job listing links.</p>
+          </div>
+        </div>
+        ${originalPostingUrl ? `<div class="job-original-actions"><a class="button-link" href="${escapeHtml(originalPostingUrl)}" target="_blank" rel="noopener noreferrer">Open original posting ↗</a></div>` : '<p class="hint">No direct original link recorded.</p>'}
+        ${links ? `<div class="job-sightings"><div class="job-sightings-head"><strong>Seen on ${sightings.length} source${sightings.length === 1 ? '' : 's'}</strong><span class="hint">${sightings.length > 1 ? `Job Radar combined ${sightings.length} sightings so you only review this role once.` : 'One source has reported this role.'}</span></div>${links}</div>` : ''}
+      </section>
+
+      <div class="match-summary-card surface-status">
+        <div>
+          <span class="status-badge status-badge--${matchCompleted ? fitClassTone(job.fit_class) : 'neutral'}">${escapeHtml(matchCompleted ? fitClassLabel(job.fit_class) : 'Review in progress')}</span>
+          <strong>${matchCompleted && job.score != null ? `${job.score}/100` : (draft.job_score != null ? `${draft.job_score}/100` : 'Score pending')}</strong>
+        </div>
+        ${matchCompleted && job.strongest_signal ? `<p><strong>Strongest signal:</strong> ${escapeHtml(job.strongest_signal.reason)}</p>` : ''}
+        ${matchCompleted && job.main_gap ? `<p><strong>Main gap:</strong> ${escapeHtml(job.main_gap.reason)}</p>` : ''}
+        ${matchCompleted ? `<p><strong>Evidence confidence:</strong> ${Math.max(0, 100 - Number(job.uncertainty || 0))}%</p>` : ''}
+        ${matchCompleted && job.missing_evidence?.length ? `<p><strong>Missing evidence:</strong> ${escapeHtml(job.missing_evidence.join(', '))}</p>` : ''}
+      </div>
+
+      ${renderJobAnalysis(job, score)}
+
+      <details class="detail-disclosure">
+        <summary>Original job description</summary>
+        <div class="description">${formatDescription(job.description || draft.job_description)}</div>
+      </details>
+
+      <div class="screen-footer-action">
+        <button type="button" class="primary button-large" id="btn-next-to-package">Next: Review package →</button>
+      </div>
+    </div>
+
+    <div id="screen-package" class="application-screen-view" ${currentScreen === 'package' ? '' : 'hidden'}>
+      <section id="application-review-resume" class="application-review-section">
+        <div class="section-head">
+          <div>
+            <h3>Resume</h3>
+            <p class="hint">Review the PDF before approving this application.</p>
+          </div>
+          <a href="/api/applications/${id}/resume" target="_blank" rel="noopener noreferrer">Open PDF ↗</a>
+        </div>
+        <div class="application-resume-preview">
+          <button type="button" class="secondary" id="load-resume-preview" disabled>Loading preview…</button>
+          <div class="application-preview-pages" hidden></div>
+        </div>
+        <details class="application-cv-details">
+          <summary>Edit resume details</summary>
+          <div class="application-cv-fields">
+            <p class="hint">Bullet fields show the LaTeX item lines used in the PDF. To make words bold, wrap them in <code>&#92;textbf{...}</code>, then save. This edits the resume directly without using a model.</p>
+            <div class="form-grid">
+              <label>Name<input id="draft-name" data-draft-field value="${escapeHtml(resume.name || '')}"></label>
+              <label>Email<input id="draft-email" data-draft-field value="${escapeHtml(resume.email || '')}"></label>
+              <label>Phone<input id="draft-phone" data-draft-field value="${escapeHtml(resume.phone || '')}"></label>
+              <label>Links, one per line<textarea id="draft-links" data-draft-field rows="2">${escapeHtml((resume.links || []).join('\n'))}</textarea></label>
+            </div>
+            <label>Professional summary<textarea id="draft-summary" data-draft-field rows="3">${escapeHtml(resume.summary || '')}</textarea></label>
+            <h4>Experience</h4>${(resume.experience || []).map((item, index) => `<div class="review-subsection surface-editable"><div class="form-grid"><label>Company<input data-experience-company="${index}" data-draft-field value="${escapeHtml(item.company || '')}"></label><label>Role<input data-experience-role="${index}" data-draft-field value="${escapeHtml(item.role || '')}"></label><label>Dates<input data-experience-dates="${index}" data-draft-field value="${escapeHtml(item.dates || '')}"></label></div><label>Experience bullets · LaTeX item lines<textarea class="resume-item-editor" data-experience-bullets="${index}" data-draft-field rows="4">${escapeHtml((bulletSource.experience?.[index] || []).join('\n'))}</textarea></label></div>`).join('') || '<p class="hint">No previous positions in this draft.</p>'}
+            <h4>Selected projects</h4>${projects.map((project, index) => `<div class="review-subsection surface-editable"><div class="form-grid"><label>Title<input data-project-title="${index}" data-draft-field value="${escapeHtml(project.title || '')}"></label><label>Repository URL<input data-project-url="${index}" data-draft-field value="${escapeHtml(project.repository_url || '')}"></label><label>Technologies<input data-project-stack="${index}" data-draft-field value="${escapeHtml((project.tech_stack || []).join(', '))}"></label></div><label>Project bullets · LaTeX item lines<textarea class="resume-item-editor" data-project-bullets="${index}" data-draft-field rows="4">${escapeHtml((bulletSource.projects?.[index] || []).join('\n'))}</textarea></label></div>`).join('') || '<p class="hint">No projects selected for this draft.</p>'}
+            <h4>Education</h4>${(resume.education || []).map((item, index) => { const entry = typeof item === 'string' ? {school:item} : item; return `<div class="form-grid review-subsection surface-editable"><label>School<input data-education-school="${index}" data-draft-field value="${escapeHtml(entry.school || '')}"></label><label>Degree<input data-education-degree="${index}" data-draft-field value="${escapeHtml(entry.degree || '')}"></label><label>Dates<input data-education-dates="${index}" data-draft-field value="${escapeHtml(entry.dates || '')}"></label></div>`; }).join('') || '<p class="hint">No education in this draft.</p>'}
+            <label>Achievement bullets · LaTeX item lines<textarea class="resume-item-editor" id="draft-achievements" data-draft-field rows="3">${escapeHtml((bulletSource.achievements || []).join('\n'))}</textarea></label>
+            <label>Skills, one per line<textarea id="draft-skills" data-draft-field rows="3">${escapeHtml((resume.skills || []).join('\n'))}</textarea></label>
+            <label>Skill groups, one per line as “Group: skills”<textarea id="draft-skill-groups" data-draft-field rows="3">${escapeHtml(Object.entries(resume.skill_groups || {}).map(([group, values]) => `${group}: ${Array.isArray(values) ? values.join(', ') : values}`).join('\n'))}</textarea></label>
+          </div>
+        </details>
+      </section>
+
+      ${destination.kind === 'email' ? `
+      <section id="application-review-message" class="application-review-section">
+        <div class="section-head">
+          <div>
+            <h3>Application message (Email)</h3>
+            <p class="hint">Email subject and message body to accompany your resume to ${escapeHtml(destination.email || 'the employer')}.</p>
+          </div>
+        </div>
+        <label>Subject<input id="draft-subject" data-draft-field value="${escapeHtml(message.subject || '')}"></label>
+        <label>Body<textarea id="draft-body" data-draft-field rows="10">${escapeHtml(message.body || '')}</textarea></label>
+      </section>` : ''}
+
+      ${['web','linkedin_easy_apply'].includes(destination.kind) ? `
+      <section id="application-review-form" class="application-review-section">
+        <div class="section-head">
+          <div>
+            <h3>Form answers and attachments</h3>
+            <p class="hint">${formData.action ? `Form submits to ${escapeHtml(formData.action)} (${escapeHtml(formData.method || 'GET')})` : formData.opener ? `Opened through ${escapeHtml(formData.opener.label || 'the career page button')}` : destination.kind === 'linkedin_easy_apply' ? escapeHtml(linkedinFormStatus) : 'Inspect the application page to load its fields here.'}</p>
+          </div>
+        </div>
+        ${!sent && (linkedinManual || destination.kind === 'linkedin_easy_apply') ? `
+        <div class="application-method-guidance surface-status">
+          <strong>${destination.kind === 'linkedin_easy_apply' ? 'LinkedIn Easy Apply' : 'Check how to apply on LinkedIn'}</strong>
+          <p>${destination.kind === 'linkedin_easy_apply' ? 'Review every form answer below. Inspect form reads the current LinkedIn steps without submitting.' : linkedinPaused ? 'Scheduled LinkedIn checks are paused after an account activity warning.' : 'Check what the posting’s application button opens, then review the discovered form.'}</p>
+          ${draft.job_posting_url && /^https?:\/\//i.test(draft.job_posting_url) ? `<a class="button-link" href="${escapeHtml(draft.job_posting_url)}" target="_blank" rel="noopener noreferrer">Open LinkedIn posting ↗</a>` : ''}
+          ${linkedinManual ? '<button type="button" class="secondary" id="discover-linkedin-apply">Check application button</button>' : ''}
+        </div>` : ''}
+        ${canInspect ? `
+        <div class="application-form-inspection-banner surface-status">
+          <p class="hint">Job Radar uses a browser to discover the questions on this form and prefill answers from your profile.</p>
+          <button id="inspect-form-inline" type="button" class="secondary">${destination.kind === 'linkedin_easy_apply' && !formData.complete ? 'Inspect remaining steps' : 'Inspect form fields'}</button>
+        </div>` : ''}
+        ${formData.inspection_blockers?.length ? applicationAlert('warning', 'More answers needed to inspect every step', formData.inspection_blockers) : ''}
+        <div class="application-form-fields">${(formData.fields || []).map((field) => renderApplicationFormField(field, draft)).join('') || '<p class="empty">No form fields inspected yet.</p>'}</div>
+      </section>` : ''}
+
       <div class="application-destination surface-editable">
-        <div class="section-head"><div><h4>Where to apply</h4><p class="hint">Use an email address from the posting or the actual employer application form opened by Apply. A job listing URL alone is not an application form.</p></div></div>
+        <div class="section-head">
+          <div>
+            <h4>Where to apply</h4>
+            <p class="hint">Use an email address from the posting or the actual employer application form URL.</p>
+          </div>
+        </div>
         ${destination.provenance ? `<p class="hint">Detected from ${escapeHtml(destination.provenance.replace(/_/g, ' '))} · ${escapeHtml(destination.confidence || 'unknown confidence')}</p>` : ''}
         <div class="form-grid">
           <label>Channel<select id="draft-destination-kind" data-draft-field><option value="web" ${destination.kind === 'web' ? 'selected' : ''}>Web form</option><option value="email" ${destination.kind === 'email' ? 'selected' : ''}>Email</option><option value="linkedin_easy_apply" ${destination.kind === 'linkedin_easy_apply' ? 'selected' : ''}>LinkedIn Easy Apply</option><option value="manual" ${!['web','email','linkedin_easy_apply'].includes(destination.kind) ? 'selected' : ''}>Manual review</option></select></label>
           <label>Application form URL or application email<input id="draft-destination" data-draft-field value="${escapeHtml(destination.url || destination.email || '')}"></label>
         </div>
-        <p class="hint">Choose Inspect form and review every answer. Job Radar follows a career page’s form-opening button when needed. Filling and submission happen only after Approve &amp; send.</p>
       </div>
-    </section>
 
-    <section id="application-review-resume" class="application-review-section">
-      <div class="section-head"><div><h3>Resume</h3><p class="hint">Review the PDF before approving this application.</p></div><a href="/api/applications/${id}/resume" target="_blank" rel="noopener noreferrer">Open PDF ↗</a></div>
-      <div class="application-resume-preview"><button type="button" class="secondary" id="load-resume-preview" disabled>Loading preview…</button><div class="application-preview-pages" hidden></div></div>
-      <details class="application-cv-details"><summary>Edit resume details</summary><div class="application-cv-fields">
-      <p class="hint">Bullet fields show the LaTeX item lines used in the PDF. To make words bold, wrap them in <code>&#92;textbf{...}</code>, then save. This edits the resume directly without using a model.</p>
-      <div class="form-grid"><label>Name<input id="draft-name" data-draft-field value="${escapeHtml(resume.name || '')}"></label><label>Email<input id="draft-email" data-draft-field value="${escapeHtml(resume.email || '')}"></label><label>Phone<input id="draft-phone" data-draft-field value="${escapeHtml(resume.phone || '')}"></label><label>Links, one per line<textarea id="draft-links" data-draft-field rows="2">${escapeHtml((resume.links || []).join('\n'))}</textarea></label></div>
-      <label>Professional summary<textarea id="draft-summary" data-draft-field rows="3">${escapeHtml(resume.summary || '')}</textarea></label>
-      <h4>Experience</h4>${(resume.experience || []).map((item, index) => `<div class="review-subsection surface-editable"><div class="form-grid"><label>Company<input data-experience-company="${index}" data-draft-field value="${escapeHtml(item.company || '')}"></label><label>Role<input data-experience-role="${index}" data-draft-field value="${escapeHtml(item.role || '')}"></label><label>Dates<input data-experience-dates="${index}" data-draft-field value="${escapeHtml(item.dates || '')}"></label></div><label>Experience bullets · LaTeX item lines<textarea class="resume-item-editor" data-experience-bullets="${index}" data-draft-field rows="4">${escapeHtml((bulletSource.experience?.[index] || []).join('\n'))}</textarea></label></div>`).join('') || '<p class="hint">No previous positions in this draft.</p>'}
-      <h4>Selected projects</h4>${projects.map((project, index) => `<div class="review-subsection surface-editable"><div class="form-grid"><label>Title<input data-project-title="${index}" data-draft-field value="${escapeHtml(project.title || '')}"></label><label>Repository URL<input data-project-url="${index}" data-draft-field value="${escapeHtml(project.repository_url || '')}"></label><label>Technologies<input data-project-stack="${index}" data-draft-field value="${escapeHtml((project.tech_stack || []).join(', '))}"></label></div><label>Project bullets · LaTeX item lines<textarea class="resume-item-editor" data-project-bullets="${index}" data-draft-field rows="4">${escapeHtml((bulletSource.projects?.[index] || []).join('\n'))}</textarea></label></div>`).join('') || '<p class="hint">No projects selected for this draft.</p>'}
-      <h4>Education</h4>${(resume.education || []).map((item, index) => { const entry = typeof item === 'string' ? {school:item} : item; return `<div class="form-grid review-subsection surface-editable"><label>School<input data-education-school="${index}" data-draft-field value="${escapeHtml(entry.school || '')}"></label><label>Degree<input data-education-degree="${index}" data-draft-field value="${escapeHtml(entry.degree || '')}"></label><label>Dates<input data-education-dates="${index}" data-draft-field value="${escapeHtml(entry.dates || '')}"></label></div>`; }).join('') || '<p class="hint">No education in this draft.</p>'}
-      <label>Achievement bullets · LaTeX item lines<textarea class="resume-item-editor" id="draft-achievements" data-draft-field rows="3">${escapeHtml((bulletSource.achievements || []).join('\n'))}</textarea></label>
-      <label>Skills, one per line<textarea id="draft-skills" data-draft-field rows="3">${escapeHtml((resume.skills || []).join('\n'))}</textarea></label>
-      <label>Skill groups, one per line as “Group: skills”<textarea id="draft-skill-groups" data-draft-field rows="3">${escapeHtml(Object.entries(resume.skill_groups || {}).map(([group, values]) => `${group}: ${Array.isArray(values) ? values.join(', ') : values}`).join('\n'))}</textarea></label>
-      </div></details>
-    </section>
+      ${!sent && recentChanges.length ? `
+      <div class="application-change-list">
+        <strong>Changed by your last regeneration</strong>
+        ${recentChanges.map((change) => `<div class="application-change-item"><span class="status-badge status-badge--warning">${escapeHtml(change.section)}</span><small>Only this section changed. Untouched sections kept their reviewed content.</small></div>`).join('')}
+      </div>` : ''}
 
-    <section id="application-review-message" class="application-review-section" ${destination.kind === 'email' ? '' : 'hidden'}>
-      <h3>Application message</h3>
-      <label>Subject<input id="draft-subject" data-draft-field value="${escapeHtml(message.subject || '')}"></label>
-      <label>Body<textarea id="draft-body" data-draft-field rows="10">${escapeHtml(message.body || '')}</textarea></label>
-    </section>
+      <section id="application-review-regenerate" class="application-review-section">
+        <h3>Regenerate only what needs work</h3>
+        <p class="hint">${webGenerator ? 'ChatGPT Web enters the prompt in your saved Chrome browser and automatically receives its reply to revise this application.' : 'Choose one section to revise. Resume changes update the PDF. For the application email, AI rewrites only the experience and project fit paragraph.'}</p>
+        <label>Section<select id="regenerate-section"><option value="summary">Professional summary</option><option value="experience">Experience bullets</option><option value="projects">Selected projects and bullets</option><option value="education">Education wording</option><option value="achievements">Achievements</option><option value="skills">Skills</option>${destination.kind === 'email' ? '<option value="message">Application experience and project fit</option>' : ''}<option value="all" ${draft.provider === 'chatgpt_web' ? 'selected' : ''}>${webGenerator ? 'Full resume draft' : 'Full draft · uses more quota'}</option></select></label>
+        <label>Custom instructions<textarea id="regenerate-prompt" rows="3" placeholder="Example: make the summary shorter and emphasize production search work"></textarea></label>
+        <div class="actions"><button id="regenerate-draft" class="secondary" ${webGenerator ? 'hidden' : ''} ${draft.provider === 'template' || sent || uncertain ? 'disabled' : ''}>Regenerate selected section</button><button id="chatgpt-input" class="secondary" ${webGenerator ? '' : 'hidden'} ${sent || uncertain ? 'disabled' : ''}>Regenerate selected section</button></div>
+        ${sent ? '<p class="hint">This application has been sent. Its reviewed message and resume are preserved in the submission receipt.</p>' : ''}
+        ${draft.provider === 'template' && !webGenerator ? '<p class="hint">This draft used the basic template. Create a new draft with an AI provider to regenerate it with instructions.</p>' : ''}
+      </section>
 
-    <section id="application-review-form" class="application-review-section" ${['web','linkedin_easy_apply'].includes(destination.kind) ? '' : 'hidden'}>
-      <div class="section-head"><div><h3>Form answers and attachments</h3><p class="hint">${formData.action ? `Form submits to ${escapeHtml(formData.action)} (${escapeHtml(formData.method || 'GET')})` : formData.opener ? `Opened through ${escapeHtml(formData.opener.label || 'the career page button')}` : destination.kind === 'linkedin_easy_apply' ? escapeHtml(linkedinFormStatus) : 'Inspect the application page to load its fields here.'}</p></div></div>
-      ${formData.inspection_blockers?.length ? applicationAlert('warning', 'More answers needed to inspect every step', formData.inspection_blockers) : ''}
-      ${canInspect && destination.kind === 'linkedin_easy_apply' && !formData.complete && !formData.inspection_blockers?.length ? '<div class="application-next-step"><p class="hint">Your answers are saved. Inspect the remaining LinkedIn steps before sending.</p><button id="inspect-remaining-inline" type="button" class="secondary">Inspect remaining steps</button></div>' : ''}
-      <div class="application-form-fields">${(formData.fields || []).map((field) => renderApplicationFormField(field, draft)).join('') || '<p class="empty">No form fields inspected yet.</p>'}</div>
-    </section>
-
-    <section id="application-review-regenerate" class="application-review-section">
-      <h3>Regenerate only what needs work</h3>
-      <p class="hint">${webGenerator ? 'ChatGPT Web enters the prompt in your saved Chrome browser and automatically receives its reply to revise this application.' : 'Choose one section to revise. Resume changes update the PDF. For the application email, AI rewrites only the experience and project fit paragraph.'}</p>
-      <label>Section<select id="regenerate-section"><option value="summary">Professional summary</option><option value="experience">Experience bullets</option><option value="projects">Selected projects and bullets</option><option value="education">Education wording</option><option value="achievements">Achievements</option><option value="skills">Skills</option>${destination.kind === 'email' ? '<option value="message">Application experience and project fit</option>' : ''}<option value="all" ${draft.provider === 'chatgpt_web' ? 'selected' : ''}>${webGenerator ? 'Full resume draft' : 'Full draft · uses more quota'}</option></select></label>
-      <label>Custom instructions<textarea id="regenerate-prompt" rows="3" placeholder="Example: make the summary shorter and emphasize production search work"></textarea></label>
-      <div class="actions"><button id="regenerate-draft" class="secondary" ${webGenerator ? 'hidden' : ''} ${draft.provider === 'template' || sent || uncertain ? 'disabled' : ''}>Regenerate selected section</button><button id="chatgpt-input" class="secondary" ${webGenerator ? '' : 'hidden'} ${sent || uncertain ? 'disabled' : ''}>Regenerate selected section</button></div>
-      ${sent ? '<p class="hint">This application has been sent. Its reviewed message and resume are preserved in the submission receipt above.</p>' : ''}
-      ${draft.provider === 'template' && !webGenerator ? '<p class="hint">This draft used the basic template. Create a new draft with an AI provider to regenerate it with instructions.</p>' : ''}
-    </section>
-
-    <details class="application-debug"><summary>Activity and technical details</summary><p class="hint">Telegram review delivery: ${escapeHtml(draft.telegram_status || 'Not configured')}${draft.telegram_error ? ` · ${escapeHtml(draft.telegram_error)}` : ''}</p><p class="hint">Package fingerprint: <span class="mono">${escapeHtml(draft.package_hash.slice(0, 16))}</span></p></details>
+      <details class="application-debug"><summary>Activity and technical details</summary><p class="hint">Telegram review delivery: ${escapeHtml(draft.telegram_status || 'Not configured')}${draft.telegram_error ? ` · ${escapeHtml(draft.telegram_error)}` : ''}</p><p class="hint">Package fingerprint: <span class="mono">${escapeHtml(draft.package_hash.slice(0, 16))}</span></p></details>
+    </div>
 
     <div class="application-sticky-actions">
-      <div><span id="application-dirty-state" class="status-badge status-badge--neutral">Saved</span><span id="application-outcome" class="hint" role="status" aria-live="polite"></span></div>
+      <div id="sticky-first-glance-controls" ${currentScreen === 'first-glance' ? '' : 'hidden'}>
+        <span class="status-badge status-badge--${reviewTone}">${escapeHtml(applicationReviewLabel(draft))}</span>
+      </div>
+      <div id="sticky-package-controls-left" ${currentScreen === 'package' ? '' : 'hidden'}>
+        <button type="button" class="secondary" id="btn-sticky-back-first-glance">← Back to First glance</button>
+        <span id="application-dirty-state" class="status-badge status-badge--neutral">Saved</span>
+        <span id="application-outcome" class="hint" role="status" aria-live="polite"></span>
+      </div>
       <div class="actions">
-        <button id="save-draft" class="secondary" disabled>Save changes</button>
-        <button id="inspect-draft" class="secondary" ${canInspect ? '' : 'disabled'}>${destination.kind === 'linkedin_easy_apply' && !formData.complete ? 'Inspect remaining steps' : 'Inspect form'}</button>
-        <button id="send-draft" class="primary" ${canSend ? '' : 'disabled'}>${sent ? escapeHtml(draft.latest_submission?.outcome?.label || 'Sent') : 'Approve &amp; send'}</button>
+        <button type="button" class="primary" id="btn-sticky-next-to-package" ${currentScreen === 'first-glance' ? '' : 'hidden'}>Next: Review package →</button>
+        <button id="save-draft" class="secondary" disabled ${currentScreen === 'package' ? '' : 'hidden'}>Save changes</button>
+        <button id="send-draft" class="primary" ${canSend ? '' : 'disabled'} ${(currentScreen === 'package' || sent) ? '' : 'hidden'}>${sent ? escapeHtml(draft.latest_submission?.outcome?.label || 'Sent') : 'Approve &amp; send'}</button>
       </div>
     </div>`;
 
-  detail.querySelector('#application-review-overview').before(detail.querySelector('#application-review-resume'));
   const loadResumePreview = async () => {
     const preview = detail.querySelector('.application-preview-pages');
     const button = detail.querySelector('#load-resume-preview');
@@ -2598,36 +2753,30 @@ async function showApplication(id) {
   };
   detail.querySelector('#load-resume-preview')?.addEventListener('click', loadResumePreview);
   loadResumePreview();
-  detail.querySelector('#view-application-job')?.addEventListener('click', () => openApplicationJob(draft.vacancy_id).catch((error) => notice(error.message, true)));
+
   detail.querySelector('#discover-linkedin-apply')?.addEventListener('click', async (event) => {
     const button = beginPending(event.currentTarget, 'Checking LinkedIn…');
     try {
       const result = await api(`/api/applications/${id}/discover-apply`, {method:'POST'});
       if (result.action.kind === 'web') {
-        await loadApplications(id);
+        await loadApplications(id, 'package');
         notice(result.inspection_error
           ? `External Apply page found. Its form needs manual review: ${result.inspection_error}`
           : 'External Apply form found and inspected. Review its fields and answers before approving.');
       } else if (result.action.kind === 'linkedin_easy_apply') {
-        await loadApplications(id);
+        await loadApplications(id, 'package');
         notice(result.inspection_error ? `LinkedIn Easy Apply found, but inspection needs attention: ${result.inspection_error}` : 'LinkedIn Easy Apply fields are ready for review. Complete missing answers, save, then inspect again.');
       } else {
-        await loadApplications(id);
+        await loadApplications(id, 'package');
         notice(result.action.detail || 'No external application form was found.', true);
       }
     } catch(error) { notice(error.message, true); }
     finally { if (button.isConnected) endPending(button); }
   });
-  detail.querySelectorAll('[data-review-target]').forEach((button) => button.addEventListener('click', () => {
-    detail.querySelectorAll('[data-review-target]').forEach((item) => item.removeAttribute('aria-current'));
-    button.setAttribute('aria-current', 'true');
-    scrollNodeIntoView(detail.querySelector(`#${button.dataset.reviewTarget}`), {block:'start'});
-  }));
 
   const dirtyState = $('#application-dirty-state');
   const saveButton = $('#save-draft');
   const sendButton = $('#send-draft');
-  const inspectButton = $('#inspect-draft');
   const dirtySections = new Set();
   const markDirty = (field) => {
     if (sent || uncertain) return;
@@ -2643,8 +2792,11 @@ async function showApplication(id) {
     $('#application-outcome').textContent = 'Save your changes before approving this application.';
     field.closest('label')?.classList.add('is-dirty');
     if (['draft-destination-kind','draft-destination'].includes(field.id)) {
-      inspectButton.disabled = !['web','linkedin_easy_apply'].includes($('#draft-destination-kind').value) ||
-        ($('#draft-destination-kind').value === 'web' && isLinkedInJobPostingUrl($('#draft-destination').value.trim()));
+      const inspectInline = detail.querySelector('#inspect-form-inline');
+      if (inspectInline) {
+        inspectInline.disabled = !['web','linkedin_easy_apply'].includes($('#draft-destination-kind').value) ||
+          ($('#draft-destination-kind').value === 'web' && isLinkedInJobPostingUrl($('#draft-destination').value.trim()));
+      }
     }
   };
 
@@ -2659,7 +2811,7 @@ async function showApplication(id) {
     for (const eventName of ['input','change']) field.addEventListener(eventName, () => markDirty(field));
   });
 
-  $('#regenerate-draft').addEventListener('click', async () => {
+  $('#regenerate-draft')?.addEventListener('click', async () => {
     const prompt = $('#regenerate-prompt').value.trim();
     if (!prompt) { notice('Enter custom instructions to regenerate the draft.', true); return; }
     const button = $('#regenerate-draft');
@@ -2669,17 +2821,17 @@ async function showApplication(id) {
       const section = $('#regenerate-section').value;
       const result = await api(`/api/applications/${id}/regenerate`, {method:'POST', body:JSON.stringify({prompt, section})});
       applicationReviewChanges[id] = result.changes || [];
-      await loadApplications(id);
+      await loadApplications(id, 'package');
       notice(section === 'all' ? 'New draft prepared for review.' : 'Selected section regenerated. Untouched content was preserved.');
     } catch(error) {
-      try { await loadApplications(id); } catch (refreshError) { console.warn('Could not refresh application status', refreshError); }
+      try { await loadApplications(id, 'package'); } catch (refreshError) { console.warn('Could not refresh application status', refreshError); }
       notice(error.message, true);
     } finally {
       if (button.isConnected) endPending(button);
     }
   });
 
-  $('#chatgpt-input').addEventListener('click', async (event) => {
+  $('#chatgpt-input')?.addEventListener('click', async (event) => {
     if (dirtySections.size) { notice('Save your application changes before sending its context to ChatGPT.', true); return; }
     const button = beginPending(event.currentTarget, 'Regenerating…');
     showApplicationRegenerating(id);
@@ -2689,11 +2841,11 @@ async function showApplication(id) {
         method:'POST',
         body:JSON.stringify({section, instruction:$('#regenerate-prompt').value.trim()}),
       });
-      await loadApplications(id);
+      await loadApplications(id, 'package');
       notice(result.detail || (section === 'all' ? 'New draft prepared for review.' : 'Selected section regenerated. Untouched content was preserved.'),
         result.status !== 'entered' && result.status !== 'received');
     } catch(error) {
-      try { await loadApplications(id); } catch (refreshError) { console.warn('Could not refresh application status', refreshError); }
+      try { await loadApplications(id, 'package'); } catch (refreshError) { console.warn('Could not refresh application status', refreshError); }
       notice(error.message, true);
     }
     finally { if (button.isConnected) endPending(button); }
@@ -2712,15 +2864,14 @@ async function showApplication(id) {
         dirtyState.className = 'status-badge status-badge--neutral';
         sendButton.disabled = !(saved.send_ready && saved.review_status === 'awaiting_review');
         $('#application-outcome').textContent = '';
-        const badge = detail.querySelector('.application-review-header .status-badge');
-        if (badge) {
+        detail.querySelectorAll('.application-review-header .status-badge').forEach((badge) => {
           badge.textContent = applicationReviewLabel(saved);
           badge.className = `status-badge status-badge--${applicationReviewTone(saved)}`;
-        }
+        });
         detail.querySelectorAll('.is-dirty').forEach((field) => field.classList.remove('is-dirty'));
         savedInline = true;
       } else {
-        await loadApplications(id);
+        await loadApplications(id, 'package');
       }
       notice(saved.form_data?.kind === 'linkedin_easy_apply' && !saved.form_data.complete
         ? saved.form_data.inspection_blockers?.length
@@ -2737,27 +2888,29 @@ async function showApplication(id) {
     }
   });
 
-  $('#inspect-draft').addEventListener('click', async (event) => {
-    const button = beginPending(event.currentTarget, 'Inspecting…');
-    try {
-      if (!saveButton.disabled) await saveApplication(id, draft, dirtySections);
-      await api(`/api/applications/${id}/inspect`, {method:'POST'});
-      await loadApplications(id);
-      notice('Application form inspected.');
-    } catch(error) {
-      notice(error.message, true);
-    } finally {
-      if (button.isConnected) endPending(button);
-    }
-  });
-  detail.querySelector('#inspect-remaining-inline')?.addEventListener('click', () => inspectButton.click());
+  const inspectFormButton = detail.querySelector('#inspect-form-inline');
+  if (inspectFormButton) {
+    inspectFormButton.addEventListener('click', async (event) => {
+      const button = beginPending(event.currentTarget, 'Inspecting…');
+      try {
+        if (!saveButton.disabled) await saveApplication(id, draft, dirtySections);
+        await api(`/api/applications/${id}/inspect`, {method:'POST'});
+        await loadApplications(id, 'package');
+        notice('Application form inspected.');
+      } catch(error) {
+        notice(error.message, true);
+      } finally {
+        if (button.isConnected) endPending(button);
+      }
+    });
+  }
 
   $('#send-draft').addEventListener('click', async (event) => {
     const button = beginPending(event.currentTarget, 'Sending…');
     try {
       const result = await api(`/api/applications/${id}/approve`, {method:'POST', body:JSON.stringify({package_hash:draft.package_hash})});
       const outcome = result.outcome || {};
-      await loadApplications(id);
+      await loadApplications(id, 'first-glance');
       const message = `${outcome.label || 'Application updated'}${result.receipt || result.error ? `: ${result.receipt || result.error}` : ''}`;
       $('#application-outcome').textContent = message;
       notice(message, outcome.key === 'submission_uncertain');
@@ -2768,13 +2921,49 @@ async function showApplication(id) {
     }
   });
 
+  const switchScreen = (screen) => {
+    activeApplicationScreen = screen;
+    detail.querySelectorAll('[data-app-screen]').forEach((btn) => {
+      btn.setAttribute('aria-current', btn.dataset.appScreen === screen ? 'true' : 'false');
+    });
+    const eyebrow = detail.querySelector('#application-screen-eyebrow');
+    if (eyebrow) eyebrow.textContent = screen === 'package' ? 'APPLICATION · PACKAGE' : 'APPLICATION · FIRST GLANCE';
+    const firstGlanceEl = detail.querySelector('#screen-first-glance');
+    const packageEl = detail.querySelector('#screen-package');
+    if (firstGlanceEl && packageEl) {
+      firstGlanceEl.hidden = screen !== 'first-glance';
+      packageEl.hidden = screen !== 'package';
+    }
+    const stickyFG = detail.querySelector('#sticky-first-glance-controls');
+    const stickyPkgLeft = detail.querySelector('#sticky-package-controls-left');
+    const stickyNext = detail.querySelector('#btn-sticky-next-to-package');
+    const saveBtn = detail.querySelector('#save-draft');
+    const sendBtn = detail.querySelector('#send-draft');
+    if (stickyFG) stickyFG.hidden = screen !== 'first-glance';
+    if (stickyPkgLeft) stickyPkgLeft.hidden = screen !== 'package';
+    if (stickyNext) stickyNext.hidden = screen !== 'first-glance';
+    if (saveBtn) saveBtn.hidden = screen !== 'package';
+    if (sendBtn) sendBtn.hidden = screen !== 'package' && !sent;
+    scrollNodeIntoView(detail, {block:'start'});
+  };
+
+  detail.querySelectorAll('[data-app-screen]').forEach((btn) => {
+    btn.addEventListener('click', () => switchScreen(btn.dataset.appScreen));
+  });
+  detail.querySelector('#btn-next-to-package')?.addEventListener('click', () => switchScreen('package'));
+  detail.querySelector('#btn-sticky-next-to-package')?.addEventListener('click', () => switchScreen('package'));
+  detail.querySelector('#btn-sticky-back-first-glance')?.addEventListener('click', () => switchScreen('first-glance'));
+
   if (sent || uncertain) {
-    detail.querySelectorAll('[data-draft-field],#regenerate-draft,#save-draft,#inspect-draft,#send-draft').forEach((control) => { control.disabled = true; });
+    detail.querySelectorAll('[data-draft-field],#regenerate-draft,#chatgpt-input,#save-draft,#send-draft,#inspect-form-inline').forEach((control) => { control.disabled = true; });
     dirtyState.textContent = uncertain ? 'Submission status uncertain' : 'Sent';
     dirtyState.className = `status-badge status-badge--${uncertain ? 'warning' : 'success'}`;
     if (uncertain) $('#application-outcome').textContent = draft.latest_submission?.outcome?.guidance ||
       'Verify on the employer site before taking another send action.';
   }
+
+  switchScreen(currentScreen);
+  detail.focus({preventScroll:true});
 }
 
 async function saveApplication(id, draft, dirtySections) {

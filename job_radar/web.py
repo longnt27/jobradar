@@ -23,7 +23,15 @@ from pydantic import BaseModel, Field, HttpUrl
 
 from .db import Database, new_id, now
 from .discovery import merge_reason_label, source_coverage, split_observation, summarize_discovery
-from .apply import inspect_form, send_application, send_readiness, submission_attachment, submission_record, submission_resume_path
+from .apply import (
+    CONFIRMED_SUBMISSION_STATUSES,
+    inspect_form,
+    send_application,
+    send_readiness,
+    submission_attachment,
+    submission_record,
+    submission_resume_path,
+)
 from .auto_apply import AutoApplyManager
 from .browser_login import BrowserLoginManager
 from .chatgpt_handoff import ChatGPTInputManager, application_prompt, apply_chatgpt_reply
@@ -1892,8 +1900,52 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             draft = get_draft(db, draft_id)
             reasons = send_readiness(db, settings, draft)
-            review = db.one("SELECT status,review_hash,telegram_status,telegram_error,requested_by,detail,prepare_anyway FROM auto_application_attempts WHERE draft_id=?", (draft_id,))
+            review = db.one("SELECT status,review_hash,telegram_status,telegram_error,requested_by,detail,prepare_anyway,updated_at,created_at FROM auto_application_attempts WHERE draft_id=?", (draft_id,))
             latest = db.one("SELECT * FROM submissions WHERE draft_id=? ORDER BY sent_at DESC,id DESC LIMIT 1", (draft_id,))
+            job_data = None
+            try:
+                job_data = job(draft["vacancy_id"])
+            except Exception as error:
+                log.warning("Could not attach job data for draft %s: %s", draft_id, error)
+
+            activities = []
+            if latest:
+                activities.append({
+                    "kind": "submission",
+                    "label": "Application sent",
+                    "detail": f"{latest['status']} · {latest.get('receipt') or 'Submitted'}",
+                    "created_at": latest["sent_at"],
+                    "tone": "success" if latest["status"] in CONFIRMED_SUBMISSION_STATUSES else "warning",
+                })
+            if review and review.get("detail"):
+                activities.append({
+                    "kind": "status",
+                    "label": f"Status: {review['status'].replace('_', ' ').capitalize()}",
+                    "detail": review["detail"],
+                    "created_at": review.get("updated_at") or draft["updated_at"],
+                    "tone": "info",
+                })
+            notif_rows = db.all(
+                "SELECT channel, status, error, created_at FROM notification_events WHERE vacancy_id=? ORDER BY created_at DESC LIMIT 5",
+                (draft["vacancy_id"],),
+            )
+            for ev in notif_rows:
+                activities.append({
+                    "kind": "notification",
+                    "label": f"Notification ({ev['channel'].replace('_', ' ')})",
+                    "detail": f"Status: {ev['status']}" + (f" · {ev['error']}" if ev.get("error") else ""),
+                    "created_at": ev["created_at"],
+                    "tone": "success" if ev["status"] == "sent" else "warning",
+                })
+            activities.append({
+                "kind": "creation",
+                "label": "Draft created",
+                "detail": f"Prepared with {draft.get('provider') or 'model'}",
+                "created_at": draft["created_at"],
+                "tone": "info",
+            })
+            activities.sort(key=lambda a: a.get("created_at") or "", reverse=True)
+
             return {**draft, "resume_bullet_source": editable_bullet_lines(draft["resume_data"]),
                     "send_ready": not reasons, "send_blockers": reasons,
                     "linkedin_automation_paused": bool(db.get_setting("linkedin_automation_paused", False)) if draft["job_source_kind"] == "linkedin" else False,
@@ -1904,7 +1956,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "preparation_requested_by": review["requested_by"] if review else None,
                     "preparation_detail": review["detail"] if review else None,
                     "preparation_approved_without_destination": bool(review["prepare_anyway"]) if review else False,
-                    "latest_submission": submission_record(latest, include_package=True) if latest else None}
+                    "latest_submission": submission_record(latest, include_package=True) if latest else None,
+                    "job": job_data,
+                    "activities": activities}
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
 

@@ -311,6 +311,39 @@ input,textarea,select{font-weight:400}
 .application-review-nav button strong{font-size:13px;line-height:1.2}
 .application-review-nav button small{font-size:11px;color:#647a6f}
 .application-review-nav button:hover,.application-review-nav button[aria-current="true"]{background:#e5f2e9;border-color:#8fbea3;color:#174d39;filter:none}
+
+.application-screen-nav{position:sticky;top:0;z-index:5;display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:10px 0;background:rgba(247,250,248,.96);backdrop-filter:blur(8px);border-bottom:1px solid #d8e4dc;margin-bottom:16px}
+.application-screen-nav button{display:flex;align-items:center;gap:12px;min-height:56px;text-align:left;border:2px solid #d8e4dc;background:#fff;color:#355247;padding:10px 14px;border-radius:11px;cursor:pointer;transition:all .15s ease}
+.application-screen-nav button .screen-step-num{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;background:#e2ece6;color:#244b3c;font-weight:800;font-size:12px;flex:none}
+.application-screen-nav button .screen-step-text strong{display:block;font-size:13px;line-height:1.2}
+.application-screen-nav button .screen-step-text small{display:block;font-size:11px;color:#647a6f;margin-top:2px}
+.application-screen-nav button:hover{border-color:#8fbea3;background:#f4faf6}
+.application-screen-nav button[aria-current="true"]{border-color:#1c694a;background:#ebf6f0;box-shadow:0 2px 8px rgba(28,105,74,.1)}
+.application-screen-nav button[aria-current="true"] .screen-step-num{background:#1c694a;color:#fff}
+.application-screen-nav button[aria-current="true"] .screen-step-text strong{color:#134531}
+
+.application-screen-view[hidden]{display:none!important}
+
+.application-activity-section{margin:18px 0;padding:16px;border:1px solid #cbded2;border-radius:11px}
+.application-activity-section .section-head{margin-bottom:12px}
+.application-activity-section h3{margin:0;font-size:16px}
+.activity-timeline{display:grid;gap:10px}
+.activity-item{display:flex;align-items:flex-start;gap:12px;padding:8px 0;border-top:1px solid #e1ebe4}
+.activity-item:first-of-type{border-top:0}
+.activity-item-content{flex:1;min-width:0}
+.activity-item-content strong{display:block;font-size:13px;color:#18362b}
+.activity-item-content small{display:block;font-size:11px;color:#5d756c;margin-top:2px}
+.activity-item-badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;flex:none;margin-top:2px}
+.activity-item-badge--success{background:#dcf2e3;color:#175338}
+.activity-item-badge--info{background:#e2ecf5;color:#184a6e}
+.activity-item-badge--warning{background:#fdf2d8;color:#744700}
+.activity-item-badge--danger{background:#fde8e4;color:#862f24}
+
+.screen-footer-action{display:flex;justify-content:flex-end;margin:24px 0 16px;padding-top:16px;border-top:1px solid #e2eae5}
+.screen-footer-action .button-large{padding:12px 24px;font-size:14px;font-weight:750}
+
+.application-form-inspection-banner{padding:14px;border:1px solid #cbded2;border-radius:10px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
+.application-form-inspection-banner p{margin:0;flex:1;min-width:200px}
 .application-review-section{padding:24px 0;border-top:1px solid #e2eae5;scroll-margin-top:98px}
 .application-review-nav+.application-review-section{border-top:0}
 .application-preparation-reason{padding:15px;border:1px solid #cbded2;border-radius:11px;margin-bottom:18px}
