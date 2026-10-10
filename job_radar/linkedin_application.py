@@ -17,35 +17,47 @@ from .social_browser import chrome_context_options, clean_stale_chrome_lock
 
 
 _EASY_APPLY = re.compile(r"easy\s+apply|ứng\s+tuyển\s+dễ\s+dàng", re.I)
-_FINAL_SUBMIT = re.compile(r"submit application|send application|nộp đơn ứng tuyển", re.I)
+_FINAL_SUBMIT = re.compile(r"submit(?:\s+application)?|send application|nộp đơn(?:\s+ứng tuyển)?", re.I)
+_REVIEW_BUTTON = re.compile(r"review(?:\s+application)?|xem lại(?:\s+đơn)?", re.I)
+_NEXT_BUTTON = re.compile(r"next|tiếp(?: theo)?", re.I)
 
 
 async def _easy_apply_step(page: Page):
     """Return the visible Easy Apply step, including controls inside shadow DOM."""
-    for name in ("Next", "Review", _FINAL_SUBMIT):
-        button = page.get_by_role("button", name=name, exact=isinstance(name, str)).filter(
-            has_text=name if isinstance(name, str) else _FINAL_SUBMIT).last
+    candidates = (
+        (_FINAL_SUBMIT, "submit"),
+        (_REVIEW_BUTTON, "review"),
+        (_NEXT_BUTTON, "next"),
+    )
+    for pattern, default_action in candidates:
+        button = page.get_by_role("button", name=pattern).filter(has_text=pattern).last
         try:
             if not await button.is_visible():
                 continue
-            for depth in range(1, 11):
+            for depth in range(1, 12):
                 root = button.locator("xpath=" + "/".join(".." for _ in range(depth)))
                 text = await root.inner_text(timeout=1500)
                 match = re.search(r"(\d+)\s*(?:/|of|trên)\s*(\d+)", text, re.I)
                 if match:
-                    action = "submit" if (not isinstance(name, str) or name == "Review") else name.casefold()
-                    return root, button, action, int(match.group(1)), int(match.group(2))
+                    cur = int(match.group(1))
+                    tot = int(match.group(2))
+                    action = "submit" if default_action == "submit" else default_action
+                    return root, button, action, cur, tot
         except Exception:
             continue
-    for name in (_FINAL_SUBMIT, "Review", "Next"):
-        button = page.get_by_role("button", name=name, exact=isinstance(name, str)).filter(
-            has_text=name if isinstance(name, str) else _FINAL_SUBMIT).last
+    for pattern, default_action in candidates:
+        button = page.get_by_role("button", name=pattern).filter(has_text=pattern).last
         try:
             if await button.is_visible():
-                for dialog in await page.get_by_role("dialog").all():
-                    if await dialog.is_visible() and await dialog.get_by_role("button", name=name).count():
-                        action = "submit" if (not isinstance(name, str) or name == "Review") else name.casefold()
-                        return dialog, button, action, 1, 1
+                dialogs = page.locator("dialog[open], [data-testid='dialog'], .jobs-easy-apply-modal, [role='dialog']")
+                for idx in range(await dialogs.count()):
+                    dialog = dialogs.nth(idx)
+                    if await dialog.is_visible() and await dialog.get_by_role("button", name=pattern).count() > 0:
+                        text = await dialog.inner_text(timeout=1500)
+                        match = re.search(r"(\d+)\s*(?:/|of|trên)\s*(\d+)", text, re.I)
+                        cur, tot = (int(match.group(1)), int(match.group(2))) if match else (1, 1)
+                        action = "submit" if default_action == "submit" else default_action
+                        return dialog, button, action, cur, tot
         except Exception:
             continue
     raise ValueError("LinkedIn Easy Apply did not show a recognizable application step")
@@ -61,30 +73,232 @@ async def _wait_for_easy_apply_step(page: Page) -> None:
     raise ValueError("LinkedIn Easy Apply did not open a recognizable application form")
 
 
+def _infer_default_radio_answer(label: str, options: list[dict]) -> str:
+    text = (label or "").casefold()
+    opt_texts = [str(o.get("text", "")).casefold() for o in options]
+    has_yes = any(t in ("yes", "có", "đồng ý") for t in opt_texts)
+    has_no = any(t in ("no", "không") for t in opt_texts)
+
+    if re.search(r"require.*sponsorship|cần.*bảo lãnh", text):
+        if has_no:
+            for o in options:
+                if str(o.get("text", "")).casefold() in ("no", "không"):
+                    return str(o.get("value") or o.get("text"))
+            return "No"
+
+    if re.search(r"willing|authorized|legally|drug test|background check|sẵn sàng|cho phép|đồng ý|tuân thủ", text):
+        if has_yes:
+            for o in options:
+                if str(o.get("text", "")).casefold() in ("yes", "có", "đồng ý"):
+                    return str(o.get("value") or o.get("text"))
+            return "Yes"
+
+    return ""
+
+
 async def _step_fields(root, step: int, start_index: int) -> list[dict]:
-    data = await root.evaluate("""node => {
-      const visible = el => {const box=el.getBoundingClientRect();return box.width>0 && box.height>0};
-      const resume = /\\bresume\\b/i.test(node.innerText) &&
+    data = await root.evaluate(r"""node => {
+      const visible = el => {
+        const box = el.getBoundingClientRect();
+        const style = window.getComputedStyle ? window.getComputedStyle(el) : null;
+        return box.width > 0 && box.height > 0 && (!style || (style.visibility !== 'hidden' && style.display !== 'none'));
+      };
+      const isVisibleControl = el => {
+        if (visible(el)) return true;
+        const type = (el.type || '').toLowerCase();
+        if (['radio', 'checkbox'].includes(type)) {
+          const container = el.closest('[role="radio"], [role="checkbox"], label, fieldset, [role="radiogroup"]');
+          return container ? visible(container) : false;
+        }
+        return false;
+      };
+
+      const resume = /\bresume\b/i.test(node.innerText) &&
         [...node.querySelectorAll('button')].some(button => /upload resume/i.test(button.innerText));
-      const controls = [...node.querySelectorAll('input,select,textarea')];
-      const fields = controls.map((el, position) => {
-        const type = el.tagName === 'SELECT' ? 'select' : el.tagName === 'TEXTAREA' ? 'textarea' : (el.type || 'text').toLowerCase();
-        if (!visible(el) || ['hidden','submit','button','reset','image','password'].includes(type) || (resume && type === 'radio')) return null;
+
+      const allControls = [...node.querySelectorAll('input, select, textarea')];
+      const fields = [];
+      const processedRadioGroups = new Set();
+
+      allControls.forEach((el, position) => {
+        const type = el.tagName === 'SELECT' ? 'select' :
+                     el.tagName === 'TEXTAREA' ? 'textarea' :
+                     (el.type || 'text').toLowerCase();
+
+        if (!isVisibleControl(el) || ['hidden', 'submit', 'button', 'reset', 'image', 'password'].includes(type)) {
+          return;
+        }
+
+        if (resume && type === 'radio') {
+          return;
+        }
+
+        if (type === 'radio') {
+          const groupContainer = el.closest('fieldset, [role="radiogroup"], [data-test-form-builder-radio-button-form-component]') || el.parentElement;
+          const groupKey = el.name ? ('name:' + el.name) : ('pos:' + position);
+
+          if (processedRadioGroups.has(groupKey)) {
+            return;
+          }
+          processedRadioGroups.add(groupKey);
+
+          let rawLabel = '';
+          const legend = groupContainer?.querySelector('legend');
+          if (legend && legend.textContent.trim()) {
+            rawLabel = legend.textContent.trim();
+          } else {
+            const titleEl = groupContainer?.querySelector('[data-test-form-builder-radio-button-form-component__title], h3, h4, [role="heading"]');
+            if (titleEl && titleEl.textContent.trim()) {
+              rawLabel = titleEl.textContent.trim();
+            } else {
+              const firstRadio = groupContainer?.querySelector('[role="radio"], input[type="radio"]');
+              if (firstRadio) {
+                for (const child of (groupContainer?.querySelectorAll('p, span, label, h3, h4') || [])) {
+                  if (child.compareDocumentPosition(firstRadio) & Node.DOCUMENT_POSITION_FOLLOWING) {
+                    const txt = child.textContent.trim();
+                    if (txt && !/^\s*\d+\s*(\/|of|trên)\s*\d+/i.test(txt)) {
+                      rawLabel = txt;
+                      break;
+                    }
+                  }
+                }
+              }
+            }
+          }
+          if (!rawLabel) {
+            let prev = groupContainer?.previousElementSibling;
+            while (prev) {
+              const txt = prev.textContent.trim();
+              if (txt && !/^\s*\d+\s*(\/|of|trên)\s*\d+/i.test(txt) && !['BUTTON', 'HR', 'FOOTER'].includes(prev.tagName)) {
+                rawLabel = txt;
+                break;
+              }
+              prev = prev.previousElementSibling;
+            }
+          }
+          if (!rawLabel && groupContainer?.parentElement) {
+            for (const cand of groupContainer.parentElement.querySelectorAll('[data-test-form-builder-radio-button-form-component__title], h3, h4, p, span.t-bold, label')) {
+              const txt = cand.textContent.trim();
+              if (txt && !/^\s*\d+\s*(\/|of|trên)\s*\d+/i.test(txt) && !groupContainer.contains(cand)) {
+                rawLabel = txt;
+                break;
+              }
+            }
+          }
+          if (!rawLabel) {
+            const labelNode = el.labels?.[0] || el.closest('label');
+            rawLabel = (labelNode?.textContent || el.getAttribute('aria-label') || '').trim();
+          }
+
+          const isRequired = !!(groupContainer?.querySelector('input[required]')) ||
+                             /\*/.test(rawLabel) ||
+                             !!el.required;
+
+          const cleanLabel = rawLabel.replace(/\s*\*\s*$/, '').trim().slice(0, 250);
+
+          const optionInputs = allControls.filter(c => {
+            if ((c.type || '').toLowerCase() !== 'radio') return false;
+            if (el.name && c.name) return c.name === el.name;
+            if (groupContainer) return groupContainer.contains(c);
+            return c === el;
+          });
+
+          const options = [];
+          let checkedValue = '';
+
+          optionInputs.forEach(optInput => {
+            const optContainer = optInput.closest('[role="radio"], .fb-radio-buttons, label') || optInput.parentElement;
+            let optText = '';
+            if (optContainer && optContainer !== groupContainer) {
+              const optClone = optContainer.cloneNode(true);
+              optClone.querySelectorAll('input').forEach(i => i.remove());
+              optText = optClone.textContent.trim();
+            }
+            if (!optText) {
+              optText = (optInput.labels?.[0]?.textContent || optInput.value || '').trim();
+            }
+            const optVal = optText || optInput.value || '';
+            if (optInput.checked) {
+              checkedValue = optVal;
+            }
+            if (optVal && !options.some(o => o.value === optVal)) {
+              options.push({value: optVal, text: optText || optVal});
+            }
+          });
+
+          fields.push({
+            position,
+            type: 'radio',
+            label: cleanLabel || el.name || 'Choice',
+            name: el.name || '',
+            required: isRequired,
+            options,
+            value: checkedValue,
+            max_length: null
+          });
+          return;
+        }
+
         const labelNode = el.labels?.[0] || el.closest('label');
-        const cleanLabel = labelNode?.cloneNode(true);
-        cleanLabel?.querySelectorAll('input,select,textarea,button').forEach(control => control.remove());
-        const label = (cleanLabel?.textContent || el.getAttribute('aria-label') ||
-          el.getAttribute('placeholder') || '').trim().replace(/\\s*\\*\\s*$/, '');
-        return {position, type, label:label.slice(0,250), name:el.name || '', required:!!el.required,
-          options:type === 'select' ? [...el.options].map(option => ({value:option.value,text:option.text.trim()})) : [],
-          value:type === 'checkbox' || type === 'radio' ? (el.checked ? 'yes' : '') : el.value || '',
-          max_length:el.maxLength > 0 ? el.maxLength : null};
-      }).filter(Boolean);
-      if (resume) fields.push({position:-1,type:'file',label:'Resume',name:'resume',required:true,
-        options:[],value:'',accept:'.pdf,application/pdf',max_file_bytes:2000000,max_length:null});
+        const cleanLabelNode = labelNode?.cloneNode(true);
+        cleanLabelNode?.querySelectorAll('input,select,textarea,button').forEach(control => control.remove());
+        let label = (cleanLabelNode?.textContent || el.getAttribute('aria-label') || el.getAttribute('placeholder') || '').trim();
+        if (!label) {
+          const prev = el.previousElementSibling;
+          if (prev && ['LABEL', 'P', 'SPAN', 'H3'].includes(prev.tagName)) {
+            label = prev.textContent.trim();
+          } else {
+            const next = el.nextElementSibling;
+            if (next && ['LABEL', 'P', 'SPAN'].includes(next.tagName)) {
+              label = next.textContent.trim();
+            } else if (el.parentElement) {
+              const pClone = el.parentElement.cloneNode(true);
+              pClone.querySelectorAll('input,select,textarea,button').forEach(c => c.remove());
+              label = pClone.textContent.trim();
+            }
+          }
+        }
+        const isRequired = !!el.required || /\*/.test(label);
+        const finalLabel = label.replace(/\s*\*\s*$/, '').trim().slice(0, 250);
+
+        fields.push({
+          position,
+          type,
+          label: finalLabel,
+          name: el.name || '',
+          required: isRequired,
+          options: type === 'select' ? [...el.options].map(opt => ({value: opt.value, text: opt.text.trim()})) : [],
+          value: type === 'checkbox' ? (el.checked ? 'yes' : '') : el.value || '',
+          max_length: el.maxLength > 0 ? el.maxLength : null
+        });
+      });
+
+      if (resume) {
+        fields.push({
+          position: -1,
+          type: 'file',
+          label: 'Resume',
+          name: 'resume',
+          required: true,
+          options: [],
+          value: '',
+          accept: '.pdf,application/pdf',
+          max_file_bytes: 2000000,
+          max_length: null
+        });
+      }
+
       return fields;
     }""")
-    return [{**field, "step": step, "index": start_index + offset} for offset, field in enumerate(data)]
+    result = []
+    for offset, field in enumerate(data):
+        item = {**field, "step": step, "index": start_index + offset}
+        if item.get("type") == "radio" and item.get("options") and not item.get("value"):
+            inferred = _infer_default_radio_answer(item.get("label", ""), item.get("options", []))
+            if inferred:
+                item["value"] = inferred
+        result.append(item)
+    return result
 
 
 def _easy_signature(fields: list[dict], posting_url: str, total_steps: int) -> str:
@@ -131,23 +345,79 @@ async def _fill_step(page: Page, root, fields: list[dict], answers: dict[str, st
             except Exception:
                 missing.append(f"Could not attach the reviewed resume for {label}")
             continue
-        answer = str(answers.get(str(field["index"]), ""))
+
+        answer = str(answers.get(str(field["index"]), "") or field.get("value") or "")
         if field["required"] and not answer.strip():
-            if field["type"] == "radio" and re.search(r"\byes\b", label, re.I):
+            if field["type"] == "radio" and field.get("options"):
+                inferred = _infer_default_radio_answer(label, field["options"])
+                if inferred:
+                    answer = inferred
+                else:
+                    missing.append(f"Answer required: {label}")
+                    continue
+            elif field["type"] == "radio" and re.search(r"\byes\b", label, re.I):
                 answer = "yes"
             else:
                 missing.append(f"Answer required: {label}")
                 continue
+
         if not answer:
             continue
-        locator = controls.nth(field["position"])
+
         try:
-            if field["type"] == "select":
-                await locator.select_option(value=answer)
-            elif field["type"] in ("checkbox", "radio"):
+            if field["type"] == "radio":
+                chosen = None
+                opt_pattern = re.compile(rf"^\s*{re.escape(answer)}\s*$", re.I)
+                scope = root
+                containers = root.locator("fieldset, [role='radiogroup'], [data-test-form-builder-radio-button-form-component]")
+                c_count = await containers.count()
+                if c_count == 1:
+                    scope = containers.first
+                elif c_count > 1:
+                    words = [w for w in re.sub(r'[^\w\s]', '', label).split() if len(w) > 3][:3]
+                    for ci in range(c_count):
+                        cand = containers.nth(ci)
+                        cand_text = await cand.inner_text()
+                        if any(w.casefold() in cand_text.casefold() for w in words):
+                            scope = cand
+                            break
+
+                candidates = scope.locator("[role='radio'], label, .fb-radio-buttons").filter(has_text=opt_pattern)
+                if await candidates.count() > 0:
+                    chosen = candidates.first
+                else:
+                    candidates = scope.locator("[role='radio'], label, .fb-radio-buttons").filter(
+                        has_text=re.compile(re.escape(answer), re.I)
+                    )
+                    if await candidates.count() > 0:
+                        chosen = candidates.first
+
+                if chosen is not None:
+                    await chosen.click(timeout=3000)
+                    radio_input = chosen.locator("input[type='radio']").first
+                    if await radio_input.count() > 0 and not await radio_input.is_checked():
+                        await radio_input.check(force=True)
+                else:
+                    if field.get("position", -1) >= 0 and field["position"] < await controls.count():
+                        locator = controls.nth(field["position"])
+                        await locator.check(force=True)
+
+            elif field["type"] == "select":
+                locator = controls.nth(field["position"])
+                try:
+                    await locator.select_option(value=answer)
+                except Exception:
+                    await locator.select_option(label=answer)
+
+            elif field["type"] == "checkbox":
+                locator = controls.nth(field["position"])
                 if answer.casefold() in ("yes", "true", "checked", "1"):
                     await locator.check()
+                else:
+                    await locator.uncheck()
+
             else:
+                locator = controls.nth(field["position"])
                 if field.get("max_length") and len(answer) > field["max_length"]:
                     missing.append(f"Answer is too long: {label}")
                     continue
@@ -166,8 +436,8 @@ async def _advance(page: Page, button, step: int) -> bool:
             pass
         await page.wait_for_timeout(250)
         try:
-            _, new_button, _, current, _ = await _easy_apply_step(page)
-            if current > step:
+            _, new_button, action, current, _ = await _easy_apply_step(page)
+            if current > step or (current == step and action == "submit"):
                 return True
             button = new_button
         except ValueError:
@@ -233,7 +503,10 @@ async def submit_easy_apply_dialog(page: Page, reviewed: dict, resume_path: Path
                 return "needs_user_attention", "LinkedIn form changed after review; inspect it again"
             await button.click(timeout=15000)
             try:
-                await page.get_by_text(re.compile(r"application sent|application submitted|you applied|ứng tuyển thành công", re.I)).first.wait_for(timeout=8000)
+                await page.get_by_text(re.compile(
+                    r"application (?:sent|submitted|was sent)|your application was sent|you applied|ứng tuyển thành công|đã gửi đơn ứng tuyển",
+                    re.I
+                )).first.wait_for(timeout=8000)
                 return "submitted_confirmed", f"LinkedIn confirmed application at {page.url}"
             except Exception:
                 return "submitted_unconfirmed", f"LinkedIn submit was clicked; confirmation was not detected at {page.url}"

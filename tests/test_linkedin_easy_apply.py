@@ -218,3 +218,90 @@ def test_related_job_apply_is_not_used_for_selected_posting() -> None:
                 await browser.close()
 
     asyncio.run(run())
+
+
+def test_easy_apply_with_radiogroup_questions_and_review_step(tmp_path: Path) -> None:
+    from job_radar.linkedin_application import inspect_easy_apply_dialog, submit_easy_apply_dialog
+
+    resume = tmp_path / "resume.pdf"
+    resume.write_bytes(b"%PDF-1.4\nexample")
+
+    page_html = """
+    <button id="apply">Easy Apply</button><div id="host"></div>
+    <script>
+      window.submitted = false;
+      let step = 0;
+      document.querySelector('#apply').onclick = () => { step = 1; render(); };
+      function render() {
+        const host = document.querySelector('#host');
+        if (step === 1) {
+          host.innerHTML = `<dialog open data-testid="dialog"><div>1/4 pages</div>
+            <label>Email address*<select required><option value="a@example.com" selected>a@example.com</option></select></label>
+            <label>Phone number*<input type="tel" value="123456" required></label>
+            <footer><button id="next1">Next</button></footer></dialog>`;
+          host.querySelector('#next1').onclick = () => { step = 2; render(); };
+        } else if (step === 2) {
+          host.innerHTML = `<dialog open data-testid="dialog"><div>2/4 pages</div>
+            <h3>Resume</h3><input type="file" accept=".pdf" hidden><button id="upload">Upload resume</button>
+            <input type="radio" checked aria-label="Saved resume">
+            <footer><button id="next2">Next</button></footer></dialog>`;
+          host.querySelector('#next2').onclick = () => { step = 3; render(); };
+        } else if (step === 3) {
+          host.innerHTML = `<dialog open data-testid="dialog"><div>3/4 pages</div>
+            <fieldset role="radiogroup">
+              <p>Are you willing to take a drug test, in accordance with local law/regulations?*</p>
+              <div role="radio"><input type="radio" id="r1" name="drug_test" value="Yes"><label for="r1"></label><p>Yes</p></div>
+              <div role="radio"><input type="radio" id="r2" name="drug_test" value="No"><label for="r2"></label><p>No</p></div>
+            </fieldset>
+            <footer><button id="review-btn">Review</button></footer></dialog>`;
+          host.querySelectorAll('[role="radio"]').forEach(div => {
+            div.onclick = () => { div.querySelector('input').checked = true; };
+          });
+          host.querySelector('#review-btn').onclick = () => {
+            if (host.querySelector('#r1').checked || host.querySelector('#r2').checked) {
+              step = 4;
+              render();
+            }
+          };
+        } else if (step === 4) {
+          host.innerHTML = `<dialog open data-testid="dialog"><div>4/4 pages</div>
+            <h3>Review your application</h3>
+            <footer><button id="submit-btn">Submit application</button></footer></dialog>`;
+          host.querySelector('#submit-btn').onclick = () => {
+            window.submitted = true;
+            host.innerHTML = '<p>Application submitted</p>';
+          };
+        }
+      }
+    </script>
+    """
+
+    async def run() -> None:
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(headless=True)
+            try:
+                page = await browser.new_page()
+                await page.set_content(page_html)
+                form = await inspect_easy_apply_dialog(page, "https://www.linkedin.com/jobs/view/4475150267/", {}, resume)
+                assert form["complete"]
+                assert form["steps_total"] == 4
+                radio_fields = [f for f in form["fields"] if f["type"] == "radio"]
+                assert len(radio_fields) == 1
+                drug_field = radio_fields[0]
+                assert "drug test" in drug_field["label"].casefold()
+                assert len(drug_field["options"]) == 2
+                assert [o["value"] for o in drug_field["options"]] == ["Yes", "No"]
+                assert form["answers"][str(drug_field["index"])] == "Yes"
+                assert not await page.evaluate("window.submitted")
+
+                # Now test submission traverses all 4 steps and submits
+                await page.goto("about:blank")
+                await page.set_content(page_html)
+                status, receipt = await submit_easy_apply_dialog(page, form, resume)
+                assert status == "submitted_confirmed"
+                assert await page.evaluate("window.submitted")
+            finally:
+                await browser.close()
+
+    asyncio.run(run())
+

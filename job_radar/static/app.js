@@ -2383,12 +2383,6 @@ function renderApplicationFormField(field, draft) {
     </label>`;
   }
 
-  if (field.type === 'radio' || field.type === 'checkbox') {
-    const checked = ['yes','true','checked','1'].includes(answer.toLowerCase());
-    const group = field.type === 'radio' ? ` name="review-radio-${escapeHtml(field.name || 'group')}"` : '';
-    return `<label class="application-form-choice"><input type="${field.type}"${group} data-answer="${field.index}" data-draft-field value="yes" ${checked ? 'checked' : ''}><span>${escapeHtml(label)}${required}</span></label>`;
-  }
-
   const options = Array.isArray(field.options) ? field.options.map((option) => {
     if (typeof option === 'string') return {value:option, label:option};
     return {value:String(option.value ?? option.label ?? ''), label:String(option.label ?? option.text ?? option.value ?? '')};
@@ -2403,6 +2397,12 @@ function renderApplicationFormField(field, draft) {
         ${options.map((option) => `<option value="${escapeHtml(option.value)}" ${option.value === answer ? 'selected' : ''}>${escapeHtml(option.label || option.value)}</option>`).join('')}
       </select>
     </label>`;
+  }
+
+  if (field.type === 'radio' || field.type === 'checkbox') {
+    const checked = ['yes','true','checked','1'].includes(answer.toLowerCase());
+    const group = field.type === 'radio' ? ` name="review-radio-${escapeHtml(field.name || 'group')}"` : '';
+    return `<label class="application-form-choice"><input type="${field.type}"${group} data-answer="${field.index}" data-draft-field value="yes" ${checked ? 'checked' : ''}><span>${escapeHtml(label)}${required}</span></label>`;
   }
 
   if (field.type === 'textarea' || answer.length > 120) {
@@ -3093,6 +3093,7 @@ async function showApplication(id, preferredScreen = null) {
     }
   };
 
+  detail.querySelector('#btn-discard-draft')?.addEventListener('click', handleDiscard);
   detail.querySelector('#btn-sticky-discard-draft')?.addEventListener('click', handleDiscard);
 
   if (sent || uncertain) {
