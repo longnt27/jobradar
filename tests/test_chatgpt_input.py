@@ -167,6 +167,12 @@ def test_settings_select_chatgpt_web_without_calling_cli_for_new_draft(tmp_path:
 
     next_job = client.post("/api/jobs/import", json={"company": "Another Co", "title": "Python Engineer",
         "description": "Build Python APIs for search products.", "apply_url": "https://example.org/second"}).json()
+
+    async def fake_inspect(db, settings, draft_id):
+        from job_radar.drafting import get_draft
+        return get_draft(db, draft_id)
+
+    monkeypatch.setattr("job_radar.auto_apply.inspect_form", fake_inspect)
     queued = app.state.auto_apply_manager.queue_manual(next_job["id"], "chatgpt_web", prepare_anyway=True)
     assert queued["status"] == "queued"
     asyncio.run(app.state.auto_apply_manager._process(next_job["id"]))
@@ -696,6 +702,12 @@ def test_auto_apply_chatgpt_web_drafts_when_logged_in(tmp_path: Path, monkeypatc
 
     monkeypatch.setattr(chatgpt_input, "enter", fake_enter)
 
+    async def fake_inspect(db, settings, draft_id):
+        from job_radar.drafting import get_draft
+        return get_draft(db, draft_id)
+
+    monkeypatch.setattr("job_radar.auto_apply.inspect_form", fake_inspect)
+
     queued = app.state.auto_apply_manager.queue_manual(job["id"], "chatgpt_web", prepare_anyway=True)
     assert queued["status"] == "queued"
     asyncio.run(app.state.auto_apply_manager._process(job["id"]))
@@ -715,6 +727,111 @@ def test_auto_apply_chatgpt_web_delay_between_automatic_drafts(tmp_path: Path, m
 
     app.state.db.set_setting("profile", {"name": "Alex", "email": "a@b.com", "drafting_provider": "chatgpt_web"})
     assert manager.chatgpt_delay == 0.05
+
+
+def test_application_prompt_contains_thinking_bold_and_bullet_rules(tmp_path: Path) -> None:
+    app = create_app(Settings(tmp_path))
+    client = TestClient(app)
+    db = app.state.db
+    db.set_setting("profile", {"name": "Alex", "email": "a@b.com", "drafting_provider": "chatgpt_web", "experience": [
+        {"company": "Corp", "role": "Eng", "dates": "2024", "bullets": ["Built Python search systems."]}
+    ]})
+    job = client.post("/api/jobs/import", json={
+        "company": "Test Corp", "title": "AI Engineer", "description": "Build LLM systems.", "apply_url": "https://example.org/apply"
+    }).json()
+    draft = prepare_draft(db, app.state.settings, job["id"], "chatgpt_web")
+
+    prompt = application_prompt(db, draft["id"], "all", "")
+    assert "maximum thinking effort" in prompt
+    assert "bold_phrases" in prompt
+    assert "exactly three approved projects" in prompt
+    assert "exactly two bullets" in prompt
+    assert "what/how" in prompt
+    assert "measured results" in prompt
+
+
+def test_apply_chatgpt_reply_enforces_three_projects_and_two_bullets(tmp_path: Path) -> None:
+    app = create_app(Settings(tmp_path))
+    client = TestClient(app)
+    db = app.state.db
+    settings = app.state.settings
+    db.set_setting("profile", {"name": "Alex", "email": "a@b.com", "drafting_provider": "chatgpt_web", "experience": [
+        {"company": "AI Inc", "role": "ML Engineer", "dates": "2024-2026", "bullets": ["Improved inference latency by 35% on T4 GPUs."]}
+    ]})
+
+    # Create 3 approved project cards
+    for idx in range(1, 4):
+        details = json.dumps({
+            "what": f"Project {idx} architecture and system pipeline.",
+            "results": [{"outcome": f"Model {idx} reached 9{idx}.5% accuracy on benchmark test suite."}]
+        })
+        db.execute(
+            "INSERT INTO evidence(id, title, claim, kind, approved, details, created_at, updated_at) "
+            "VALUES(?, ?, ?, 'project', 1, ?, '2026-01-01', '2026-01-01')",
+            (f"proj_{idx}", f"Project {idx} Title", f"Claim {idx} with 8{idx}% metric.", details)
+        )
+
+    job = client.post("/api/jobs/import", json={
+        "company": "Company", "title": "Engineer", "description": "Build models.", "apply_url": "https://example.org/apply2"
+    }).json()
+    draft = prepare_draft(db, settings, job["id"], "chatgpt_web")
+
+    # ChatGPT reply only returns 2 projects:
+    # Project 1 has only 1 metric bullet (needs intro synthesized).
+    # Project 2 has 3 bullets (needs results combined into bullet 2).
+    # Project 3 is omitted entirely (needs backfilling).
+    reply_payload = {
+        "summary": "AI researcher with experience deploying models.",
+        "experience": [
+            {"company": "AI Inc", "role": "ML Engineer", "dates": "2024-2026",
+             "bullets": ["Improved inference latency by **35%** on T4 GPUs."]}
+        ],
+        "projects": [
+            {
+                "id": "proj_1",
+                "title": "Project 1 Title",
+                "bullets": ["Model 1 reached 91.5% accuracy on benchmark test suite."]
+            },
+            {
+                "id": "proj_2",
+                "title": "Project 2 Title",
+                "bullets": [
+                    "Designed and implemented distributed pipeline.",
+                    "Reduced overhead by 20% across cluster nodes.",
+                    "Increased throughput to 500 req/sec."
+                ]
+            }
+        ],
+        "bold_phrases": ["91.5% accuracy"]
+    }
+
+    updated = apply_chatgpt_reply(db, settings, draft["id"], "all", json.dumps(reply_payload))
+    resume = updated["resume_data"]
+
+    # 1. Enforces exactly 3 projects
+    assert len(resume["projects"]) == 3, f"Expected 3 projects, got {len(resume['projects'])}"
+    assert resume["projects"][0]["id"] == "proj_1"
+    assert resume["projects"][1]["id"] == "proj_2"
+    assert resume["projects"][2]["id"] == "proj_3"
+
+    # 2. Enforces exactly 2 bullets per project
+    for p in resume["projects"]:
+        assert len(p["bullets"]) == 2, f"Project {p['title']} has {len(p['bullets'])} bullets, expected exactly 2"
+
+    # Project 1: bullet 0 should be intro, bullet 1 should be the metric
+    assert "Project 1 architecture" in resume["projects"][0]["bullets"][0]
+    assert "91.5% accuracy" in resume["projects"][0]["bullets"][1]
+
+    # Project 2: bullet 0 should be intro, bullet 1 should be combined results
+    assert "Designed and implemented" in resume["projects"][1]["bullets"][0]
+    assert "20%" in resume["projects"][1]["bullets"][1]
+    assert "500 req/sec" in resume["projects"][1]["bullets"][1]
+
+    # 3. Bold phrases populated and markdown asterisks stripped
+    assert "35%" not in resume["experience"][0]["bullets"][0] or "**35%**" not in resume["experience"][0]["bullets"][0]
+    assert len(resume["bold_phrases"]) >= 2
+    assert any("91.5%" in phrase or "35%" in phrase for phrase in resume["bold_phrases"])
+
 
 
 

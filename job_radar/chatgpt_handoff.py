@@ -129,22 +129,34 @@ def application_prompt(db: Database, draft_id: str, section: str, instruction: s
     elif section in {"all", "projects"}:
         rules += (
             "For Selected Projects choose exactly three approved projects when available, in order of strongest "
-            "job-relevant evidence. Give each project two bullets: what/how, then measured results. Combine "
-            "complementary supported results in the second bullet. Keep repository links and at most five skill "
-            "categories. Write resume text in English. "
+            "job-relevant evidence. Give each project exactly two bullets: bullet 1 introduces what was built, why, and how; "
+            "bullet 2 provides measured results. Combine complementary supported results into the second bullet. "
+            "Keep repository links and at most five skill categories. Write resume text in English. "
+            "In 'bold_phrases', provide a JSON list of 2 to 6 short exact substrings that carry the strongest measured results "
+            "(at most one phrase per bullet). Include at least one from candidate experience when one exists, and at least one "
+            "from each selected project's second (result) bullet. Quote short metric phrases or comparison figures directly "
+            "(e.g. 'F1 0.5043', 'achieved 85.14% stress-location accuracy'). Do NOT bold entire bullets, routine duties, or vague claims. "
         )
         if section == "projects":
             rules += (
-                "Return the revised projects as a JSON array or object with a 'projects' list: "
-                '[{"id": "<approved_project_id>", "title": "<project_title>", "repository_url": "<url>", '
-                '"tech_stack": ["Skill 1", "Skill 2"], "bullets": ["<what/how bullet>", "<measured results bullet>"]}]. '
+                "Return the revised projects as a JSON object with 'projects' and 'bold_phrases': "
+                '{"projects": [{"id": "<approved_project_id>", "title": "<project_title>", "repository_url": "<url>", '
+                '"tech_stack": ["Skill 1", "Skill 2"], "bullets": ["<intro/what/how bullet>", "<combined measured results bullet>"]}], '
+                '"bold_phrases": ["<short exact measured result 1>", "<short exact measured result 2>"]}. '
+                "Choose exactly three distinct approved projects when available. "
                 "Use exact IDs and titles from approved_projects in the context. "
             )
         elif section == "all":
             rules += (
-                "Return the revised resume as a JSON object with keys: summary, experience, projects, education, achievements, skills, skill_groups. "
-                "For projects, format as a list of objects with id, title, repository_url, tech_stack, and bullets. "
+                "Return the revised resume as a JSON object with keys: summary, experience, projects, education, achievements, skills, skill_groups, bold_phrases. "
+                "For projects, format as a list of exactly three objects (when available) with id, title, repository_url, tech_stack, and bullets (exactly two bullets: what/how first, combined measured results second). "
+                "Set bold_phrases to 2 to 6 short exact substrings that quote the strongest measured results from experience bullets and project second bullets. "
             )
+    elif section == "experience":
+        rules += (
+            "Revise the experience bullets in English using only supported facts. "
+            "Include 'bold_phrases': a JSON list of 1 to 3 short exact substrings of the strongest measured results present in the experience bullets. "
+        )
     elif section == "summary":
         rules += (
             "Write a high-level, cohesive professional summary under 450 characters in English (2 to 3 sentences). "
@@ -156,8 +168,9 @@ def application_prompt(db: Database, draft_id: str, section: str, instruction: s
     else:
         rules += "Write resume text in English and revise only the requested section. "
     return (
-        f"Help revise the {section} section of this job application. Return only the revised section, "
-        "with no commentary or surrounding code fence.\n\n"
+        f"Help revise the {section} section of this job application. "
+        "Reason deeply with maximum thinking effort and deliberation before generating the output. "
+        "Return only the revised section JSON, with no commentary or surrounding code fence.\n\n"
         f"Rules: {rules}\n\n"
         f"User instructions: {instruction.strip() or 'Improve relevance and clarity without changing supported facts.'}\n\n"
         f"Application context (JSON):\n{json.dumps(context, ensure_ascii=False, default=str)}"
@@ -268,13 +281,165 @@ def _find_card(
     return None
 
 
+def _strip_markdown_bold_and_collect(text: str) -> tuple[str, list[str]]:
+    found: list[str] = []
+
+    def repl(m: re.Match) -> str:
+        span = m.group(1).strip()
+        if span and len(span) <= 90:
+            found.append(span)
+        return span
+
+    cleaned = re.sub(r"\*\*([^*]+)\*\*", repl, text)
+    cleaned = re.sub(r"__([^_]+)__", repl, cleaned)
+    return cleaned, found
+
+
+def _extract_metric_phrases(bullet: str) -> list[str]:
+    patterns = [
+        r"(?:(?:F1|PCC|mAP|PA-MPJPE|Recall|Precision|accuracy|latency|speedup|throughput|error rate)\s*(?:reached|rose|fell|was|of|is|:)?\s*[\d\.\±\+\-x×\%\s]{1,25}(?:pp|%|ms|fps|MB|GB)?)",
+        r"(?:[\d\.]+\s*(?:±\s*[\d\.]+|pp|%|ms|fps|MB|GB|x|×)(?:\s*(?:faster|slower|accuracy|error|gain|boost))?)",
+        r"(?:achieved\s+[\d\.]+(?:%|\s*accuracy|\s*F1)?)",
+    ]
+    phrases: list[str] = []
+    for pat in patterns:
+        for m in re.finditer(pat, bullet, re.IGNORECASE):
+            phrase = m.group(0).strip(" ,.;:")
+            if 4 <= len(phrase) <= 60 and phrase in bullet and phrase != bullet.strip():
+                if not any(phrase in existing or existing in phrase for existing in phrases):
+                    phrases.append(phrase)
+    return phrases
+
+
+def _normalize_bullets_to_two(raw_bullets: list[str], card: dict | None = None) -> list[str]:
+    cleaned_bullets: list[str] = []
+    for b in raw_bullets:
+        s = str(b).strip()
+        s = re.sub(r"^[-*•\\]+\s*", "", s).strip()
+        if s:
+            cleaned_bullets.append(s)
+
+    details: dict = {}
+    claim = ""
+    if card:
+        details = json.loads(card.get("details") or "{}") if isinstance(card.get("details"), str) else (card.get("details") or {})
+        claim = str(card.get("claim") or "").strip()
+
+    what_fallback = details.get("what") or claim or "Developed and evaluated application components."
+
+    results_list = details.get("results") or []
+    results_text: list[str] = []
+    for r in results_list:
+        if isinstance(r, dict) and r.get("outcome"):
+            results_text.append(str(r["outcome"]).strip())
+    if not results_text and claim:
+        results_text.append(claim)
+    results_fallback = (
+        "; ".join(r.rstrip(".;") for r in results_text[:3]) + "."
+        if results_text
+        else "Delivered evaluated performance improvements across benchmark suites."
+    )
+
+    if not cleaned_bullets:
+        return [what_fallback, results_fallback]
+    elif len(cleaned_bullets) == 1:
+        single = cleaned_bullets[0]
+        if re.search(r"\d", single):
+            return [what_fallback, single]
+        else:
+            return [single, results_fallback]
+    elif len(cleaned_bullets) == 2:
+        return cleaned_bullets
+    else:
+        intro = cleaned_bullets[0]
+        results_combined = "; ".join(b.rstrip(".;") for b in cleaned_bullets[1:] if b.strip())
+        if results_combined and not results_combined.endswith("."):
+            results_combined += "."
+        return [intro, results_combined or results_fallback]
+
+
+def _backfill_projects_to_three(projects: list[dict], cards: list[dict], excluded_text: str = "") -> list[dict]:
+    if len(projects) >= 3 or len(cards) < 3:
+        return projects[:3]
+    selected_ids = {p.get("id") for p in projects if p.get("id")}
+    selected_titles = {_normalize_key(p.get("title", "")) for p in projects if p.get("title")}
+    norm_excluded = _normalize_key(excluded_text) if excluded_text else ""
+
+    backfilled = list(projects)
+    for card in cards:
+        if len(backfilled) >= 3:
+            break
+        if card["id"] in selected_ids or _normalize_key(card["title"]) in selected_titles:
+            continue
+        if norm_excluded:
+            prefix = _normalize_key(re.split(r"[:\—\-]", card["title"])[0])
+            slug = _normalize_key(str(card.get("repository_url") or "").rstrip("/").split("/")[-1])
+            if (prefix and prefix in norm_excluded) or (slug and slug in norm_excluded):
+                continue
+        backfilled.append(_card_to_project_dict(card))
+        selected_ids.add(card["id"])
+        selected_titles.add(_normalize_key(card["title"]))
+    return backfilled[:3]
+
+
+def _populate_resume_bold_phrases(resume: dict, explicit_phrases: list[str] | None = None) -> list[str]:
+    raw_candidates: list[str] = []
+    if explicit_phrases and isinstance(explicit_phrases, list):
+        for p in explicit_phrases:
+            clean_p = str(p).strip()
+            if 3 <= len(clean_p) <= 90:
+                raw_candidates.append(clean_p)
+    elif resume.get("bold_phrases") and isinstance(resume["bold_phrases"], list):
+        for p in resume["bold_phrases"]:
+            clean_p = str(p).strip()
+            if 3 <= len(clean_p) <= 90:
+                raw_candidates.append(clean_p)
+
+    experience_bullets: list[str] = []
+    for exp in resume.get("experience") or []:
+        cleaned_exp_bullets = []
+        for b in exp.get("bullets") or []:
+            cb, collected = _strip_markdown_bold_and_collect(str(b))
+            cleaned_exp_bullets.append(cb)
+            raw_candidates.extend(collected)
+        exp["bullets"] = cleaned_exp_bullets
+        experience_bullets.extend(cleaned_exp_bullets)
+
+    project_result_bullets: list[str] = []
+    for proj in resume.get("projects") or []:
+        cleaned_proj_bullets = []
+        for idx, b in enumerate(proj.get("bullets") or []):
+            cb, collected = _strip_markdown_bold_and_collect(str(b))
+            cleaned_proj_bullets.append(cb)
+            if idx > 0:
+                raw_candidates.extend(collected)
+                project_result_bullets.append(cb)
+        proj["bullets"] = cleaned_proj_bullets
+
+    all_target_bullets = experience_bullets + project_result_bullets
+
+    valid_phrases: list[str] = []
+    for p in raw_candidates:
+        if any(p in b and p != b.strip() for b in all_target_bullets):
+            if p not in valid_phrases:
+                valid_phrases.append(p)
+
+    if len(valid_phrases) < 2:
+        for b in project_result_bullets + [eb for eb in experience_bullets if re.search(r"\d", eb)]:
+            for phrase in _extract_metric_phrases(b):
+                if phrase not in valid_phrases and any(phrase in tb and phrase != tb.strip() for tb in all_target_bullets):
+                    valid_phrases.append(phrase)
+                    if len(valid_phrases) >= 4:
+                        break
+            if len(valid_phrases) >= 4:
+                break
+
+    return valid_phrases[:6]
+
+
 def _card_to_project_dict(card: dict, custom_bullets: list[str] | None = None, tech_stack: list[str] | None = None) -> dict:
     details = json.loads(card.get("details") or "{}") if isinstance(card.get("details"), str) else (card.get("details") or {})
-    bullets = [b.strip() for b in custom_bullets] if custom_bullets else []
-    bullets = [b for b in bullets if b]
-    if not bullets:
-        bullets = details.get("bullets") or ([card["claim"]] if card.get("claim") else [])
-    bullets = bullets[:2] if len(bullets) >= 2 else bullets
+    bullets = _normalize_bullets_to_two(custom_bullets or [], card)
     stack = tech_stack or details.get("tech_stack", [])
     if isinstance(stack, str):
         stack = [s.strip() for s in stack.split(",") if s.strip()]
@@ -356,6 +521,8 @@ def _apply_experience_reply(draft: dict, reply: str, db: Database, settings: Set
         if lines and current_exp:
             current_exp[0] = {**current_exp[0], "bullets": lines}
     resume["experience"] = current_exp
+    explicit_bold = data.get("bold_phrases") if isinstance(data, dict) and isinstance(data.get("bold_phrases"), list) else None
+    resume["bold_phrases"] = _populate_resume_bold_phrases(resume, explicit_phrases=explicit_bold)
     return update_draft(db, settings, draft["id"], {"resume_data": resume})
 
 
@@ -540,8 +707,12 @@ def _apply_projects_reply(draft: dict, reply: str, db: Database, settings: Setti
                 else:
                     merged[-1] = np
         final_projects = merged
-
+    final_projects = _backfill_projects_to_three(final_projects, cards, excluded_text=instruction)
     resume = {**draft["resume_data"], "projects": final_projects}
+    explicit_bold = None
+    if isinstance(extracted, dict) and isinstance(extracted.get("bold_phrases"), list):
+        explicit_bold = extracted["bold_phrases"]
+    resume["bold_phrases"] = _populate_resume_bold_phrases(resume, explicit_phrases=explicit_bold)
     return update_draft(db, settings, draft["id"], {"resume_data": resume})
 
 
@@ -565,12 +736,17 @@ def _apply_all_reply(draft: dict, reply: str, db: Database, settings: Settings, 
                     bullets = item.get("bullets", [])
                     if isinstance(bullets, str):
                         bullets = [x.strip() for x in bullets.splitlines() if x.strip()]
+                    normalized_bullets = _normalize_bullets_to_two(bullets, card)
                     if card:
-                        projects.append(_card_to_project_dict(card, bullets, item.get("tech_stack")))
+                        projects.append(_card_to_project_dict(card, normalized_bullets, item.get("tech_stack")))
                     else:
-                        projects.append(item)
+                        clean_item = dict(item)
+                        clean_item["bullets"] = normalized_bullets
+                        projects.append(clean_item)
             if projects:
-                resume["projects"] = projects[:3]
+                resume["projects"] = _backfill_projects_to_three(projects, cards, excluded_text=instruction)
+        explicit_bold = data.get("bold_phrases") if isinstance(data.get("bold_phrases"), list) else None
+        resume["bold_phrases"] = _populate_resume_bold_phrases(resume, explicit_phrases=explicit_bold)
         updates = {"resume_data": resume}
         if "message_data" in data and isinstance(data["message_data"], dict):
             updates["message_data"] = data["message_data"]
@@ -882,14 +1058,43 @@ class ChatGPTInputManager:
                     self.error = str(error)[:180]
                     return {"status": "failed", "detail": f"Could not open ChatGPT: {str(error)[:180]}"}
 
-    async def _receive_reply(self, page: Page, initial_count: int = 0, timeout: float = 60.0) -> str | None:
+    async def _select_extra_high_thinking(self, page: Page) -> None:
+        try:
+            model_btn = page.locator("button:has-text('5.6'), button:has-text('Medium'), button:has-text('High'), button:has-text('Low'), button:has-text('Extra High'), [data-testid*='model-switcher']").first
+            if await model_btn.count() == 0:
+                return
+            btn_text = (await model_btn.inner_text()).strip()
+            if "Extra High" in btn_text:
+                return
+            await model_btn.click()
+            await asyncio.sleep(0.3)
+            slider = page.locator("[data-reasoning-slider='true'], [data-model-picker-power-slider]").first
+            if await slider.count() > 0:
+                last_tick = page.locator("[data-model-picker-power-slider] .TickRail-KLjYfZ > span").last
+                if await last_tick.count() > 0:
+                    await last_tick.click()
+                else:
+                    await slider.focus()
+                    for _ in range(3):
+                        await page.keyboard.press("ArrowRight")
+                await asyncio.sleep(0.3)
+            await page.keyboard.press("Escape")
+            await asyncio.sleep(0.2)
+        except Exception:
+            pass
+
+    async def _receive_reply(self, page: Page, initial_count: int = 0, timeout: float = 180.0) -> str | None:
         loop = asyncio.get_event_loop()
         start_time = loop.time()
-        appearance_timeout = min(timeout, 20.0)
+        appearance_timeout = min(timeout, 60.0)
         assistant_found = False
 
         while loop.time() - start_time < appearance_timeout:
             try:
+                stop_btn = page.locator(STOP_BUTTON).first
+                if await stop_btn.is_visible():
+                    assistant_found = True
+                    break
                 current_count = await page.locator(ASSISTANT_MESSAGE).count()
                 if current_count > initial_count or (current_count > 0 and initial_count == 0):
                     assistant_found = True
@@ -962,7 +1167,7 @@ class ChatGPTInputManager:
             return clean_reply_text(last_text)
         return None
 
-    async def enter(self, prompt: str, timeout: float = 60.0) -> dict[str, Any]:
+    async def enter(self, prompt: str, timeout: float = 180.0) -> dict[str, Any]:
         self.frontmost_app = frontmost_app_bundle()
         async with self.priority_browser():
             try:
@@ -981,6 +1186,8 @@ class ChatGPTInputManager:
                             "status": "sign_in_required",
                             "detail": "Sign in to ChatGPT in Settings > Drafting provider, then try again.",
                         }
+
+                    await self._select_extra_high_thinking(page)
 
                     initial_assistant_count = 0
                     try:
