@@ -73,6 +73,25 @@ async def _wait_for_easy_apply_step(page: Page) -> None:
     raise ValueError("LinkedIn Easy Apply did not open a recognizable application form")
 
 
+async def _open_easy_apply_dialog(page: Page) -> None:
+    button = page.get_by_role("button", name=_EASY_APPLY).first
+    await button.wait_for(state="visible", timeout=12000)
+    for attempt in range(4):
+        try:
+            if await button.is_visible() and await button.is_enabled():
+                await button.click(timeout=3000)
+        except Exception:
+            pass
+        for _ in range(16):
+            await page.wait_for_timeout(250)
+            try:
+                await _easy_apply_step(page)
+                return
+            except ValueError:
+                pass
+    raise ValueError("LinkedIn Easy Apply did not open a recognizable application form")
+
+
 def _infer_default_radio_answer(label: str, options: list[dict]) -> str:
     text = (label or "").casefold()
     opt_texts = [str(o.get("text", "")).casefold() for o in options]
@@ -448,8 +467,7 @@ async def _advance(page: Page, button, step: int) -> bool:
 async def inspect_easy_apply_dialog(page: Page, posting_url: str, existing_answers: dict[str, str],
                                     resume_path: Path) -> dict:
     """Inspect and prefill every reachable step, stopping before submission."""
-    await page.get_by_role("button", name=_EASY_APPLY).first.click(timeout=12000)
-    await _wait_for_easy_apply_step(page)
+    await _open_easy_apply_dialog(page)
     fields: list[dict] = []
     answers: dict[str, str] = {}
     attachments: dict[str, dict] = {}
@@ -483,36 +501,38 @@ async def inspect_easy_apply_dialog(page: Page, posting_url: str, existing_answe
 
 async def submit_easy_apply_dialog(page: Page, reviewed: dict, resume_path: Path) -> tuple[str, str]:
     """Fill the reviewed LinkedIn steps and submit only if every step still matches."""
-    await page.get_by_role("button", name=_EASY_APPLY).first.click(timeout=12000)
-    await _wait_for_easy_apply_step(page)
-    seen: list[dict] = []
-    expected = reviewed.get("fields") or []
-    posting_url = reviewed.get("destination_url") or page.url
-    for _ in range(12):
-        root, button, action, step, total_steps = await _easy_apply_step(page)
-        current = await _step_fields(root, step, len(seen))
-        checked = seen + current
-        if _easy_signature(checked, posting_url, total_steps) != _easy_signature(expected[:len(checked)], posting_url, total_steps):
-            return "needs_user_attention", "LinkedIn form changed after review; inspect it again"
-        seen = checked
-        blockers = await _fill_step(page, root, current, reviewed.get("answers") or {}, resume_path)
-        if blockers:
-            return "needs_user_attention", "; ".join(blockers)
-        if action == "submit":
-            if not reviewed.get("complete") or _easy_signature(seen, posting_url, total_steps) != reviewed.get("signature"):
+    try:
+        await _open_easy_apply_dialog(page)
+        seen: list[dict] = []
+        expected = reviewed.get("fields") or []
+        posting_url = reviewed.get("destination_url") or page.url
+        for _ in range(12):
+            root, button, action, step, total_steps = await _easy_apply_step(page)
+            current = await _step_fields(root, step, len(seen))
+            checked = seen + current
+            if _easy_signature(checked, posting_url, total_steps) != _easy_signature(expected[:len(checked)], posting_url, total_steps):
                 return "needs_user_attention", "LinkedIn form changed after review; inspect it again"
-            await button.click(timeout=15000)
-            try:
-                await page.get_by_text(re.compile(
-                    r"application (?:sent|submitted|was sent)|your application was sent|you applied|ứng tuyển thành công|đã gửi đơn ứng tuyển",
-                    re.I
-                )).first.wait_for(timeout=8000)
-                return "submitted_confirmed", f"LinkedIn confirmed application at {page.url}"
-            except Exception:
-                return "submitted_unconfirmed", f"LinkedIn submit was clicked; confirmation was not detected at {page.url}"
-        if not await _advance(page, button, step):
-            return "needs_user_attention", "LinkedIn did not advance after filling the reviewed answers"
-    return "needs_user_attention", "LinkedIn application had more steps than were reviewed"
+            seen = checked
+            blockers = await _fill_step(page, root, current, reviewed.get("answers") or {}, resume_path)
+            if blockers:
+                return "needs_user_attention", "; ".join(blockers)
+            if action == "submit":
+                if not reviewed.get("complete") or _easy_signature(seen, posting_url, total_steps) != reviewed.get("signature"):
+                    return "needs_user_attention", "LinkedIn form changed after review; inspect it again"
+                await button.click(timeout=15000)
+                try:
+                    await page.get_by_text(re.compile(
+                        r"application (?:sent|submitted|was sent)|your application was sent|you applied|ứng tuyển thành công|đã gửi đơn ứng tuyển",
+                        re.I
+                    )).first.wait_for(timeout=8000)
+                    return "submitted_confirmed", f"LinkedIn confirmed application at {page.url}"
+                except Exception:
+                    return "submitted_unconfirmed", f"LinkedIn submit was clicked; confirmation was not detected at {page.url}"
+            if not await _advance(page, button, step):
+                return "needs_user_attention", "LinkedIn did not advance after filling the reviewed answers"
+        return "needs_user_attention", "LinkedIn application had more steps than were reviewed"
+    except Exception as error:
+        return "needs_user_attention", str(error)
 
 
 async def inspect_linkedin_application(settings: Settings, draft: dict) -> dict:

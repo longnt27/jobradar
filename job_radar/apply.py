@@ -16,7 +16,7 @@ from .application_action import is_linkedin_job_posting_url
 from .db import Database, new_id, now
 from .drafting import draft_custom_answers, get_draft, package_hash
 from .mail_config import send_smtp_message, validated_smtp_config
-from .linkedin_application import inspect_linkedin_application, submit_easy_apply_dialog
+from .linkedin_application import inspect_linkedin_application, submit_easy_apply_dialog, wait_for_linkedin_apply_control
 from .settings import Settings
 from .social_browser import chrome_context_options, clean_stale_chrome_lock
 
@@ -677,11 +677,23 @@ async def _send_linkedin_easy_apply(settings: Settings, draft: dict) -> tuple[st
     from .collectors import AuthRequired, _check_auth
 
     posting_url = draft["destination"]["url"]
+    clean_stale_chrome_lock(settings.browser_profile)
     async with async_playwright() as playwright:
-        context = await playwright.chromium.launch_persistent_context(
-            str(settings.browser_profile), headless=True, accept_downloads=False,
-            **chrome_context_options(required=True),
-        )
+        try:
+            context = await playwright.chromium.launch_persistent_context(
+                str(settings.browser_profile), headless=True, accept_downloads=False,
+                **chrome_context_options(required=True),
+            )
+        except Exception as error:
+            if "SingletonLock" in str(error) or "ProcessSingleton" in str(error):
+                clean_stale_chrome_lock(settings.browser_profile)
+                await asyncio.sleep(2.0)
+                context = await playwright.chromium.launch_persistent_context(
+                    str(settings.browser_profile), headless=True, accept_downloads=False,
+                    **chrome_context_options(required=True),
+                )
+            else:
+                return "needs_user_attention", f"Failed to launch browser: {error}"
         try:
             page = await context.new_page()
             await page.goto(posting_url, wait_until="domcontentloaded", timeout=45000)
@@ -689,7 +701,12 @@ async def _send_linkedin_easy_apply(settings: Settings, draft: dict) -> tuple[st
                 _check_auth(page.url, await page.locator("body").inner_text(timeout=7000))
             except AuthRequired as error:
                 return "needs_user_attention", str(error)
+            control = await wait_for_linkedin_apply_control(page)
+            if control["kind"] != "linkedin_easy_apply":
+                return "needs_user_attention", control.get("detail") or "LinkedIn Easy Apply is not available on this posting"
             return await submit_easy_apply_dialog(page, draft["form_data"], Path(draft["resume_path"]))
+        except Exception as error:
+            return "needs_user_attention", str(error)
         finally:
             await context.close()
 
