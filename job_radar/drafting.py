@@ -464,13 +464,14 @@ def _run_provider(provider: str, job: dict, profile: dict, cards: list[dict], cu
               "Include at least one from a candidate experience bullet with a measured result when one exists, "
               "and at least one from a selected project's second (result) bullet. Prefer metrics and comparisons; use at most "
               "one phrase per bullet. Do not bold routine methods, vague claims, or whole bullets. "
-              "Do not add unsupported facts. Write a high-level, cohesive professional summary (2 to 3 sentences, "
-              "250 to 450 characters) in English. Introduce candidate identity, competitive programming background, "
-              "core technologies (such as Python, PyTorch, Linux), and relevant technical domains (such as machine learning, "
-              "computer vision, LLM systems, or backend integration) aligned with the target role. "
-              "Emphasize experience building end-to-end AI pipelines, model evaluation, and integrating practical solutions. "
-              "Do NOT include hyper-specific project metrics, benchmark scores (like PCC, F1, PSNR, SSIM), test fixture numbers, "
-              "dataset names (e.g. SpeechOcean762), or individual project names in the summary—keep it cohesive and professional. "
+              "Do not add unsupported facts. Write a clean, high-level, cohesive professional summary (2 to 3 sentences, "
+              "200 to 450 characters) in English. Introduce candidate engineering identity (e.g. Applied AI Engineer with a strong "
+              "algorithmic and problem-solving foundation) and overarching focus on designing, building, and deploying reliable, "
+              "production-oriented AI systems and workflows. Keep it general and accessible for HR/recruiters: do NOT rattle off laundry lists "
+              "of programming languages, frameworks, databases, or cloud tools (e.g. do not list Python, Go, TypeScript, FastAPI, PostgreSQL, Docker, AWS; "
+              "technologies belong strictly in Skills, not in the summary). Do NOT throw buzzwords, tech stack dumps, "
+              "hyper-specific project metrics, benchmark scores (like PCC, F1, PSNR, SSIM), test fixture numbers, "
+              "dataset names (e.g. SpeechOcean762), or individual project names into the summary—keep it cohesive, natural, and professional. "
               "Do not repeat the degree or school already in Education. "
               "Previous positions belong only in Experience, projects "
               "only in Selected Projects. Write the professional summary and all resume/project bullets in English, "
@@ -840,12 +841,13 @@ def _section_model(provider: str, section: str, prompt: str, job: dict, profile:
         "skills": SkillsSection, "message": ApplicationFit,
     }
     instructions = {
-        "summary": ("Return only a high-level, cohesive professional summary under 450 characters in English (2 to 3 sentences). "
-                    "Highlight candidate role identity, competitive programming background, core technologies (e.g. Python, PyTorch, Linux), "
-                    "and relevant technical domains (e.g. machine learning, deep learning, computer vision, LLM systems, or backend integration) "
-                    "aligned with the target role. Emphasize experience building end-to-end AI pipelines, evaluating model performance, "
-                    "and integrating practical solutions. Do NOT cite hyper-specific benchmark metrics (such as PCC, F1, PSNR, SSIM), "
-                    "test fixture numbers, dataset names (e.g. SpeechOcean762), or individual project names."),
+        "summary": ("Return only a clean, high-level, cohesive professional summary under 450 characters in English (2 to 3 sentences). "
+                    "Introduce candidate engineering identity (e.g. Applied AI Engineer with a strong algorithmic and problem-solving foundation) "
+                    "and overarching focus on designing, building, and deploying reliable, production-oriented AI systems and workflows. "
+                    "Keep it general and accessible for HR/recruiters: do NOT list laundry lists of programming languages, frameworks, libraries, "
+                    "databases, or tools (technologies belong strictly in Skills). Do NOT throw buzzwords, tech stack dumps, "
+                    "hyper-specific benchmark metrics (such as PCC, F1, PSNR, SSIM), test fixture numbers, dataset names (e.g. SpeechOcean762), "
+                    "or individual project names into the summary."),
         "experience": "Return one indexed entry per current position. Rewrite only its bullets in English; do not change employers, roles, or dates. Keep measured results accurate.",
         "projects": "Select up to three approved project IDs, ordered by strong job-relevant evidence. When at least three projects are approved, select exactly three. For each, return exactly two bullets: first what it does and how, then one result bullet. Select one to three complementary job-relevant result IDs per project and combine their supported outcomes in the single second bullet when they give a fuller, more balanced achievement. Every metric in bullet 2 must be supported by a result ID in project_focus. Keep internal logs and trace artifacts out of result bullets; describe them in bullet 1 only if they explain how the project works. For accuracy-focused work prioritize measured accuracy over model count, mesh size, or speed. For 3D pose work include PA-MPJPE when approved evidence supports it; if citing reduced acceleration error, include its pose-accuracy tradeoff in the same result bullet. For vision jobs, use strong perception results before unrelated LLM results. Name the dataset and measurement scope as needed; never invent or improve a metric. Use three to five supported skill categories. Reference valid result IDs where available. Bold phrases must be short exact measured-result substrings from the second bullets. Do not include caveats or weaker negative metrics as achievements.",
         "education": "Return one indexed entry per current education record. Rewrite only degree wording in English. Preserve the exact school, credential, and dates; do not invent qualifications.",

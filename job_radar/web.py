@@ -2204,7 +2204,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404, str(error)) from error
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
-        result = await chatgpt_input.enter(prompt)
+        timeout = 360.0 if payload.section == "all" else 240.0
+        try:
+            result = await chatgpt_input.enter(prompt, timeout=timeout)
+        except TypeError:
+            result = await chatgpt_input.enter(prompt)
         if result["status"] == "failed":
             raise HTTPException(503, result["detail"])
         if result.get("reply"):

@@ -159,6 +159,12 @@ def application_prompt(db: Database, draft_id: str, section: str, instruction: s
             )
         elif section == "all":
             rules += (
+                "For the professional summary, write a clean, high-level, cohesive overview under 450 characters in English (2 to 3 sentences). "
+                "Introduce candidate engineering identity (e.g. Applied AI Engineer with a strong algorithmic and problem-solving foundation) "
+                "and overarching focus on designing, building, and deploying reliable, production-oriented AI systems and practical workflows. "
+                "Keep it general and accessible for HR/recruiters: do NOT list laundry lists of programming languages, frameworks, "
+                "databases, or cloud tools (technologies belong strictly in Skills, not in the summary). Do NOT throw buzzwords, tech stack dumps, "
+                "hyper-specific benchmark metrics (like PCC, F1, PSNR, SSIM), dataset names, or individual project names into the summary. "
                 "Return the revised resume as a JSON object with keys: summary, experience, projects, education, achievements, skills, skill_groups, bold_phrases. "
                 "For projects, format as a list of exactly three objects (when available) with id, title, repository_url, tech_stack, and bullets (exactly two bullets: what/how first, combined measured results second). "
                 "Set bold_phrases to 2 to 6 short exact substrings that quote the strongest measured results from experience bullets and project second bullets. "
@@ -170,11 +176,13 @@ def application_prompt(db: Database, draft_id: str, section: str, instruction: s
         )
     elif section == "summary":
         rules += (
-            "Write a high-level, cohesive professional summary under 450 characters in English (2 to 3 sentences). "
-            "Highlight role identity, competitive programming background, core technologies (Python, PyTorch, Linux), "
-            "and relevant technical domains aligned with the target role, with experience building end-to-end AI pipelines "
-            "and integrating practical solutions. Do NOT cite hyper-specific benchmark metrics (like PCC, F1, PSNR, SSIM), "
-            "test scores, dataset names, or project names in the summary. "
+            "Write a clean, high-level, cohesive professional summary under 450 characters in English (2 to 3 sentences). "
+            "Introduce candidate engineering identity (e.g. Applied AI Engineer with a strong algorithmic and problem-solving foundation) "
+            "and overarching focus on designing, building, and deploying reliable, production-oriented AI systems and practical workflows. "
+            "Keep it general, natural, and accessible for HR/recruiters: do NOT list laundry lists of programming languages, frameworks, "
+            "libraries, databases, or cloud tools (e.g. do not list Python, Go, TypeScript, FastAPI, PostgreSQL, Docker, AWS; technologies belong strictly in Skills). "
+            "Do NOT throw buzzwords or tech stack dumps into HR's face, and do NOT cite hyper-specific benchmark metrics (like PCC, F1, PSNR, SSIM), "
+            "dataset names, or individual project names in the summary. "
         )
     else:
         rules += "Write resume text in English and revise only the requested section. "
@@ -1161,9 +1169,11 @@ class ChatGPTInputManager:
                         # Fallback to DOM extraction from turn container
                         try:
                             dom_text = await last_copy.evaluate("""(el) => {
-                                const asst = el.closest("[data-message-author-role='assistant'], article, .group, .agent-turn") || el.parentElement;
+                                const asst = el.closest("[data-message-author-role='assistant'], article, .group, .agent-turn, [data-testid*='conversation-turn']") 
+                                    || el.parentElement?.parentElement?.parentElement 
+                                    || el.parentElement;
                                 if (asst) {
-                                    const md = asst.querySelector("[class*='markdown'], [class*='Markdown'], [data-message-id], .prose") || asst;
+                                    const md = asst.querySelector("[class*='markdown'], [class*='Markdown'], [class*='MarkdownRoot'], [data-message-id], .prose") || asst;
                                     const clone = md.cloneNode(true);
                                     clone.querySelectorAll('button').forEach(b => b.remove());
                                     return clone.innerText || '';
@@ -1174,6 +1184,16 @@ class ChatGPTInputManager:
                                 dom_text = re.sub(r"^ChatGPT said:\s*", "", dom_text.strip())
                                 if dom_text and dom_text != prompt.strip():
                                     return clean_reply_text(dom_text)
+                        except Exception:
+                            pass
+
+                        # If copy button is present and generation stopped, extract directly from markdown locator
+                        try:
+                            md_locator = page.locator("[class*='MarkdownRoot'], [data-message-author-role='assistant'] [class*='markdown'], [class*='markdown'], .prose")
+                            if await md_locator.count() > 0:
+                                md_txt = (await md_locator.last.inner_text()).strip()
+                                if md_txt and md_txt != prompt.strip():
+                                    return clean_reply_text(md_txt)
                         except Exception:
                             pass
                 except Exception:
@@ -1194,7 +1214,7 @@ class ChatGPTInputManager:
                     last_text = text
                     stable_time = 0.0
 
-                if not is_generating and stable_time >= 3.0:
+                if not is_generating and (stable_time >= 2.0 or curr_copies > initial_copy_count):
                     return clean_reply_text(text)
 
             await asyncio.sleep(check_interval)
@@ -1203,7 +1223,7 @@ class ChatGPTInputManager:
             return clean_reply_text(last_text)
         return None
 
-    async def enter(self, prompt: str, timeout: float = 180.0) -> dict[str, Any]:
+    async def enter(self, prompt: str, timeout: float = 240.0) -> dict[str, Any]:
         self.frontmost_app = frontmost_app_bundle()
         async with self.priority_browser():
             try:
@@ -1242,17 +1262,16 @@ class ChatGPTInputManager:
                     send_btn = page.locator(SEND_BUTTON).first
                     submitted = False
                     try:
-                        if await send_btn.is_visible() and await send_btn.is_enabled():
-                            await send_btn.click()
-                            submitted = True
+                        await send_btn.click(timeout=5000)
+                        submitted = True
                     except Exception:
                         pass
 
                     if not submitted:
-                        await composer.press("Enter")
                         try:
-                            if await send_btn.is_visible() and await send_btn.is_enabled():
-                                await send_btn.click()
+                            await composer.press("Enter")
+                            await send_btn.click(timeout=3000)
+                            submitted = True
                         except Exception:
                             pass
 

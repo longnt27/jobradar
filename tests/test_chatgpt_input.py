@@ -748,6 +748,12 @@ def test_application_prompt_contains_thinking_bold_and_bullet_rules(tmp_path: Pa
     assert "exactly two bullets" in prompt
     assert "what/how" in prompt
     assert "measured results" in prompt
+    assert "professional summary" in prompt
+    assert "technologies belong strictly in Skills" in prompt
+
+    summary_prompt = application_prompt(db, draft["id"], "summary", "")
+    assert "clean, high-level, cohesive professional summary" in summary_prompt
+    assert "technologies belong strictly in Skills" in summary_prompt
 
 
 def test_apply_chatgpt_reply_enforces_three_projects_and_two_bullets(tmp_path: Path) -> None:
