@@ -147,6 +147,9 @@ def application_prompt(db: Database, draft_id: str, section: str, instruction: s
             "(at most one phrase per bullet). Include at least one from candidate experience when one exists, and at least one "
             "from each selected project's second (result) bullet. Quote short metric phrases or comparison figures directly "
             "(e.g. 'F1 0.5043', 'achieved 85.14% stress-location accuracy'). Do NOT bold entire bullets, routine duties, or vague claims. "
+            "Do NOT include academic caveats, protocol-version warnings, historical-result warnings, unaccelerated hardware/CPU slowdowns, "
+            "or statistical disclaimers in any resume bullet (e.g. NEVER include 'Historical thesis results', 'protocol-v2 reruns may differ', "
+            "'slower on Kaggle CPU', 'warrant caution', or 'no non-inferiority margin'). Focus cleanly on positive, verified achievements. "
         )
         if section == "projects":
             rules += (

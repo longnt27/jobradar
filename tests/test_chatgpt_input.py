@@ -750,6 +750,7 @@ def test_application_prompt_contains_thinking_bold_and_bullet_rules(tmp_path: Pa
     assert "measured results" in prompt
     assert "professional summary" in prompt
     assert "technologies belong strictly in Skills" in prompt
+    assert "Do NOT include academic caveats" in prompt
 
     summary_prompt = application_prompt(db, draft["id"], "summary", "")
     assert "clean, high-level, cohesive professional summary" in summary_prompt
