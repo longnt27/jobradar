@@ -141,7 +141,11 @@ def application_prompt(db: Database, draft_id: str, section: str, instruction: s
         rules += (
             "For Selected Projects choose exactly three approved projects when available, in order of strongest "
             "job-relevant evidence. Give each project exactly two bullets: bullet 1 introduces what was built, why, and how; "
-            "bullet 2 provides measured results. Combine complementary supported results into the second bullet. "
+            "bullet 2 provides the single strongest, most job-relevant measured result for the target role. "
+            "If the job is LLM/Agent/Software-focused, prioritize the LLM/reasoning benchmark; if the job is computer vision, "
+            "prioritize the vision benchmark. Do NOT mechanically paste disparate metrics from different sub-models or pipeline stages "
+            "together with semicolons (e.g. NEVER glue an LLM benchmark and an unrelated YOLO vision metric together into one confusing sentence). "
+            "Write one cohesive, naturally phrased result sentence with clear context explaining what model or stage achieved the metric. "
             "Keep repository links and at most five skill categories. Write resume text in English. "
             "In 'bold_phrases', provide a JSON list of 2 to 6 short exact substrings that carry the strongest measured results "
             "(at most one phrase per bullet). Include at least one from candidate experience when one exists, and at least one "
@@ -155,7 +159,7 @@ def application_prompt(db: Database, draft_id: str, section: str, instruction: s
             rules += (
                 "Return the revised projects as a JSON object with 'projects' and 'bold_phrases': "
                 '{"projects": [{"id": "<approved_project_id>", "title": "<project_title>", "repository_url": "<url>", '
-                '"tech_stack": ["Skill 1", "Skill 2"], "bullets": ["<intro/what/how bullet>", "<combined measured results bullet>"]}], '
+                '"tech_stack": ["Skill 1", "Skill 2"], "bullets": ["<intro/what/how bullet>", "<cohesive measured result bullet>"]}], '
                 '"bold_phrases": ["<short exact measured result 1>", "<short exact measured result 2>"]}. '
                 "Choose exactly three distinct approved projects when available. "
                 "Use exact IDs and titles from approved_projects in the context. "
@@ -169,7 +173,7 @@ def application_prompt(db: Database, draft_id: str, section: str, instruction: s
                 "databases, or cloud tools (technologies belong strictly in Skills, not in the summary). Do NOT throw buzzwords, tech stack dumps, "
                 "hyper-specific benchmark metrics (like PCC, F1, PSNR, SSIM), dataset names, or individual project names into the summary. "
                 "Return the revised resume as a JSON object with keys: summary, experience, projects, education, achievements, skills, skill_groups, bold_phrases. "
-                "For projects, format as a list of exactly three objects (when available) with id, title, repository_url, tech_stack, and bullets (exactly two bullets: what/how first, combined measured results second). "
+                "For projects, format as a list of exactly three objects (when available) with id, title, repository_url, tech_stack, and bullets (exactly two bullets: what/how first, cohesive measured result second). "
                 "Set bold_phrases to 2 to 6 short exact substrings that quote the strongest measured results from experience bullets and project second bullets. "
             )
     elif section == "experience":
@@ -357,7 +361,7 @@ def _normalize_bullets_to_two(raw_bullets: list[str], card: dict | None = None) 
     if not results_text and claim:
         results_text.append(claim)
     results_fallback = (
-        "; ".join(r.rstrip(".;") for r in results_text[:3]) + "."
+        results_text[0].rstrip(".;") + "."
         if results_text
         else "Delivered evaluated performance improvements across benchmark suites."
     )
