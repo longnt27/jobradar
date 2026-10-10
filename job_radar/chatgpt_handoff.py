@@ -29,17 +29,28 @@ SECTIONS = {"all", "summary", "experience", "projects", "education", "achievemen
 COMPOSER = "#prompt-textarea, [data-testid='composer-input'], div[contenteditable='true'][role='textbox'], .ProseMirror[contenteditable='true']"
 ASSISTANT_MESSAGE = (
     "[data-message-author-role='assistant'], "
-    "[class*='DilResponseRoot'], "
-    "[class*='MarkdownRoot'], "
-    ".markdown, "
     "article[data-testid*='assistant'], "
     ".agent-turn, "
     "[data-testid*='conversation-turn-assistant']"
 )
-STOP_BUTTON = "button[data-testid='stop-button'], button[aria-label='Stop generating'], button[aria-label='Stop streaming'], button[data-testid*='stop']"
-COPY_BUTTON = "button[aria-label='Copy'], button[data-testid='copy-turn-action-button'], [data-testid*='copy']"
+STOP_BUTTON = (
+    "button[data-testid='stop-button'], "
+    "button[aria-label*='Stop generating'], "
+    "button[aria-label*='Stop streaming'], "
+    "button[aria-label*='Stop'], "
+    "button[aria-label*='stop'], "
+    "button[data-testid*='stop']"
+)
+COPY_BUTTON = (
+    "button[aria-label='Copy'], "
+    "button[data-testid='copy-turn-action-button'], "
+    "button[data-testid*='copy'], "
+    ".turn-action-controls button[aria-label='Copy']"
+)
 SEND_BUTTON = "button[data-testid='send-button'], button[aria-label='Send prompt'], button[aria-label='Send message'], button[data-testid*='send'], button[aria-label*='Send']"
 STREAMING_INDICATOR = ".result-streaming, [data-is-streaming='true'], .streaming-element"
+
+
 CHROME_EPOCH_OFFSET = 11644473600
 
 
@@ -1083,7 +1094,9 @@ class ChatGPTInputManager:
         except Exception:
             pass
 
-    async def _receive_reply(self, page: Page, initial_count: int = 0, timeout: float = 180.0) -> str | None:
+    async def _receive_reply(
+        self, page: Page, initial_copy_count: int = 0, timeout: float = 180.0, prompt: str = ""
+    ) -> str | None:
         loop = asyncio.get_event_loop()
         start_time = loop.time()
         appearance_timeout = min(timeout, 60.0)
@@ -1095,27 +1108,17 @@ class ChatGPTInputManager:
                 if await stop_btn.is_visible():
                     assistant_found = True
                     break
-                current_count = await page.locator(ASSISTANT_MESSAGE).count()
-                if current_count > initial_count or (current_count > 0 and initial_count == 0):
+                current_copies = await page.locator(COPY_BUTTON).count()
+                if current_copies > initial_copy_count:
                     assistant_found = True
                     break
             except Exception:
                 pass
             await asyncio.sleep(0.1)
 
-        if not assistant_found:
-            try:
-                if await page.locator(ASSISTANT_MESSAGE).count() > 0:
-                    assistant_found = True
-            except Exception:
-                pass
-
-        if not assistant_found:
-            return None
-
         last_text = ""
         stable_time = 0.0
-        check_interval = 0.2
+        check_interval = 0.4
         while loop.time() - start_time < timeout:
             is_generating = False
             try:
@@ -1132,38 +1135,70 @@ class ChatGPTInputManager:
             except Exception:
                 pass
 
-            has_copy = False
+            curr_copies = 0
             try:
                 copy_locator = page.locator(COPY_BUTTON)
-                if await copy_locator.count() > 0 and await copy_locator.last.is_visible():
-                    has_copy = True
+                curr_copies = await copy_locator.count()
             except Exception:
                 pass
+
+            if not is_generating and curr_copies > initial_copy_count:
+                last_copy = page.locator(COPY_BUTTON).last
+                try:
+                    if await last_copy.is_visible():
+                        # Try clipboard first
+                        try:
+                            await page.context.grant_permissions(["clipboard-read", "clipboard-write"])
+                            await last_copy.click()
+                            await asyncio.sleep(0.4)
+                            cb_text = await page.evaluate("navigator.clipboard.readText()")
+                            if cb_text and cb_text.strip() and cb_text.strip() != prompt.strip():
+                                return clean_reply_text(cb_text)
+                        except Exception:
+                            pass
+
+                        # Fallback to DOM extraction from turn container
+                        try:
+                            dom_text = await last_copy.evaluate("""(el) => {
+                                const asst = el.closest("[data-message-author-role='assistant'], article, .group, .agent-turn") || el.parentElement;
+                                if (asst) {
+                                    const md = asst.querySelector("[class*='markdown'], [class*='Markdown'], [data-message-id], .prose") || asst;
+                                    const clone = md.cloneNode(true);
+                                    clone.querySelectorAll('button').forEach(b => b.remove());
+                                    return clone.innerText || '';
+                                }
+                                return '';
+                            }""")
+                            if dom_text:
+                                dom_text = re.sub(r"^ChatGPT said:\s*", "", dom_text.strip())
+                                if dom_text and dom_text != prompt.strip():
+                                    return clean_reply_text(dom_text)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
 
             text = ""
             try:
-                md_locator = page.locator("[class*='MarkdownRoot'], .markdown")
+                md_locator = page.locator("[data-message-author-role='assistant'] [class*='markdown'], [data-message-author-role='assistant'] .markdown, [class*='MarkdownRoot'], [class*='markdown'], .prose")
                 if await md_locator.count() > 0:
                     text = (await md_locator.last.inner_text()).strip()
-                else:
-                    text = (await page.locator(ASSISTANT_MESSAGE).last.inner_text()).strip()
             except Exception:
                 pass
 
-            if text:
+            if text and text != prompt.strip():
                 if text == last_text:
                     stable_time += check_interval
                 else:
                     last_text = text
                     stable_time = 0.0
 
-            if text and not is_generating:
-                if has_copy or stable_time >= 1.0:
+                if not is_generating and stable_time >= 3.0:
                     return clean_reply_text(text)
 
             await asyncio.sleep(check_interval)
 
-        if last_text:
+        if last_text and last_text != prompt.strip():
             return clean_reply_text(last_text)
         return None
 
@@ -1177,7 +1212,9 @@ class ChatGPTInputManager:
                         accepts_args = bool(sig.parameters)
                     except Exception:
                         accepts_args = True
-                    page = await (self._new_page(background=True, temporary=True) if accepts_args else self._new_page())
+                    raw_page = self._new_page(background=True, temporary=True) if accepts_args else self._new_page()
+                    page = await raw_page if inspect.isawaitable(raw_page) else raw_page
+
                     composer = page.locator(COMPOSER).first
                     try:
                         await composer.wait_for(state="visible", timeout=15000)
@@ -1189,9 +1226,9 @@ class ChatGPTInputManager:
 
                     await self._select_extra_high_thinking(page)
 
-                    initial_assistant_count = 0
+                    initial_copy_count = 0
                     try:
-                        initial_assistant_count = await page.locator(ASSISTANT_MESSAGE).count()
+                        initial_copy_count = await page.locator(COPY_BUTTON).count()
                     except Exception:
                         pass
 
@@ -1218,8 +1255,10 @@ class ChatGPTInputManager:
                         except Exception:
                             pass
 
-                    reply = await self._receive_reply(page, initial_count=initial_assistant_count, timeout=timeout)
-                    if reply:
+                    reply = await self._receive_reply(
+                        page, initial_copy_count=initial_copy_count, timeout=timeout, prompt=prompt
+                    )
+                    if reply and reply.strip() != prompt.strip():
                         return {
                             "status": "entered",
                             "detail": "Prompt entered and answer received from ChatGPT.",
