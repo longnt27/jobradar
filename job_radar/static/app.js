@@ -2357,7 +2357,7 @@ function applicationActionTarget(destination) {
 }
 
 function applicationFormFieldLabel(field) {
-  return field.label || field.name || `Field ${field.index}`;
+  return field.label || field.group_label || field.name || `Field ${field.index}`;
 }
 
 function renderApplicationFormField(field, draft) {
@@ -2401,7 +2401,7 @@ function renderApplicationFormField(field, draft) {
 
   if (field.type === 'radio' || field.type === 'checkbox') {
     const checked = ['yes','true','checked','1'].includes(answer.toLowerCase());
-    const group = field.type === 'radio' ? ` name="review-radio-${escapeHtml(field.name || 'group')}"` : '';
+    const group = field.type === 'radio' ? ` name="review-radio-${escapeHtml(field.name || field.group_label || 'group')}"` : '';
     return `<label class="application-form-choice"><input type="${field.type}"${group} data-answer="${field.index}" data-draft-field value="yes" ${checked ? 'checked' : ''}><span>${escapeHtml(label)}${required}</span></label>`;
   }
 
@@ -2412,6 +2412,53 @@ function renderApplicationFormField(field, draft) {
   const inputType = ['email','tel','url','number','date'].includes(field.type) ? field.type : 'text';
   return `<label class="application-form-field">${escapeHtml(label)}${required}<input type="${inputType}" data-answer="${field.index}" data-draft-field value="${escapeHtml(answer)}" ${field.required ? 'required' : ''}></label>`;
 }
+
+function renderApplicationFormFields(fields, draft) {
+  if (!fields || !fields.length) {
+    return '<p class="empty">No form fields inspected yet.</p>';
+  }
+  const html = [];
+  let i = 0;
+  while (i < fields.length) {
+    const field = fields[i];
+    if (field.type === 'radio') {
+      const groupKey = field.name || field.group_label || String(field.index);
+      const groupFields = [];
+      let j = i;
+      while (j < fields.length && fields[j].type === 'radio' &&
+             (fields[j].name ? fields[j].name === field.name : (field.group_label && fields[j].group_label === field.group_label))) {
+        groupFields.push(fields[j]);
+        j++;
+      }
+      if (groupFields.length > 1 || field.group_label) {
+        const groupLabel = field.group_label || field.label || 'Choose an option';
+        const groupRequired = groupFields.some((f) => f.required);
+        const reqMark = groupRequired ? ' <span class="required-mark" aria-hidden="true">*</span>' : '';
+        html.push(`<fieldset class="application-form-choice-group">
+          <legend class="application-form-choice-legend">${escapeHtml(groupLabel)}${reqMark}</legend>
+          <div class="application-form-choices">
+            ${groupFields.map((gf) => {
+              const key = String(gf.index);
+              const ans = String(draft.form_data?.answers?.[key] || '');
+              const checked = ['yes','true','checked','1'].includes(ans.toLowerCase());
+              const optLabel = gf.label || 'Option';
+              return `<label class="application-form-choice">
+                <input type="radio" name="review-radio-${escapeHtml(gf.name || groupKey)}" data-answer="${gf.index}" data-draft-field value="yes" ${checked ? 'checked' : ''}>
+                <span>${escapeHtml(optLabel)}</span>
+              </label>`;
+            }).join('')}
+          </div>
+        </fieldset>`);
+        i = j;
+        continue;
+      }
+    }
+    html.push(renderApplicationFormField(field, draft));
+    i++;
+  }
+  return html.join('');
+}
+
 
 function applicationAlert(kind, title, items) {
   if (!items?.length) return '';
@@ -2785,7 +2832,7 @@ async function showApplication(id, preferredScreen = null) {
           <button id="inspect-form-inline" type="button" class="secondary">${destination.kind === 'linkedin_easy_apply' && !formData.complete ? 'Inspect remaining steps' : 'Inspect form fields'}</button>
         </div>` : ''}
         ${formData.inspection_blockers?.length ? applicationAlert('warning', 'More answers needed to inspect every step', formData.inspection_blockers) : ''}
-        <div class="application-form-fields">${(formData.fields || []).map((field) => renderApplicationFormField(field, draft)).join('') || '<p class="empty">No form fields inspected yet.</p>'}</div>
+        <div class="application-form-fields">${renderApplicationFormFields(formData.fields || [], draft)}</div>
       </section>
 
       <div class="application-destination surface-editable">
@@ -2893,6 +2940,7 @@ async function showApplication(id, preferredScreen = null) {
     sendButton.disabled = true;
     $('#application-outcome').textContent = 'Save your changes before approving this application.';
     field.closest('label')?.classList.add('is-dirty');
+    field.closest('fieldset')?.classList.add('is-dirty');
     if (['draft-destination-kind','draft-destination'].includes(field.id)) {
       const inspectInline = detail.querySelector('#inspect-form-inline');
       if (inspectInline) {

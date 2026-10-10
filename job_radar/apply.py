@@ -50,7 +50,7 @@ def submission_attachment(row: dict, field_index: str) -> tuple[Path, str] | Non
 
 
 def _field_signature(fields: list[dict], action: str, method: str, enctype: str) -> str:
-    stable = [{key: field.get(key) for key in ("index", "name", "id", "type", "required", "label", "options", "accept", "max_length")}
+    stable = [{key: field.get(key) for key in ("index", "name", "id", "type", "required", "label", "group_label", "options", "accept", "max_length")}
               for field in fields]
     return hashlib.sha256(json.dumps({"fields": stable, "action": action, "method": method, "enctype": enctype}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
@@ -64,19 +64,82 @@ async def _form_structure(page: Page) -> dict:
         if not await form.is_visible():
             continue
         metadata = await form.evaluate("node => ({action:node.action,method:node.method,enctype:node.enctype,submit:(node.querySelector('button:not([type]),button[type=submit],input[type=submit]')?.innerText || node.querySelector('input[type=submit]')?.value || '').trim()})")
-        fields = await form.locator("input,select,textarea").evaluate_all("""nodes => nodes.map((node, index) => {
-          const type = (node.getAttribute('type') || node.tagName.toLowerCase()).toLowerCase();
-          if (['hidden','submit','button','reset','image'].includes(type)) return null;
-          const id = node.id || '';
-          const label = (node.labels && node.labels.length ? node.labels[0].innerText : '') ||
-            node.getAttribute('aria-label') || node.getAttribute('placeholder') || node.getAttribute('name') || '';
-          return {index, name:node.getAttribute('name') || '', id, type, required:node.required,
-            label:label.trim().slice(0,250), options:node.tagName.toLowerCase() === 'select' ?
-              [...node.options].map(option => ({value:option.value,text:option.text.trim()})) : [],
-            accept:node.getAttribute('accept') || '', max_length:node.maxLength > 0 ? node.maxLength : null};
-        }).filter(Boolean)""")
+        fields = await form.locator("input,select,textarea").evaluate_all(r"""nodes => {
+          const cleanText = (str) => {
+            if (!str) return '';
+            return str.replace(/[\s\*\u2731\u2217\uFE61\uFF0A]+$/g, '')
+                      .replace(/^[\s\*\u2731\u2217\uFE61\uFF0A]+/g, '')
+                      .replace(/\s+/g, ' ')
+                      .trim();
+          };
+
+          return nodes.map((node, index) => {
+            const type = (node.getAttribute('type') || node.tagName.toLowerCase()).toLowerCase();
+            if (['hidden','submit','button','reset','image'].includes(type)) return null;
+
+            const id = node.id || '';
+            const name = node.getAttribute('name') || '';
+
+            // Find question container
+            const qContainer = node.closest('.application-question, .custom-question, fieldset, [role=group], [role=radiogroup], .form-group, .field, [data-qa*=question]');
+            let groupLabel = '';
+            if (qContainer) {
+              const labelEl = qContainer.querySelector('.application-label, legend, [data-qa*=label], .label, .field-label, .control-label, h3, h4, h5');
+              if (labelEl) {
+                groupLabel = cleanText(labelEl.innerText || labelEl.textContent || '');
+              }
+            }
+
+            // Immediate label
+            let immediateLabel = '';
+            if (node.labels && node.labels.length) {
+              immediateLabel = cleanText(node.labels[0].innerText || '');
+            } else if (node.closest('label')) {
+              immediateLabel = cleanText(node.closest('label').innerText || '');
+            }
+
+            if (immediateLabel.includes('\n')) {
+              immediateLabel = cleanText(immediateLabel.split('\n')[0]);
+            }
+
+            const ariaLabel = cleanText(node.getAttribute('aria-label') || '');
+            const placeholder = cleanText(node.getAttribute('placeholder') || '');
+
+            let label = '';
+            if (type === 'radio' || type === 'checkbox') {
+              label = immediateLabel || ariaLabel || node.value || '';
+            } else if (type === 'file' && groupLabel) {
+              label = groupLabel;
+            } else {
+              const isCardOrHash = /^(cards\[|field\d+$)/i.test(immediateLabel) || !immediateLabel;
+              if (!isCardOrHash) {
+                label = immediateLabel;
+              } else if (groupLabel) {
+                label = groupLabel;
+              } else {
+                label = ariaLabel || placeholder || name || '';
+              }
+            }
+
+            const isRequired = node.required || !!(qContainer && qContainer.querySelector('.required, [aria-required="true"]'));
+
+            return {
+              index,
+              name,
+              id,
+              type,
+              required: isRequired,
+              label: label.slice(0, 250),
+              group_label: groupLabel.slice(0, 250),
+              options: node.tagName.toLowerCase() === 'select' ?
+                [...node.options].map(option => ({value: option.value, text: option.text.trim()})) : [],
+              accept: node.getAttribute('accept') || '',
+              max_length: node.maxLength > 0 ? node.maxLength : null
+            };
+          }).filter(Boolean);
+        }""")
         if fields and not any(field["type"] == "password" for field in fields):
-            description = " ".join([metadata["submit"], *(field["label"] for field in fields)]).casefold()
+            description = " ".join([metadata["submit"], *(f"{field['label']} {field.get('group_label', '')}" for field in fields)]).casefold()
             if not any(field["type"] == "file" for field in fields) and not re.search(r"apply|application|resume|curriculum vitae|cover letter|ứng tuyển|nộp hồ sơ", description):
                 continue
             candidates.append((form_index, fields, metadata))
@@ -86,6 +149,7 @@ async def _form_structure(page: Page) -> dict:
     return {"form_index": form_index, "fields": fields, "action": metadata["action"], "method": metadata["method"],
             "enctype": metadata["enctype"],
             "signature": _field_signature(fields, metadata["action"], metadata["method"], metadata["enctype"]), "final_url": page.url}
+
 
 
 async def _dismiss_cookie_dialogs(page: Page) -> None:
@@ -233,9 +297,45 @@ async def _find_application_email(page: Page) -> str | None:
     return None
 
 
+def _match_select_option(options: list[dict], candidate: str) -> str:
+    if not candidate or not options:
+        return ""
+    cand = candidate.casefold().strip()
+    for opt in options:
+        val = str(opt.get("value", "")).strip()
+        txt = str(opt.get("text", "")).strip()
+        if cand in (val.casefold(), txt.casefold()) and val:
+            return val
+    for opt in options:
+        val = str(opt.get("value", "")).strip()
+        txt = str(opt.get("text", "")).strip()
+        if not val:
+            continue
+        if (txt and (cand in txt.casefold() or txt.casefold() in cand)) or \
+           (val and (cand in val.casefold() or val.casefold() in cand)):
+            return val
+    return ""
+
+
 def _default_answer(field: dict, profile: dict, message: dict) -> str:
-    text = f"{field['name']} {field['id']} {field['label']}".casefold()
-    if field["type"] in ("file", "checkbox", "radio"):
+    lbl = field.get("label", "")
+    grp = field.get("group_label", "")
+    text = f"{field['name']} {field['id']} {lbl} {grp}".casefold()
+    if field["type"] == "file":
+        return ""
+    if field["type"] == "radio":
+        lbl_f = lbl.casefold().strip()
+        grp_f = grp.casefold()
+        if lbl_f in ("yes", "có", "đồng ý"):
+            if re.search(r"eligible|eligibility|committed|full.?time|authorized|legal|willing|background|drug", grp_f):
+                return "yes"
+        elif lbl_f in ("no", "không"):
+            if re.search(r"require.*(visa|sponsor)|need.*sponsor", grp_f):
+                return "yes"
+        elif re.search(r"hear about|source", grp_f) and "linkedin" in lbl_f:
+            return "yes"
+        return ""
+    if field["type"] == "checkbox":
         return ""
     if re.search(r"cover.?letter|motivation|why (this|you|us)|message to|additional information", text):
         return message.get("body", "")
@@ -245,8 +345,25 @@ def _default_answer(field: dict, profile: dict, message: dict) -> str:
             return str(profile.get(key, ""))
     if re.search(r"reason.*(leav|left|exit)", text):
         return "Seeking career growth as an AI Engineer in a dynamic engineering team."
-    if re.search(r"country", text):
-        return str(profile.get("country") or "Vietnam")
+    if re.search(r"less than 40 hours|how many hours", text):
+        return "N/A (committed to full-time 40 hours/week)"
+    if re.search(r"how many months|duration.*available|available.*duration", text):
+        return "6 months (available immediately full-time)"
+    if field["type"] == "select" and field.get("options"):
+        if re.search(r"which location|applying for|preferred location", text):
+            for opt in field["options"]:
+                if opt.get("text", "").strip().casefold() in ("asia", "vietnam", "remote"):
+                    return str(opt.get("value", ""))
+    if re.search(r"nationality", text):
+        ans = str(profile.get("nationality") or profile.get("country") or "Vietnam")
+        if field["type"] == "select" and field.get("options"):
+            return _match_select_option(field["options"], ans)
+        return ans
+    if re.search(r"country|where do you (currently )?live", text):
+        ans = str(profile.get("country") or "Vietnam")
+        if field["type"] == "select" and field.get("options"):
+            return _match_select_option(field["options"], ans)
+        return ans
     patterns = [
         (r"e.?mail", "email"), (r"phone|mobile|telephone", "phone"),
         (r"first.?name|given.?name", "first_name"), (r"last.?name|sur.?name|family.?name", "last_name"),
@@ -255,16 +372,22 @@ def _default_answer(field: dict, profile: dict, message: dict) -> str:
     ]
     for pattern, key in patterns:
         if re.search(pattern, text):
+            ans = ""
             if key == "first_name":
-                return str(profile.get("given_name", ""))
-            if key == "last_name":
-                return str(profile.get("family_name", ""))
-            if key == "location":
-                return str(profile.get("location") or "Hanoi, Vietnam")
-            if key in ("linkedin", "github"):
-                return next((link for link in profile.get("links", []) if key in link.casefold()), "")
-            return str(profile.get(key, ""))
+                ans = str(profile.get("given_name", ""))
+            elif key == "last_name":
+                ans = str(profile.get("family_name", ""))
+            elif key == "location":
+                ans = str(profile.get("location") or "Hanoi, Vietnam")
+            elif key in ("linkedin", "github"):
+                ans = next((link for link in profile.get("links", []) if key in link.casefold()), "")
+            else:
+                ans = str(profile.get(key, ""))
+            if field["type"] == "select" and field.get("options"):
+                return _match_select_option(field["options"], ans)
+            return ans
     return ""
+
 
 
 async def inspect_form(db: Database, settings: Settings, draft_id: str) -> dict:
@@ -324,7 +447,16 @@ async def inspect_form(db: Database, settings: Settings, draft_id: str) -> dict:
         return set_discovered_email_destination(db, draft_id, found_email, f"Recruitment email {found_email} discovered on employer page {destination['url']}.")
     profile = db.get_setting("profile", {})
     existing = draft["form_data"].get("answers", {})
-    answers = {str(field["index"]): (existing.get(str(field["index"])) or _default_answer(field, profile, draft["message_data"]))
+    def _field_answer(field: dict) -> str:
+        idx_str = str(field["index"])
+        val = existing.get(idx_str)
+        if val and field["type"] == "select" and field.get("options"):
+            valid_vals = {str(opt.get("value", "")) for opt in field["options"]}
+            if val not in valid_vals:
+                val = ""
+        return val or _default_answer(field, profile, draft["message_data"])
+
+    answers = {str(field["index"]): _field_answer(field)
                for field in structure["fields"] if field["type"] != "file"}
     if draft["provider"] != "template":
         cards = [card for card in draft["resume_data"].get("evidence", []) if card.get("id") in draft["evidence_ids"]]
@@ -551,14 +683,14 @@ def send_readiness(db: Database, settings: Settings, draft: dict) -> list[str]:
                     except ValueError as error:
                         reasons.append(str(error))
                 elif field["type"] == "radio" and field["required"]:
-                    required_radios.setdefault(field["name"] or str(field["index"]), []).append(field)
+                    required_radios.setdefault(field["name"] or field.get("group_label") or str(field["index"]), []).append(field)
                 elif field["required"]:
                     answer = str(form.get("answers", {}).get(str(field["index"]), "")).strip()
                     if not answer or (field["type"] == "checkbox" and answer.casefold() not in ("yes", "true", "checked")):
-                        reasons.append(f"Answer required: {field['label'] or field['name']}")
+                        reasons.append(f"Answer required: {field.get('label') or field.get('group_label') or field['name']}")
             for group in required_radios.values():
                 if not any(str(form.get("answers", {}).get(str(field["index"]), "")).casefold() in ("yes", "true", "checked") for field in group):
-                    reasons.append(f"Choose an option: {group[0]['label'] or group[0]['name']}")
+                    reasons.append(f"Choose an option: {group[0].get('group_label') or group[0].get('label') or group[0]['name']}")
     elif draft["destination"].get("kind") == "linkedin_easy_apply":
         form = draft["form_data"]
         if (form.get("kind") != "linkedin_easy_apply" or not form.get("complete") or
@@ -625,10 +757,10 @@ async def _send_web(settings: Settings, draft: dict) -> tuple[str, str]:
             required_radio_groups = {}
             for field in current["fields"]:
                 if field["type"] == "radio" and field["required"]:
-                    required_radio_groups.setdefault(field["name"] or str(field["index"]), []).append(field)
+                    required_radio_groups.setdefault(field["name"] or field.get("group_label") or str(field["index"]), []).append(field)
             for group in required_radio_groups.values():
                 if not any(str(answers.get(str(field["index"]), "")).casefold() in ("yes", "true", "checked") for field in group):
-                    return "needs_user_attention", f"Review required choice: {group[0]['label']}"
+                    return "needs_user_attention", f"Review required choice: {group[0].get('group_label') or group[0].get('label')}"
             for field in current["fields"]:
                 locator = fields.nth(field["index"])
                 kind = field["type"]

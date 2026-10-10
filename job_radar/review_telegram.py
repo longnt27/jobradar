@@ -103,7 +103,12 @@ def format_review_details(draft: dict, blockers: list[str]) -> str:
         for field in form.get("fields", []):
             index = str(field["index"])
             value = form.get("attachments", {}).get(index) if field["type"] == "file" else form.get("answers", {}).get(index, "")
-            label = field.get("label") or field.get("name") or index
+            label = field.get("label") or field.get("group_label") or field.get("name") or index
+            if field.get("type") == "radio":
+                if str(value).casefold() in ("yes", "true", "checked"):
+                    q = field.get("group_label") or label
+                    lines.append(f"{q}: {field.get('label') or 'Yes'}")
+                continue
             rendered = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
             if rendered not in ("", "null", "{}"):
                 lines.append(f"{label}: {rendered}")
