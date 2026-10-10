@@ -198,6 +198,9 @@ async def _open_application_form(page: Page, reviewed_opener: dict | None = None
             except ValueError:
                 await page.wait_for_timeout(250)
 
+    if len(chosen_candidates) > 1:
+        labels = ", ".join(repr(action["label"] or action["href"]) for action in chosen_candidates)
+        raise ValueError(f"Multiple possible application buttons were found: {labels}. Choose the application page manually.")
     raise ValueError("The application button did not open a recognizable application form")
 
 

@@ -193,6 +193,11 @@ def _stabilize(page: Page, active_selector: str) -> None:
         ) from error
     assert not page._ui_issues["page"], "Browser page errors:\n- " + "\n- ".join(page._ui_issues["page"])
     assert not page._ui_issues["api"], "API request failures:\n- " + "\n- ".join(page._ui_issues["api"])
+    if page.locator("#applications.active").count() > 0:
+        try:
+            page.locator("#application-detail h2").wait_for(timeout=4000)
+        except Exception:
+            pass
     notice = page.locator("#notice")
     if notice.is_visible() and notice.get_attribute("role") == "alert":
         raise AssertionError(f"UI loader error: {notice.inner_text()}")
@@ -213,6 +218,17 @@ def _stabilize(page: Page, active_selector: str) -> None:
       });
       document.querySelectorAll('.application-card .item-meta:last-child').forEach((node) => {
         node.textContent = node.textContent.includes('Sent') ? 'Updated recently · Sent' : 'Updated recently';
+      });
+      document.querySelectorAll('.activity-item small, .job-sighting small').forEach((node) => {
+        node.textContent = 'Activity recently';
+      });
+      document.querySelectorAll('.metric-subtext').forEach((node) => {
+        if (node.textContent.includes('First seen')) node.textContent = 'First seen recently';
+      });
+      document.querySelectorAll('#application-detail p.hint, .activity-item-content strong').forEach((node) => {
+        if (node.textContent.includes('Application draft created')) {
+          node.textContent = 'Application draft created recently';
+        }
       });
       const sinceLabel = document.querySelector('#jobs-since-label');
       const sinceCount = document.querySelector('#jobs-since-count');
@@ -395,25 +411,23 @@ def test_desktop_keyboard_path_reaches_navigation_jobs_and_application_review(ui
         page.keyboard.press("Enter")
         page.locator("#jobs.active").wait_for()
         page.locator('[data-job-inbox="all"]').click()
-        page.locator("[data-job]").first.wait_for()
-
+        _stabilize(page, "#jobs.active")
         card = page.locator("[data-job]").first
         card.focus()
         assert page.evaluate("document.activeElement?.hasAttribute('data-job')") is True
         page.keyboard.press("Enter")
-        page.locator("#job-detail h2").wait_for()
-        assert page.locator("#job-detail").evaluate("node => document.activeElement === node")
+        page.wait_for_function("document.activeElement?.id === 'job-detail'")
         assert card.get_attribute("aria-pressed") == "true"
 
         page.locator('.sidebar nav [data-tab="applications"]').focus()
         page.keyboard.press("Enter")
         page.locator("#applications.active").wait_for()
+        _stabilize(page, "#applications.active")
         application = page.locator("[data-application]").first
         application.focus()
         page.keyboard.press("Enter")
-        page.locator("#application-detail h2").wait_for()
+        page.wait_for_function("document.activeElement?.id === 'application-detail'")
         assert page.locator("#application-detail").is_visible()
-        assert page.locator("#application-detail").evaluate("node => document.activeElement === node")
         assert application.get_attribute("aria-pressed") == "true"
     finally:
         page.context.close()
@@ -442,6 +456,9 @@ def test_application_approve_and_send_is_keyboard_operable_without_redundant_con
     try:
         page.goto(_surface_url(ui_server, "applications"))
         _stabilize(page, "#applications.active")
+        next_pkg = page.locator("#btn-next-to-package")
+        if next_pkg.is_visible():
+            next_pkg.click()
         send = page.locator("#send-draft")
         send.wait_for()
         assert send.is_enabled()

@@ -758,7 +758,8 @@ def _apply_all_reply(draft: dict, reply: str, db: Database, settings: Settings, 
                 resume["projects"] = _backfill_projects_to_three(projects, cards, excluded_text=instruction)
         explicit_bold = data.get("bold_phrases") if isinstance(data.get("bold_phrases"), list) else None
         resume["bold_phrases"] = _populate_resume_bold_phrases(resume, explicit_phrases=explicit_bold)
-        updates = {"resume_data": resume, "warnings": []}
+        db.execute("UPDATE application_drafts SET warnings='[]' WHERE id=?", (draft["id"],))
+        updates = {"resume_data": resume}
         if "message_data" in data and isinstance(data["message_data"], dict):
             updates["message_data"] = data["message_data"]
         return update_draft(db, settings, draft["id"], updates)
