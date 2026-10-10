@@ -253,11 +253,9 @@ def _default_answer(field: dict, profile: dict, message: dict) -> str:
     for pattern, key in patterns:
         if re.search(pattern, text):
             if key == "first_name":
-                parts = profile.get("name", "").split()
-                return str(profile.get("given_name") or (parts[-1] if parts else ""))
+                return str(profile.get("given_name", ""))
             if key == "last_name":
-                parts = profile.get("name", "").split()
-                return str(profile.get("family_name") or (" ".join(parts[:-1]) if len(parts) > 1 else (parts[0] if parts else "")))
+                return str(profile.get("family_name", ""))
             if key == "location":
                 return str(profile.get("location") or "Hanoi, Vietnam")
             if key in ("linkedin", "github"):

@@ -1883,6 +1883,11 @@ function applicationReviewKey(draft) {
   const outcome = draft.latest_submission?.outcome?.key;
   if (outcome === 'submission_uncertain' || outcome === 'sending') return 'submission_uncertain';
   if (['email_sent','application_submitted'].includes(outcome)) return 'sent';
+  if (draft.project_refresh_error || draft.status === 'failed' || draft.review_status === 'failed' ||
+      (draft.review_status === 'needs_review' && draft.attempt_detail &&
+       (draft.attempt_detail.toLowerCase().includes('failed') || draft.attempt_detail.toLowerCase().includes('stopped')))) {
+    return 'failed';
+  }
   if (draft.review_status) return draft.review_status;
   if (draft.status === 'sent') return 'sent';
   if (draft.status === 'submission_uncertain') return 'submission_uncertain';
@@ -1901,7 +1906,7 @@ function applicationReviewLabel(draft) {
     queued:'Queued',
     preparing:'Preparing',
     needs_confirmation:'Application method needs confirmation',
-    failed:'Needs attention',
+    failed:'Generation failed',
     draft:'Draft',
   })[key] || String(key || 'Draft').replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
@@ -1913,6 +1918,21 @@ function applicationReviewTone(draft) {
   if (['needs_review','needs_confirmation','queued','submission_uncertain'].includes(key)) return 'warning';
   if (key === 'failed') return 'danger';
   return 'neutral';
+}
+
+function applicationGroup(item) {
+  // 1: Generation failed, 2: Need changes, 3: Ready to review, 4: Sent
+  if (item.category !== undefined) {
+    if (['credits', 'failed', 'quota'].includes(item.category) || item.status === 'failed') return 1;
+    if (item.status === 'needs_confirmation' || item.category === 'method' || item.status === 'needs_review') return 2;
+    if (['queued', 'preparing'].includes(item.status)) return 3;
+    return 3;
+  }
+  const key = applicationReviewKey(item);
+  if (key === 'failed') return 1;
+  if (['needs_review', 'needs_confirmation', 'regenerating'].includes(key)) return 2;
+  if (['sent', 'submission_uncertain', 'sending'].includes(key) || applicationIsSent(item) || applicationIsUncertain(item)) return 4;
+  return 3;
 }
 
 function applicationIsSent(draft) {
@@ -2043,10 +2063,22 @@ function visibleApplicationPreparations() {
   const company = $('#application-company-filter').value;
   const review = $('#application-review-filter').value;
   const delivery = $('#application-sent-filter').value;
-  if ((review && review !== 'preparation_failed') || (delivery && delivery !== 'unsent')) return [];
-  return applicationPreparations.filter((item) =>
-    (!query || `${item.job_title} ${item.company} ${providerLabel(item.provider)}`.toLowerCase().includes(query)) &&
-    (!company || item.company === company));
+  if (delivery && delivery !== 'unsent') return [];
+  return applicationPreparations.filter((item) => {
+    if (review) {
+      if (review === 'preparation_failed') {
+        if (applicationGroup(item) !== 1) return false;
+      } else if (review === 'needs_review' || review === 'needs_confirmation') {
+        if (applicationGroup(item) !== 2) return false;
+      } else if (['awaiting_review', 'draft', 'preparing', 'queued'].includes(review)) {
+        if (applicationGroup(item) !== 3) return false;
+      } else {
+        return false;
+      }
+    }
+    return (!query || `${item.job_title} ${item.company} ${providerLabel(item.provider)}`.toLowerCase().includes(query)) &&
+      (!company || item.company === company);
+  });
 }
 
 function renderApplicationList(total = applicationsTotal) {
@@ -2065,18 +2097,39 @@ function renderApplicationList(total = applicationsTotal) {
     $('#applications-browse-jobs')?.addEventListener('click', () => showTab('jobs'));
     return;
   }
-  list.innerHTML = preparations.map((item) => {
-    const selected = item.vacancy_id === activePreparationJobId;
-    const inProgress = ['queued', 'preparing'].includes(item.status);
-    const tone = ['credits','failed','quota'].includes(item.category) ? 'danger' : inProgress ? 'info' : 'warning';
-    const statusNote = item.status === 'queued' ? 'Queued in background' : item.status === 'preparing' ? 'Preparing draft' : 'No draft yet';
-    return `<button type="button" class="item clickable application-card surface-action ${selected ? 'is-selected' : ''}" data-preparation="${item.vacancy_id}" aria-pressed="${selected ? 'true' : 'false'}">
-      <div class="item-title">${escapeHtml(item.job_title)}</div>
-      <div class="application-card-status"><span class="status-badge status-badge--${tone}">${escapeHtml(item.label)}</span></div>
-      <div class="item-meta">${escapeHtml(item.company)} · ${item.score} match · ${statusNote}</div>
-      <div class="item-meta">Updated ${when(item.updated_at)}</div>
-    </button>`;
-  }).join('') + applicationDrafts.map((draft) => {
+  const combined = [
+    ...preparations.map((item) => ({
+      type: 'preparation',
+      data: item,
+      group: applicationGroup(item),
+      time: new Date(item.updated_at || item.created_at || 0).getTime(),
+    })),
+    ...applicationDrafts.map((draft) => ({
+      type: 'draft',
+      data: draft,
+      group: applicationGroup(draft),
+      time: new Date(draft.updated_at || draft.created_at || 0).getTime(),
+    })),
+  ];
+  combined.sort((a, b) => {
+    if (a.group !== b.group) return a.group - b.group;
+    return b.time - a.time;
+  });
+  list.innerHTML = combined.map((entry) => {
+    if (entry.type === 'preparation') {
+      const item = entry.data;
+      const selected = item.vacancy_id === activePreparationJobId;
+      const inProgress = ['queued', 'preparing'].includes(item.status);
+      const tone = ['credits','failed','quota'].includes(item.category) ? 'danger' : inProgress ? 'info' : 'warning';
+      const statusNote = item.status === 'queued' ? 'Queued in background' : item.status === 'preparing' ? 'Preparing draft' : 'No draft yet';
+      return `<button type="button" class="item clickable application-card surface-action ${selected ? 'is-selected' : ''}" data-preparation="${item.vacancy_id}" aria-pressed="${selected ? 'true' : 'false'}">
+        <div class="item-title">${escapeHtml(item.job_title)}</div>
+        <div class="application-card-status"><span class="status-badge status-badge--${tone}">${escapeHtml(item.label)}</span></div>
+        <div class="item-meta">${escapeHtml(item.company)} · ${item.score} match · ${statusNote}</div>
+        <div class="item-meta">Updated ${when(item.updated_at)}</div>
+      </button>`;
+    }
+    const draft = entry.data;
     const selected = draft.id === activeApplicationId;
     const tone = applicationReviewTone(draft);
     const delivery = draft.latest_submission?.outcome?.label;
@@ -2088,8 +2141,10 @@ function renderApplicationList(total = applicationsTotal) {
     </button>`;
   }).join('');
   list.querySelectorAll('[data-application]').forEach((node) => node.addEventListener('click', async () => {
-    activeApplicationScreen = 'first-glance';
-    await showApplication(node.dataset.application, 'first-glance');
+    const draft = applicationDrafts.find((d) => d.id === node.dataset.application);
+    const screen = (draft && (applicationIsSent(draft) || applicationIsUncertain(draft))) ? 'package' : 'first-glance';
+    activeApplicationScreen = screen;
+    await showApplication(node.dataset.application, screen);
     if (window.matchMedia('(max-width: 900px)').matches) scrollNodeIntoView($('#application-detail'), {block:'start'});
     $('#application-detail').focus({preventScroll:true});
   }));
@@ -2532,7 +2587,7 @@ async function showApplication(id, preferredScreen = null) {
   const uncertain = applicationIsUncertain(draft);
   const warnings = sent || uncertain ? [] : (draft.warnings || []).filter((warning) =>
     !linkedinManual || !warning.startsWith('No application destination is known.') && !warning.startsWith('No verified application method was found.'));
-  const blockers = sent ? [] : (draft.send_blockers || []).map((blocker) =>
+  const blockers = sent || uncertain ? [] : (draft.send_blockers || []).map((blocker) =>
     linkedinManual && blocker === 'Choose an email or web application destination'
       ? linkedinEasyApply ? 'Complete this Easy Apply application on LinkedIn.' : 'No verified way to apply was found. Check the LinkedIn posting’s Apply button.'
       : blocker);
@@ -2601,8 +2656,8 @@ async function showApplication(id, preferredScreen = null) {
       <section id="application-review-overview" class="application-activity-section surface-status">
         <div class="section-head">
           <div>
-            <h3>${sent ? 'Application sent' : 'My last activities with this application'}</h3>
-            <p class="hint">${sent ? 'Submission record and delivery confirmation' : 'Status, attention items, and recent application activity'}</p>
+            <h3>${sent ? 'Application sent' : uncertain ? 'Submission status uncertain' : 'My last activities with this application'}</h3>
+            <p class="hint">${sent ? 'Submission record and delivery confirmation' : uncertain ? 'Submission outcome requires confirmation on employer site' : 'Status, attention items, and recent application activity'}</p>
           </div>
           <div class="activity-header-badges">
             <span class="pill muted">${escapeHtml(destination.kind === 'email' ? 'Email package' : ['web','linkedin_easy_apply'].includes(destination.kind) ? 'Form package' : 'Manual handoff')}</span>
@@ -2613,7 +2668,7 @@ async function showApplication(id, preferredScreen = null) {
           <small>Destination: <strong>${escapeHtml(applicationActionLabel(destination))}</strong> · ${escapeHtml(actionTarget)}</small>
         </div>
 
-        ${sent ? renderSubmissionProof(draft.latest_submission, true) : ''}
+        ${(sent || uncertain) ? renderSubmissionProof(draft.latest_submission, true) : ''}
         ${applicationAlert('danger', 'Sending is blocked', blockers)}
         ${applicationAlert('warning', 'Review before sending', warnings)}
 
@@ -2989,10 +3044,10 @@ async function showApplication(id, preferredScreen = null) {
     const sendBtn = detail.querySelector('#send-draft');
     if (backBtn) backBtn.hidden = screen !== 'package';
     if (dirtyBadge) dirtyBadge.hidden = screen !== 'package';
-    if (outcomeEl) outcomeEl.hidden = screen !== 'package';
+    if (outcomeEl) outcomeEl.hidden = screen !== 'package' && !(sent || uncertain);
     if (nextBtn) nextBtn.hidden = screen !== 'first-glance';
     if (saveBtn) saveBtn.hidden = screen !== 'package';
-    if (sendBtn) sendBtn.hidden = screen !== 'package';
+    if (sendBtn) sendBtn.hidden = screen !== 'package' && !(sent || uncertain);
     scrollNodeIntoView(detail, {block:'start'});
   };
 

@@ -469,3 +469,69 @@ def test_delete_application_draft_sent_forbidden(tmp_path: Path) -> None:
     assert resp.status_code == 422
     assert "Sent applications cannot be deleted" in resp.text
 
+
+def test_application_page_sorting_by_status_and_recency(tmp_path: Path) -> None:
+    from job_radar.db import new_id
+
+    client = TestClient(create_app(Settings(tmp_path)))
+    db = client.app.state.db
+
+    profile = client.get("/api/profile").json()
+    profile.update({
+        "name": "Alex Example", "email": "alex@example.org",
+        "experience": [{"company": "Prior", "role": "Engineer", "dates": "2024-2026", "bullets": ["Built Python systems."]}],
+    })
+    client.put("/api/profile", json=profile)
+
+    def add_item(suffix: str, draft_status: str, attempt_status: str | None = None, attempt_detail: str | None = None,
+                 submission_status: str | None = None, updated_at: str = "2026-10-01T00:00:00Z") -> str:
+        job = client.post("/api/jobs/import", json={
+            "company": f"Company {suffix}", "title": f"Role {suffix}", "description": "Build systems and software.",
+        }).json()
+        draft = prepare_draft(db, client.app.state.settings, job["id"], "template")
+        draft_id = draft["id"]
+        db.execute("UPDATE application_drafts SET status=?, updated_at=?, created_at=? WHERE id=?",
+                   (draft_status, updated_at, updated_at, draft_id))
+        if attempt_status:
+            db.execute(
+                "INSERT INTO auto_application_attempts(vacancy_id,status,draft_id,detail,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?)",
+                (job["id"], attempt_status, draft_id, attempt_detail or "", updated_at, updated_at),
+            )
+        if submission_status:
+            sub_id = new_id()
+            db.execute(
+                "INSERT INTO submissions(id,draft_id,vacancy_id,package_hash,package_data,destination,status,sent_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?)",
+                (sub_id, draft_id, job["id"], draft["package_hash"], "{}", "{}", submission_status, updated_at, updated_at),
+            )
+        return draft_id
+
+    # 1. Generation failed (newest and older)
+    fail_old = add_item("fail_old", "failed", updated_at="2026-10-01T10:00:00Z")
+    fail_new = add_item("fail_new", "draft", attempt_status="needs_review", attempt_detail="drafting failed with error", updated_at="2026-10-02T10:00:00Z")
+
+    # 2. Need changes (newest and older)
+    change_old = add_item("change_old", "draft", attempt_status="needs_review", attempt_detail="manual check needed", updated_at="2026-10-03T10:00:00Z")
+    change_new = add_item("change_new", "draft", attempt_status="needs_confirmation", updated_at="2026-10-04T10:00:00Z")
+
+    # 3. Ready to review (newest and older)
+    ready_old = add_item("ready_old", "draft", attempt_status="awaiting_review", updated_at="2026-10-05T10:00:00Z")
+    ready_new = add_item("ready_new", "draft", attempt_status="awaiting_review", updated_at="2026-10-06T10:00:00Z")
+
+    # 4. Sent (newest and older)
+    sent_old = add_item("sent_old", "sent", submission_status="sent_confirmed", updated_at="2026-10-07T10:00:00Z")
+    sent_new = add_item("sent_new", "sent", submission_status="sent_confirmed", updated_at="2026-10-08T10:00:00Z")
+
+    page = client.get("/api/applications/page", params={"page_size": 20}).json()
+    item_ids = [item["id"] for item in page["items"]]
+
+    expected = [
+        fail_new, fail_old,      # Group 1: Generation failed, newest first
+        change_new, change_old,  # Group 2: Need changes, newest first
+        ready_new, ready_old,    # Group 3: Ready to review, newest first
+        sent_new, sent_old,      # Group 4: Sent, newest first
+    ]
+    assert item_ids == expected
+
+

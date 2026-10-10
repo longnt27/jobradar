@@ -1801,9 +1801,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "ELSE COALESCE(a.status,CASE WHEN d.status='sent' THEN 'sent' "
             "WHEN d.status='submission_uncertain' THEN 'submission_uncertain' ELSE 'draft' END) END"
         )
+        sort_priority_expr = (
+            "CASE "
+            "WHEN d.project_refresh_error IS NOT NULL "
+            "     OR d.status = 'failed' "
+            "     OR a.status = 'failed' "
+            "     OR (a.status = 'needs_review' AND (a.detail LIKE '%failed%' OR a.detail LIKE '%stopped%')) THEN 1 "
+            "WHEN " + review_expr + " IN ('needs_review', 'needs_confirmation', 'regenerating') THEN 2 "
+            "WHEN " + review_expr + " IN ('awaiting_review', 'draft', 'preparing', 'queued') THEN 3 "
+            "WHEN " + review_expr + " IN ('sent', 'submission_uncertain', 'sending') THEN 4 "
+            "ELSE 3 END"
+        )
         if review:
-            clauses.append(f"{review_expr}=?")
-            params.append(review)
+            if review == "preparation_failed":
+                clauses.append(f"({sort_priority_expr}=1)")
+            else:
+                clauses.append(f"{review_expr}=?")
+                params.append(review)
         if delivery == "sent":
             clauses.append("EXISTS(SELECT 1 FROM submissions s WHERE s.draft_id=d.id AND s.status IN ('sent_confirmed','submitted_confirmed'))")
         elif delivery == "uncertain":
@@ -1817,9 +1831,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         pages = max(1, (total + page_size - 1) // page_size)
         page = min(page, pages)
         rows = db.all(
-            "SELECT d.id,d.vacancy_id,d.status,d.provider,d.provider_mode,d.created_at,d.updated_at,"
-            "v.title AS job_title,v.company,a.status AS review_status,a.telegram_status" + base + where +
-            " ORDER BY d.created_at DESC,d.id DESC LIMIT ? OFFSET ?",
+            f"SELECT d.id,d.vacancy_id,d.status,d.provider,d.provider_mode,d.created_at,d.updated_at,"
+            f"v.title AS job_title,v.company,({review_expr}) AS review_status,a.telegram_status,"
+            f"a.detail AS attempt_detail,d.project_refresh_error" + base + where +
+            f" ORDER BY {sort_priority_expr} ASC, COALESCE(d.updated_at, d.created_at) DESC, d.created_at DESC, d.id DESC LIMIT ? OFFSET ?",
             (*params, page_size, (page - 1) * page_size),
         )
         items = []
