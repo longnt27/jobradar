@@ -6,6 +6,7 @@ import json
 import os
 import re
 import smtplib
+import subprocess
 from email.message import EmailMessage
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -740,8 +741,27 @@ async def _send_web(settings: Settings, draft: dict) -> tuple[str, str]:
     form_data = draft["form_data"]
     if not form_data.get("signature") or form_data.get("destination_url") != draft["destination"].get("url"):
         return "needs_user_attention", "Inspect this exact application form before sending"
+    clean_stale_chrome_lock(settings.browser_profile)
+    is_test = bool(os.environ.get("PYTEST_CURRENT_TEST"))
+    headless = is_test or os.environ.get("JOB_RADAR_HEADLESS", "").lower() in ("1", "true")
     async with async_playwright() as playwright:
-        context = await playwright.chromium.launch_persistent_context(str(settings.browser_profile), headless=True, accept_downloads=False, **chrome_context_options())
+        opts = chrome_context_options()
+        if not headless:
+            opts["ignore_default_args"] = list(set(opts.get("ignore_default_args", []) + ["--enable-automation"]))
+            opts["args"] = list(set(opts.get("args", []) + ["--disable-blink-features=AutomationControlled"]))
+        try:
+            context = await playwright.chromium.launch_persistent_context(
+                str(settings.browser_profile), headless=headless, accept_downloads=False, **opts
+            )
+        except Exception as error:
+            if "SingletonLock" in str(error) or "ProcessSingleton" in str(error):
+                clean_stale_chrome_lock(settings.browser_profile)
+                await asyncio.sleep(2.0)
+                context = await playwright.chromium.launch_persistent_context(
+                    str(settings.browser_profile), headless=headless, accept_downloads=False, **opts
+                )
+            else:
+                raise
         try:
             page = await context.new_page()
             await page.goto(draft["destination"]["url"], wait_until="domcontentloaded", timeout=45000)
@@ -785,11 +805,63 @@ async def _send_web(settings: Settings, draft: dict) -> tuple[str, str]:
                     await locator.fill(answer)
                 elif field["required"]:
                     return "needs_user_attention", f"Answer required: {field['label']}"
-            submit = form.locator('button:not([type]),button[type="submit"],input[type="submit"]').first
-            if not await submit.count():
+            submit = None
+            for selector in (
+                '#btn-submit',
+                '[data-qa="btn-submit"]',
+                '.template-btn-submit',
+                'button[type="submit"]',
+                'input[type="submit"]',
+                'button:not([type])',
+                'button[type="button"]',
+                'button',
+                'input[type="button"]',
+            ):
+                count = await form.locator(selector).count()
+                for i in range(count):
+                    cand = form.locator(selector).nth(i)
+                    if not await cand.is_visible():
+                        continue
+                    b_id = (await cand.get_attribute("id") or "").lower()
+                    b_cls = (await cand.get_attribute("class") or "").lower()
+                    if "hcaptcha" in b_id or "hidden" in b_cls:
+                        continue
+                    if selector in ('button[type="button"]', 'button', 'input[type="button"]'):
+                        text = (await cand.inner_text() or await cand.get_attribute("value") or "").strip().lower()
+                        aria = (await cand.get_attribute("aria-label") or "").strip().lower()
+                        if not re.search(r"\b(submit|apply|send|nộp|gửi)\b", f"{text} {aria}"):
+                            continue
+                    submit = cand
+                    break
+                if submit:
+                    break
+
+            if not submit:
+                for selector in (
+                    '#btn-submit',
+                    '[data-qa="btn-submit"]',
+                    '.template-btn-submit',
+                    'button[type="submit"]',
+                    'input[type="submit"]',
+                ):
+                    count = await page.locator(selector).count()
+                    for i in range(count):
+                        cand = page.locator(selector).nth(i)
+                        if not await cand.is_visible():
+                            continue
+                        b_id = (await cand.get_attribute("id") or "").lower()
+                        b_cls = (await cand.get_attribute("class") or "").lower()
+                        if "hcaptcha" in b_id or "hidden" in b_cls:
+                            continue
+                        submit = cand
+                        break
+                    if submit:
+                        break
+
+            if not submit or not await submit.count():
                 return "needs_user_attention", "No submit control was found on the reviewed form"
             invalid = form.locator("input:invalid,select:invalid,textarea:invalid").first
-            if await invalid.count():
+            if await invalid.count() and await invalid.is_visible():
                 label = await invalid.get_attribute("name") or await invalid.get_attribute("aria-label") or "form field"
                 return "needs_user_attention", f"Review invalid or missing value: {label}"
             before = page.url
@@ -797,12 +869,64 @@ async def _send_web(settings: Settings, draft: dict) -> tuple[str, str]:
             submitted_requests = []
             page.on("request", lambda request: submitted_requests.append(request.url) if request.method not in ("GET", "HEAD") else None)
             await submit.click(timeout=15000)
-            await page.wait_for_timeout(2500)
-            visible = (await page.locator("body").inner_text(timeout=7000))[:3000]
-            if submitted_requests and (page.url != before or visible != before_text) and re.search(r"thank you|application (has been |was )?(received|submitted)|successfully applied|cảm ơn|ứng tuyển thành công", visible, re.I):
-                return "submitted_confirmed", f"{page.url}: {visible[:500]}"
+            max_seconds = 180 if not headless else 15
+            captcha_prompted = False
+            for _ in range(max_seconds):
+                try:
+                    await page.wait_for_timeout(1000)
+                except Exception:
+                    pass
+                try:
+                    url = page.url
+                except Exception:
+                    if captcha_prompted:
+                        return "needs_user_attention", "Browser window was closed before verification completed."
+                    break
+                try:
+                    visible = (await page.locator("body").inner_text(timeout=4000))[:3000]
+                except Exception:
+                    visible = ""
+                if any(x in url.lower() for x in ("/thanks", "/thank-you", "/confirmation", "/success")):
+                    return "submitted_confirmed", f"{url}: {visible[:500]}"
+                if submitted_requests and (url != before or visible != before_text) and re.search(r"thank you|application (has been |was )?(received|submitted)|successfully applied|cảm ơn|ứng tuyển thành công", visible, re.I):
+                    return "submitted_confirmed", f"{url}: {visible[:500]}"
+                if url != before and not await page.locator("form").count():
+                    await page.wait_for_timeout(1500)
+                    try:
+                        visible = (await page.locator("body").inner_text(timeout=4000))[:3000]
+                    except Exception:
+                        pass
+                    if re.search(r"thank you|application (has been |was )?(received|submitted)|successfully applied|cảm ơn|ứng tuyển thành công", visible, re.I) or any(x in url.lower() for x in ("/thanks", "/thank-you", "/confirmation", "/success")):
+                        return "submitted_confirmed", f"{url}: {visible[:500]}"
+                    return "submitted_unconfirmed", f"Form navigated to {url}; confirmation not detected"
+
+                try:
+                    captcha_active = await page.evaluate('''() => {
+                        return Array.from(document.querySelectorAll('iframe')).some(f => 
+                            (f.src.includes('hcaptcha.com') || f.src.includes('recaptcha') || f.src.includes('cloudflare.com'))
+                            && f.offsetWidth > 0 && f.offsetHeight > 0
+                            && window.getComputedStyle(f).visibility !== 'hidden'
+                        );
+                    }''')
+                except Exception:
+                    captcha_active = False
+
+                if captcha_active:
+                    if not headless:
+                        if not captcha_prompted:
+                            captcha_prompted = True
+                            try:
+                                subprocess.run(["osascript", "-e", 'tell application "Google Chrome" to activate'], check=False)
+                            except Exception:
+                                pass
+                        continue
+                    else:
+                        return "needs_user_attention", "Security verification (CAPTCHA) is required on the employer site before submission can complete."
+
             if page.url != before and not await page.locator("form").count():
                 return "submitted_unconfirmed", f"Form navigated to {page.url}; confirmation not detected"
+            if captcha_prompted:
+                return "needs_user_attention", "Security verification (CAPTCHA) was not completed before timeout. Please try sending again."
             return "submitted_unconfirmed", f"Submit clicked; confirmation not detected at {page.url}"
         finally:
             await context.close()
