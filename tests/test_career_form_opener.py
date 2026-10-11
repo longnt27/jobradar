@@ -63,3 +63,39 @@ def test_ambiguous_career_buttons_require_choice() -> None:
             await playwright.stop()
 
     asyncio.run(run())
+
+
+def test_form_structure_filters_hidden_dummy_inputs() -> None:
+    from job_radar.apply import _form_structure
+
+    async def run():
+        html = """
+        <main>
+          <form action="/apply" method="post" enctype="multipart/form-data">
+            <label>First Name <input id="first_name" name="first_name" type="text" required></label>
+            <input required="" tabindex="-1" aria-hidden="true" class="remix-css-1a0ro4n-requiredInput" style="opacity: 0" value="">
+            <div style="display: none;">
+              <input id="iti-search" type="search" placeholder="Search country">
+            </div>
+            <input type="text" style="display: none">
+            <label>Resume <input id="resume" name="resume" type="file" required></label>
+            <button type="submit">Submit application</button>
+          </form>
+        </main>
+        """
+        playwright, browser, page = await _page(html)
+        try:
+            form = await _form_structure(page)
+            labels = [f["label"] for f in form["fields"]]
+            ids = [f["id"] for f in form["fields"]]
+            assert ids == ["first_name", "resume"]
+            assert labels == ["First Name", "Resume"]
+            assert form["fields"][0]["index"] == 0
+            # resume is index 4 in form.locator("input,select,textarea")
+            assert form["fields"][1]["index"] == 4
+        finally:
+            await browser.close()
+            await playwright.stop()
+
+    asyncio.run(run())
+

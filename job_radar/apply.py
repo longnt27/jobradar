@@ -78,6 +78,19 @@ async def _form_structure(page: Page) -> dict:
             const type = (node.getAttribute('type') || node.tagName.toLowerCase()).toLowerCase();
             if (['hidden','submit','button','reset','image'].includes(type)) return null;
 
+            if (type !== 'file') {
+              if (node.getAttribute('aria-hidden') === 'true') return null;
+              if (node.tabIndex === -1 && !node.id && !node.getAttribute('name')) return null;
+              if (typeof node.checkVisibility === 'function') {
+                if (!node.checkVisibility()) return null;
+              }
+              const style = window.getComputedStyle(node);
+              if (style.display === 'none' || style.visibility === 'hidden') return null;
+              if (type !== 'checkbox' && type !== 'radio') {
+                if (style.opacity === '0' || style.pointerEvents === 'none') return null;
+              }
+            }
+
             const id = node.id || '';
             const name = node.getAttribute('name') || '';
 
@@ -120,6 +133,10 @@ async def _form_structure(page: Page) -> dict:
               } else {
                 label = ariaLabel || placeholder || name || '';
               }
+            }
+
+            if (!id && !name && !label && type !== 'file') {
+              return null;
             }
 
             const isRequired = node.required || !!(qContainer && qContainer.querySelector('.required, [aria-required="true"]'));
