@@ -157,7 +157,11 @@ def _body(resume: dict) -> str:
         contacts.append(r"\contactitem{" + icon + "}{" + _link(target, label) + "}")
     pieces += ["\n\\quad\n".join(contacts), r"\end{center}", r"\vspace{1pt}"]
     if resume.get("summary"):
-        pieces += [r"\noindent", r"\textit{" + _tex(resume["summary"]) + "}", r"\vspace{-5pt}"]
+        summary_tex = _tex(resume["summary"]).strip()
+        if " " in summary_tex:
+            prefix, last_word = summary_tex.rsplit(" ", 1)
+            summary_tex = f"{prefix}~{last_word}"
+        pieces += [r"\noindent", r"\textit{" + summary_tex + "}", r"\vspace{-5pt}"]
 
     phrases = [str(p) for p in resume.get("bold_phrases") or [] if p]
     if resume.get("experience"):

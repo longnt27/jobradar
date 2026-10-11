@@ -82,3 +82,14 @@ def test_resume_bullets_bold_multiple_phrases_in_same_bullet(tmp_path: Path) -> 
     text = PdfReader(path).pages[0].extract_text()
     assert "0.645" in text and "1.24" in text
 
+
+def test_resume_summary_prevents_orphan_words() -> None:
+    resume = {
+        "name": "Long Nguyen",
+        "email": "long@example.com",
+        "summary": "Applied AI Engineer with hands-on experience in backend integration and deployment.",
+    }
+    source = _body(resume)
+    assert r"and~deployment." in source
+
+

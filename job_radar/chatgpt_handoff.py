@@ -176,6 +176,8 @@ def application_prompt(db: Database, draft_id: str, section: str, instruction: s
                 "Keep it general and accessible for HR/recruiters: do NOT list laundry lists of programming languages, frameworks, "
                 "databases, or cloud tools (technologies belong strictly in Skills, not in the summary). Do NOT throw buzzwords, tech stack dumps, "
                 "hyper-specific benchmark metrics (like PCC, F1, PSNR, SSIM), dataset names, or individual project names into the summary. "
+                "Do NOT leave orphan words: avoid ending paragraphs, bullets, or the summary with a single word stranded alone on the final line; "
+                "craft sentences and phrasing so the concluding line is well-balanced or fits cleanly across lines without trailing runts. "
                 f"{_leadership_summary_rule(profile, job)} "
                 "Return the revised resume as a JSON object with keys: summary, experience, projects, education, achievements, skills, skill_groups, bold_phrases. "
                 "For projects, format as a list of exactly three objects (when available) with id, title, repository_url, tech_stack, and bullets (exactly two bullets: what/how first, cohesive measured result second). "
@@ -184,6 +186,7 @@ def application_prompt(db: Database, draft_id: str, section: str, instruction: s
     elif section == "experience":
         rules += (
             "Revise the experience bullets in English using only supported facts. "
+            "Do not leave orphan words stranded alone on the final line of any bullet. "
             "Include 'bold_phrases': a JSON list of 1 to 3 short exact substrings of the strongest measured results present in the experience bullets. "
         )
     elif section == "summary":
@@ -195,6 +198,8 @@ def application_prompt(db: Database, draft_id: str, section: str, instruction: s
             "libraries, databases, or cloud tools (e.g. do not list Python, Go, TypeScript, FastAPI, PostgreSQL, Docker, AWS; technologies belong strictly in Skills). "
             "Do NOT throw buzzwords or tech stack dumps into HR's face, and do NOT cite hyper-specific benchmark metrics (like PCC, F1, PSNR, SSIM), "
             "dataset names, or individual project names in the summary. "
+            "Do NOT leave orphan words: avoid ending paragraphs, bullets, or the summary with a single word stranded alone on the final line; "
+            "craft sentences and phrasing so the concluding line is well-balanced or fits cleanly across lines without trailing runts. "
             f"{_leadership_summary_rule(profile, job)} "
         )
     else:
