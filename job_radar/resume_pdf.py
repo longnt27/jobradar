@@ -221,16 +221,16 @@ def _body(resume: dict) -> str:
 def render_resume(settings: Settings, draft_id: str, resume: dict) -> tuple[str, str]:
     settings.ensure_dirs()
     template = _TEMPLATE.read_text(encoding="utf-8")
-    revision = hashlib.sha256((template + json.dumps(resume, sort_keys=True, ensure_ascii=False)).encode()).hexdigest()[:16]
-    path = settings.artifact_dir / f"resume-{draft_id}-{revision}.pdf"
-    if path.exists():
-        return str(path), hashlib.sha256(path.read_bytes()).hexdigest()
     compiler = shutil.which("tectonic") or "/opt/homebrew/bin/tectonic"
     if not Path(compiler).is_file():
         raise RuntimeError("The LaTeX resume renderer (tectonic) is unavailable on this Mac")
     source = template.replace("__PDF_TITLE__", _tex(f"{resume.get('name', '')} — Resume"))
     source = source.replace("__PDF_AUTHOR__", _tex(resume.get("name")))
     source = source.replace("__BODY__", _body(resume))
+    revision = hashlib.sha256(source.encode("utf-8")).hexdigest()[:16]
+    path = settings.artifact_dir / f"resume-{draft_id}-{revision}.pdf"
+    if path.exists():
+        return str(path), hashlib.sha256(path.read_bytes()).hexdigest()
     with tempfile.TemporaryDirectory(prefix="job-radar-resume-") as directory:
         tex_path = Path(directory) / "resume.tex"
         tex_path.write_text(source, encoding="utf-8")
