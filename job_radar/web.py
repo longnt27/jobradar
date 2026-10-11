@@ -34,7 +34,7 @@ from .apply import (
 )
 from .auto_apply import AutoApplyManager
 from .browser_login import BrowserLoginManager
-from .chatgpt_handoff import ChatGPTInputManager, application_prompt, apply_chatgpt_reply
+from .chatgpt_handoff import ChatGPTInputManager, application_prompt, apply_chatgpt_reply, register_chatgpt_input_manager
 from .capabilities import capability_readiness, provider_processing
 from .drafting import PROVIDERS, get_draft, prepare_draft, refresh_draft_projects, set_discovered_linkedin_destination, set_discovered_web_destination, set_unavailable_linkedin_destination, update_draft
 from .evidence import generate_project_content, inspect_repository
@@ -262,6 +262,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     clean_saved_analysis(db)
     scan_manager = ScanManager(db, settings)
     chatgpt_input = ChatGPTInputManager(settings, scan_manager.browser_lock, scan_manager.priority_browser, db=db)
+    register_chatgpt_input_manager(chatgpt_input)
     auto_apply_manager = AutoApplyManager(
         db, settings, scan_manager.browser_lock, scan_manager.priority_browser, chatgpt_input=chatgpt_input
     )

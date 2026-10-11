@@ -20,7 +20,7 @@ from .settings import Settings
 
 PROVIDERS = {
     "template": "local template; no model inference",
-    "chatgpt_web": "ChatGPT Web browser handoff; reply reviewed manually",
+    "chatgpt_web": "ChatGPT Web automated via Chrome session",
     "codex_local": "local inference through Codex OSS",
     "codex": "remote inference through local Codex CLI",
     "agy": "remote inference through local Antigravity CLI",
@@ -463,10 +463,12 @@ def _run_provider(provider: str, job: dict, profile: dict, cards: list[dict], cu
               "never pad a weak project or turn a limitation into an achievement. For each selected project, "
               "set project_bullets.skills to three to five short, appealing skill categories or technologies "
               "that matter to this job and are supported by the approved project evidence. Do not list the full stack. "
-              "Set bold_phrases to 2 to 6 short exact substrings that carry the strongest measured results. "
-              "Include at least one from a candidate experience bullet with a measured result when one exists, "
-              "and at least one from a selected project's second (result) bullet. Prefer metrics and comparisons; use at most "
-              "one phrase per bullet. Do not bold routine methods, vague claims, or whole bullets. "
+              "Set bold_phrases to short exact substrings (2 to 10 phrases total) that carry the strongest measured results, "
+              "metrics, speedups, or comparisons from experience and project result bullets. If a result bullet contains multiple distinct key metrics "
+              "or achievements (such as an accuracy metric AND a speedup/tradeoff metric, e.g. 'Phone PCC 0.645 ± 0.009' and '1.24× faster', "
+              "or '+6.38 pp' and 'F1 0.5043', or Core ML model size, frame time, and error reduction), include each key metric in bold_phrases "
+              "so all important results are highlighted, not just the first one. Include at least one from a candidate experience bullet with a measured result when one exists, "
+              "and at least one from each selected project's second (result) bullet. Do not bold routine methods, vague claims, or whole bullets. "
               "Do not add unsupported facts. Write a clean, high-level, cohesive professional summary (2 to 3 sentences, "
               "200 to 450 characters) in English. Introduce candidate engineering identity (e.g. Applied AI Engineer with a strong "
               "algorithmic and problem-solving foundation) and overarching focus on designing, building, and deploying reliable, "
@@ -475,6 +477,8 @@ def _run_provider(provider: str, job: dict, profile: dict, cards: list[dict], cu
               "technologies belong strictly in Skills, not in the summary). Do NOT throw buzzwords, tech stack dumps, "
               "hyper-specific project metrics, benchmark scores (like PCC, F1, PSNR, SSIM), test fixture numbers, "
               "dataset names (e.g. SpeechOcean762), or individual project names into the summary—keep it cohesive, natural, and professional. "
+              "Do NOT mention leading teams, team lead roles, leadership claims, team sizes, or managing people in the professional summary "
+              "(any brief trainee lead role belongs strictly within Experience, not the summary). Keep the summary general, high-level, and focused on engineering and problem solving. "
               "Do not repeat the degree or school already in Education. "
               "Previous positions belong only in Experience, projects "
               "only in Selected Projects. Write the professional summary and all resume/project bullets in English, "
@@ -504,7 +508,7 @@ def _run_provider(provider: str, job: dict, profile: dict, cards: list[dict], cu
         def has_bold_span(values: list[str]) -> bool:
             return any(phrase.strip() and len(phrase.strip()) <= 90 and phrase.strip() in value and
                        phrase.strip() != value.strip() for phrase in model.bold_phrases for value in values)
-        complete_bold = (2 <= len(model.bold_phrases) <= 6 and has_bold_span(result_bullets)
+        complete_bold = (2 <= len(model.bold_phrases) <= 12 and has_bold_span(result_bullets)
                          and (not measured_experience or has_bold_span(measured_experience)))
         complete_projects = len(chosen) == 3 and all(
             len(bullets.get(identifier, [])) == 2 and
@@ -526,6 +530,9 @@ def _run_provider(provider: str, job: dict, profile: dict, cards: list[dict], cu
 
 
 def _provider_json(provider: str, prompt: str, response_type: type[BaseModel]) -> BaseModel:
+    if provider == "chatgpt_web":
+        from .chatgpt_handoff import run_chatgpt_web_json
+        return run_chatgpt_web_json(prompt, response_type)
     command = "codex" if provider.startswith("codex") else provider
     if not shutil.which(command):
         raise RuntimeError(f"{command} CLI is not installed")
@@ -574,7 +581,7 @@ def _provider_json(provider: str, prompt: str, response_type: type[BaseModel]) -
 
 
 def draft_custom_answers(provider: str, job: dict, profile: dict, cards: list[dict], fields: list[dict]) -> dict[str, str]:
-    if provider in ("template", "chatgpt_web") or not fields:
+    if provider == "template" or not fields:
         return {}
     safe_fields = [field for field in fields if field["type"] not in ("file", "checkbox", "radio", "select") and
                    not re.search(r"salary|compensation|visa|work authorization|notice period|relocat|consent|gender|race|disability", f"{field.get('label', '')} {field.get('group_label', '')}", re.I)]
@@ -639,17 +646,13 @@ def _model_bold_phrases(model: ModelDraft, resume: dict) -> list[str]:
     bullets.extend(str(project.get("bullets", [])[1]) for project in resume.get("projects", [])
                    if len(project.get("bullets", [])) >= 2)
     phrases = []
-    used_bullets = set()
     for phrase in model.bold_phrases:
         phrase = phrase.strip()
         if not phrase or len(phrase) > 90 or phrase in phrases:
             continue
-        match = next((index for index, bullet in enumerate(bullets)
-                      if index not in used_bullets and phrase in bullet and phrase != bullet.strip()), None)
-        if match is not None:
+        if any(phrase in bullet and phrase != bullet.strip() for bullet in bullets):
             phrases.append(phrase)
-            used_bullets.add(match)
-        if len(phrases) == 6:
+        if len(phrases) == 12:
             break
     return phrases
 
@@ -684,8 +687,6 @@ def prepare_draft(db: Database, settings: Settings, vacancy_id: str, provider: s
         card["details"] = json.loads(card["details"])
     if not cards and not profile.get("experience"):
         raise ValueError("Add a previous position or approve a GitHub project before preparing an application")
-    if custom_prompt and provider == "chatgpt_web":
-        raise ValueError("Use the ChatGPT Web prompt handoff, then copy approved text into this application")
     if custom_prompt and provider == "template":
         raise ValueError("Choose an AI drafting provider to regenerate with custom instructions")
     previous = get_draft(db, draft_id) if draft_id else None
@@ -695,11 +696,11 @@ def prepare_draft(db: Database, settings: Settings, vacancy_id: str, provider: s
         if draft_id else None)
     if previous and (previous["vacancy_id"] != vacancy_id or previous["status"] in ("sent", "submission_uncertain") or previous_submission):
         raise ValueError("This application cannot be regenerated after a submission attempt")
-    browser_handoff = provider == "chatgpt_web"
-    model = (_template(job, profile, cards) if provider in {"template", "chatgpt_web"} else
+    browser_handoff = provider == "chatgpt_web" and not custom_prompt
+    model = (_template(job, profile, cards) if provider == "template" or browser_handoff else
              _run_provider(provider, job, profile, cards, custom_prompt) if custom_prompt else
              _run_provider(provider, job, profile, cards))
-    if provider not in {"template", "chatgpt_web"}:
+    if not browser_handoff and provider != "template":
         model = _fit_in_job_language(provider, job, model)
     selected, projects = _selected_resume_projects(job, cards, model, "template" if browser_handoff else provider)
     resume = _resume_from_model(profile, model, selected, projects, provider)
@@ -781,17 +782,16 @@ def refresh_draft_content(db: Database, settings: Settings, draft_id: str,
     for card in cards:
         card["details"] = json.loads(card["details"])
     provider = previous["provider"]
-    if provider == "chatgpt_web" and custom_prompt:
-        raise ValueError("Use the ChatGPT Web prompt handoff, then copy approved text into this application")
+    browser_handoff = provider == "chatgpt_web" and not custom_prompt
     try:
-        model = (_template(job, profile, cards) if provider in {"template", "chatgpt_web"} else
+        model = (_template(job, profile, cards) if provider == "template" or browser_handoff else
                  _run_provider(provider, job, profile, cards, custom_prompt) if custom_prompt else
                  _run_provider(provider, job, profile, cards))
         if required_project_ids and tuple(model.selected_evidence_ids) != required_project_ids:
             raise ValueError("The drafting model did not select the requested projects in the requested order")
-        if provider not in {"template", "chatgpt_web"}:
+        if not browser_handoff and provider != "template":
             model = _fit_in_job_language(provider, job, model)
-        selected, projects = _selected_resume_projects(job, cards, model, "template" if provider == "chatgpt_web" else provider)
+        selected, projects = _selected_resume_projects(job, cards, model, "template" if browser_handoff else provider)
         resume = _resume_from_model(profile, model, selected, projects, provider)
         message = _compose_application_message(job, profile, model.fit_text)
         path, digest = render_resume(settings, draft_id, resume)
@@ -850,9 +850,11 @@ def _section_model(provider: str, section: str, prompt: str, job: dict, profile:
                     "Keep it general and accessible for HR/recruiters: do NOT list laundry lists of programming languages, frameworks, libraries, "
                     "databases, or tools (technologies belong strictly in Skills). Do NOT throw buzzwords, tech stack dumps, "
                     "hyper-specific benchmark metrics (such as PCC, F1, PSNR, SSIM), test fixture numbers, dataset names (e.g. SpeechOcean762), "
-                    "or individual project names into the summary."),
+                    "or individual project names into the summary. "
+                    "Do NOT mention leading teams, team lead roles, leadership claims, team sizes, or managing people in the summary "
+                    "(keep any brief trainee lead role strictly within Experience, not the summary). Keep the summary general and focused on engineering."),
         "experience": "Return one indexed entry per current position. Rewrite only its bullets in English; do not change employers, roles, or dates. Keep measured results accurate.",
-        "projects": "Select up to three approved project IDs, ordered by strong job-relevant evidence. When at least three projects are approved, select exactly three. For each, return exactly two bullets: first what it does and how, then one result bullet. Select one to three complementary job-relevant result IDs per project and combine their supported outcomes in the single second bullet when they give a fuller, more balanced achievement, but do NOT mechanically glue disparate metrics from different sub-models or pipeline stages together with semicolons into one confusing sentence; write a single cohesive, naturally phrased result sentence with clear context. Every metric in bullet 2 must be supported by a result ID in project_focus. Keep internal logs and trace artifacts out of result bullets; describe them in bullet 1 only if they explain how the project works. For accuracy-focused work prioritize measured accuracy over model count, mesh size, or speed. For 3D pose work include PA-MPJPE when approved evidence supports it; if citing reduced acceleration error, include its pose-accuracy tradeoff in the same result bullet. For vision jobs, use strong perception results before unrelated LLM results. Name the dataset and measurement scope as needed; never invent or improve a metric. Use three to five supported skill categories. Reference valid result IDs where available. Bold phrases must be short exact measured-result substrings from the second bullets. Do not include caveats, academic disclaimers, protocol-v2/historical-thesis warnings, unaccelerated CPU slowdowns, or weaker negative metrics as achievements (e.g. never include 'Historical thesis results', 'protocol-v2 reruns may differ', or 'slower on Kaggle CPU').",
+        "projects": "Select up to three approved project IDs, ordered by strong job-relevant evidence. When at least three projects are approved, select exactly three. For each, return exactly two bullets: first what it does and how, then one result bullet. Select one to three complementary job-relevant result IDs per project and combine their supported outcomes in the single second bullet when they give a fuller, more balanced achievement, but do NOT mechanically glue disparate metrics from different sub-models or pipeline stages together with semicolons into one confusing sentence; write a single cohesive, naturally phrased result sentence with clear context. Every metric in bullet 2 must be supported by a result ID in project_focus. Keep internal logs and trace artifacts out of result bullets; describe them in bullet 1 only if they explain how the project works. For accuracy-focused work prioritize measured accuracy over model count, mesh size, or speed. For 3D pose work include PA-MPJPE when approved evidence supports it; if citing reduced acceleration error, include its pose-accuracy tradeoff in the same result bullet. For vision jobs, use strong perception results before unrelated LLM results. Name the dataset and measurement scope as needed; never invent or improve a metric. Use three to five supported skill categories. Reference valid result IDs where available. Bold phrases must be short exact measured-result substrings from the second bullets (include multiple distinct key metrics if present in the bullet). Do not include caveats, academic disclaimers, protocol-v2/historical-thesis warnings, unaccelerated CPU slowdowns, or weaker negative metrics as achievements (e.g. never include 'Historical thesis results', 'protocol-v2 reruns may differ', or 'slower on Kaggle CPU').",
         "education": "Return one indexed entry per current education record. Rewrite only degree wording in English. Preserve the exact school, credential, and dates; do not invent qualifications.",
         "achievements": "Return concise English achievement bullets supported by the supplied candidate record. Omit weak items when requested; invent none.",
         "skills": "Return at most five appealing skill groups, each with concise skills supported by the candidate record or current selected projects. Do not invent skills.",
@@ -947,7 +949,7 @@ def _revised_section(previous: dict, section: str, model: BaseModel, cards: list
         experience_bullets = [bullet for item in resume.get("experience", []) for bullet in item.get("bullets", [])]
         retained = [phrase for phrase in resume.get("bold_phrases", [])
                     if any(phrase in bullet for bullet in experience_bullets)]
-        resume["bold_phrases"] = list(dict.fromkeys([*retained, *new_phrases]))[:6]
+        resume["bold_phrases"] = list(dict.fromkeys([*retained, *new_phrases]))[:12]
         selected_ids = identifiers
     elif section == "education":
         current = resume.get("education", [])
@@ -981,8 +983,6 @@ def regenerate_draft(db: Database, settings: Settings, draft_id: str, prompt: st
     if section not in {"all", "summary", "experience", "projects", "education", "achievements", "skills", "message"}:
         raise ValueError("Choose a resume section, application email, or the full draft")
     previous = get_draft(db, draft_id)
-    if previous["provider"] == "chatgpt_web":
-        raise ValueError("Use the ChatGPT Web prompt handoff, then copy approved text into this application")
     before = _section_snapshot(previous)
     if section == "all":
         revised = prepare_draft(db, settings, previous["vacancy_id"], previous["provider"], draft_id, prompt.strip())

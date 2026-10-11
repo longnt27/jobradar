@@ -30,7 +30,7 @@ def provider_processing(provider: str) -> dict[str, Any]:
     if provider == "template":
         destination = "Processed locally with deterministic templates; no AI model receives the data."
     elif provider == "chatgpt_web":
-        destination = "Job Radar enters the prompt in ChatGPT Web. Review the reply there and copy approved text into the application."
+        destination = "Job Radar enters prompts in ChatGPT Web automatically using your Chrome session."
     elif provider == "codex_local":
         destination = "Processed locally through Codex OSS and Ollama; resume and application text stay on this Mac."
     else:

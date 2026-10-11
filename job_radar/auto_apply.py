@@ -816,9 +816,19 @@ class AutoApplyManager:
             raise ValueError("This application cannot be regenerated")
         self._set_status(attempt["vacancy_id"], "regenerating", "Generating a new draft from your instructions.", draft_id)
         try:
-            draft = await asyncio.to_thread(regenerate_draft, self.db, self.settings, draft_id, prompt, section)
-            regeneration_changes = draft.get("changes", [])
-            regenerated_section = draft.get("regenerated_section", section)
+            previous_draft = get_draft(self.db, draft_id)
+            if previous_draft.get("provider") == "chatgpt_web" and self.chatgpt_input and self.chatgpt_input.status().get("logged_in"):
+                prompt_text = application_prompt(self.db, draft_id, section, prompt)
+                result = await self.chatgpt_input.enter(prompt_text, timeout=360.0 if section == "all" else 240.0)
+                if not result.get("reply"):
+                    raise RuntimeError(result.get("detail") or "No reply received from ChatGPT Web")
+                draft = apply_chatgpt_reply(self.db, self.settings, draft_id, section, result["reply"], prompt)
+                regeneration_changes = []
+                regenerated_section = section
+            else:
+                draft = await asyncio.to_thread(regenerate_draft, self.db, self.settings, draft_id, prompt, section)
+                regeneration_changes = draft.get("changes", [])
+                regenerated_section = draft.get("regenerated_section", section)
             if section == "all" and draft["destination"].get("kind") == "web":
                 try:
                     async with self.browser_lock:

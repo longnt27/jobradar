@@ -459,7 +459,7 @@ async def inspect_form(db: Database, settings: Settings, draft_id: str) -> dict:
 
     answers = {str(field["index"]): _field_answer(field)
                for field in structure["fields"] if field["type"] != "file"}
-    if draft["provider"] not in ("template", "chatgpt_web"):
+    if draft["provider"] != "template":
         cards = [card for card in draft["resume_data"].get("evidence", []) if card.get("id") in draft["evidence_ids"]]
         job = db.one("SELECT title,company,description FROM vacancies WHERE id=?", (draft["vacancy_id"],))
         try:

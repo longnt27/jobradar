@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import inspect
 import json
 import re
@@ -147,10 +148,13 @@ def application_prompt(db: Database, draft_id: str, section: str, instruction: s
             "together with semicolons (e.g. NEVER glue an LLM benchmark and an unrelated YOLO vision metric together into one confusing sentence). "
             "Write one cohesive, naturally phrased result sentence with clear context explaining what model or stage achieved the metric. "
             "Keep repository links and at most five skill categories. Write resume text in English. "
-            "In 'bold_phrases', provide a JSON list of 2 to 6 short exact substrings that carry the strongest measured results "
-            "(at most one phrase per bullet). Include at least one from candidate experience when one exists, and at least one "
-            "from each selected project's second (result) bullet. Quote short metric phrases or comparison figures directly "
-            "(e.g. 'F1 0.5043', 'achieved 85.14% stress-location accuracy'). Do NOT bold entire bullets, routine duties, or vague claims. "
+            "In 'bold_phrases', provide a JSON list of short exact substrings (2 to 10 phrases total) that carry the strongest measured results, "
+            "metrics, speedups, or comparisons from experience and project result bullets. If a result bullet contains multiple distinct key metrics "
+            "or achievements (such as an accuracy metric AND a speedup/tradeoff metric, e.g. 'Phone PCC 0.645 ± 0.009' and '1.24× faster', "
+            "or '+6.38 pp' and 'F1 0.5043', or Core ML model size, frame time, and error reduction), include each key metric in bold_phrases "
+            "so all important results are highlighted, not just the first one. Include at least one from candidate experience when one exists, "
+            "and at least one from each selected project's second (result) bullet. Quote short metric phrases or comparison figures directly "
+            "(e.g. 'F1 0.5043', '1.24× faster', 'achieved 85.14% stress-location accuracy'). Do NOT bold entire bullets, routine duties, or vague claims. "
             "Do NOT include academic caveats, protocol-version warnings, historical-result warnings, unaccelerated hardware/CPU slowdowns, "
             "or statistical disclaimers in any resume bullet (e.g. NEVER include 'Historical thesis results', 'protocol-v2 reruns may differ', "
             "'slower on Kaggle CPU', 'warrant caution', or 'no non-inferiority margin'). Focus cleanly on positive, verified achievements. "
@@ -172,9 +176,11 @@ def application_prompt(db: Database, draft_id: str, section: str, instruction: s
                 "Keep it general and accessible for HR/recruiters: do NOT list laundry lists of programming languages, frameworks, "
                 "databases, or cloud tools (technologies belong strictly in Skills, not in the summary). Do NOT throw buzzwords, tech stack dumps, "
                 "hyper-specific benchmark metrics (like PCC, F1, PSNR, SSIM), dataset names, or individual project names into the summary. "
+                "Do NOT mention leading teams, team lead roles, leadership claims, team sizes, or managing people in the summary "
+                "(keep any brief trainee lead role strictly within Experience, not the summary). Keep the summary general and focused on engineering. "
                 "Return the revised resume as a JSON object with keys: summary, experience, projects, education, achievements, skills, skill_groups, bold_phrases. "
                 "For projects, format as a list of exactly three objects (when available) with id, title, repository_url, tech_stack, and bullets (exactly two bullets: what/how first, cohesive measured result second). "
-                "Set bold_phrases to 2 to 6 short exact substrings that quote the strongest measured results from experience bullets and project second bullets. "
+                "Set bold_phrases to 2 to 10 short exact substrings that quote the strongest measured results from experience bullets and project second bullets (including multiple distinct key metrics per bullet when present). "
             )
     elif section == "experience":
         rules += (
@@ -190,6 +196,8 @@ def application_prompt(db: Database, draft_id: str, section: str, instruction: s
             "libraries, databases, or cloud tools (e.g. do not list Python, Go, TypeScript, FastAPI, PostgreSQL, Docker, AWS; technologies belong strictly in Skills). "
             "Do NOT throw buzzwords or tech stack dumps into HR's face, and do NOT cite hyper-specific benchmark metrics (like PCC, F1, PSNR, SSIM), "
             "dataset names, or individual project names in the summary. "
+            "Do NOT mention leading teams, team lead roles, leadership claims, team sizes, or managing people in the summary "
+            "(keep any brief trainee lead role strictly within Experience, not the summary). Keep the summary general and focused on engineering. "
         )
     else:
         rules += "Write resume text in English and revise only the requested section. "
@@ -460,7 +468,7 @@ def _populate_resume_bold_phrases(resume: dict, explicit_phrases: list[str] | No
             if len(valid_phrases) >= 4:
                 break
 
-    return valid_phrases[:6]
+    return valid_phrases[:12]
 
 
 def _card_to_project_dict(card: dict, custom_bullets: list[str] | None = None, tech_stack: list[str] | None = None) -> dict:
@@ -809,19 +817,101 @@ def apply_chatgpt_reply(db: Database, settings: Settings, draft_id: str, section
     return updated
 
 
+_active_chatgpt_input: ChatGPTInputManager | None = None
+
+
+def register_chatgpt_input_manager(manager: ChatGPTInputManager) -> None:
+    global _active_chatgpt_input
+    _active_chatgpt_input = manager
+
+
+def get_chatgpt_input_manager(settings: Settings | None = None) -> ChatGPTInputManager:
+    global _active_chatgpt_input
+    if _active_chatgpt_input is not None:
+        return _active_chatgpt_input
+    s = settings or Settings.from_env()
+    return ChatGPTInputManager(s)
+
+
+def run_chatgpt_web_json(prompt: str, response_type: Any, settings: Settings | None = None) -> Any:
+    s = settings or Settings.from_env()
+    if not chatgpt_logged_in(s.browser_profile):
+        raise RuntimeError("ChatGPT Web is not signed in; open ChatGPT in Chrome and sign in first")
+
+    schema = response_type.model_json_schema()
+
+    def strict(node: object) -> None:
+        if isinstance(node, list):
+            for child in node:
+                strict(child)
+        elif isinstance(node, dict):
+            for key in ("default", "minLength", "maxLength", "minItems", "maxItems", "pattern", "format"):
+                node.pop(key, None)
+            if node.get("type") == "object":
+                node["additionalProperties"] = False
+                node["required"] = list(node.get("properties", {}))
+            for child in list(node.values()):
+                strict(child)
+
+    strict(schema)
+
+    chatgpt_prompt = (
+        f"{prompt}\n\n"
+        "Reason deeply with maximum thinking effort and deliberation before generating the output.\n"
+        "Return ONLY a valid JSON object matching the JSON schema below. "
+        "Do not include explanation, conversational text, markdown formatting, or surrounding backticks. "
+        "Raw JSON only:\n"
+        f"{json.dumps(schema, ensure_ascii=False)}"
+    )
+
+    async def _execute() -> dict[str, Any]:
+        manager = get_chatgpt_input_manager(s)
+        return await manager.enter(chatgpt_prompt, timeout=240.0)
+
+    try:
+        asyncio.get_running_loop()
+        in_loop = True
+    except RuntimeError:
+        in_loop = False
+
+    if in_loop:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            result = pool.submit(asyncio.run, _execute()).result()
+    else:
+        result = asyncio.run(_execute())
+
+    if result.get("status") == "sign_in_required":
+        raise RuntimeError("ChatGPT Web is not signed in; open ChatGPT in Chrome and sign in first")
+    if result.get("status") == "failed":
+        raise RuntimeError(f"ChatGPT Web drafting failed: {result.get('detail', 'unknown error')}")
+
+    reply = result.get("reply") or ""
+    if not reply.strip():
+        raise RuntimeError("ChatGPT Web did not return a response")
+
+    data = _extract_json_or_none(reply)
+    if data is None:
+        raise RuntimeError(f"ChatGPT Web returned invalid JSON: {reply[:200]}")
+
+    try:
+        return response_type.model_validate(data)
+    except Exception as error:
+        raise RuntimeError(f"ChatGPT Web returned an invalid draft: {str(error)[:200]}") from error
+
+
 class ChatGPTInputManager:
     """Enter a prompt in a visible, locally signed-in ChatGPT browser and receive its reply."""
 
     def __init__(
         self,
         settings: Settings,
-        browser_lock: asyncio.Lock,
+        browser_lock: asyncio.Lock | None = None,
         priority_browser: Callable[[], AsyncContextManager[None]] | None = None,
         db: Database | None = None,
     ):
         self.settings = settings
         self.lock = asyncio.Lock()
-        self.browser_lock = browser_lock
+        self.browser_lock = browser_lock or asyncio.Lock()
         self.priority_browser = priority_browser or _no_browser_priority
         self.db = db
         self.owns_browser_lock = False

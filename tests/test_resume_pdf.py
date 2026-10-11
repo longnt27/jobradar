@@ -57,3 +57,28 @@ def test_resume_bullets_accept_editable_latex_items(tmp_path: Path) -> None:
     resume["experience"][0]["bullets"] = [r"\item Reached 95% recall."]
     with pytest.raises(ValueError, match="Escape LaTeX special characters"):
         render_resume(Settings(tmp_path), "percent", resume)
+
+
+def test_resume_bullets_bold_multiple_phrases_in_same_bullet(tmp_path: Path) -> None:
+    resume = {
+        "name": "Long Nguyen",
+        "email": "long@example.com",
+        "summary": "AI Engineer focused on speech and vision systems.",
+        "experience": [],
+        "projects": [{
+            "title": "Pronunciation Assessment",
+            "bullets": [
+                "Built an alignment-free scoring pipeline.",
+                "Achieved Phone PCC 0.645 ± 0.009 and delivered 1.24× faster inference on GPU.",
+            ],
+        }],
+        "education": [{"school": "HUST", "degree": "CS", "dates": "2026"}],
+        "bold_phrases": ["0.645 ± 0.009", "1.24× faster"],
+    }
+    source = _body(resume)
+    assert r"\textbf{0.645 \pm 0.009}" in source or r"\textbf{0.645" in source
+    assert r"\textbf{1.24" in source and r"faster}" in source
+    path, _ = render_resume(Settings(tmp_path), "multi_bold", resume)
+    text = PdfReader(path).pages[0].extract_text()
+    assert "0.645" in text and "1.24" in text
+

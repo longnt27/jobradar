@@ -88,11 +88,39 @@ def _bullet(value: object, phrases: list[str]) -> str:
         if depth != 0:
             raise ValueError("LaTeX bullet braces must be balanced")
         return source
-    phrase = next((p for p in phrases if p and p in text and p != text.strip()), None)
-    if not phrase:
+    valid_phrases = [str(p) for p in phrases if p and str(p).strip() and str(p) in text and str(p) != text.strip()]
+    if not valid_phrases:
         return r"\item " + _tex(text)
-    before, after = text.split(phrase, 1)
-    return r"\item " + _tex(before) + r"\textbf{" + _tex(phrase) + "}" + _tex(after)
+
+    matches: list[tuple[int, int]] = []
+    for p in sorted(set(valid_phrases), key=len, reverse=True):
+        start = 0
+        while True:
+            idx = text.find(p, start)
+            if idx == -1:
+                break
+            matches.append((idx, idx + len(p)))
+            start = idx + 1
+
+    matches.sort(key=lambda m: (m[0], -(m[1] - m[0])))
+    spans: list[tuple[int, int]] = []
+    for start, end in matches:
+        if not spans or start >= spans[-1][1]:
+            spans.append((start, end))
+
+    spans.sort(key=lambda s: s[0])
+
+    pieces: list[str] = []
+    last_idx = 0
+    for start, end in spans:
+        if start > last_idx:
+            pieces.append(_tex(text[last_idx:start]))
+        pieces.append(r"\textbf{" + _tex(text[start:end]) + "}")
+        last_idx = end
+    if last_idx < len(text):
+        pieces.append(_tex(text[last_idx:]))
+
+    return r"\item " + "".join(pieces)
 
 
 def _items(values: list[str], phrases: list[str] | None = None) -> str:
