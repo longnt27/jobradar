@@ -99,3 +99,82 @@ def test_form_structure_filters_hidden_dummy_inputs() -> None:
 
     asyncio.run(run())
 
+
+def test_signatures_compatible_normalizes_labels() -> None:
+    from job_radar.apply import _signatures_compatible
+
+    cur = [
+        {"id": "name", "type": "text", "name": "", "label": "Name"},
+        {"id": "cv", "type": "file", "name": "", "label": "Upload CV Here"},
+    ]
+    saved = [
+        {"id": "name", "type": "text", "name": "", "label": "Name*"},
+        {"id": "cv", "type": "file", "name": "", "label": "Upload CV\n\nHere"},
+    ]
+    # Identical structure with trailing asterisks or whitespace differences
+    assert _signatures_compatible(cur, saved, "sig1", "sig2")
+
+    # Mismatched ID should not be compatible
+    cur_diff = [
+        {"id": "other_id", "type": "text", "name": "", "label": "Name"},
+        {"id": "cv", "type": "file", "name": "", "label": "Upload CV Here"},
+    ]
+    assert not _signatures_compatible(cur_diff, saved, "sig1", "sig2")
+
+    # Mismatched question text should not be compatible
+    cur_diff_q = [
+        {"id": "name", "type": "text", "name": "", "label": "Your Phone Number"},
+        {"id": "cv", "type": "file", "name": "", "label": "Upload CV Here"},
+    ]
+    assert not _signatures_compatible(cur_diff_q, saved, "sig1", "sig2")
+
+
+def test_open_application_form_matches_opener_when_index_shifts() -> None:
+    from job_radar.apply import _open_application_form
+
+    async def run():
+        # First page has button at index 0
+        html1 = """
+        <main>
+          <button id="apply-btn">Apply now</button>
+          <section id="form-sec" hidden>
+            <form action="/submit" method="post">
+              <label>Name <input name="name"></label>
+              <button type="submit">Submit application</button>
+            </form>
+          </section>
+        </main>
+        <script>document.querySelector('#apply-btn').onclick = () => { document.querySelector('#form-sec').hidden = false; };</script>
+        """
+        # Second page has an extra link beforehand, shifting button index to 1
+        html2 = """
+        <main>
+          <a href="/home">Home</a>
+          <button id="apply-btn">Apply now</button>
+          <section id="form-sec" hidden>
+            <form action="/submit" method="post">
+              <label>Name <input name="name"></label>
+              <button type="submit">Submit application</button>
+            </form>
+          </section>
+        </main>
+        <script>document.querySelector('#apply-btn').onclick = () => { document.querySelector('#form-sec').hidden = false; };</script>
+        """
+        playwright, browser, page = await _page(html1)
+        try:
+            _, form1 = await _open_application_form(page)
+            opener = form1["opener"]
+            assert opener["label"] == "Apply now"
+
+            # Now visit html2 where index has shifted
+            await page.set_content(html2)
+            _, form2 = await _open_application_form(page, reviewed_opener=opener)
+            assert len(form2["fields"]) == 1
+            assert form2["fields"][0]["name"] == "name"
+        finally:
+            await browser.close()
+            await playwright.stop()
+
+    asyncio.run(run())
+
+

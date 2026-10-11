@@ -56,6 +56,21 @@ def _field_signature(fields: list[dict], action: str, method: str, enctype: str)
     return hashlib.sha256(json.dumps({"fields": stable, "action": action, "method": method, "enctype": enctype}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
+def _signatures_compatible(current_fields: list[dict], saved_fields: list[dict], current_sig: str, saved_sig: str) -> bool:
+    if current_sig == saved_sig:
+        return True
+    if not current_fields or not saved_fields or len(current_fields) != len(saved_fields):
+        return False
+    for cur, saved in zip(current_fields, saved_fields):
+        if cur.get("id") != saved.get("id") or cur.get("type") != saved.get("type") or cur.get("name") != saved.get("name"):
+            return False
+        cur_lbl = re.sub(r"[\s\*\u2731\u2217\uFE61\uFF0A]+", "", cur.get("label", ""))
+        saved_lbl = re.sub(r"[\s\*\u2731\u2217\uFE61\uFF0A]+", "", saved.get("label", ""))
+        if cur_lbl.casefold() != saved_lbl.casefold():
+            return False
+    return True
+
+
 async def _form_structure(page: Page) -> dict:
     forms = page.locator("form")
     count = await forms.count()
@@ -242,6 +257,9 @@ async def _open_application_form(page: Page, reviewed_opener: dict | None = None
         chosen_candidates = [action for action in actions if all(action.get(key) == reviewed_opener.get(key)
                              for key in ("index", "tag", "label", "href"))]
         if not chosen_candidates:
+            chosen_candidates = [action for action in actions if all(action.get(key) == reviewed_opener.get(key)
+                                 for key in ("tag", "label", "href"))]
+        if not chosen_candidates:
             raise ValueError("Application button changed after review; inspect the form again")
     else:
         if not actions or actions[0]["score"] < 2:
@@ -363,6 +381,8 @@ def _default_answer(field: dict, profile: dict, message: dict) -> str:
             return str(profile.get(key, ""))
     if re.search(r"reason.*(leav|left|exit)", text):
         return "Seeking career growth as an AI Engineer in a dynamic engineering team."
+    if re.search(r"referr", text):
+        return ""
     if re.search(r"less than 40 hours|how many hours", text):
         return "N/A (committed to full-time 40 hours/week)"
     if re.search(r"how many months|duration.*available|available.*duration", text):
@@ -787,7 +807,10 @@ async def _send_web(settings: Settings, draft: dict) -> tuple[str, str]:
                 page, current = await _open_application_form(page, form_data.get("opener"))
             except ValueError as error:
                 return "needs_user_attention", str(error)
-            if current["signature"] != form_data["signature"] or current["final_url"] != form_data["final_url"]:
+            compatible = (current["signature"] == form_data["signature"]) or _signatures_compatible(
+                current.get("fields", []), form_data.get("fields", []), current["signature"], form_data["signature"]
+            )
+            if not compatible or current["final_url"] != form_data["final_url"]:
                 return "needs_user_attention", "Application destination or form fields changed after review"
             form = page.locator("form").nth(form_data["form_index"])
             fields = form.locator("input,select,textarea")
