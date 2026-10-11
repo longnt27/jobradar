@@ -6,7 +6,7 @@ import re
 import shutil
 import subprocess
 import tempfile
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from .application_action import is_linkedin_job_posting_url, resolve_application_action, reviewed_application_action
 from .linkedin_application import unwrap_linkedin_redirect
 from .db import Database, new_id, now
+from .search_intent import DATE_TOKEN, _month_index
 from .settings import Settings
 
 
@@ -170,6 +171,141 @@ APPLICATION_FIT_PROMPT = (
     "Do not write a greeting, posting source, education, call to action, sign-off, or email subject; "
     "the app inserts those parts from verified data. Do not use line breaks. "
 )
+
+_LEAD_ROLE_PATTERN = re.compile(
+    r"\b(lead|leader|tech\s+lead|team\s+lead|manager|engineering\s+manager|head\s+of|director|supervisor|chief|architect|principal)\b",
+    re.I,
+)
+_TRAINEE_ROLE_PATTERN = re.compile(
+    r"\b(trainee|intern|internship|student|bootcamp|fellow|fellowship|apprentice|apprenticeship|academy|hackathon|workshop|thực\s+tập|học\s+viên)\b",
+    re.I,
+)
+_TRAINEE_COMPANY_PATTERN = re.compile(
+    r"\b(program|bootcamp|academy|fellowship|hackathon|workshop|internship)\b",
+    re.I,
+)
+_LEAD_ACTION_PATTERN = re.compile(
+    r"\b(led\b|leading\b|team\s+lead\b|tech\s+lead\b|managed\s+a\s+team\b|supervised\b|coordinated\s+a\s+team\b|directing\b)",
+    re.I,
+)
+_LEAD_JOB_PATTERN = re.compile(
+    r"\b(lead|leader|tech\s+lead|team\s+lead|manager|engineering\s+manager|head\s+of|director|supervisor)\b",
+    re.I,
+)
+
+
+def _position_months(dates: str, *, as_of: datetime | None = None) -> int | None:
+    if not dates:
+        return None
+    tokens = [match.group() for match in DATE_TOKEN.finditer(dates)]
+    if len(tokens) < 2:
+        return None
+    current = as_of or datetime.now().astimezone()
+    start = _month_index(tokens[0], end=False, current=current)
+    end = _month_index(tokens[1], end=True, current=current)
+    if start is not None and end is not None and start <= end:
+        return max(1, end - start + 1)
+    return None
+
+
+def _has_substantial_leadership(profile_or_experience: dict | list | None) -> bool:
+    if not profile_or_experience:
+        return False
+    if isinstance(profile_or_experience, list):
+        positions = profile_or_experience
+    elif isinstance(profile_or_experience, dict):
+        positions = (
+            profile_or_experience.get("experience")
+            or (profile_or_experience.get("resume_data") or {}).get("experience")
+            or profile_or_experience.get("positions")
+            or []
+        )
+    else:
+        return False
+
+    for item in positions:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").strip()
+        company = str(item.get("company") or "").strip()
+        dates = str(item.get("dates") or "").strip()
+        bullets = [str(b) for b in item.get("bullets") or []]
+        months = _position_months(dates)
+        is_trainee = bool(_TRAINEE_ROLE_PATTERN.search(role) or _TRAINEE_COMPANY_PATTERN.search(company))
+        if is_trainee:
+            continue
+        if months is not None and months < 6:
+            continue
+        if _LEAD_ROLE_PATTERN.search(role):
+            return True
+        if re.search(r"\b(senior|staff|principal)\b", role, re.I) and _LEAD_ACTION_PATTERN.search(" ".join(bullets)):
+            if months is None or months >= 12:
+                return True
+    return False
+
+
+def _has_any_lead_mention(profile_or_experience: dict | list | None) -> bool:
+    if not profile_or_experience:
+        return False
+    if isinstance(profile_or_experience, dict):
+        summary = str(profile_or_experience.get("summary") or "")
+        if _LEAD_ROLE_PATTERN.search(summary) or _LEAD_ACTION_PATTERN.search(summary):
+            return True
+        positions = (
+            profile_or_experience.get("experience")
+            or (profile_or_experience.get("resume_data") or {}).get("experience")
+            or profile_or_experience.get("positions")
+            or []
+        )
+    elif isinstance(profile_or_experience, list):
+        positions = profile_or_experience
+    else:
+        return False
+
+    for item in positions:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "")
+        bullets = " ".join(str(b) for b in item.get("bullets") or [])
+        if _LEAD_ROLE_PATTERN.search(role) or _LEAD_ACTION_PATTERN.search(role) or _LEAD_ACTION_PATTERN.search(bullets):
+            return True
+    return False
+
+
+def _is_leadership_job(job: dict | None) -> bool:
+    if not job or not isinstance(job, dict):
+        return False
+    title = str(job.get("title") or "")
+    return bool(_LEAD_JOB_PATTERN.search(title))
+
+
+def _leadership_summary_rule(profile: dict | list | None, job: dict | None = None) -> str:
+    has_sub = _has_substantial_leadership(profile)
+    has_any = _has_any_lead_mention(profile)
+    is_job_lead = _is_leadership_job(job)
+
+    if has_sub:
+        if is_job_lead:
+            return (
+                "Highlight technical leadership, architecture, and team delivery in the professional summary "
+                "to align with the target leadership role, as supported by candidate facts."
+            )
+        return (
+            "Highlight technical leadership, architecture, and team delivery in the professional summary "
+            "as supported by candidate facts."
+        )
+    if has_any:
+        return (
+            "Do NOT claim team leadership, team lead roles, leadership claims, team sizes, or managing people "
+            "in the professional summary based on short-term, temporary, trainee, or early-career lead stints "
+            "(such brief details belong strictly within Experience bullets, not the summary). "
+            "Keep the summary general, high-level, and focused on core engineering and problem-solving capabilities."
+        )
+    return (
+        "Only highlight team leadership in the professional summary if supported by substantial professional tenure "
+        "or requested by the job. Keep the summary general, high-level, and focused on core engineering and problem-solving capabilities."
+    )
+
 
 
 def _brief_message(body: str) -> bool:
@@ -477,8 +613,7 @@ def _run_provider(provider: str, job: dict, profile: dict, cards: list[dict], cu
               "technologies belong strictly in Skills, not in the summary). Do NOT throw buzzwords, tech stack dumps, "
               "hyper-specific project metrics, benchmark scores (like PCC, F1, PSNR, SSIM), test fixture numbers, "
               "dataset names (e.g. SpeechOcean762), or individual project names into the summary—keep it cohesive, natural, and professional. "
-              "Do NOT mention leading teams, team lead roles, leadership claims, team sizes, or managing people in the professional summary "
-              "(any brief trainee lead role belongs strictly within Experience, not the summary). Keep the summary general, high-level, and focused on engineering and problem solving. "
+              f"{_leadership_summary_rule(profile, job)} "
               "Do not repeat the degree or school already in Education. "
               "Previous positions belong only in Experience, projects "
               "only in Selected Projects. Write the professional summary and all resume/project bullets in English, "
@@ -851,8 +986,7 @@ def _section_model(provider: str, section: str, prompt: str, job: dict, profile:
                     "databases, or tools (technologies belong strictly in Skills). Do NOT throw buzzwords, tech stack dumps, "
                     "hyper-specific benchmark metrics (such as PCC, F1, PSNR, SSIM), test fixture numbers, dataset names (e.g. SpeechOcean762), "
                     "or individual project names into the summary. "
-                    "Do NOT mention leading teams, team lead roles, leadership claims, team sizes, or managing people in the summary "
-                    "(keep any brief trainee lead role strictly within Experience, not the summary). Keep the summary general and focused on engineering."),
+                    f"{_leadership_summary_rule(profile, job)}"),
         "experience": "Return one indexed entry per current position. Rewrite only its bullets in English; do not change employers, roles, or dates. Keep measured results accurate.",
         "projects": "Select up to three approved project IDs, ordered by strong job-relevant evidence. When at least three projects are approved, select exactly three. For each, return exactly two bullets: first what it does and how, then one result bullet. Select one to three complementary job-relevant result IDs per project and combine their supported outcomes in the single second bullet when they give a fuller, more balanced achievement, but do NOT mechanically glue disparate metrics from different sub-models or pipeline stages together with semicolons into one confusing sentence; write a single cohesive, naturally phrased result sentence with clear context. Every metric in bullet 2 must be supported by a result ID in project_focus. Keep internal logs and trace artifacts out of result bullets; describe them in bullet 1 only if they explain how the project works. For accuracy-focused work prioritize measured accuracy over model count, mesh size, or speed. For 3D pose work include PA-MPJPE when approved evidence supports it; if citing reduced acceleration error, include its pose-accuracy tradeoff in the same result bullet. For vision jobs, use strong perception results before unrelated LLM results. Name the dataset and measurement scope as needed; never invent or improve a metric. Use three to five supported skill categories. Reference valid result IDs where available. Bold phrases must be short exact measured-result substrings from the second bullets (include multiple distinct key metrics if present in the bullet). Do not include caveats, academic disclaimers, protocol-v2/historical-thesis warnings, unaccelerated CPU slowdowns, or weaker negative metrics as achievements (e.g. never include 'Historical thesis results', 'protocol-v2 reruns may differ', or 'slower on Kaggle CPU').",
         "education": "Return one indexed entry per current education record. Rewrite only degree wording in English. Preserve the exact school, credential, and dates; do not invent qualifications.",

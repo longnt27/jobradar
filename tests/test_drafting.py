@@ -463,3 +463,70 @@ def test_vietnamese_experience_is_translated_before_cv_render(monkeypatch) -> No
     assert translated["summary"] == "Data engineer experienced in building systems."
     assert translated["experience"][0]["company"] == "Prior Co"
     assert translated["experience"][0]["bullets"] == ["Built data systems with Python."]
+
+
+def test_leadership_summary_rule_distinguishes_real_vs_trainee_leadership() -> None:
+    from job_radar.drafting import (
+        _has_substantial_leadership,
+        _has_any_lead_mention,
+        _is_leadership_job,
+        _leadership_summary_rule,
+    )
+
+    trainee_lead_profile = {
+        "experience": [
+            {
+                "company": "Vingroup - AI Thuc Chien Program",
+                "role": "Applied AI Trainee / Team Lead",
+                "dates": "Jul 2026 – Present",
+                "bullets": ["Led a 4-person team building AmenityBook."],
+            },
+            {
+                "company": "VinSmart Future (Vingroup)",
+                "role": "AI Engineering Intern",
+                "dates": "Dec 2025 – Jun 2026",
+                "bullets": ["Engineered NuRec 3D reconstruction pipeline."],
+            },
+        ]
+    }
+    assert not _has_substantial_leadership(trainee_lead_profile)
+    assert _has_any_lead_mention(trainee_lead_profile)
+    rule_trainee = _leadership_summary_rule(trainee_lead_profile, {"title": "AI Agent Engineer"})
+    assert "Do NOT claim team leadership" in rule_trainee
+    assert "short-term, temporary, trainee, or early-career lead stints" in rule_trainee
+    assert "strictly within Experience bullets" in rule_trainee
+
+    tech_lead_profile = {
+        "experience": [
+            {
+                "company": "Tech Corp",
+                "role": "Technical Lead",
+                "dates": "Jan 2023 – Dec 2024",
+                "bullets": ["Led engineering team delivering distributed systems."],
+            }
+        ]
+    }
+    assert _has_substantial_leadership(tech_lead_profile)
+    rule_tech_lead = _leadership_summary_rule(tech_lead_profile, {"title": "AI Engineer"})
+    assert "Highlight technical leadership, architecture, and team delivery" in rule_tech_lead
+
+    ic_profile = {
+        "experience": [
+            {
+                "company": "Example Labs",
+                "role": "Software Engineer",
+                "dates": "Jan 2023 – Dec 2024",
+                "bullets": ["Developed microservices and REST APIs."],
+            }
+        ]
+    }
+    assert not _has_substantial_leadership(ic_profile)
+    assert not _has_any_lead_mention(ic_profile)
+    rule_ic = _leadership_summary_rule(ic_profile, {"title": "Software Engineer"})
+    assert "Only highlight team leadership in the professional summary if supported by substantial professional tenure" in rule_ic
+
+    lead_job = {"title": "Team Lead, Applied AI"}
+    assert _is_leadership_job(lead_job)
+    rule_tech_lead_for_lead_job = _leadership_summary_rule(tech_lead_profile, lead_job)
+    assert "to align with the target leadership role" in rule_tech_lead_for_lead_job
+

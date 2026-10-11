@@ -21,7 +21,7 @@ from playwright.async_api import Browser, Page, Playwright, TimeoutError as Play
 
 from .db import Database
 from .desktop_handoff import activate_app, frontmost_app_bundle, hide_chrome, launch_background_browser, return_to_job_radar
-from .drafting import APPLICATION_FIT_PROMPT, _compose_application_message, _job_for_drafting, _job_language, get_draft, update_draft
+from .drafting import APPLICATION_FIT_PROMPT, _compose_application_message, _job_for_drafting, _job_language, _leadership_summary_rule, get_draft, update_draft
 from .settings import Settings
 from .social_browser import chrome_executable
 
@@ -176,8 +176,7 @@ def application_prompt(db: Database, draft_id: str, section: str, instruction: s
                 "Keep it general and accessible for HR/recruiters: do NOT list laundry lists of programming languages, frameworks, "
                 "databases, or cloud tools (technologies belong strictly in Skills, not in the summary). Do NOT throw buzzwords, tech stack dumps, "
                 "hyper-specific benchmark metrics (like PCC, F1, PSNR, SSIM), dataset names, or individual project names into the summary. "
-                "Do NOT mention leading teams, team lead roles, leadership claims, team sizes, or managing people in the summary "
-                "(keep any brief trainee lead role strictly within Experience, not the summary). Keep the summary general and focused on engineering. "
+                f"{_leadership_summary_rule(profile, job)} "
                 "Return the revised resume as a JSON object with keys: summary, experience, projects, education, achievements, skills, skill_groups, bold_phrases. "
                 "For projects, format as a list of exactly three objects (when available) with id, title, repository_url, tech_stack, and bullets (exactly two bullets: what/how first, cohesive measured result second). "
                 "Set bold_phrases to 2 to 10 short exact substrings that quote the strongest measured results from experience bullets and project second bullets (including multiple distinct key metrics per bullet when present). "
@@ -196,8 +195,7 @@ def application_prompt(db: Database, draft_id: str, section: str, instruction: s
             "libraries, databases, or cloud tools (e.g. do not list Python, Go, TypeScript, FastAPI, PostgreSQL, Docker, AWS; technologies belong strictly in Skills). "
             "Do NOT throw buzzwords or tech stack dumps into HR's face, and do NOT cite hyper-specific benchmark metrics (like PCC, F1, PSNR, SSIM), "
             "dataset names, or individual project names in the summary. "
-            "Do NOT mention leading teams, team lead roles, leadership claims, team sizes, or managing people in the summary "
-            "(keep any brief trainee lead role strictly within Experience, not the summary). Keep the summary general and focused on engineering. "
+            f"{_leadership_summary_rule(profile, job)} "
         )
     else:
         rules += "Write resume text in English and revise only the requested section. "
