@@ -574,7 +574,7 @@ def _provider_json(provider: str, prompt: str, response_type: type[BaseModel]) -
 
 
 def draft_custom_answers(provider: str, job: dict, profile: dict, cards: list[dict], fields: list[dict]) -> dict[str, str]:
-    if provider == "template" or not fields:
+    if provider in ("template", "chatgpt_web") or not fields:
         return {}
     safe_fields = [field for field in fields if field["type"] not in ("file", "checkbox", "radio", "select") and
                    not re.search(r"salary|compensation|visa|work authorization|notice period|relocat|consent|gender|race|disability", f"{field.get('label', '')} {field.get('group_label', '')}", re.I)]

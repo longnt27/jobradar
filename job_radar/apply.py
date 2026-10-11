@@ -459,7 +459,7 @@ async def inspect_form(db: Database, settings: Settings, draft_id: str) -> dict:
 
     answers = {str(field["index"]): _field_answer(field)
                for field in structure["fields"] if field["type"] != "file"}
-    if draft["provider"] != "template":
+    if draft["provider"] not in ("template", "chatgpt_web"):
         cards = [card for card in draft["resume_data"].get("evidence", []) if card.get("id") in draft["evidence_ids"]]
         job = db.one("SELECT title,company,description FROM vacancies WHERE id=?", (draft["vacancy_id"],))
         try:
@@ -468,7 +468,8 @@ async def inspect_form(db: Database, settings: Settings, draft_id: str) -> dict:
                 if key not in existing and value:
                     answers[key] = value
         except Exception as error:
-            warnings = [*draft["warnings"], f"Form answer drafting failed: {str(error)[:200]}"]
+            current_warnings = [w for w in draft.get("warnings", []) if not w.startswith("Form answer drafting failed:")]
+            warnings = [*current_warnings, f"Form answer drafting failed: {str(error)[:200]}"]
             db.execute("UPDATE application_drafts SET warnings=? WHERE id=?", (json.dumps(warnings), draft_id))
     structure["answers"] = answers
     attachments = draft["form_data"].get("attachments", {}) if draft["form_data"].get("signature") == structure["signature"] else {}
