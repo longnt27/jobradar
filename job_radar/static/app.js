@@ -254,11 +254,11 @@ function renderSocialAuth(browser, linkedinPaused = false) {
     ? 'LinkedIn automated checks are paused after an account activity warning. Other job sources continue checking.'
     : expired ? `${socialSiteNames(browser)} sign-in expired. Reconnect to resume checks or approved messages.` : '';
   $('#social-auth-action').hidden = linkedinPaused && !(browser.sites || []).some((site) => site !== 'linkedin');
-  const discoveryConnected = ['linkedin', 'facebook'].filter(site => connected.includes(site)).length;
-  const socialReady = !expired && !linkedinPaused && discoveryConnected === 2 && !['opening', 'open'].includes(browser.state);
+  const connectedCount = ['linkedin', 'facebook', 'zalo'].filter(site => connected.includes(site)).length;
+  const socialReady = !expired && !linkedinPaused && connectedCount === 3 && !['opening', 'open'].includes(browser.state);
   setStepStatus('#social-sign-in-status', linkedinPaused ? 'LinkedIn paused' : expired ? 'Sign in again'
     : ['opening', 'open'].includes(browser.state) ? 'Waiting for sign-in'
-    : socialReady ? 'Both connected' : `${discoveryConnected} of 2 sources connected`, socialReady ? '' : 'warning');
+    : socialReady ? 'All connected' : `${connectedCount} of 3 connected`, socialReady ? '' : 'warning');
   for (const site of ['linkedin', 'facebook', 'zalo']) {
     const label = ({linkedin:'LinkedIn', facebook:'Facebook', zalo:'Zalo'})[site];
     const needsSignIn = !connected.includes(site) || (browser.sites || []).includes(site);
