@@ -12,7 +12,8 @@ from job_radar.web import create_app
 
 
 @pytest.mark.parametrize('width', [1280, 390])
-def test_writing_editor_saves_preserves_edits_restores_and_fits_viewport(tmp_path, monkeypatch, width):
+@pytest.mark.parametrize('theme', ['light', 'dark'])
+def test_writing_editor_saves_preserves_edits_restores_and_fits_viewport(tmp_path, monkeypatch, width, theme):
     app = create_app(Settings(tmp_path))
     app.state.db.execute('UPDATE sources SET enabled=0')
     monkeypatch.setattr('job_radar.web.list_local_models', lambda: [])
@@ -32,6 +33,7 @@ def test_writing_editor_saves_preserves_edits_restores_and_fits_viewport(tmp_pat
             browser = playwright.chromium.launch(headless=True)
             try:
                 page = browser.new_page(viewport={'width': width, 'height': 900})
+                page.context.add_init_script(f"localStorage.setItem('job-radar-theme', '{theme}')")
                 errors = []
                 page.on('pageerror', lambda error: errors.append(str(error)))
                 page.goto(f'http://127.0.0.1:{port}/#settings')
@@ -73,7 +75,7 @@ def test_writing_editor_saves_preserves_edits_restores_and_fits_viewport(tmp_pat
                 assert page.evaluate('Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) <= innerWidth + 1')
                 page.locator('#writing-preferences-editor summary').click()
                 assert page.locator('#writing-default').is_visible()
-                artifact = Path(__file__).parents[1] / 'artifacts' / f'writing-editor-{width}.png'
+                artifact = Path(__file__).parents[1] / 'artifacts' / f'writing-editor-{theme}-{width}.png'
                 artifact.parent.mkdir(exist_ok=True)
                 page.screenshot(path=str(artifact), full_page=True)
                 assert not errors

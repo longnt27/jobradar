@@ -114,6 +114,8 @@ Each local data directory has its own profile and writing settings. Different pe
 
 ## Day-to-Day Workflow
 
+Use **Theme** in the top-right corner to choose **Light**, **Dark**, or **System**. System follows your device's appearance; your choice is remembered in this browser.
+
 ```mermaid
 flowchart LR
     A["Job Feeds\n(Careers, LinkedIn, FB)"] --> B["Local AI Scorer\n(Ollama)"]
