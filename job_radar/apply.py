@@ -16,6 +16,7 @@ from playwright.async_api import BrowserContext, Page, async_playwright
 from .application_action import is_linkedin_job_posting_url
 from .db import Database, new_id, now
 from .drafting import draft_custom_answers, get_draft, package_hash
+from .writing_preferences import profile_with_preferences
 from .mail_config import send_smtp_message, validated_smtp_config
 from .linkedin_application import inspect_linkedin_application, submit_easy_apply_dialog, wait_for_linkedin_apply_control
 from .settings import Settings
@@ -537,7 +538,7 @@ async def inspect_form(db: Database, settings: Settings, draft_id: str) -> dict:
             await context.close()
     if found_email:
         return set_discovered_email_destination(db, draft_id, found_email, f"Recruitment email {found_email} discovered on employer page {destination['url']}.")
-    profile = db.get_setting("profile", {})
+    profile = profile_with_preferences(db)
     existing = draft["form_data"].get("answers", {})
     def _field_answer(field: dict) -> str:
         idx_str = str(field["index"])

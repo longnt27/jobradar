@@ -102,6 +102,14 @@ Open **My profile** and complete the setup steps:
 - **Telegram Bot:** Create a bot via [@BotFather](https://t.me/BotFather), enter your token, and click **Find my chat ID**. When a job qualifies for an application, Telegram receives a review message with the exact compiled PDF resume and action buttons.
 - **Email (SMTP):** If sending email applications, configure your SMTP server (e.g., Gmail using an App Password). Click **Send test email** to verify delivery.
 
+### 6. Customize Prompts and Templates (Optional)
+
+Open **Settings → Prompts and templates** to edit application drafting instructions, individual section prompts, ChatGPT prompts, project briefs, resume import, job analysis, application form answers, and English/Vietnamese email templates. You can also adjust the number of selected projects, AI project bullets, maximum resume pages, and the LaTeX layout. The editor shows available placeholders and the original default; **Restore default** removes only the selected override.
+
+Every option starts with the current shipped values. Overrides are saved in your local Job Radar database and survive restarts and updates; they never modify the shared source templates. Existing drafts and PDFs retain their content until you explicitly regenerate or edit them. Zalo inquiries keep their separate template under **Settings → Zalo inquiry message**, including any previously saved customization.
+
+Each local data directory has its own profile and writing settings. Different people on the same Mac can run separate instances with their own `JOB_RADAR_DATA_DIR` and `JOB_RADAR_PORT` values. There is one profile per data directory.
+
 ---
 
 ## Day-to-Day Workflow

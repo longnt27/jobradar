@@ -1808,6 +1808,7 @@ async function loadSettings() {
     loadSetup(),
     api('/api/search-intent'),
     api('/api/preferences/suggestions'),
+    window.JobRadarWriting?.mount($('#writing-preferences-editor'), {api, notice}),
   ]);
   renderSearchIntentForm(intent);
   renderPreferenceSuggestions(suggestions);

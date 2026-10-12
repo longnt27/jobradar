@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 
+from .writing_preferences import get_preferences
 from .db import Database, now
 from .auto_apply import AutoApplyManager
 from .local_analysis import ANALYSIS_VERSION, LocalModelUnavailable, RECOMMENDED_MODEL, analyze_job, validate_local_model
@@ -221,7 +222,7 @@ class MatchManager:
                     lambda stage: self.db.execute(
                         "UPDATE vacancies SET analysis_stage=? WHERE id=? AND analysis_status='running'",
                         (stage, job["id"])),
-                    preferences,
+                    preferences, get_preferences(self.db),
                 )
                 self.service_error = None
                 if model != self.db.get_setting("matching_model", ""):

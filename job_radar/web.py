@@ -21,6 +21,7 @@ import pypdfium2 as pdfium
 from playwright.async_api import Error as PlaywrightError
 from pydantic import BaseModel, Field, HttpUrl
 
+from .writing_preferences import create_writing_router, get_preferences
 from .db import Database, new_id, now
 from .discovery import merge_reason_label, source_coverage, split_observation, summarize_discovery
 from .apply import (
@@ -295,6 +296,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await scan_manager.stop()
 
     app = FastAPI(title="Job Radar", version="0.1.0", lifespan=lifespan)
+    app.include_router(create_writing_router(db))
     app.include_router(create_zalo_router(db, settings, scan_manager.browser_lock))
     app.state.db = db
     app.state.settings = settings
@@ -367,7 +369,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def index():
         static = Path(__file__).parent / "static"
         html = (static / "index.html").read_text()
-        for asset, attribute in (("app.js", "src"), ("zalo.js", "src"), ("app.css", "href")):
+        for asset, attribute in (("app.js", "src"), ("zalo.js", "src"), ("writing.js", "src"), ("app.css", "href")):
             version = hashlib.sha256((static / asset).read_bytes()).hexdigest()[:12]
             html = html.replace(f'{attribute}="/{asset}"', f'{attribute}="/{asset}?v={version}"')
         return HTMLResponse(html, headers={"Cache-Control": "no-store"})
@@ -380,6 +382,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/app.css")
     def stylesheet():
         return FileResponse(Path(__file__).parent / "static" / "app.css", media_type="text/css",
+                            headers={"Cache-Control": "no-store"})
+
+    @app.get("/writing.js")
+    def writing_script():
+        return FileResponse(Path(__file__).parent / "static" / "writing.js", media_type="application/javascript",
                             headers={"Cache-Control": "no-store"})
 
     @app.get("/zalo.js")
@@ -818,7 +825,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(422, f"{provider} is not available on this Mac")
         data = await file.read(10_000_001)
         try:
-            extracted = await asyncio.to_thread(extract_resume, data, provider)
+            writing = get_preferences(db)
+            arguments = (data, provider, writing) if writing else (data, provider)
+            extracted = await asyncio.to_thread(extract_resume, *arguments)
         except (ValueError, RuntimeError) as error:
             raise HTTPException(422, str(error)) from error
         profile = {**db.get_setting("profile", {}), **extracted}
