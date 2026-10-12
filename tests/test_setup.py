@@ -364,3 +364,11 @@ def test_auto_detect_closes_chrome_and_returns_to_app(tmp_path: Path, monkeypatc
         assert not any("/signin/finish/" in arg for arg in launches[0])
         assert client.get("/api/setup").json()["browser"]["connected_sites"] == ["linkedin"]
         assert activated == [("com.openai.codex", 8787)]
+
+
+def test_zalo_sign_in_is_accepted_as_a_sending_connection(tmp_path: Path, monkeypatch) -> None:
+    app = create_app(Settings(tmp_path))
+    monkeypatch.setattr(app.state.login_manager, "start", lambda site: {"state": "open", "active_site": site})
+    response = TestClient(app).post("/api/setup/browser/start", json={"site": "zalo"})
+    assert response.status_code == 200
+    assert response.json()["active_site"] == "zalo"

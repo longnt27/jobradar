@@ -28,7 +28,7 @@ def clean_stale_chrome_lock(profile_dir: Path | str) -> None:
             pass
 
 
-SITES = ("linkedin", "facebook")
+SITES = ("linkedin", "facebook", "zalo")
 CHROME_KEYCHAIN_ARGS = ("--password-store=basic", "--use-mock-keychain")
 
 
@@ -48,6 +48,8 @@ def social_login_at(db: Database, site: str) -> str | None:
     saved = db.get_setting(f"social_login_completed_at_{site}")
     if saved:
         return saved
+    if site == "zalo":
+        return None
     # Existing installs used one shared completion date for both sites.
     return db.get_setting("browser_login_completed_at")
 

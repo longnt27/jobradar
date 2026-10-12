@@ -95,7 +95,7 @@ class SourceInput(BaseModel):
 
 
 class BrowserLoginInput(BaseModel):
-    site: Literal["linkedin", "facebook"]
+    site: Literal["linkedin", "facebook", "zalo"]
 
 
 class EmployerInput(BaseModel):

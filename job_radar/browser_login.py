@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import subprocess
+import socket
 import time
 from collections.abc import Callable
 
@@ -12,7 +13,7 @@ from .settings import Settings
 from .social_browser import SITES, chrome_executable, social_login_at
 
 
-LOGIN_URLS = {"linkedin": "https://www.linkedin.com/feed/", "facebook": "https://www.facebook.com/settings"}
+LOGIN_URLS = {"linkedin": "https://www.linkedin.com/feed/", "facebook": "https://www.facebook.com/settings", "zalo": "https://chat.zalo.me/"}
 
 
 class BrowserLoginManager:
@@ -28,6 +29,7 @@ class BrowserLoginManager:
         self.process: subprocess.Popen | None = None
         self.return_app: str | None = None
         self.on_complete = on_complete
+        self.zalo_cdp_port: int | None = None
 
     def status(self) -> dict:
         expired = [site for site in SITES if self.db.get_setting(f"social_reauth_required_{site}")]
@@ -41,7 +43,7 @@ class BrowserLoginManager:
 
     def start(self, site: str) -> dict:
         if site not in SITES:
-            raise ValueError("Choose LinkedIn or Facebook")
+            raise ValueError("Choose LinkedIn, Facebook, or Zalo")
         if self.task and not self.task.done():
             if site != self.site:
                 raise ValueError(f"Complete {self.site.capitalize()} sign-in before opening {site.capitalize()}")
@@ -78,17 +80,24 @@ class BrowserLoginManager:
             async with self.browser_lock:
                 self.settings.ensure_dirs()
                 started_at = time.time()
-                self.process = subprocess.Popen(
-                    [chrome_executable(), f"--user-data-dir={self.settings.browser_profile}",
+                arguments = [chrome_executable(), f"--user-data-dir={self.settings.browser_profile}",
                      "--profile-directory=Default", "--no-first-run", "--no-default-browser-check",
-                     "--new-window", LOGIN_URLS[self.site]],
+                     "--new-window", LOGIN_URLS[self.site]]
+                if self.site == "zalo":
+                    with socket.socket() as sock:
+                        sock.bind(("127.0.0.1", 0))
+                        self.zalo_cdp_port = sock.getsockname()[1]
+                    arguments.extend([f"--remote-debugging-port={self.zalo_cdp_port}", "--remote-debugging-address=127.0.0.1"])
+                self.process = subprocess.Popen(
+                    arguments,
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 )
                 self.state = "open"
                 while self.process.poll() is None:
                     try:
-                        ready = await asyncio.to_thread(chrome_login_complete, self.settings.browser_profile,
-                                                        self.site, started_at)
+                        ready = (await self._zalo_login_ready() if self.site == "zalo" else
+                                 await asyncio.to_thread(chrome_login_complete, self.settings.browser_profile,
+                                                        self.site, started_at))
                         self.error = None
                         if ready:
                             break
@@ -122,3 +131,17 @@ class BrowserLoginManager:
             await self._close_process()
             self.state = "failed"
             self.error = str(error)[:300]
+
+    async def _zalo_login_ready(self) -> bool:
+        from playwright.async_api import async_playwright
+        from .zalo_browser import zalo_authenticated
+        try:
+            async with async_playwright() as playwright:
+                browser = await playwright.chromium.connect_over_cdp(f"http://127.0.0.1:{self.zalo_cdp_port}")
+                for context in browser.contexts:
+                    for page in context.pages:
+                        if await zalo_authenticated(page):
+                            return True
+        except Exception:
+            return False
+        return False
