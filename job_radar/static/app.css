@@ -873,3 +873,14 @@ button.danger,.text-button.danger{color:#a4382d;border-color:#e7c2bd}
 .zalo-contact-section textarea { width: 100%; box-sizing: border-box; }
 
 #zalo-template-editor { margin: 18px 23px 23px; }
+
+#writing-preferences-editor { margin: 18px 23px 23px; }
+#writing-preferences-panel > summary > span:first-child { display: grid; gap: 4px; }
+#writing-preferences-panel > summary .hint { text-align: left; }
+.writing-editor { display: grid; gap: 10px; min-width: 0; }
+.writing-editor > label { font-weight: 600; }
+.writing-editor textarea { width: 100%; box-sizing: border-box; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; line-height: 1.5; }
+.writing-editor select { width: 100%; min-width: 0; }
+.writing-editor .hint { margin: 0; overflow-wrap: anywhere; }
+.writing-editor pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 400px; overflow-y: auto; font-size: 13px; }
+.writing-editor [hidden] { display: none; }

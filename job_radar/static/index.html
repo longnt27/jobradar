@@ -7,6 +7,7 @@
   <link rel="icon" href="/logo.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/app.css">
   <script src="/zalo.js" defer></script>
+  <script src="/writing.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
 <body>
@@ -365,6 +366,11 @@
           <div class="smtp-guide"><div><strong>Use Gmail</strong><p class="hint">Use a Google app password rather than your normal account password.</p></div><button id="smtp-gmail-preset" class="secondary" type="button">Use Gmail settings</button></div>
           <form id="setup-smtp-form" class="form-grid"><label>Mail server<input name="host" placeholder="smtp.gmail.com" required></label><label>Port<select name="port"><option value="587">587 (STARTTLS)</option><option value="465">465 (TLS)</option></select></label><label>Email account<input name="user" autocomplete="username"></label><label>Password or app password<input name="password" type="password" autocomplete="new-password"></label><label class="full">From address<input name="from_address" type="email" required></label><button class="primary" type="submit">Save email settings</button><button id="setup-smtp-remove" class="secondary danger" type="button">Remove settings</button></form>
           <div class="smtp-test"><div><strong>Test your connection</strong><p id="smtp-test-result" class="hint" role="status" aria-live="polite">Save settings to send a test email.</p></div><button id="smtp-send-test" class="secondary" type="button" disabled>Send test email</button></div>
+        </details>
+        <details class="panel flow-panel" id="writing-preferences-panel">
+          <summary><span><strong>Prompts and templates</strong><small class="hint">Make the writing your own</small></span><span id="writing-customization-status" class="pill muted">Original defaults</span></summary>
+          <p class="hint">Start with the current defaults, then customize your prompts, email text, and resume layout. Changes are saved for this local profile. Existing drafts keep their content; future drafting and resume rendering use your saved choices.</p>
+          <div id="writing-preferences-editor"></div>
         </details>
       </section>
 

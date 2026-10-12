@@ -1,4 +1,4 @@
-"""Render tailored resumes with the user's one-page LaTeX template."""
+"""Render tailored resumes with the local user's LaTeX layout preferences."""
 
 from __future__ import annotations
 
@@ -16,9 +16,10 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
 from .settings import Settings
+from .db import Database
+from .writing_preferences import get_preferences, preference
 
 
-_TEMPLATE = Path(__file__).with_name("templates") / "resume.tex"
 _ESCAPES = {
     "\\": r"\textbackslash{}", "&": r"\&", "%": r"\%", "$": r"\$",
     "#": r"\#", "_": r"\_", "{": r"\{", "}": r"\}",
@@ -220,7 +221,8 @@ def _body(resume: dict) -> str:
 
 def render_resume(settings: Settings, draft_id: str, resume: dict) -> tuple[str, str]:
     settings.ensure_dirs()
-    template = _TEMPLATE.read_text(encoding="utf-8")
+    preferences = get_preferences(Database(settings.database_path))
+    template = preference(preferences, "resume_layout")
     compiler = shutil.which("tectonic") or "/opt/homebrew/bin/tectonic"
     if not Path(compiler).is_file():
         raise RuntimeError("The LaTeX resume renderer (tectonic) is unavailable on this Mac")
@@ -229,7 +231,14 @@ def render_resume(settings: Settings, draft_id: str, resume: dict) -> tuple[str,
     source = source.replace("__BODY__", _body(resume))
     revision = hashlib.sha256(source.encode("utf-8")).hexdigest()[:16]
     path = settings.artifact_dir / f"resume-{draft_id}-{revision}.pdf"
+    max_pages = preference(preferences, "resume_max_pages")
+
+    def validate_pages(reader: PdfReader) -> None:
+        if not 1 <= len(reader.pages) <= max_pages:
+            raise ValueError(f"Resume template filled {len(reader.pages)} pages (maximum {max_pages}); shorten the draft content or adjust the page limit in Settings")
+
     if path.exists():
+        validate_pages(PdfReader(path))
         return str(path), hashlib.sha256(path.read_bytes()).hexdigest()
     with tempfile.TemporaryDirectory(prefix="job-radar-resume-") as directory:
         tex_path = Path(directory) / "resume.tex"
@@ -242,8 +251,7 @@ def render_resume(settings: Settings, draft_id: str, resume: dict) -> tuple[str,
         reader = PdfReader(output)
         extracted = "\n".join(page.extract_text() or "" for page in reader.pages)
         name = str(resume.get("name") or "")
-        if len(reader.pages) != 1:
-            raise ValueError(f"Resume template filled {len(reader.pages)} pages; shorten the draft content")
+        validate_pages(reader)
         if not name or name not in extracted or len(extracted.strip()) < 40:
             raise ValueError("Resume PDF failed text validation")
         shutil.copy2(output, path)
