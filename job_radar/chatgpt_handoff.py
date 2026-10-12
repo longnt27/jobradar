@@ -334,15 +334,24 @@ def _strip_markdown_bold_and_collect(text: str) -> tuple[str, list[str]]:
 
 def _extract_metric_phrases(bullet: str) -> list[str]:
     patterns = [
-        r"(?:(?:F1|PCC|mAP|PA-MPJPE|Recall|Precision|accuracy|latency|speedup|throughput|error rate)\s*(?:reached|rose|fell|was|of|is|:)?\s*[\d\.\±\+\-x×\%\s]{1,25}(?:pp|%|ms|fps|MB|GB)?)",
-        r"(?:[\d\.]+\s*(?:±\s*[\d\.]+|pp|%|ms|fps|MB|GB|x|×)(?:\s*(?:faster|slower|accuracy|error|gain|boost))?)",
+        r"PSNR\s+[\d\.]+\s+and\s+SSIM\s+[\d\.]+",
+        r"\d+(?:\.\d+)?\s*ms/frame(?:\s*\([\d\.]+\s*fps\))?",
+        r"(?:Phone\s+)?PCC\s*[\d\.]+\s*±\s*[\d\.]+",
+        r"mAP(?:@\d+)?\s*(?:to\s*)?[\d\.]+",
+        r"F1\s*[\d\.]+",
+        r"[+\-]?\d+(?:\.\d+)?\s*pp(?:\s*\(to\s*[\d\.]+\))?",
+        r"[~≈]?\d+(?:\.\d+)?%",
+        r"\d+(?:\.\d+)?[×x]\s*faster(?:\s*inference)?",
+        r"\d+(?:\.\d+)?\s*MB(?:\s*peak\s*memory)?",
+        r"(?:(?:F1|PCC|mAP|PA-MPJPE|Recall|Precision|accuracy|latency|speedup|throughput|error rate)\s*(?:reached|rose|fell|was|of|is|:)?\s*[+\-]?\d[\d\.\±\+\-x×\%\s]{0,25}(?:pp|%|ms|fps|MB|GB)?)",
+        r"(?:[+\-]?\d[\d\.]*\s*(?:±\s*[\d\.]+|pp|%|ms|fps|MB|GB|x|×)(?:\s*(?:faster|slower|accuracy|error|gain|boost))?)",
         r"(?:achieved\s+[\d\.]+(?:%|\s*accuracy|\s*F1)?)",
     ]
     phrases: list[str] = []
     for pat in patterns:
         for m in re.finditer(pat, bullet, re.IGNORECASE):
             phrase = m.group(0).strip(" ,.;:")
-            if 4 <= len(phrase) <= 60 and phrase in bullet and phrase != bullet.strip():
+            if 3 <= len(phrase) <= 60 and phrase in bullet and phrase != bullet.strip():
                 if not any(phrase in existing or existing in phrase for existing in phrases):
                     phrases.append(phrase)
     return phrases
@@ -461,17 +470,17 @@ def _populate_resume_bold_phrases(resume: dict, explicit_phrases: list[str] | No
             if p not in valid_phrases:
                 valid_phrases.append(p)
 
-    if len(valid_phrases) < 2:
-        for b in project_result_bullets + [eb for eb in experience_bullets if re.search(r"\d", eb)]:
-            for phrase in _extract_metric_phrases(b):
-                if phrase not in valid_phrases and any(phrase in tb and phrase != tb.strip() for tb in all_target_bullets):
-                    valid_phrases.append(phrase)
-                    if len(valid_phrases) >= 4:
-                        break
-            if len(valid_phrases) >= 4:
-                break
+    for b in project_result_bullets:
+        for phrase in _extract_metric_phrases(b):
+            if phrase not in valid_phrases and any(phrase in tb and phrase != tb.strip() for tb in all_target_bullets):
+                valid_phrases.append(phrase)
 
-    return valid_phrases[:12]
+    for eb in [eb for eb in experience_bullets if re.search(r"\d", eb)]:
+        for phrase in _extract_metric_phrases(eb):
+            if phrase not in valid_phrases and any(phrase in tb and phrase != tb.strip() for tb in all_target_bullets):
+                valid_phrases.append(phrase)
+
+    return valid_phrases[:18]
 
 
 def _card_to_project_dict(card: dict, custom_bullets: list[str] | None = None, tech_stack: list[str] | None = None) -> dict:

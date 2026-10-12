@@ -518,3 +518,39 @@ def test_inspect_form_falls_back_to_discovered_email(tmp_path: Path) -> None:
     finally:
         server.shutdown()
         thread.join(timeout=5)
+
+
+def test_linkedin_direct_message_action_and_submission(tmp_path: Path) -> None:
+    from job_radar.application_action import describe_application_action
+    from job_radar.drafting import get_draft, set_discovered_linkedin_message_destination
+
+    client = TestClient(create_app(Settings(tmp_path)))
+    profile = client.get("/api/profile").json()
+    profile.update({"name": "Alex Example", "email": "alex@example.org"})
+    client.put("/api/profile", json=profile)
+    client.post("/api/positions", json={
+        "company": "Prior Co", "role": "Engineer", "dates": "2024-2026", "bullets": ["Built Python systems."]
+    })
+    job_url = "https://www.linkedin.com/jobs/view/4462118123"
+    vacancy_id, _ = ingest(client.app.state.db, _source(client.app.state.db, "linkedin"), ObservedJob(
+        job_url, "AI Engineer", "Fox AI", "Backend AI engineer role.",
+    ))
+    draft = prepare_draft(client.app.state.db, client.app.state.settings, vacancy_id, "template")
+    client.app.state.auto_apply_manager.register_review(draft)
+
+    # Switch destination to linkedin_message
+    updated = set_discovered_linkedin_message_destination(client.app.state.db, draft["id"], job_url)
+    assert updated["destination"]["kind"] == "linkedin_message"
+    assert updated["destination"]["action_type"] == "linkedin_message"
+    assert describe_application_action(updated["destination"]) == f"Direct message to company -> {job_url}"
+
+    # Verify send readiness
+    blockers = send_readiness(client.app.state.db, client.app.state.settings, updated)
+    assert blockers == []
+
+    # Send application
+    res = asyncio.run(send_application(client.app.state.db, client.app.state.settings, draft["id"], updated["package_hash"]))
+    assert res["status"] == "submitted_confirmed"
+    assert "Direct message outreach confirmed on LinkedIn" in res["receipt"]
+    assert res["outcome"]["key"] == "application_submitted"
+    assert res["outcome"]["label"] == "Direct message sent"

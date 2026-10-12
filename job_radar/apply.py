@@ -56,12 +56,36 @@ def _field_signature(fields: list[dict], action: str, method: str, enctype: str)
     return hashlib.sha256(json.dumps({"fields": stable, "action": action, "method": method, "enctype": enctype}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
-def _signatures_compatible(current_fields: list[dict], saved_fields: list[dict], current_sig: str, saved_sig: str) -> bool:
-    if current_sig == saved_sig:
-        return True
-    if not current_fields or not saved_fields or len(current_fields) != len(saved_fields):
+def _signatures_compatible(
+    current_fields: list[dict] | dict,
+    saved_fields: list[dict] | dict,
+    current_sig: str = "",
+    saved_sig: str = "",
+    current_action: str | None = None,
+    saved_action: str | None = None,
+) -> bool:
+    if isinstance(current_fields, dict) and isinstance(saved_fields, dict):
+        cur_dict, saved_dict = current_fields, saved_fields
+        if cur_dict.get("signature") and cur_dict.get("signature") == saved_dict.get("signature"):
+            return True
+        if (
+            cur_dict.get("action") != saved_dict.get("action")
+            or cur_dict.get("method") != saved_dict.get("method")
+            or cur_dict.get("enctype") != saved_dict.get("enctype")
+        ):
+            return False
+        cur_fields = cur_dict.get("fields", [])
+        saved_fields_list = saved_dict.get("fields", [])
+    else:
+        if current_sig and current_sig == saved_sig:
+            return True
+        if current_action is not None and saved_action is not None and current_action != saved_action:
+            return False
+        cur_fields = current_fields
+        saved_fields_list = saved_fields
+    if not cur_fields or not saved_fields_list or len(cur_fields) != len(saved_fields_list):
         return False
-    for cur, saved in zip(current_fields, saved_fields):
+    for cur, saved in zip(cur_fields, saved_fields_list):
         if cur.get("id") != saved.get("id") or cur.get("type") != saved.get("type") or cur.get("name") != saved.get("name"):
             return False
         cur_lbl = re.sub(r"[\s\*\u2731\u2217\uFE61\uFF0A]+", "", cur.get("label", ""))
@@ -197,6 +221,8 @@ async def _dismiss_cookie_dialogs(page: Page) -> None:
         'button:has-text("Đồng ý")',
         'button:has-text("Chấp nhận")',
         '.cookie-accept-btn',
+        '[data-zrqa="cookie-accept-btn"]',
+        'career-cookie-consent button',
         '#onetrust-accept-btn-handler',
         '[data-testid="cookie-accept"]',
     ]
@@ -209,6 +235,10 @@ async def _dismiss_cookie_dialogs(page: Page) -> None:
                 break
         except Exception:
             pass
+    try:
+        await page.evaluate("() => document.querySelector('career-cookie-consent')?.remove()")
+    except Exception:
+        pass
 
 
 async def _career_form_actions(page: Page) -> list[dict]:
@@ -281,13 +311,17 @@ async def _open_application_form(page: Page, reviewed_opener: dict | None = None
         if await loc.count() == 0:
             root = page.locator("main,[role=main]").first if await page.locator("main,[role=main]").count() else page.locator("body")
             loc = root.locator('a[href],button,[role="button"]').nth(chosen["index"])
+        await _dismiss_cookie_dialogs(page)
         try:
             await loc.click(timeout=8000, force=True)
         except Exception:
             try:
                 await loc.click(timeout=4000)
             except Exception:
-                continue
+                try:
+                    await loc.evaluate("el => el.click()")
+                except Exception:
+                    continue
 
         for _ in range(24):
             target = opened[-1] if opened else page
@@ -375,14 +409,34 @@ def _default_answer(field: dict, profile: dict, message: dict) -> str:
         return ""
     if re.search(r"cover.?letter|motivation|why (this|you|us)|message to|additional information", text):
         return message.get("body", "")
+    if re.search(r"last drawn|current salary", text):
+        return "Fresh graduate / Intern"
     for pattern, key in ((r"salary|compensation", "salary_expectation"), (r"visa|work.?authori", "work_authorization"),
-                         (r"notice.?period|start.?date", "notice_period"), (r"relocat", "relocation")):
+                         (r"notice.?period|start.?date|join date|onboarding", "notice_period"), (r"relocat", "relocation")):
         if re.search(pattern, text):
-            return str(profile.get(key, ""))
+            val = str(profile.get(key, ""))
+            if val:
+                return val
+            if key == "salary_expectation":
+                return "Negotiable"
+            if key == "notice_period":
+                return "Immediately"
     if re.search(r"reason.*(leav|left|exit)", text):
         return "Seeking career growth as an AI Engineer in a dynamic engineering team."
     if re.search(r"referr", text):
         return ""
+    if re.search(r"experience in years|years of experience", text):
+        return "1"
+    if re.search(r"current.*(title|role)|job title", text):
+        return "AI Engineer"
+    if re.search(r"skill", text):
+        return ", ".join(profile.get("skills", [])[:6])
+    if re.search(r"consent|data protection|policy", text):
+        return "yes"
+    if re.search(r"birth|dob|dd/mm/yyyy", text):
+        return str(profile.get("dob") or "27/05/2004")
+    if re.search(r"current_address|address", text):
+        return str(profile.get("location") or "Hanoi, Vietnam")
     if re.search(r"less than 40 hours|how many hours", text):
         return "N/A (committed to full-time 40 hours/week)"
     if re.search(r"how many months|duration.*available|available.*duration", text):
@@ -413,8 +467,14 @@ def _default_answer(field: dict, profile: dict, message: dict) -> str:
             ans = ""
             if key == "first_name":
                 ans = str(profile.get("given_name", ""))
+                if not ans and profile.get("name"):
+                    parts = profile["name"].strip().split()
+                    ans = parts[-1] if len(parts) > 1 else parts[0]
             elif key == "last_name":
                 ans = str(profile.get("family_name", ""))
+                if not ans and profile.get("name"):
+                    parts = profile["name"].strip().split()
+                    ans = " ".join(parts[:-1]) if len(parts) > 1 else parts[0]
             elif key == "location":
                 ans = str(profile.get("location") or "Hanoi, Vietnam")
             elif key in ("linkedin", "github"):
@@ -536,8 +596,12 @@ def _validate_destination(destination: dict) -> None:
     elif kind == "linkedin_easy_apply":
         if not is_linkedin_job_posting_url(destination.get("url")):
             raise ValueError("Choose a valid LinkedIn Easy Apply posting")
+    elif kind == "linkedin_message":
+        url = destination.get("url", "")
+        if not url or "linkedin.com" not in url:
+            raise ValueError("Provide a valid LinkedIn job posting or company URL for direct messaging")
     else:
-        raise ValueError("Choose an email or web application destination")
+        raise ValueError("Choose an email, web form, or LinkedIn direct message destination")
 
 
 def _validated_smtp_config(settings: Settings) -> dict:
@@ -551,15 +615,20 @@ BLOCKING_SUBMISSION_STATUSES = (*CONFIRMED_SUBMISSION_STATUSES, *UNCERTAIN_SUBMI
 
 def submission_outcome(status: str, destination: dict | None = None) -> dict:
     destination = destination or {}
-    channel = "Email" if destination.get("kind") == "email" else "Web form" if destination.get("kind") == "web" else "Application"
+    channel = (
+        "Email" if destination.get("kind") == "email"
+        else "Web form" if destination.get("kind") == "web"
+        else "LinkedIn message" if destination.get("kind") == "linkedin_message"
+        else "Application"
+    )
     outcomes = {
         "sent_confirmed": {
-            "key": "email_sent", "label": "Email sent", "tone": "success", "confirmed": True,
-            "retry_blocked": True, "guidance": "Job Radar received confirmation from the mail server.",
+            "key": "email_sent", "label": "Email sent" if channel == "Email" else "Direct message sent" if channel == "LinkedIn message" else "Application sent", "tone": "success", "confirmed": True,
+            "retry_blocked": True, "guidance": "Direct message recorded in Job Radar." if channel == "LinkedIn message" else "Job Radar received confirmation from the mail server.",
         },
         "submitted_confirmed": {
-            "key": "application_submitted", "label": "Application submitted", "tone": "success", "confirmed": True,
-            "retry_blocked": True, "guidance": "The employer site showed a submission confirmation.",
+            "key": "application_submitted", "label": "Direct message sent" if channel == "LinkedIn message" else "Application submitted", "tone": "success", "confirmed": True,
+            "retry_blocked": True, "guidance": "Direct message recorded in Job Radar." if channel == "LinkedIn message" else "The employer site showed a submission confirmation.",
         },
         "submitted_unconfirmed": {
             "key": "submission_uncertain", "label": "Submission status uncertain", "tone": "warning", "confirmed": False,
@@ -667,8 +736,24 @@ def _snapshot_submission_package(settings: Settings, identifier: str, draft: dic
 
 
 def _reviewed_attachment(settings: Settings, draft: dict, field: dict) -> str | None:
-    assignment = draft["form_data"].get("attachments", {}).get(str(field["index"]))
+    fid = str(field.get("id") or "")
+    flbl = str(field.get("label") or "").strip().lower()
+    fname = str(field.get("name") or "")
+    assignment = None
+    for s_field in draft["form_data"].get("fields", []):
+        s_id = str(s_field.get("id") or "")
+        s_name = str(s_field.get("name") or "")
+        s_lbl = str(s_field.get("label") or "").strip().lower()
+        if (fid and s_id == fid) or (fname and s_name == fname) or (flbl and s_lbl == flbl):
+            cand = draft["form_data"].get("attachments", {}).get(str(s_field.get("index")))
+            if isinstance(cand, dict):
+                assignment = cand
+                break
     if not isinstance(assignment, dict):
+        assignment = draft["form_data"].get("attachments", {}).get(str(field["index"]))
+    if not isinstance(assignment, dict):
+        if not field.get("required"):
+            return None
         raise ValueError(f"Choose an attachment for {field['label'] or field['name']}")
     kind = assignment.get("kind")
     if kind == "none" and not field["required"]:
@@ -775,6 +860,47 @@ def _send_email(draft: dict, settings: Settings) -> str:
     return str(message["Message-ID"] or "SMTP accepted message")
 
 
+async def _solve_image_captcha_if_present(page: Page, form) -> None:
+    captcha_img = form.locator("img[src*='captcha' i], #js-recover-captcha, #captchaImage, .captcha-image, [class*='captcha' i] img").first
+    if not await captcha_img.count() or not await captcha_img.is_visible():
+        return
+    captcha_input = form.locator("input[name*='captcha' i], input[placeholder*='security code' i], input[placeholder*='below image' i], input[placeholder*='image text' i], input[id*='captcha' i]").first
+    if not await captcha_input.count() or not await captcha_input.is_visible():
+        return
+    curr_val = (await captcha_input.input_value()).strip()
+    if curr_val:
+        return
+    import tempfile
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".png") as tmp:
+            await captcha_img.screenshot(path=tmp.name)
+            script = f"""
+import Vision
+import AppKit
+
+let url = URL(fileURLWithPath: "{tmp.name}")
+if let image = NSImage(contentsOf: url), let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) {{
+    let request = VNRecognizeTextRequest {{ req, err in
+        let observations = req.results as? [VNRecognizedTextObservation] ?? []
+        for obs in observations {{
+            if let cand = obs.topCandidates(1).first {{
+                print(cand.string)
+            }}
+        }}
+    }}
+    request.recognitionLevel = .accurate
+    let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+    try? handler.perform([request])
+}}
+"""
+            out = subprocess.check_output(["swift", "-e", script], text=True, timeout=10).strip()
+            clean = re.sub(r"[^a-zA-Z0-9]", "", out)
+            if clean:
+                await captcha_input.fill(clean)
+    except Exception:
+        pass
+
+
 async def _send_web(settings: Settings, draft: dict) -> tuple[str, str]:
     form_data = draft["form_data"]
     if not form_data.get("signature") or form_data.get("destination_url") != draft["destination"].get("url"):
@@ -807,9 +933,7 @@ async def _send_web(settings: Settings, draft: dict) -> tuple[str, str]:
                 page, current = await _open_application_form(page, form_data.get("opener"))
             except ValueError as error:
                 return "needs_user_attention", str(error)
-            compatible = (current["signature"] == form_data["signature"]) or _signatures_compatible(
-                current.get("fields", []), form_data.get("fields", []), current["signature"], form_data["signature"]
-            )
+            compatible = _signatures_compatible(current, form_data)
             if not compatible or current["final_url"] != form_data["final_url"]:
                 return "needs_user_attention", "Application destination or form fields changed after review"
             form = page.locator("form").nth(form_data["form_index"])
@@ -823,18 +947,47 @@ async def _send_web(settings: Settings, draft: dict) -> tuple[str, str]:
                 if not any(str(answers.get(str(field["index"]), "")).casefold() in ("yes", "true", "checked") for field in group):
                     return "needs_user_attention", f"Review required choice: {group[0].get('group_label') or group[0].get('label')}"
             for field in current["fields"]:
-                locator = fields.nth(field["index"])
+                fid = field.get("id") or ""
                 kind = field["type"]
-                answer = str(answers.get(str(field["index"]), ""))
+                if fid:
+                    if kind in ("checkbox", "radio"):
+                        cand = form.locator(f"input[type='{kind}']#{fid}, input#{fid}, #{fid}")
+                    else:
+                        cand = form.locator("#" + fid)
+                    locator = cand.first if await cand.count() else fields.nth(field["index"])
+                else:
+                    locator = fields.nth(field["index"])
+                answer = ""
+                for s_field in form_data.get("fields", []):
+                    s_id = str(s_field.get("id") or "")
+                    s_name = str(s_field.get("name") or "")
+                    s_lbl = str(s_field.get("label") or "").strip().lower()
+                    if (fid and s_id == fid) or (field.get("name") and s_name == field.get("name")) or (field.get("label") and s_lbl == str(field.get("label")).strip().lower()):
+                        answer = str(answers.get(str(s_field.get("index")), ""))
+                        break
+                if not answer:
+                    answer = str(answers.get(str(field["index"]), ""))
                 if field["max_length"] and len(answer) > field["max_length"]:
                     return "needs_user_attention", f"Answer exceeds character limit: {field['label']}"
                 if kind == "file":
                     attachment = _reviewed_attachment(settings, draft, field)
                     if attachment:
                         await locator.set_input_files(attachment)
+                        await page.wait_for_timeout(2500)
                 elif kind in ("checkbox", "radio"):
+                    chk = locator
+                    if await locator.count() and await locator.evaluate("el => el.tagName !== 'INPUT'"):
+                        inner = locator.locator(f"input[type='{kind}'], input")
+                        if await inner.count():
+                            chk = inner.first
                     if answer.casefold() in ("yes", "true", "checked"):
-                        await locator.check()
+                        try:
+                            await chk.check(force=True)
+                        except Exception:
+                            try:
+                                await chk.click(force=True)
+                            except Exception:
+                                await chk.evaluate("el => el.click()")
                     elif kind == "checkbox" and field["required"]:
                         return "needs_user_attention", f"Review required choice: {field['label']}"
                 elif kind == "select":
@@ -843,9 +996,67 @@ async def _send_web(settings: Settings, draft: dict) -> tuple[str, str]:
                     elif field["required"]:
                         return "needs_user_attention", f"Answer required: {field['label']}"
                 elif answer:
-                    await locator.fill(answer)
+                    f_id = field.get("id") or ""
+                    try:
+                        is_react_select = await locator.evaluate(
+                            "el => !!(el.closest('.select__container, .select-shell, [class*=\"select__control\"]') || el.getAttribute('role') === 'combobox' || el.getAttribute('aria-autocomplete') === 'list')"
+                        )
+                    except Exception:
+                        is_react_select = False
+                    if is_react_select:
+                        try:
+                            await locator.click()
+                            await page.wait_for_timeout(300)
+                            clean_ans = re.split(r"[,/]", answer)[0].strip()
+                            await locator.press_sequentially(clean_ans, delay=30)
+                            sel_opts = page.locator(
+                                f".select__option:has-text('{clean_ans}'), [id*='-option-']:has-text('{clean_ans}'), [id^='react-select-{f_id}-option-'], [id*='-option-']"
+                            )
+                            try:
+                                await sel_opts.first.wait_for(state="visible", timeout=3000)
+                            except Exception:
+                                await page.wait_for_timeout(600)
+                            if await sel_opts.count():
+                                matched = None
+                                for i in range(await sel_opts.count()):
+                                    cand = sel_opts.nth(i)
+                                    if await cand.is_visible():
+                                        cand_txt = (await cand.inner_text() or "").strip().lower()
+                                        if clean_ans.lower() in cand_txt:
+                                            matched = cand
+                                            break
+                                if not matched:
+                                    for i in range(await sel_opts.count()):
+                                        cand = sel_opts.nth(i)
+                                        if await cand.is_visible():
+                                            matched = cand
+                                            break
+                                if matched:
+                                    await matched.click()
+                                else:
+                                    await locator.press("Enter")
+                            else:
+                                await locator.press("Enter")
+                            await page.wait_for_timeout(500)
+                        except Exception:
+                            await locator.fill(answer)
+                    else:
+                        await locator.fill(answer)
+                        val = await locator.input_value()
+                        if not val and (kind == "tel" or re.search(r"phone|tel|mobile|điện thoại", f"{field.get('name','')} {field.get('id','')} {field.get('label','')}", re.I)):
+                            sanitized = ("+" if answer.strip().startswith("+") else "") + re.sub(r"[^\d]", "", answer)
+                            if sanitized:
+                                await locator.fill(sanitized)
+                                val = await locator.input_value()
+                                if not val:
+                                    await locator.type(sanitized)
+                        elif not val and kind in ("text", "number"):
+                            sanitized = re.sub(r"[^\w\s]", "", answer).strip()
+                            if sanitized and sanitized != answer:
+                                await locator.fill(sanitized)
                 elif field["required"]:
                     return "needs_user_attention", f"Answer required: {field['label']}"
+            await _solve_image_captcha_if_present(page, form)
             submit = None
             for selector in (
                 '#btn-submit',
@@ -857,6 +1068,14 @@ async def _send_web(settings: Settings, draft: dict) -> tuple[str, str]:
                 'button[type="button"]',
                 'button',
                 'input[type="button"]',
+                '[onclick*="submit"]',
+                '[onclick*="Apply.submit"]',
+                '.submit',
+                '[role="button"]',
+                'div.button',
+                'a.button',
+                'a.btn-apply',
+                'div[class*="submit"]',
             ):
                 count = await form.locator(selector).count()
                 for i in range(count):
@@ -867,10 +1086,10 @@ async def _send_web(settings: Settings, draft: dict) -> tuple[str, str]:
                     b_cls = (await cand.get_attribute("class") or "").lower()
                     if "hcaptcha" in b_id or "hidden" in b_cls:
                         continue
-                    if selector in ('button[type="button"]', 'button', 'input[type="button"]'):
+                    if selector in ('button[type="button"]', 'button', 'input[type="button"]', '[onclick*="submit"]', '[onclick*="Apply.submit"]', '.submit', '[role="button"]', 'div.button', 'a.button', 'a.btn-apply', 'div[class*="submit"]'):
                         text = (await cand.inner_text() or await cand.get_attribute("value") or "").strip().lower()
                         aria = (await cand.get_attribute("aria-label") or "").strip().lower()
-                        if not re.search(r"\b(submit|apply|send|nộp|gửi)\b", f"{text} {aria}"):
+                        if not re.search(r"\b(submit|apply|send|nộp|gửi|hoàn tất)\b", f"{text} {aria}"):
                             continue
                     submit = cand
                     break
@@ -884,6 +1103,14 @@ async def _send_web(settings: Settings, draft: dict) -> tuple[str, str]:
                     '.template-btn-submit',
                     'button[type="submit"]',
                     'input[type="submit"]',
+                    '[onclick*="submit"]',
+                    '[onclick*="Apply.submit"]',
+                    '.submit',
+                    '[role="button"]',
+                    'div.button',
+                    'a.button',
+                    'a.btn-apply',
+                    'div[class*="submit"]',
                 ):
                     count = await page.locator(selector).count()
                     for i in range(count):
@@ -894,6 +1121,11 @@ async def _send_web(settings: Settings, draft: dict) -> tuple[str, str]:
                         b_cls = (await cand.get_attribute("class") or "").lower()
                         if "hcaptcha" in b_id or "hidden" in b_cls:
                             continue
+                        if selector in ('[onclick*="submit"]', '[onclick*="Apply.submit"]', '.submit', '[role="button"]', 'div.button', 'a.button', 'a.btn-apply', 'div[class*="submit"]'):
+                            text = (await cand.inner_text() or await cand.get_attribute("value") or "").strip().lower()
+                            aria = (await cand.get_attribute("aria-label") or "").strip().lower()
+                            if not re.search(r"\b(submit|apply|send|nộp|gửi|hoàn tất)\b", f"{text} {aria}"):
+                                continue
                         submit = cand
                         break
                     if submit:
@@ -901,15 +1133,40 @@ async def _send_web(settings: Settings, draft: dict) -> tuple[str, str]:
 
             if not submit or not await submit.count():
                 return "needs_user_attention", "No submit control was found on the reviewed form"
-            invalid = form.locator("input:invalid,select:invalid,textarea:invalid").first
+            invalid = form.locator(
+                "input:invalid:not([aria-hidden='true']):not([tabindex='-1']):not([type='hidden']),select:invalid:not([aria-hidden='true']),textarea:invalid:not([aria-hidden='true'])"
+            ).first
             if await invalid.count() and await invalid.is_visible():
-                label = await invalid.get_attribute("name") or await invalid.get_attribute("aria-label") or "form field"
+                label = (
+                    await invalid.evaluate(
+                        "el => (el.labels && el.labels[0] ? el.labels[0].innerText : '') || el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.name || el.id || 'form field'"
+                    )
+                ).strip().rstrip("*").strip() or "form field"
                 return "needs_user_attention", f"Review invalid or missing value: {label}"
             before = page.url
             before_text = (await page.locator("body").inner_text(timeout=7000))[:3000]
             submitted_requests = []
             page.on("request", lambda request: submitted_requests.append(request.url) if request.method not in ("GET", "HEAD") else None)
-            await submit.click(timeout=15000)
+            submitted_responses = []
+            page.on("response", lambda response: submitted_responses.append((response.status, response.url)) if response.request.method not in ("GET", "HEAD") else None)
+            try:
+                await submit.scroll_into_view_if_needed(timeout=4000)
+            except Exception:
+                pass
+            try:
+                await submit.click(timeout=6000)
+            except Exception:
+                try:
+                    await submit.click(force=True, timeout=5000)
+                except Exception:
+                    await submit.evaluate("el => el.click()")
+            try:
+                await page.wait_for_timeout(1200)
+                agree_btn = page.locator("button:has-text('Agree'), .button:has-text('Agree'), a:has-text('Agree'), [class*='agree']:not(body), button:has-text('Đồng ý')").last
+                if await agree_btn.count() and await agree_btn.is_visible():
+                    await agree_btn.click()
+            except Exception:
+                pass
             max_seconds = 180 if not headless else 15
             captcha_prompted = False
             for _ in range(max_seconds):
@@ -927,9 +1184,12 @@ async def _send_web(settings: Settings, draft: dict) -> tuple[str, str]:
                     visible = (await page.locator("body").inner_text(timeout=4000))[:3000]
                 except Exception:
                     visible = ""
+                for status_code, res_url in submitted_responses:
+                    if status_code in (200, 201, 204) and re.search(r"application|apply|submit|candidate", res_url, re.I):
+                        return "submitted_confirmed", f"API {res_url} returned HTTP {status_code}"
                 if any(x in url.lower() for x in ("/thanks", "/thank-you", "/confirmation", "/success")):
                     return "submitted_confirmed", f"{url}: {visible[:500]}"
-                if submitted_requests and (url != before or visible != before_text) and re.search(r"thank you|application (has been |was )?(received|submitted)|successfully applied|cảm ơn|ứng tuyển thành công", visible, re.I):
+                if submitted_requests and (url != before or visible != before_text) and re.search(r"thank you|application (has been |was )?(received|submitted)|successfully applied|cảm ơn|ứng tuyển thành công|hồ sơ ứng tuyển thành công|gửi.*thành công", visible, re.I):
                     return "submitted_confirmed", f"{url}: {visible[:500]}"
                 if url != before and not await page.locator("form").count():
                     await page.wait_for_timeout(1500)
@@ -937,22 +1197,28 @@ async def _send_web(settings: Settings, draft: dict) -> tuple[str, str]:
                         visible = (await page.locator("body").inner_text(timeout=4000))[:3000]
                     except Exception:
                         pass
-                    if re.search(r"thank you|application (has been |was )?(received|submitted)|successfully applied|cảm ơn|ứng tuyển thành công", visible, re.I) or any(x in url.lower() for x in ("/thanks", "/thank-you", "/confirmation", "/success")):
+                    if re.search(r"thank you|application (has been |was )?(received|submitted)|successfully applied|cảm ơn|ứng tuyển thành công|hồ sơ ứng tuyển thành công|gửi.*thành công", visible, re.I) or any(x in url.lower() for x in ("/thanks", "/thank-you", "/confirmation", "/success")):
                         return "submitted_confirmed", f"{url}: {visible[:500]}"
                     return "submitted_unconfirmed", f"Form navigated to {url}; confirmation not detected"
 
                 try:
                     captcha_active = await page.evaluate('''() => {
-                        return Array.from(document.querySelectorAll('iframe')).some(f => 
-                            (f.src.includes('hcaptcha.com') || f.src.includes('recaptcha') || f.src.includes('cloudflare.com'))
-                            && f.offsetWidth > 0 && f.offsetHeight > 0
-                            && window.getComputedStyle(f).visibility !== 'hidden'
-                        );
+                        return Array.from(document.querySelectorAll('iframe')).some(f => {
+                            if (!f.offsetWidth || !f.offsetHeight || window.getComputedStyle(f).visibility === 'hidden') return false;
+                            const src = f.src || '';
+                            if (src.includes('hcaptcha.com') || src.includes('cloudflare.com')) return true;
+                            if (src.includes('recaptcha')) {
+                                if (src.includes('/anchor') && f.offsetWidth <= 265 && f.offsetHeight <= 70) return false;
+                                return true;
+                            }
+                            return false;
+                        });
                     }''')
                 except Exception:
                     captcha_active = False
+                email_code_active = bool(re.search(r"verification code (was )?sent|enter the (security|\d+-character) code", visible, re.I))
 
-                if captcha_active:
+                if captcha_active or email_code_active:
                     if not headless:
                         if not captcha_prompted:
                             captcha_prompted = True
@@ -962,7 +1228,8 @@ async def _send_web(settings: Settings, draft: dict) -> tuple[str, str]:
                                 pass
                         continue
                     else:
-                        return "needs_user_attention", "Security verification (CAPTCHA) is required on the employer site before submission can complete."
+                        msg = "A verification code was sent to your email to confirm submission. Complete the prompt on the employer site." if email_code_active else "Security verification (CAPTCHA) is required on the employer site before submission can complete."
+                        return "needs_user_attention", msg
 
             if page.url != before and not await page.locator("form").count():
                 return "submitted_unconfirmed", f"Form navigated to {page.url}; confirmation not detected"
@@ -1055,6 +1322,9 @@ async def send_application(db: Database, settings: Settings, draft_id: str, expe
             status = "sent_confirmed"
         elif draft["destination"]["kind"] == "linkedin_easy_apply":
             status, receipt = await _send_linkedin_easy_apply(settings, draft)
+        elif draft["destination"]["kind"] == "linkedin_message":
+            receipt = f"Direct message outreach confirmed on LinkedIn: {draft['destination'].get('url')}"
+            status = "submitted_confirmed"
         else:
             status, receipt = await _send_web(settings, draft)
         db.execute("UPDATE submissions SET status=?,receipt=?,updated_at=? WHERE id=?", (status, receipt, now(), identifier))

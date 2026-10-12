@@ -47,6 +47,9 @@ def _destination_warning(destination: dict) -> str | None:
         return "Enter a valid application URL before sending."
     if destination.get("kind") == "linkedin_easy_apply":
         return None if is_linkedin_job_posting_url(destination.get("url")) else "Choose a valid LinkedIn Easy Apply posting."
+    if destination.get("kind") == "linkedin_message":
+        url = destination.get("url", "")
+        return None if (is_linkedin_job_posting_url(url) or "linkedin.com" in url) else "Provide a valid LinkedIn posting or company page URL."
     return DESTINATION_WARNING
 
 
@@ -780,8 +783,9 @@ def _selected_resume_projects(job: dict, cards: list[dict], model: ModelDraft,
 def _model_bold_phrases(model: ModelDraft, resume: dict) -> list[str]:
     """Keep only exact model-selected spans present in rendered resume bullets."""
     bullets = [str(value) for item in resume.get("experience", []) for value in item.get("bullets", [])]
-    bullets.extend(str(project.get("bullets", [])[1]) for project in resume.get("projects", [])
-                   if len(project.get("bullets", [])) >= 2)
+    project_result_bullets = [str(project.get("bullets", [])[1]) for project in resume.get("projects", [])
+                              if len(project.get("bullets", [])) >= 2]
+    bullets.extend(project_result_bullets)
     phrases = []
     for phrase in model.bold_phrases:
         phrase = phrase.strip()
@@ -789,9 +793,18 @@ def _model_bold_phrases(model: ModelDraft, resume: dict) -> list[str]:
             continue
         if any(phrase in bullet and phrase != bullet.strip() for bullet in bullets):
             phrases.append(phrase)
-        if len(phrases) == 12:
+        if len(phrases) == 18:
             break
-    return phrases
+    from .chatgpt_handoff import _extract_metric_phrases
+    for pb in project_result_bullets:
+        for p in _extract_metric_phrases(pb):
+            if not any(p in existing for existing in phrases) and any(p in b and p != b.strip() for b in bullets):
+                phrases.append(p)
+                if len(phrases) >= 18:
+                    break
+        if len(phrases) >= 18:
+            break
+    return phrases[:18]
 
 
 def _resume_from_model(profile: dict, model: ModelDraft, selected: list[dict],
@@ -1087,7 +1100,13 @@ def _revised_section(previous: dict, section: str, model: BaseModel, cards: list
         experience_bullets = [bullet for item in resume.get("experience", []) for bullet in item.get("bullets", [])]
         retained = [phrase for phrase in resume.get("bold_phrases", [])
                     if any(phrase in bullet for bullet in experience_bullets)]
-        resume["bold_phrases"] = list(dict.fromkeys([*retained, *new_phrases]))[:12]
+        combined_phrases = list(dict.fromkeys([*retained, *new_phrases]))
+        from .chatgpt_handoff import _extract_metric_phrases
+        for pb in project_results:
+            for p in _extract_metric_phrases(pb):
+                if p not in combined_phrases:
+                    combined_phrases.append(p)
+        resume["bold_phrases"] = combined_phrases[:18]
         selected_ids = identifiers
     elif section == "education":
         current = resume.get("education", [])
@@ -1353,5 +1372,28 @@ def set_unavailable_linkedin_destination(db: Database, identifier: str, reason: 
         "UPDATE application_drafts SET destination=?,form_data=?,warnings=?,status='draft',updated_at=? WHERE id=?",
         (json.dumps(destination, ensure_ascii=False), json.dumps({"fields": [], "answers": {}, "attachments": {}}),
          json.dumps(warnings, ensure_ascii=False), now(), identifier),
+    )
+    return get_draft(db, identifier)
+
+
+def set_discovered_linkedin_message_destination(db: Database, identifier: str, url: str | None = None) -> dict:
+    """Record a direct messaging destination on LinkedIn for this draft."""
+    draft = get_draft(db, identifier)
+    if draft["status"] in {"sent", "submission_uncertain"}:
+        raise ValueError("This application cannot be changed after a send attempt")
+    target_url = url or draft.get("job_posting_url") or ""
+    if not target_url or "linkedin.com" not in target_url:
+        raise ValueError("Provide a valid LinkedIn job posting or company page URL")
+    destination = {
+        "kind": "linkedin_message", "action_type": "linkedin_message", "url": target_url,
+        "provenance": "manual_override", "confidence": "high",
+        "evidence": "Direct message outreach on LinkedIn.",
+    }
+    warnings = [item for item in draft["warnings"] if item not in (DESTINATION_WARNING, LEGACY_DESTINATION_WARNING)
+                and not item.startswith("Enter a valid application ")
+                and not item.startswith("A LinkedIn job posting URL is not an application form")]
+    db.execute(
+        "UPDATE application_drafts SET destination=?,warnings=?,status='draft',updated_at=? WHERE id=?",
+        (json.dumps(destination, ensure_ascii=False), json.dumps(warnings, ensure_ascii=False), now(), identifier),
     )
     return get_draft(db, identifier)

@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 
 from playwright.async_api import async_playwright
 
@@ -178,3 +179,87 @@ def test_open_application_form_matches_opener_when_index_shifts() -> None:
     asyncio.run(run())
 
 
+def test_send_web_sanitizes_strict_phone_input(tmp_path: Path) -> None:
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+    from fastapi.testclient import TestClient
+    from job_radar.web import create_app
+    from job_radar.settings import Settings
+    from job_radar.ingest import ingest, ObservedJob
+    from job_radar.drafting import prepare_draft, get_draft, update_draft
+    from job_radar.db import new_id, now
+
+    posted = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            html = """
+            <html><body>
+            <form action="/submit" method="post">
+              <label for="name">Name</label>
+              <input id="name" name="name" required>
+              <label for="phone">Phone*</label>
+              <input id="phone" type="tel" required>
+              <button type="submit">Submit application</button>
+            </form>
+            <script>
+              const phone = document.getElementById('phone');
+              phone.addEventListener('input', (e) => {
+                // Reject spaces/formatting: reset to empty if value contains spaces
+                if (/\\s/.test(phone.value)) {
+                  phone.value = '';
+                }
+              });
+            </script>
+            </body></html>
+            """
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(html.encode())
+
+        def do_POST(self):
+            posted.append(self.rfile.read(int(self.headers["Content-Length"])))
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(b"<html><body>Thank you. Application submitted successfully</body></html>")
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        settings = Settings(tmp_path)
+        client = TestClient(create_app(settings))
+        db = client.app.state.db
+        source_id = new_id()
+        db.execute("INSERT INTO sources(id,kind,name,url,config,created_at) VALUES(?,?,?,?,?,?)",
+                   (source_id, "career", "Career Co", "https://example.org", "{}", now()))
+        job_url = f"http://127.0.0.1:{server.server_port}/jobs/1"
+        vacancy_id, _ = ingest(db, source_id, ObservedJob(job_url, "AI Engineer", "Co", "Details", apply_url=job_url))
+        profile = client.get("/api/profile").json()
+        profile.update({"name": "Nguyen Trung Long", "email": "test@example.com", "phone": "0948 741 099"})
+        client.put("/api/profile", json=profile)
+        client.post("/api/positions", json={
+            "company": "Prior Co", "role": "Engineer", "dates": "2024-2026", "bullets": ["Built Python systems."]
+        })
+        draft = prepare_draft(db, settings, vacancy_id, "template")
+        client.post(f"/api/applications/{draft['id']}/inspect")
+        inspected = get_draft(db, draft["id"])
+
+        # Verify inspected answer for phone has spaces from profile
+        phone_field = next(f for f in inspected["form_data"]["fields"] if f["type"] == "tel")
+        assert inspected["form_data"]["answers"][str(phone_field["index"])] == "0948 741 099"
+
+        # Send application: _send_web should detect that the input cleared due to spaces,
+        # sanitize it to digits-only (0948741099), and successfully submit!
+        res = client.post(f"/api/applications/{draft['id']}/send", json={"package_hash": inspected["package_hash"]})
+        assert res.status_code == 200, res.text
+        assert res.json()["status"] == "submitted_confirmed"
+        assert len(posted) == 1
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)

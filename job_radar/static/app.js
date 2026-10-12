@@ -125,6 +125,28 @@ function renderJobAnalysis(job, score) {
     ${extracted}${breakdown}`;
 }
 
+let renderedJobState = null;
+let renderedDraftState = null;
+
+function captureOpenDisclosures(container) {
+  if (!container) return new Set();
+  const openKeys = new Set();
+  container.querySelectorAll('details[open] > summary').forEach((summary) => {
+    openKeys.add(summary.textContent.trim().slice(0, 40));
+  });
+  return openKeys;
+}
+
+function restoreOpenDisclosures(container, openKeys) {
+  if (!container || !openKeys || !openKeys.size) return;
+  container.querySelectorAll('details > summary').forEach((summary) => {
+    const text = summary.textContent.trim().slice(0, 40);
+    if (openKeys.has(text)) {
+      summary.parentElement.open = true;
+    }
+  });
+}
+
 async function api(path, options = {}) {
   const response = await fetch(path, {
     headers: options.body instanceof FormData ? (options.headers || {}) : {'Content-Type': 'application/json', ...(options.headers || {})},
@@ -963,11 +985,30 @@ async function loadJobs() {
   const emptyCopy = jobsInboxMode === 'since_last_visit' ? (jobsVisitBoundary ? 'Nothing new since your previous visit.' : 'No jobs to review yet.')
     : jobsInboxMode === 'unseen' ? 'No unseen jobs left.'
     : 'No jobs match these filters.';
-  $('#job-list').innerHTML = jobs.length ? jobs.map(renderJobCard).join('') : `<div class="empty">${emptyCopy}</div>`;
+  const jobList = $('#job-list');
+  const listScroll = jobList ? jobList.scrollTop : 0;
+  jobList.innerHTML = jobs.length ? jobs.map(renderJobCard).join('') : `<div class="empty">${emptyCopy}</div>`;
   bindJobCards(jobs);
-  if (activeJob && jobs.some((job) => job.id === activeJob)) await showJob(activeJob, activeJobPinned);
-  else {
+  if (jobList && listScroll) jobList.scrollTop = listScroll;
+
+  const activeJobData = jobs.find((job) => job.id === activeJob);
+  if (activeJob && activeJobData) {
+    const isUnchanged = renderedJobState &&
+      renderedJobState.id === activeJobData.id &&
+      renderedJobState.score === activeJobData.score &&
+      renderedJobState.analysis_status === activeJobData.analysis_status &&
+      renderedJobState.application_progress === activeJobData.application_progress &&
+      renderedJobState.decision_state === activeJobData.decision_state &&
+      renderedJobState.pin === activeJobPinned;
+    if (!isUnchanged) {
+      await showJob(activeJob, activeJobPinned, null, true);
+    }
+  } else if (!activeJob) {
     activeJob = null; activeJobPinned = false; syncJobsHash();
+    $('#job-detail').innerHTML = `<div class="empty">${jobs.length ? 'Choose a job to read its posting and match explanation.' : emptyCopy}</div>`;
+  } else {
+    activeJob = null; activeJobPinned = false; syncJobsHash();
+    renderedJobState = null;
     $('#job-detail').innerHTML = `<div class="empty">${jobs.length ? 'Choose a job to read its posting and match explanation.' : emptyCopy}</div>`;
   }
   if ((matching.pending || jobs.some((job) => ['pending','running'].includes(job.analysis_status))
@@ -1045,8 +1086,13 @@ async function showJob(id, pin = false, loadedJob = null) {
         ? '<button type="button" class="primary" disabled aria-busy="true">Preparing in background</button>'
         : `<button data-prepare="${id}" class="primary" ${preparation.ready ? '' : 'disabled'}>${job.application_progress === 'needs_confirmation' ? 'Review application method' : 'Prepare application'}</button>`;
 
-  $('#job-detail').setAttribute('tabindex', '-1');
-  $('#job-detail').innerHTML = `<div class="job-detail-head"><div><h2>${escapeHtml(job.title)}</h2><div class="item-meta">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div>
+  const detail = $('#job-detail');
+  const openDisclosures = captureOpenDisclosures(detail);
+  const detailScroll = detail?.scrollTop || 0;
+  const pageScroll = window.scrollY;
+
+  detail.setAttribute('tabindex', '-1');
+  detail.innerHTML = `<div class="job-detail-head"><div><h2>${escapeHtml(job.title)}</h2><div class="item-meta">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div>
     <div class="item-meta">${escapeHtml(job.work_mode || '')}${job.published_at ? ` · Posted <span${exactTimeTitle(job.published_at)}>${relativeWhen(job.published_at)}</span>` : ''} · Found <span${exactTimeTitle(job.first_seen_at)}>${relativeWhen(job.first_seen_at)}</span></div></div>
     ${job.read_state === 'seen' ? '<span class="status-badge status-badge--neutral">Seen</span>' : ''}</div>
 
@@ -1085,6 +1131,19 @@ async function showJob(id, pin = false, loadedJob = null) {
     </section>
 
     <details class="detail-disclosure"><summary>Original description</summary><div class="description">${formatDescription(job.description)}</div></details>`;
+
+  restoreOpenDisclosures(detail, openDisclosures);
+  if (detailScroll) detail.scrollTop = detailScroll;
+  window.scrollTo(0, pageScroll);
+
+  renderedJobState = {
+    id: job.id,
+    score: job.score,
+    analysis_status: job.analysis_status,
+    application_progress: job.application_progress,
+    decision_state: job.decision_state,
+    pin: pin,
+  };
 
   if (job.observations.some(source => source.kind === 'facebook')) window.JobRadarZalo?.mountJob($('#job-zalo-contact'), id, {api, notice});
   $('#job-detail').querySelector('[data-tab="settings"]').addEventListener('click', () => showTab('settings'));
@@ -1829,8 +1888,15 @@ async function showTab(name, historyMode = 'push') {
   if (!document.getElementById(name)?.classList.contains('tab')) name = 'home';
   if (name !== 'settings') clearTimeout(window.setupPoll);
   if (name !== 'settings') clearTimeout(window.matchingPoll);
-  if (name !== 'jobs') clearTimeout(window.jobPoll);
-  if (name !== 'applications') clearTimeout(window.autoApplyPoll);
+  if (name !== 'jobs') {
+    clearTimeout(window.jobPoll);
+    renderedJobState = null;
+  }
+  if (name !== 'applications') {
+    clearTimeout(window.autoApplyPoll);
+    clearTimeout(window.applicationPreparationPoll);
+    renderedDraftState = null;
+  }
   if (name !== 'queue') clearTimeout(window.queuePoll);
   if (name !== 'home') clearTimeout(window.homeQueuePoll);
   if (name !== 'sources') clearTimeout(window.sourcePoll);
@@ -2020,11 +2086,15 @@ function bindApplicationWorkspace() {
   root.dataset.workspaceBound = 'true';
   root.querySelectorAll('[data-app-view]').forEach((button) => button.addEventListener('click', () => {
     setApplicationWorkspaceView(button.dataset.appView);
+    if (button.dataset.appView !== 'drafts') {
+      clearTimeout(window.applicationPreparationPoll);
+    }
     if (['automation','activity'].includes(button.dataset.appView)) {
       $('#auto-apply-status').textContent = 'Loading…';
       loadAutoApply().catch((error) => notice(error.message, true));
     }
     if (button.dataset.appView === 'history') loadSubmissionHistory().catch((error) => notice(error.message, true));
+    if (button.dataset.appView === 'drafts') loadApplications().catch((error) => notice(error.message, true));
   }));
   const reloadApplications = () => { applicationsPage = 1; loadApplications().catch((error) => notice(error.message, true)); };
   $('#application-query').addEventListener('input', reloadApplications);
@@ -2216,18 +2286,30 @@ async function loadApplications(selectedId = null, preferredScreen = null) {
     activeApplicationId = completedPreparation.id;
   }
   renderApplicationList(result.total);
-  if (activeApplicationId) await showApplication(activeApplicationId, preferredScreen);
-  else if (completedPreparation) await showApplication(completedPreparation.id, preferredScreen);
-  else if (activePreparationJobId) {
-    const issue = applicationPreparations.find((item) => item.vacancy_id === activePreparationJobId);
-    if (issue) showPreparationIssue(issue);
-  } else {
-    const detail = $('#application-detail');
-    if (detail) detail.innerHTML = '<div class="panel empty"><p>No application drafts to display.</p></div>';
+  if (applicationWorkspaceView === 'drafts') {
+    if (activeApplicationId) {
+      const currentDraft = applicationDrafts.find((d) => d.id === activeApplicationId);
+      const isUnchanged = !selectedId && renderedDraftState && currentDraft &&
+        renderedDraftState.id === currentDraft.id &&
+        renderedDraftState.updated_at === currentDraft.updated_at &&
+        renderedDraftState.review_status === currentDraft.review_status &&
+        renderedDraftState.status === currentDraft.status &&
+        (!preferredScreen || renderedDraftState.screen === preferredScreen);
+      if (!isUnchanged) {
+        await showApplication(activeApplicationId, preferredScreen);
+      }
+    } else if (completedPreparation) await showApplication(completedPreparation.id, preferredScreen);
+    else if (activePreparationJobId) {
+      const issue = applicationPreparations.find((item) => item.vacancy_id === activePreparationJobId);
+      if (issue) showPreparationIssue(issue);
+    } else {
+      const detail = $('#application-detail');
+      if (detail) detail.innerHTML = '<div class="panel empty"><p>No application drafts to display.</p></div>';
+    }
   }
   clearTimeout(window.applicationPreparationPoll);
   if (applicationPreparations.some((item) => ['queued','preparing'].includes(item.status)) &&
-      $('#applications').classList.contains('active')) {
+      $('#applications').classList.contains('active') && applicationWorkspaceView === 'drafts') {
     window.applicationPreparationPoll = setTimeout(() => loadApplications().catch((error) => notice(error.message, true)), 3000);
   }
 }
@@ -2345,8 +2427,8 @@ $('#queue-existing-drafts').addEventListener('click', async (event) => {
 });
 
 function applicationActionLabel(destination) {
-  return ({email:'Email', web_form:'Web form', linkedin_easy_apply:'LinkedIn Easy Apply', manual:'Manual review', unknown:'Manual review'})[destination.action_type]
-    || (destination.kind === 'email' ? 'Email' : destination.kind === 'web' ? 'Web form' : 'Manual review');
+  return ({email:'Email', web_form:'Web form', linkedin_easy_apply:'LinkedIn Easy Apply', linkedin_message:'Direct message to company', manual:'Manual review', unknown:'Manual review'})[destination.action_type]
+    || (destination.kind === 'email' ? 'Email' : destination.kind === 'web' ? 'Web form' : destination.kind === 'linkedin_message' ? 'Direct message to company' : 'Manual review');
 }
 
 function isLinkedInJobPostingUrl(value) {
@@ -2477,9 +2559,13 @@ function confirmApplicationSend(draft) {
   const fields = draft.form_data?.fields?.length || 0;
   const attachments = Object.keys(draft.form_data?.attachments || {}).length;
   $('#application-send-confirm-target').textContent = target;
-  $('#application-send-confirm-summary').textContent = `${draft.job_title} at ${draft.company} · ${providerLabel(draft.provider_mode || draft.provider)} · ${fields} form field${fields === 1 ? '' : 's'} reviewed · ${attachments} attachment${attachments === 1 ? '' : 's'}`;
+  $('#application-send-confirm-summary').textContent = destination.kind === 'linkedin_message'
+    ? `${draft.job_title} at ${draft.company} · Direct outreach on LinkedIn · Resume and message prepared`
+    : `${draft.job_title} at ${draft.company} · ${providerLabel(draft.provider_mode || draft.provider)} · ${fields} form field${fields === 1 ? '' : 's'} reviewed · ${attachments} attachment${attachments === 1 ? '' : 's'}`;
   if (typeof dialog.showModal !== 'function') {
-    return Promise.resolve(window.confirm(`Approve and send to ${applicationActionTarget(destination)}?`));
+    return Promise.resolve(window.confirm(destination.kind === 'linkedin_message'
+      ? `Confirm direct message outreach to ${draft.company} on LinkedIn?`
+      : `Approve and send to ${applicationActionTarget(destination)}?`));
   }
   if (dialog.open) dialog.close('cancel');
   return new Promise((resolve) => {
@@ -2631,7 +2717,7 @@ async function showApplication(id, preferredScreen = null) {
   const projects = resume.projects || [];
   const bulletSource = draft.resume_bullet_source || {experience:[], projects:[], achievements:[]};
   const recentChanges = applicationReviewChanges[id] || [];
-  const linkedinManual = draft.job_source_kind === 'linkedin' && !['web','email','linkedin_easy_apply'].includes(destination.kind);
+  const linkedinManual = draft.job_source_kind === 'linkedin' && !['web','email','linkedin_easy_apply','linkedin_message'].includes(destination.kind);
   const linkedinPaused = linkedinManual && draft.linkedin_automation_paused;
   const linkedinEasyApply = destination.kind === 'linkedin_easy_apply' || destination.action_type === 'linkedin_easy_apply';
   const sent = applicationIsSent(draft);
@@ -2680,6 +2766,10 @@ async function showApplication(id, preferredScreen = null) {
       </div>
     </div>`).join('') : `<p class="hint">Application draft created ${relativeWhen(draft.created_at)}.</p>`);
 
+  const openDisclosures = captureOpenDisclosures(detail);
+  const detailScroll = detail?.scrollTop || 0;
+  const pageScroll = window.scrollY;
+
   detail.innerHTML = `
     <div class="application-review-header">
       <div>
@@ -2711,7 +2801,7 @@ async function showApplication(id, preferredScreen = null) {
             <p class="hint">${sent ? 'Submission record and delivery confirmation' : uncertain ? 'Submission outcome requires confirmation on employer site' : 'Status, attention items, and recent application activity'}</p>
           </div>
           <div class="activity-header-badges">
-            <span class="pill muted">${escapeHtml(destination.kind === 'email' ? 'Email package' : ['web','linkedin_easy_apply'].includes(destination.kind) ? 'Form package' : 'Manual handoff')}</span>
+            <span class="pill muted">${escapeHtml(destination.kind === 'email' ? 'Email package' : destination.kind === 'linkedin_message' ? 'Direct message package' : ['web','linkedin_easy_apply'].includes(destination.kind) ? 'Form package' : 'Manual handoff')}</span>
           </div>
         </div>
 
@@ -2804,17 +2894,28 @@ async function showApplication(id, preferredScreen = null) {
         </details>
       </section>
 
-      ${destination.kind === 'email' ? `
+      ${['email', 'linkedin_message'].includes(destination.kind) ? `
       <section id="application-review-message" class="application-review-section">
         <div class="section-head">
           <div>
-            <h3>Application message (Email)</h3>
-            <p class="hint">Email subject and message body to accompany your resume to ${escapeHtml(destination.email || 'the employer')}.</p>
+            <h3>${destination.kind === 'linkedin_message' ? 'Application message (Direct message to company)' : 'Application message (Email)'}</h3>
+            <p class="hint">${destination.kind === 'linkedin_message' ? 'Direct message to accompany your resume when messaging the employer or recruiter on LinkedIn.' : `Email subject and message body to accompany your resume to ${escapeHtml(destination.email || 'the employer')}.`}</p>
           </div>
+          ${destination.kind === 'linkedin_message' ? `<button type="button" class="secondary" id="copy-direct-message">Copy message</button>` : ''}
         </div>
         <label>Subject<input id="draft-subject" data-draft-field value="${escapeHtml(message.subject || '')}"></label>
         <label>Body<textarea id="draft-body" data-draft-field rows="10">${escapeHtml(message.body || '')}</textarea></label>
       </section>` : ''}
+
+      ${destination.kind === 'linkedin_message' ? `
+      <div class="application-method-guidance surface-status" style="margin-bottom:1.5rem;">
+        <strong>Direct message on LinkedIn</strong>
+        <p>You can send your application message directly to the company or recruiter on LinkedIn along with your tailored resume PDF.</p>
+        <div class="actions" style="margin-top:0.5rem;display:flex;gap:0.5rem;flex-wrap:wrap;">
+          ${destination.url ? `<a class="button-link" href="${escapeHtml(destination.url)}" target="_blank" rel="noopener noreferrer">Open LinkedIn ↗</a>` : ''}
+          <a class="button-link secondary" href="/api/applications/${id}/resume" target="_blank" rel="noopener noreferrer">Download resume PDF ↗</a>
+        </div>
+      </div>` : ''}
 
       <section id="application-review-form" class="application-review-section" ${['web','linkedin_easy_apply'].includes(destination.kind) ? '' : 'hidden'}>
         <div class="section-head">
@@ -2827,13 +2928,19 @@ async function showApplication(id, preferredScreen = null) {
         <div class="application-method-guidance surface-status">
           <strong>${destination.kind === 'linkedin_easy_apply' ? 'LinkedIn Easy Apply' : 'Check how to apply on LinkedIn'}</strong>
           <p>${destination.kind === 'linkedin_easy_apply' ? 'Review every form answer below. Inspect form reads the current LinkedIn steps without submitting.' : linkedinPaused ? 'Scheduled LinkedIn checks are paused after an account activity warning.' : 'Check what the posting’s application button opens, then review the discovered form.'}</p>
-          ${draft.job_posting_url && /^https?:\/\//i.test(draft.job_posting_url) ? `<a class="button-link" href="${escapeHtml(draft.job_posting_url)}" target="_blank" rel="noopener noreferrer">Open LinkedIn posting ↗</a>` : ''}
-          ${linkedinManual ? '<button type="button" class="secondary" id="discover-linkedin-apply">Check application button</button>' : ''}
+          <div class="actions" style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
+            ${draft.job_posting_url && /^https?:\/\//i.test(draft.job_posting_url) ? `<a class="button-link" href="${escapeHtml(draft.job_posting_url)}" target="_blank" rel="noopener noreferrer">Open LinkedIn posting ↗</a>` : ''}
+            ${linkedinManual ? '<button type="button" class="secondary" id="discover-linkedin-apply">Check application button</button>' : ''}
+            <button id="btn-switch-linkedin-msg" type="button" class="secondary">Send direct message on LinkedIn</button>
+          </div>
         </div>` : ''}
         ${canInspect ? `
         <div class="application-form-inspection-banner surface-status">
           <p class="hint">Job Radar uses a browser to discover the questions on this form and prefill answers from your profile.</p>
-          <button id="inspect-form-inline" type="button" class="secondary">${destination.kind === 'linkedin_easy_apply' && !formData.complete ? 'Inspect remaining steps' : 'Inspect form fields'}</button>
+          <div class="actions" style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
+            <button id="inspect-form-inline" type="button" class="secondary">${destination.kind === 'linkedin_easy_apply' && !formData.complete ? 'Inspect remaining steps' : 'Inspect form fields'}</button>
+            ${(draft.job_source_kind === 'linkedin' || (draft.job_posting_url && draft.job_posting_url.includes('linkedin.com'))) ? `<button id="btn-switch-linkedin-msg" type="button" class="text-button">Or switch to direct LinkedIn message</button>` : ''}
+          </div>
         </div>` : ''}
         ${formData.inspection_blockers?.length ? applicationAlert('warning', 'More answers needed to inspect every step', formData.inspection_blockers) : ''}
         <div class="application-form-fields">${renderApplicationFormFields(formData.fields || [], draft)}</div>
@@ -2843,13 +2950,13 @@ async function showApplication(id, preferredScreen = null) {
         <div class="section-head">
           <div>
             <h4>Where to apply</h4>
-            <p class="hint">Use an email address from the posting or the actual employer application form URL.</p>
+            <p class="hint">Use an email address from the posting, the application form URL, or a LinkedIn URL.</p>
           </div>
         </div>
         ${destination.provenance ? `<p class="hint">Detected from ${escapeHtml(destination.provenance.replace(/_/g, ' '))} · ${escapeHtml(destination.confidence || 'unknown confidence')}</p>` : ''}
         <div class="form-grid">
-          <label>Channel<select id="draft-destination-kind" data-draft-field><option value="web" ${destination.kind === 'web' ? 'selected' : ''}>Web form</option><option value="email" ${destination.kind === 'email' ? 'selected' : ''}>Email</option><option value="linkedin_easy_apply" ${destination.kind === 'linkedin_easy_apply' ? 'selected' : ''}>LinkedIn Easy Apply</option><option value="manual" ${!['web','email','linkedin_easy_apply'].includes(destination.kind) ? 'selected' : ''}>Manual review</option></select></label>
-          <label>Application form URL or application email<input id="draft-destination" data-draft-field value="${escapeHtml(destination.url || destination.email || '')}"></label>
+          <label>Channel<select id="draft-destination-kind" data-draft-field><option value="web" ${destination.kind === 'web' ? 'selected' : ''}>Web form</option><option value="email" ${destination.kind === 'email' ? 'selected' : ''}>Email</option><option value="linkedin_easy_apply" ${destination.kind === 'linkedin_easy_apply' ? 'selected' : ''}>LinkedIn Easy Apply</option><option value="linkedin_message" ${destination.kind === 'linkedin_message' ? 'selected' : ''}>Direct message on LinkedIn</option><option value="manual" ${!['web','email','linkedin_easy_apply','linkedin_message'].includes(destination.kind) ? 'selected' : ''}>Manual review</option></select></label>
+          <label>Application form URL, email, or LinkedIn URL<input id="draft-destination" data-draft-field value="${escapeHtml(destination.url || destination.email || '')}"></label>
         </div>
       </div>
 
@@ -2862,7 +2969,7 @@ async function showApplication(id, preferredScreen = null) {
       <section id="application-review-regenerate" class="application-review-section">
         <h3>Regenerate only what needs work</h3>
         <p class="hint">${webGenerator ? 'ChatGPT Web enters the prompt in your saved Chrome browser and automatically receives its reply to revise this application.' : 'Choose one section to revise. Resume changes update the PDF. For the application email, AI rewrites only the experience and project fit paragraph.'}</p>
-        <label>Section<select id="regenerate-section"><option value="summary">Professional summary</option><option value="experience">Experience bullets</option><option value="projects">Selected projects and bullets</option><option value="education">Education wording</option><option value="achievements">Achievements</option><option value="skills">Skills</option>${destination.kind === 'email' ? '<option value="message">Application experience and project fit</option>' : ''}<option value="all" ${draft.provider === 'chatgpt_web' ? 'selected' : ''}>${webGenerator ? 'Full resume draft' : 'Full draft · uses more quota'}</option></select></label>
+        <label>Section<select id="regenerate-section"><option value="summary">Professional summary</option><option value="experience">Experience bullets</option><option value="projects">Selected projects and bullets</option><option value="education">Education wording</option><option value="achievements">Achievements</option><option value="skills">Skills</option>${['email', 'linkedin_message'].includes(destination.kind) ? '<option value="message">Application experience and project fit</option>' : ''}<option value="all" ${draft.provider === 'chatgpt_web' ? 'selected' : ''}>${webGenerator ? 'Full resume draft' : 'Full draft · uses more quota'}</option></select></label>
         <label>Custom instructions<textarea id="regenerate-prompt" rows="3" placeholder="Example: make the summary shorter and emphasize production search work"></textarea></label>
         <div class="actions"><button id="regenerate-draft" class="secondary" ${webGenerator ? 'hidden' : ''} ${draft.provider === 'template' || sent || uncertain ? 'disabled' : ''}>Regenerate selected section</button><button id="chatgpt-input" class="secondary" ${webGenerator ? '' : 'hidden'} ${sent || uncertain ? 'disabled' : ''}>Regenerate selected section</button></div>
         ${sent ? '<p class="hint">This application has been sent. Its reviewed message and resume are preserved in the submission receipt.</p>' : ''}
@@ -2882,7 +2989,7 @@ async function showApplication(id, preferredScreen = null) {
         ${!sent ? `<button type="button" class="secondary danger" id="btn-sticky-discard-draft">Discard draft</button>` : ''}
         <button type="button" class="primary" id="btn-next-to-package" ${currentScreen === 'first-glance' ? '' : 'hidden'}>Next: Review package →</button>
         <button id="save-draft" class="secondary" disabled ${currentScreen === 'package' ? '' : 'hidden'}>Save changes</button>
-        <button id="send-draft" class="primary" ${canSend ? '' : 'disabled'} ${currentScreen === 'package' ? '' : 'hidden'}>${sent ? escapeHtml(draft.latest_submission?.outcome?.label || 'Sent') : 'Approve &amp; send'}</button>
+        <button id="send-draft" class="primary" ${canSend ? '' : 'disabled'} ${currentScreen === 'package' ? '' : 'hidden'}>${sent ? escapeHtml(draft.latest_submission?.outcome?.label || 'Sent') : destination.kind === 'linkedin_message' ? 'Confirm direct message sent' : 'Approve &amp; send'}</button>
       </div>
     </div>`;
 
@@ -2925,6 +3032,34 @@ async function showApplication(id, preferredScreen = null) {
       }
     } catch(error) { notice(error.message, true); }
     finally { if (button.isConnected) endPending(button); }
+  });
+
+  detail.querySelectorAll('#btn-switch-linkedin-msg').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const select = $('#draft-destination-kind');
+      const input = $('#draft-destination');
+      if (select && input) {
+        select.value = 'linkedin_message';
+        if (!input.value.includes('linkedin.com')) {
+          input.value = draft.job_posting_url || destination.url || 'https://www.linkedin.com';
+        }
+        markDirty(select);
+        markDirty(input);
+        $('#save-draft')?.click();
+      }
+    });
+  });
+
+  detail.querySelector('#copy-direct-message')?.addEventListener('click', async () => {
+    const subject = $('#draft-subject')?.value?.trim();
+    const body = $('#draft-body')?.value?.trim();
+    const text = subject ? `${subject}\n\n${body}` : (body || '');
+    try {
+      await navigator.clipboard.writeText(text);
+      notice('Message copied to clipboard.');
+    } catch {
+      notice('Could not copy automatically. Please copy the text manually.', true);
+    }
   });
 
   const dirtyState = $('#application-dirty-state');
@@ -3157,6 +3292,17 @@ async function showApplication(id, preferredScreen = null) {
   }
 
   switchScreen(currentScreen);
+  restoreOpenDisclosures(detail, openDisclosures);
+  if (detailScroll) detail.scrollTop = detailScroll;
+  window.scrollTo(0, pageScroll);
+
+  renderedDraftState = {
+    id: draft.id,
+    updated_at: draft.updated_at,
+    review_status: draft.review_status,
+    status: draft.status,
+    screen: currentScreen,
+  };
   detail.focus({preventScroll:true});
 }
 
@@ -3196,7 +3342,7 @@ async function saveApplication(id, draft, dirtySections) {
     const sameDestination = kind === draft.destination.kind && value === originalValue;
     payload.destination = sameDestination
       ? {...draft.destination, ...editedDestination}
-      : {...editedDestination, action_type:kind === 'email' ? 'email' : kind === 'web' ? 'web_form' : kind === 'linkedin_easy_apply' ? 'linkedin_easy_apply' : 'manual',
+      : {...editedDestination, action_type:kind === 'email' ? 'email' : kind === 'web' ? 'web_form' : kind === 'linkedin_easy_apply' ? 'linkedin_easy_apply' : kind === 'linkedin_message' ? 'linkedin_message' : 'manual',
          provenance:'manual_override', confidence:'user_confirmed', evidence:'Destination edited during application review'};
   }
   if (dirtySections.has('resume_data')) {

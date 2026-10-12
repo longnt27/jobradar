@@ -102,10 +102,22 @@ def reviewed_application_action(destination: dict, previous: dict) -> dict:
     if _target(current) == _target(previous):
         merged = {**previous, **current}
         if not merged.get("action_type"):
-            merged["action_type"] = "email" if merged.get("kind") == "email" else "web_form" if merged.get("kind") == "web" else "linkedin_easy_apply" if merged.get("kind") == "linkedin_easy_apply" else "manual"
+            merged["action_type"] = (
+                "email" if merged.get("kind") == "email"
+                else "web_form" if merged.get("kind") == "web"
+                else "linkedin_easy_apply" if merged.get("kind") == "linkedin_easy_apply"
+                else "linkedin_message" if merged.get("kind") == "linkedin_message"
+                else "manual"
+            )
         return merged
     kind = current.get("kind")
-    current["action_type"] = "email" if kind == "email" else "web_form" if kind == "web" else "linkedin_easy_apply" if kind == "linkedin_easy_apply" else "manual"
+    current["action_type"] = (
+        "email" if kind == "email"
+        else "web_form" if kind == "web"
+        else "linkedin_easy_apply" if kind == "linkedin_easy_apply"
+        else "linkedin_message" if kind == "linkedin_message"
+        else "manual"
+    )
     current["provenance"] = "manual_override"
     current["confidence"] = "user_confirmed"
     current["evidence"] = "Destination edited during application review."
@@ -116,6 +128,7 @@ def describe_application_action(destination: dict) -> str:
     action_type = destination.get("action_type") or destination.get("kind") or "manual"
     labels = {
         "email": "Email", "web_form": "Web form", "linkedin_easy_apply": "LinkedIn Easy Apply",
+        "linkedin_message": "Direct message to company",
         "manual": "Manual review", "unknown": "Manual review", "web": "Web form",
     }
     label = labels.get(action_type, str(action_type).replace("_", " ").title())
