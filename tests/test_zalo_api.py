@@ -117,3 +117,27 @@ def test_uncertain_send_requires_manual_resolution_then_fresh_lookup(tmp_path, m
     assert client.post(path, json={"sent": False}).status_code == 200
     assert client.get(f"/api/zalo-inquiries/{draft['id']}").json()["recipient"] == {}
     assert len(calls) == 1
+
+
+def test_complete_inquiry_flow_uses_fixed_text_without_ai(tmp_path, monkeypatch):
+    app, job, observation = app_with_post(tmp_path)
+    calls = mock_transport(monkeypatch)
+    def unexpected_ai(*args, **kwargs):
+        raise AssertionError('Zalo inquiries must not use a drafting provider')
+    monkeypatch.setattr('job_radar.drafting._run_provider', unexpected_ai)
+    client = TestClient(app)
+    draft = prepare(client, job, observation)
+    client.patch(f"/api/zalo-inquiries/{draft['id']}", json={'position':'AI Engineer'})
+    corrected = client.post(f"/api/zalo-inquiries/{draft['id']}/regenerate").json()
+    result = client.post(f"/api/zalo-inquiries/{draft['id']}/approve", json={'package_hash':corrected['package_hash']})
+    assert result.status_code == 200
+    assert calls[0]['message'] == (
+        'Em chào anh/chị, em thấy bài đăng tuyển vị trí AI Engineer trong nhóm Facebook AI Jobs Vietnam.\n'
+        'Anh/chị có thể chia sẻ JD chi tiết cho em được không ạ?\n'
+        'Em có thể gửi CV qua Zalo cho anh/chị được không ạ?'
+    )
+    reloaded = client.get(f"/api/zalo-inquiries/{draft['id']}").json()
+    assert reloaded['latest_attempt']['receipt']['message_id'] == 'message-123'
+    assert not reloaded['send_ready']
+    assert client.get(f'/api/jobs/{job}/zalo').json()['contact_status'] == 'awaiting_reply'
+    assert client.get(f'/api/jobs/{job}').json()['application_progress'] == 'not_started'
