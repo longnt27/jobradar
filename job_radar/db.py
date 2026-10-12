@@ -156,6 +156,38 @@ CREATE TABLE IF NOT EXISTS application_drafts (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS zalo_inquiry_drafts (
+  id TEXT PRIMARY KEY,
+  vacancy_id TEXT NOT NULL REFERENCES vacancies(id),
+  observation_id TEXT NOT NULL REFERENCES observations(id),
+  phone TEXT NOT NULL,
+  position TEXT NOT NULL,
+  group_name TEXT NOT NULL,
+  post_url TEXT NOT NULL,
+  evidence TEXT NOT NULL,
+  template TEXT NOT NULL,
+  message TEXT NOT NULL,
+  recipient TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS zalo_inquiry_attempts (
+  id TEXT PRIMARY KEY,
+  draft_id TEXT NOT NULL REFERENCES zalo_inquiry_drafts(id),
+  vacancy_id TEXT NOT NULL REFERENCES vacancies(id),
+  phone TEXT NOT NULL,
+  package_hash TEXT NOT NULL,
+  package_data TEXT NOT NULL,
+  status TEXT NOT NULL,
+  receipt TEXT NOT NULL DEFAULT '{}',
+  error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_zalo_active_contact
+  ON zalo_inquiry_attempts(vacancy_id,phone)
+  WHERE status IN ('sending','sent_confirmed','send_uncertain');
+CREATE INDEX IF NOT EXISTS idx_zalo_draft_job ON zalo_inquiry_drafts(vacancy_id,created_at DESC);
 CREATE TABLE IF NOT EXISTS submissions (
   id TEXT PRIMARY KEY,
   draft_id TEXT NOT NULL REFERENCES application_drafts(id),
