@@ -23,8 +23,8 @@ def _text(value: str) -> str:
     return value.replace("\xa0", " ").replace("\r\n", "\n").strip()
 
 
-def _attention(detail: str) -> dict:
-    return {"status": "needs_attention", "detail": detail, "error": detail}
+def _attention(detail: str, code: str | None = None) -> dict:
+    return {"status": "needs_attention", "detail": detail, "error": detail, "code": code}
 
 
 async def zalo_authenticated(page: Page) -> bool:
@@ -66,7 +66,7 @@ async def _chat_matches(page: Page, recipient: dict) -> bool:
 async def lookup_recipient_on_page(page: Page, phone: str) -> dict:
     phone = normalize_zalo_phone(phone)
     if not await zalo_authenticated(page):
-        return _attention("Sign in to Zalo in Job Radar's saved Chrome profile")
+        return _attention("Sign in to Zalo in Job Radar's saved Chrome profile", "auth_required")
     search = page.locator("#contact-search-input")
     await search.fill(phone)
     deadline = asyncio.get_running_loop().time() + LOOKUP_TIMEOUT_MS / 1000
@@ -151,7 +151,7 @@ async def _session_operation(settings: Settings, operation) -> dict:
                 try:
                     await page.locator("#contact-search-input").wait_for(state="visible", timeout=20000)
                 except Exception:
-                    return _attention("Zalo sign-in is required. Connect Zalo in Settings, then look up the contact again.")
+                    return _attention("Zalo sign-in is required. Connect Zalo in Settings, then look up the contact again.", "auth_required")
                 result = await operation(page)
                 return result
             finally:

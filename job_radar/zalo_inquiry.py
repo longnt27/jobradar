@@ -133,6 +133,15 @@ def record_recipient(db: Database, inquiry_id: str, recipient: dict) -> dict:
     return get_inquiry(db, inquiry_id)
 
 
+def clear_recipient(db: Database, inquiry_id: str) -> dict:
+    with db.connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        draft = get_inquiry(db, inquiry_id)
+        _editable(db, draft)
+        conn.execute("UPDATE zalo_inquiry_drafts SET recipient='{}',updated_at=? WHERE id=?", (now(), inquiry_id))
+    return get_inquiry(db, inquiry_id)
+
+
 def claim_inquiry_send(db: Database, inquiry_id: str, expected_hash: str) -> dict:
     try:
         with db.connection() as conn:

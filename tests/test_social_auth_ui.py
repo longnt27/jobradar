@@ -39,6 +39,7 @@ def test_social_sign_in_is_a_setup_step_and_expiry_is_visible_from_jobs(tmp_path
                 page.locator("#social-sign-in-panel[open]").wait_for()
                 assert page.get_by_role("button", name="Sign in to LinkedIn").is_visible()
                 assert page.get_by_role("button", name="Sign in to Facebook").is_visible()
+                assert page.get_by_role("button", name="Sign in to Zalo").is_visible()
                 assert page.locator("#setup-browser-finish").count() == 0
 
                 app.state.db.set_setting("social_login_completed_at_linkedin", "2026-10-01T12:00:00+00:00")

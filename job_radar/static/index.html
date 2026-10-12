@@ -6,6 +6,7 @@
   <title>Job Radar</title>
   <link rel="icon" href="/logo.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/app.css">
+  <script src="/zalo.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
 <body>
@@ -327,13 +328,18 @@
           </div>
         </details>
         <details class="panel flow-panel" id="social-sign-in-panel">
-          <summary><span><span class="step-number">2</span><strong>Connect LinkedIn and Facebook</strong></span><span id="social-sign-in-status" class="pill warning">Sign-in needed</span></summary>
-          <p class="hint">Choose a site. Job Radar opens regular Chrome with a separate saved profile. Four-hour scans reuse the session until the site asks you to sign in again.</p>
+          <summary><span><span class="step-number">2</span><strong>Connect LinkedIn, Facebook, and Zalo</strong></span><span id="social-sign-in-status" class="pill warning">Sign-in needed</span></summary>
+          <p class="hint">Choose a site. Job Radar opens Chrome with a separate saved profile. LinkedIn and Facebook scans reuse their sessions. Zalo is optional for sending inquiries after your approval.</p>
           <div class="social-sign-in-content">
             <div class="social-site-row"><span><strong>LinkedIn</strong><small id="linkedin-sign-in-status">Sign-in needed</small></span><button id="setup-linkedin-start" class="primary" type="button">Sign in to LinkedIn</button></div>
             <div class="social-site-row"><span><strong>Facebook</strong><small id="facebook-sign-in-status">Sign-in needed</small></span><button id="setup-facebook-start" class="primary" type="button">Sign in to Facebook</button></div>
+            <div class="social-site-row"><span><strong>Zalo</strong><small id="zalo-sign-in-status">Optional</small></span><button id="setup-zalo-start" class="primary" type="button">Sign in to Zalo</button></div>
             <p id="setup-browser-detail" class="hint"></p>
           </div>
+        </details>
+        <details class="panel flow-panel" id="zalo-template-panel">
+          <summary><span><strong>Zalo inquiry message</strong></span><span class="pill muted">Fixed template</span></summary>
+          <div id="zalo-template-editor"></div>
         </details>
         <details class="panel flow-panel" id="telegram-panel">
           <summary><span><span class="step-number">3</span><strong>Telegram notifications</strong></span><span id="setup-telegram-status" class="pill muted">Optional</span></summary>

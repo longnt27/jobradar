@@ -860,3 +860,16 @@ button.danger,.text-button.danger{color:#a4382d;border-color:#e7c2bd}
   .sidebar nav::-webkit-scrollbar-track{background:transparent}
   .sidebar nav::-webkit-scrollbar-thumb{background:#50736f;border-radius:4px}
 }
+
+.zalo-contact-section { border-top: 1px solid var(--border, #e0e8e3); margin-top: 1.2rem; padding-top: 1.2rem; }
+.zalo-candidates { display: grid; gap: .5rem; margin: .75rem 0; }
+.zalo-candidate { display: flex; flex-direction: column; gap: .2rem; align-items: flex-start; text-align: left; white-space: normal; }
+.zalo-candidate span { font-size: .85rem; }
+.zalo-manual { margin: .8rem 0; }
+.zalo-inquiry-review { display: grid; gap: .8rem; margin-top: 1rem; }
+.zalo-source blockquote { margin: .6rem 0; padding: .7rem 1rem; border-left: 3px solid var(--border, #e0e8e3); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 12rem; overflow: auto; }
+.zalo-recipient { padding: .8rem; overflow-wrap: anywhere; }
+.zalo-inquiry-review .actions { display: flex; gap: .5rem; flex-wrap: wrap; }
+.zalo-contact-section textarea { width: 100%; box-sizing: border-box; }
+
+#zalo-template-editor { margin: 18px 23px 23px; }

@@ -237,7 +237,7 @@ function setTabLoading(target, loading) {
 }
 
 function socialSiteNames(browser) {
-  return (browser.sites || []).map((site) => site === 'linkedin' ? 'LinkedIn' : 'Facebook').join(' and ');
+  return (browser.sites || []).map((site) => ({linkedin:'LinkedIn', facebook:'Facebook', zalo:'Zalo'})[site]).join(' and ');
 }
 
 function setStepStatus(selector, label, tone = '') {
@@ -252,14 +252,15 @@ function renderSocialAuth(browser, linkedinPaused = false) {
   $('#social-auth-banner').hidden = !expired && !linkedinPaused;
   $('#social-auth-message').textContent = linkedinPaused
     ? 'LinkedIn automated checks are paused after an account activity warning. Other job sources continue checking.'
-    : expired ? `${socialSiteNames(browser)} sign-in expired. Sign in again to resume those scans.` : '';
+    : expired ? `${socialSiteNames(browser)} sign-in expired. Reconnect to resume checks or approved messages.` : '';
   $('#social-auth-action').hidden = linkedinPaused && !(browser.sites || []).some((site) => site !== 'linkedin');
-  const socialReady = !expired && !linkedinPaused && connected.length === 2 && !['opening', 'open'].includes(browser.state);
+  const discoveryConnected = ['linkedin', 'facebook'].filter(site => connected.includes(site)).length;
+  const socialReady = !expired && !linkedinPaused && discoveryConnected === 2 && !['opening', 'open'].includes(browser.state);
   setStepStatus('#social-sign-in-status', linkedinPaused ? 'LinkedIn paused' : expired ? 'Sign in again'
     : ['opening', 'open'].includes(browser.state) ? 'Waiting for sign-in'
-    : socialReady ? 'Both connected' : `${connected.length} of 2 connected`, socialReady ? '' : 'warning');
-  for (const site of ['linkedin', 'facebook']) {
-    const label = site === 'linkedin' ? 'LinkedIn' : 'Facebook';
+    : socialReady ? 'Both connected' : `${discoveryConnected} of 2 sources connected`, socialReady ? '' : 'warning');
+  for (const site of ['linkedin', 'facebook', 'zalo']) {
+    const label = ({linkedin:'LinkedIn', facebook:'Facebook', zalo:'Zalo'})[site];
     const needsSignIn = !connected.includes(site) || (browser.sites || []).includes(site);
     $(`#${site}-sign-in-status`).textContent = site === 'linkedin' && linkedinPaused ? 'Automated checks paused'
       : (browser.sites || []).includes(site) ? 'Session expired'
@@ -303,7 +304,7 @@ async function loadSetup() {
   renderSocialAuth(data.browser, data.linkedin_automation_paused);
   $('#setup-browser-detail').textContent = data.linkedin_automation_paused
     ? 'LinkedIn automated checks are paused after an account activity warning. You can review saved jobs and use LinkedIn manually; other sources continue checking.'
-    : data.browser.error || (data.browser.state === 'opening' ? 'Opening Chrome…' : data.browser.state === 'open' ? `Waiting for ${data.browser.active_site === 'linkedin' ? 'LinkedIn' : 'Facebook'} sign-in in Chrome. The window closes automatically when the account page loads.` : data.browser.state === 'reauth_required' ? `${socialSiteNames(data.browser)} needs a new sign-in. Other sources keep scanning.` : data.browser.last_saved_at ? `Saved session last updated ${when(data.browser.last_saved_at)}. Upcoming scans will verify site access.` : 'Choose a site to begin. Google sign-in opens in regular Chrome.');
+    : data.browser.error || (data.browser.state === 'opening' ? 'Opening Chrome…' : data.browser.state === 'open' ? `Waiting for ${data.browser.active_({linkedin:'LinkedIn', facebook:'Facebook', zalo:'Zalo'})[site]} sign-in in Chrome. The window closes automatically when the account page loads.` : data.browser.state === 'reauth_required' ? `${socialSiteNames(data.browser)} needs a new sign-in. Other sources keep scanning.` : data.browser.last_saved_at ? `Saved session last updated ${when(data.browser.last_saved_at)}. Upcoming scans will verify site access.` : 'Choose a site to begin. Google sign-in opens in regular Chrome.');
   const mailForm = $('#setup-smtp-form');
   if (!mailForm.dataset.initialized) {
     mailForm.elements.host.value = data.smtp_host || '';
@@ -1075,6 +1076,7 @@ async function showJob(id, pin = false, loadedJob = null) {
       ${!job.apply_url ? '<p class="hint">No application form has been verified for this posting. Check the original source before sending.</p>' : ''}
     </section>
 
+    <div id="job-zalo-contact"></div>
     <section class="job-prepare-section review-section">
       <div class="section-head"><div><h3>Application preparation</h3><p class="hint">${job.application_progress === 'not_started' ? 'Prepare only after the fit and risks above make sense to you.' : escapeHtml(applicationNote)}</p></div></div>
       <p class="hint">Drafting provider: ${escapeHtml(provider || 'Not configured')} · <button class="text-button" data-tab="settings">Change provider</button></p>
@@ -1084,6 +1086,7 @@ async function showJob(id, pin = false, loadedJob = null) {
 
     <details class="detail-disclosure"><summary>Original description</summary><div class="description">${formatDescription(job.description)}</div></details>`;
 
+  if (job.observations.some(source => source.kind === 'facebook')) window.JobRadarZalo?.mountJob($('#job-zalo-contact'), id, {api, notice});
   $('#job-detail').querySelector('[data-tab="settings"]').addEventListener('click', () => showTab('settings'));
   $('#job-detail').querySelectorAll('[data-split-sighting]').forEach((button) => button.addEventListener('click', async () => {
     if (!window.confirm('Mark this sighting as a different job? The original source evidence will be preserved.')) return;
@@ -1547,6 +1550,7 @@ function renderPreferenceSuggestions(result) {
 }
 
 async function loadSettings() {
+  window.JobRadarZalo?.mountSettings($('#zalo-template-editor'), {api, notice});
   const [profile, setup, intent, suggestions] = await Promise.all([
     api('/api/profile'),
     loadSetup(),
@@ -1578,7 +1582,7 @@ async function loadSettings() {
   setStepStatus('#provider-status', modelCount === 2 ? 'Both configured' : modelCount ? '1 of 2 configured' : 'Choose models', modelCount === 2 ? '' : 'warning');
   setStepStatus('#drafting-status', profile.drafting_provider ? `Using ${providerLabel(profile.drafting_provider)}` : 'Choose a provider', profile.drafting_provider ? '' : 'warning');
   const hasResume = Boolean(profile.name && profile.email);
-  const needsSocial = Boolean(profile.drafting_provider && hasResume && (setup.browser.sites.length || setup.browser.connected_sites.length < 2));
+  const needsSocial = Boolean(profile.drafting_provider && hasResume && (setup.browser.sites.length || ['linkedin','facebook'].some(site => !setup.browser.connected_sites.includes(site))));
   const setupPanels = ['provider-panel','social-sign-in-panel','telegram-panel','smtp-panel'];
   if (!setupPanels.some((id) => $(`#${id}`).open)) {
     closeSetupPanels(modelCount < 2 ? 'provider-panel' : needsSocial ? 'social-sign-in-panel' : null);
@@ -3516,7 +3520,7 @@ document.querySelectorAll('input[name="employer-scope"]').forEach((input) => inp
 $('#employers-prev').addEventListener('click', () => { employerPage = Math.max(1, employerPage - 1); loadEmployers().catch((error) => notice(error.message, true)); });
 $('#employers-next').addEventListener('click', () => { employerPage += 1; loadEmployers().catch((error) => notice(error.message, true)); });
 
-for (const site of ['linkedin', 'facebook']) {
+for (const site of ['linkedin', 'facebook', 'zalo']) {
   $(`#setup-${site}-start`).addEventListener('click', async () => {
     try { await api('/api/setup/browser/start', {method:'POST', body:JSON.stringify({site})}); await loadSetup(); }
     catch(error) { notice(error.message, true); }

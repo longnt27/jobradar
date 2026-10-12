@@ -34,6 +34,8 @@ from .apply import (
 )
 from .auto_apply import AutoApplyManager
 from .browser_login import BrowserLoginManager
+from .zalo_api import create_zalo_router
+from .zalo_inquiry import recover_inquiry_sends
 from .chatgpt_handoff import ChatGPTInputManager, application_prompt, apply_chatgpt_reply, register_chatgpt_input_manager
 from .capabilities import capability_readiness, provider_processing
 from .drafting import PROVIDERS, get_draft, prepare_draft, refresh_draft_projects, set_discovered_linkedin_destination, set_discovered_web_destination, set_unavailable_linkedin_destination, update_draft
@@ -273,6 +275,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         nonlocal ai_retry_task
+        recover_inquiry_sends(db)
         await scan_manager.start()
         await match_manager.start()
         await auto_apply_manager.start()
@@ -292,6 +295,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await scan_manager.stop()
 
     app = FastAPI(title="Job Radar", version="0.1.0", lifespan=lifespan)
+    app.include_router(create_zalo_router(db, settings, scan_manager.browser_lock))
     app.state.db = db
     app.state.settings = settings
     app.state.scan_manager = scan_manager
@@ -363,7 +367,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def index():
         static = Path(__file__).parent / "static"
         html = (static / "index.html").read_text()
-        for asset, attribute in (("app.js", "src"), ("app.css", "href")):
+        for asset, attribute in (("app.js", "src"), ("zalo.js", "src"), ("app.css", "href")):
             version = hashlib.sha256((static / asset).read_bytes()).hexdigest()[:12]
             html = html.replace(f'{attribute}="/{asset}"', f'{attribute}="/{asset}?v={version}"')
         return HTMLResponse(html, headers={"Cache-Control": "no-store"})
@@ -376,6 +380,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/app.css")
     def stylesheet():
         return FileResponse(Path(__file__).parent / "static" / "app.css", media_type="text/css",
+                            headers={"Cache-Control": "no-store"})
+
+    @app.get("/zalo.js")
+    def zalo_javascript():
+        return FileResponse(Path(__file__).parent / "static" / "zalo.js", media_type="application/javascript",
                             headers={"Cache-Control": "no-store"})
 
     @app.get("/logo.svg")
