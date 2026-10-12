@@ -38,6 +38,10 @@ def test_writing_editor_saves_preserves_edits_restores_and_fits_viewport(tmp_pat
                 page.on('pageerror', lambda error: errors.append(str(error)))
                 page.goto(f'http://127.0.0.1:{port}/#settings')
                 page.wait_for_function("!document.querySelector('#settings').hasAttribute('aria-busy')")
+                assert page.evaluate("""() => ['provider-panel', 'social-sign-in-panel', 'telegram-panel']
+                  .map(id => document.getElementById(id).nextElementSibling.id)""") == [
+                    'social-sign-in-panel', 'telegram-panel', 'smtp-panel']
+                assert page.locator('#writing-preferences-panel #zalo-template-panel').count() == 1
                 page.locator('#writing-preferences-panel > summary').click()
                 choice = page.locator('#writing-template-choice')
                 choice.select_option('section_summary')
@@ -78,6 +82,15 @@ def test_writing_editor_saves_preserves_edits_restores_and_fits_viewport(tmp_pat
                 artifact = Path(__file__).parents[1] / 'artifacts' / f'writing-editor-{theme}-{width}.png'
                 artifact.parent.mkdir(exist_ok=True)
                 page.screenshot(path=str(artifact), full_page=True)
+                page.locator('#zalo-template-panel > summary').click()
+                zalo_text = page.get_by_label('Default Zalo inquiry message', exact=True)
+                assert zalo_text.is_visible()
+                zalo_text.fill('Hello, I am interested in {position} from {group}.')
+                with page.expect_response(lambda response: response.url.endswith('/api/setup/zalo-template')
+                                          and response.request.method == 'PUT') as saved_zalo:
+                    page.get_by_role('button', name='Save Zalo template', exact=True).click()
+                assert saved_zalo.value.status == 200
+                assert app.state.db.get_setting('zalo_inquiry_template') == 'Hello, I am interested in {position} from {group}.'
                 assert not errors
             finally:
                 browser.close()
