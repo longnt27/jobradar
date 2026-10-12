@@ -31,6 +31,7 @@
   }
 
   async function prepare(state, observationId, phone) {
+    if (state.dirty) throw new Error('Save your message edits before choosing another inquiry.');
     const existing = state.context.drafts.find(draft => draft.observation_id === observationId && draft.phone === phone);
     if (existing) { accept(state, existing); return; }
     const draft = await state.api(`/api/jobs/${state.vacancyId}/zalo`, {

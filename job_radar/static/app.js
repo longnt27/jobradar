@@ -304,7 +304,7 @@ async function loadSetup() {
   renderSocialAuth(data.browser, data.linkedin_automation_paused);
   $('#setup-browser-detail').textContent = data.linkedin_automation_paused
     ? 'LinkedIn automated checks are paused after an account activity warning. You can review saved jobs and use LinkedIn manually; other sources continue checking.'
-    : data.browser.error || (data.browser.state === 'opening' ? 'Opening Chrome…' : data.browser.state === 'open' ? `Waiting for ${data.browser.active_({linkedin:'LinkedIn', facebook:'Facebook', zalo:'Zalo'})[site]} sign-in in Chrome. The window closes automatically when the account page loads.` : data.browser.state === 'reauth_required' ? `${socialSiteNames(data.browser)} needs a new sign-in. Other sources keep scanning.` : data.browser.last_saved_at ? `Saved session last updated ${when(data.browser.last_saved_at)}. Upcoming scans will verify site access.` : 'Choose a site to begin. Google sign-in opens in regular Chrome.');
+    : data.browser.error || (data.browser.state === 'opening' ? 'Opening Chrome…' : data.browser.state === 'open' ? `Waiting for ${({linkedin:'LinkedIn', facebook:'Facebook', zalo:'Zalo'})[data.browser.active_site]} sign-in in Chrome. The window closes automatically when the account page loads.` : data.browser.state === 'reauth_required' ? `${socialSiteNames(data.browser)} needs a new sign-in. Other sources keep scanning.` : data.browser.last_saved_at ? `Saved session last updated ${when(data.browser.last_saved_at)}. Upcoming scans will verify site access.` : 'Choose a site to begin. Google sign-in opens in regular Chrome.');
   const mailForm = $('#setup-smtp-form');
   if (!mailForm.dataset.initialized) {
     mailForm.elements.host.value = data.smtp_host || '';

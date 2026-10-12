@@ -72,6 +72,39 @@ def test_job_refresh_preserves_unsaved_inquiry_edits(ui):
     assert page.get_by_role('button', name='Approve and send Zalo inquiry', exact=True).is_disabled()
 
 
+@pytest.mark.parametrize('selection', ['candidate', 'manual'])
+def test_contact_selection_preserves_unsaved_message_edits(ui, selection):
+    page, app, _, observation = ui
+    prepare_ui(page)
+    page.get_by_label('Message to send', exact=True).fill('My corrected inquiry')
+    if selection == 'candidate':
+        page.locator('[data-zalo-candidate]').first.click()
+    else:
+        page.locator('.zalo-manual summary').click()
+        page.get_by_label('Facebook post', exact=True).select_option(observation)
+        page.get_by_label('Phone number from the post', exact=True).fill('0976543210')
+        page.get_by_role('button', name='Prepare inquiry', exact=True).click()
+    page.locator('#job-zalo-contact [role=alert]').filter(has_text='Save your message edits before choosing another inquiry.').wait_for()
+    assert page.get_by_label('Message to send', exact=True).input_value() == 'My corrected inquiry'
+    assert page.get_by_label('Zalo phone number', exact=True).input_value() == '0912345678'
+    assert app.state.db.one('SELECT count(*) AS count FROM zalo_inquiry_drafts')['count'] == 1
+
+
+@pytest.mark.parametrize('site,label', [('linkedin', 'LinkedIn'), ('facebook', 'Facebook'), ('zalo', 'Zalo')])
+def test_settings_keeps_loading_while_social_sign_in_is_open(ui, site, label):
+    page, _, _, _ = ui
+    def open_sign_in(route):
+        response = route.fetch()
+        data = response.json()
+        data['browser'].update(state='open', active_site=site)
+        route.fulfill(response=response, json=data)
+    page.route('**/api/setup', open_sign_in)
+    page.goto(page.url.split('#')[0] + '#settings')
+    page.wait_for_function("label => document.querySelector('#setup-browser-detail').textContent.includes('Waiting for '+label+' sign-in')", arg=label)
+    page.locator('[data-zalo-template]').wait_for(state='attached')
+    page.wait_for_function("document.querySelector('[data-zalo-template]').value.includes('Em chào anh/chị')")
+
+
 def test_phone_edit_disables_approval_until_new_lookup(ui):
     page, _, _, _ = ui
     prepare_ui(page)

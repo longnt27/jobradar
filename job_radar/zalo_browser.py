@@ -90,6 +90,7 @@ async def lookup_recipient_on_page(page: Page, phone: str) -> dict:
 
 async def send_inquiry_on_page(page: Page, recipient: dict, message: str) -> dict:
     may_have_sent = False
+    tracker = None
     try:
         if not message or not message.strip():
             return _attention("Review a nonempty Zalo message before sending")
@@ -111,15 +112,36 @@ async def send_inquiry_on_page(page: Page, recipient: dict, message: str) -> dic
                 or await send.get_attribute("aria-disabled") == "true"
                 or await send.get_attribute("data-disabled") in ("true", "disabled")):
             return _attention("The Zalo composer or recipient does not match the reviewed message")
+        # Zalo virtualizes chat history. A new DOM node alone is not evidence of
+        # this send: require its observed local sending state before confirmation.
+        # These public status labels come from Zalo's visible STR_SENDING UI.
+        tracker = await page.evaluate_handle(r"""({baseline, message}) => {
+          const prior = new Set(baseline), pending = new Set();
+          const view = document.querySelector('#messageView');
+          const normalize = value => value.replace(/\u00a0/g,' ').replace(/\r\n/g,'\n').trim();
+          const scan = () => {
+            for (const bubble of view.querySelectorAll('[data-component="bubble-message"].me')) {
+              if (!bubble.id || prior.has(bubble.id)) continue;
+              const texts = bubble.querySelectorAll('.text-message__container .text');
+              const status = bubble.querySelector('.bubble-message-time-status');
+              if (texts.length === 1 && normalize(texts[0].innerText) === normalize(message)
+                  && /(?:^|\n)\s*(?:đang gửi|sending)\s*(?:\n|$)/i.test(status?.innerText || '')) pending.add(bubble.id);
+            }
+          };
+          const observer = new MutationObserver(scan);
+          observer.observe(view, {subtree:true, childList:true, characterData:true, attributes:true});
+          return {pending, observer};
+        }""", {"baseline": list(baseline), "message": message})
         may_have_sent = True
         await send.click(timeout=5000)
         deadline = asyncio.get_running_loop().time() + CONFIRMATION_TIMEOUT_MS / 1000
         while asyncio.get_running_loop().time() < deadline:
             if not await _chat_matches(page, recipient):
                 break
+            pending = set(await tracker.evaluate("tracker => [...tracker.pending]"))
             for bubble in await bubbles.all():
                 identifier = await bubble.get_attribute("id") or ""
-                if not identifier or identifier in baseline:
+                if not identifier or identifier in baseline or identifier not in pending:
                     continue
                 body = bubble.locator(".text-message__container .text")
                 if await body.count() != 1 or _text(await body.inner_text()) != _text(message):
@@ -135,6 +157,13 @@ async def send_inquiry_on_page(page: Page, recipient: dict, message: str) -> dic
         return {"status": "send_uncertain", "error": "Zalo was asked to send, but a new matching message with a sent status was not confirmed. Check the chat before retrying."}
     except Exception as error:
         return {"status": "send_uncertain" if may_have_sent else "needs_attention", "error": str(error)[:600]}
+    finally:
+        if tracker is not None:
+            try:
+                await tracker.evaluate("tracker => tracker.observer.disconnect()")
+                await tracker.dispose()
+            except Exception:
+                pass  # Cleanup must not replace a verified send result.
 
 
 async def _session_operation(settings: Settings, operation) -> dict:

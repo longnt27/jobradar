@@ -23,8 +23,9 @@ document.querySelector('.send-msg-btn').onclick=()=>{window.clicks++;if(window.n
  const item=document.createElement('div');item.id='bb_msg_id_new';item.className='chat-message me';item.dataset.component='bubble-message';
  const container=document.createElement('div');container.className='text-message__container';const text=document.createElement('span');text.className='text';
  text.innerText=document.querySelector('#richInput').innerText;container.append(text);item.append(container);
- const status=document.createElement('div');status.className='bubble-message-time-status';status.innerText=window.statusText || 'Đã gửi';item.append(status);
- document.querySelector('#messageView').append(item);document.querySelector('#richInput').innerText='';};
+ const status=document.createElement('div');status.className='bubble-message-time-status';status.innerText=window.directSent ? 'Đã gửi' : 'Đang gửi';item.append(status);
+ document.querySelector('#messageView').append(item);document.querySelector('#richInput').innerText='';
+ setTimeout(()=>{status.innerText=window.statusText || 'Đã gửi';}, 30);};
 </script>"""
 
 
@@ -99,6 +100,27 @@ def test_timeout_after_send_is_uncertain(monkeypatch):
         return result
     result = asyncio.run(exercise(verify, change="window.noConfirm=true"))
     assert result["status"] == "send_uncertain"  # Old identical bubble is insufficient.
+
+
+def test_delayed_history_cannot_confirm_the_current_send(monkeypatch):
+    import job_radar.zalo_browser as adapter
+    monkeypatch.setattr(adapter, "CONFIRMATION_TIMEOUT_MS", 100)
+    change = """const old=document.querySelector('#messageView .me');old.remove();
+      old.id='bb_msg_id_'+(Date.now()-60000);window.noConfirm=true;
+      document.querySelector('.send-msg-btn').addEventListener('click',()=>document.querySelector('#messageView').append(old));"""
+    result = asyncio.run(exercise(lambda page: adapter.send_inquiry_on_page(page, {
+        "phone": "0912345678", "identity_key": "friend-item-123", "display_name": "Recruiter",
+    }, "Em xin JD chi tiết ạ."), change=change))
+    assert result["status"] == "send_uncertain"
+
+
+def test_sent_bubble_without_a_sending_transition_is_uncertain(monkeypatch):
+    import job_radar.zalo_browser as adapter
+    monkeypatch.setattr(adapter, "CONFIRMATION_TIMEOUT_MS", 100)
+    result = asyncio.run(exercise(lambda page: adapter.send_inquiry_on_page(page, {
+        "phone": "0912345678", "identity_key": "friend-item-123", "display_name": "Recruiter",
+    }, "Em xin JD."), change="window.directSent=true"))
+    assert result["status"] == "send_uncertain"
 
 
 def test_existing_unsent_draft_is_preserved():
