@@ -367,7 +367,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def index():
         static = Path(__file__).parent / "static"
         html = (static / "index.html").read_text()
-        for asset, attribute in (("app.js", "src"), ("zalo.js", "src"), ("app.css", "href")):
+        for asset, attribute in (("theme.js", "src"), ("app.js", "src"), ("zalo.js", "src"), ("app.css", "href")):
             version = hashlib.sha256((static / asset).read_bytes()).hexdigest()[:12]
             html = html.replace(f'{attribute}="/{asset}"', f'{attribute}="/{asset}?v={version}"')
         return HTMLResponse(html, headers={"Cache-Control": "no-store"})
@@ -375,6 +375,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/app.js")
     def javascript():
         return FileResponse(Path(__file__).parent / "static" / "app.js", media_type="application/javascript",
+                            headers={"Cache-Control": "no-store"})
+
+    @app.get("/theme.js")
+    def theme_javascript():
+        return FileResponse(Path(__file__).parent / "static" / "theme.js", media_type="application/javascript",
                             headers={"Cache-Control": "no-store"})
 
     @app.get("/app.css")

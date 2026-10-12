@@ -150,6 +150,7 @@ def _new_page(browser, viewport: dict) -> Page:
         locale="en-US",
         timezone_id="Asia/Bangkok",
         reduced_motion="reduce",
+        color_scheme="light",
     )
     page = context.new_page()
     page.set_default_timeout(6000)
@@ -354,13 +355,56 @@ def _a11y_issues(page: Page) -> list[str]:
     }""")
 
 
+def _text_contrast_issues(page: Page) -> list[str]:
+    return page.evaluate("""() => {
+      const issues = [];
+      const rgb = (value) => (value.match(/[\\d.]+/g) || []).map(Number);
+      const blend = (front, back) => {
+        const alpha = front[3] ?? 1;
+        return front.slice(0, 3).map((channel, i) => channel * alpha + back[i] * (1 - alpha));
+      };
+      const background = (node) => {
+        if (!node) return [255, 255, 255];
+        return blend(rgb(getComputedStyle(node).backgroundColor), background(node.parentElement));
+      };
+      const luminance = (channels) => channels.map(channel => {
+        const value = channel / 255;
+        return value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4;
+      }).reduce((sum, value, i) => sum + value * [.2126, .7152, .0722][i], 0);
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) {
+        const text = walker.currentNode;
+        const node = text.parentElement;
+        if (!text.textContent.trim() || node.closest('script,style,[disabled],[hidden],.sr-only')) continue;
+        const style = getComputedStyle(node);
+        if (style.visibility !== 'visible' || style.display === 'none') continue;
+        const range = document.createRange();
+        range.selectNode(text);
+        const box = range.getBoundingClientRect();
+        if (!box.width || !box.height || box.bottom < 0 || box.top >= innerHeight) continue;
+        const back = background(node);
+        const foreground = blend(rgb(style.color), back);
+        const a = luminance(foreground), b = luminance(back);
+        const ratio = (Math.max(a, b) + .05) / (Math.min(a, b) + .05);
+        const large = parseFloat(style.fontSize) >= 24 ||
+          (parseFloat(style.fontSize) >= 18.66 && parseInt(style.fontWeight) >= 700);
+        if (ratio < (large ? 3 : 4.5)) {
+          issues.push(`${text.textContent.trim().slice(0, 65)}: ${ratio.toFixed(2)}:1`);
+        }
+      }
+      return issues;
+    }""")
+
+
 @pytest.mark.parametrize("viewport_name", ["desktop", "tablet", "mobile"])
 @pytest.mark.parametrize("surface", list(MANIFEST["surfaces"]))
+@pytest.mark.parametrize("theme", ["light", "dark"])
 def test_core_surfaces_have_stable_responsive_visual_contract(
-    ui_server, browser, viewport_name: str, surface: str
+    ui_server, browser, viewport_name: str, surface: str, theme: str
 ) -> None:
     viewport = MANIFEST["viewports"][viewport_name]
     page = _new_page(browser, viewport)
+    page.context.add_init_script(f"localStorage.setItem('job-radar-theme', '{theme}')")
     try:
         page.goto(_surface_url(ui_server, surface))
         config = MANIFEST["surfaces"][surface]
@@ -374,9 +418,13 @@ def test_core_surfaces_have_stable_responsive_visual_contract(
                 f"{surface}/{viewport_name}: {selector} collapsed to {box}"
             )
         _assert_no_page_overflow(page, surface, viewport_name)
-        path, digest, size, fingerprint = _capture(page, surface, viewport_name)
+        if theme == "dark":
+            issues = _text_contrast_issues(page)
+            assert not issues, f"{surface}/{viewport_name} dark text contrast issues: {issues}"
+        snapshot_surface = surface if theme == "light" else f"{surface}-dark"
+        path, digest, size, fingerprint = _capture(page, snapshot_surface, viewport_name)
         assert size > 4_000, f"{surface}/{viewport_name} screenshot looks blank ({size} bytes): {path}"
-        baseline_key = f"{surface}-{viewport_name}"
+        baseline_key = f"{snapshot_surface}-{viewport_name}"
         assert baseline_key in VISUAL_BASELINES, f"Missing visual baseline for {baseline_key}"
         assert fingerprint == VISUAL_BASELINES[baseline_key], (
             f"{baseline_key} visual regression detected. "
@@ -389,8 +437,10 @@ def test_core_surfaces_have_stable_responsive_visual_contract(
 
 
 @pytest.mark.parametrize("surface", list(MANIFEST["surfaces"]))
-def test_core_surfaces_pass_automated_accessibility_smoke(ui_server, browser, surface: str) -> None:
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_core_surfaces_pass_automated_accessibility_smoke(ui_server, browser, surface: str, theme: str) -> None:
     page = _new_page(browser, MANIFEST["viewports"]["desktop"])
+    page.context.add_init_script(f"localStorage.setItem('job-radar-theme', '{theme}')")
     try:
         page.goto(_surface_url(ui_server, surface))
         config = MANIFEST["surfaces"][surface]
@@ -478,7 +528,12 @@ def test_visual_gate_static_contract() -> None:
     assert "prefers-reduced-motion:reduce" in css
     assert '<nav aria-label="Main navigation">' in html
     assert set(MANIFEST["viewports"]) == {"desktop", "tablet", "mobile"}
-    assert set(VISUAL_BASELINES) == {f"{surface}-{viewport}" for surface in MANIFEST["surfaces"] for viewport in MANIFEST["viewports"]}
+    assert set(VISUAL_BASELINES) == {
+        f"{surface}{suffix}-{viewport}"
+        for surface in MANIFEST["surfaces"]
+        for viewport in MANIFEST["viewports"]
+        for suffix in ("", "-dark")
+    }
     assert set(MANIFEST["surfaces"]) >= {
         "home", "jobs", "applications", "profile", "projects", "sources", "employers", "queue"
     }

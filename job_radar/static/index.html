@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Job Radar</title>
   <link rel="icon" href="/logo.svg" type="image/svg+xml">
+  <script src="/theme.js"></script>
   <link rel="stylesheet" href="/app.css">
   <script src="/zalo.js" defer></script>
   <script src="/app.js" defer></script>
@@ -32,6 +33,14 @@
     <main>
       <header class="topbar">
         <div><p class="eyebrow">JOB RADAR</p><h1 id="page-title">Home</h1></div>
+        <div class="theme-control">
+          <label for="theme-preference">Theme</label>
+          <select id="theme-preference">
+            <option value="system">System</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+        </div>
       </header>
       <div id="notice" role="status" aria-live="polite"></div>
       <div id="tab-loading" role="status" aria-live="polite" hidden>Loading…</div>
