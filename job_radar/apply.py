@@ -467,14 +467,8 @@ def _default_answer(field: dict, profile: dict, message: dict) -> str:
             ans = ""
             if key == "first_name":
                 ans = str(profile.get("given_name", ""))
-                if not ans and profile.get("name"):
-                    parts = profile["name"].strip().split()
-                    ans = parts[-1] if len(parts) > 1 else parts[0]
             elif key == "last_name":
                 ans = str(profile.get("family_name", ""))
-                if not ans and profile.get("name"):
-                    parts = profile["name"].strip().split()
-                    ans = " ".join(parts[:-1]) if len(parts) > 1 else parts[0]
             elif key == "location":
                 ans = str(profile.get("location") or "Hanoi, Vietnam")
             elif key in ("linkedin", "github"):

@@ -562,8 +562,15 @@ button.danger,.text-button.danger{color:#a4382d;border-color:#e7c2bd}
 
 
 /* Product Stack 02 job inbox */
+#notice:not(:empty){display:flex;align-items:center;justify-content:space-between;gap:12px}
+.toast-message{flex:1;min-width:0;line-height:1.45}
+.toast-content{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;line-height:1.45}
+.toast-line{display:block;font-size:13px}
+.toast-line strong{font-weight:700;margin-right:4px}
 .toast-action{flex:none;border:1px solid currentColor;background:transparent;color:inherit;border-radius:7px;padding:4px 9px;font-size:12px;font-weight:800}
 .toast-action:hover{background:rgba(0,0,0,.06);filter:none}
+.toast-dismiss{flex:none;border:0;background:transparent;color:inherit;font-size:18px;line-height:1;cursor:pointer;padding:2px 6px;border-radius:4px}
+.toast-dismiss:hover{background:rgba(0,0,0,.08)}
 
 .jobs-page-head{align-items:flex-end}
 .jobs-page-head h2{margin:0 0 5px;font-size:23px;letter-spacing:-.035em}

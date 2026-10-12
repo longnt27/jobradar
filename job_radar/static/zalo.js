@@ -38,6 +38,7 @@
       method:'POST', body:JSON.stringify({observation_id:observationId, phone}),
     });
     accept(state, draft);
+    state.notice('Zalo inquiry prepared. Review and approve the message below.');
   }
 
   function render(state) {
@@ -117,20 +118,28 @@
       } else if (action === 'regenerate') {
         await save(state, true);
         accept(state, await state.api(`${endpoint(state.activeId)}/regenerate`, {method:'POST'}));
+        state.notice('Zalo message regenerated from template.');
       } else if (action === 'lookup') {
         await save(state);
         const result = await state.api(`${endpoint(state.activeId)}/lookup`, {method:'POST'});
         accept(state, result.draft);
-        if (result.lookup.status !== 'ready') state.error = result.lookup.detail || result.lookup.error;
-        else context.connected = true;
+        if (result.lookup.status !== 'ready') {
+          const detail = result.lookup.detail || result.lookup.error;
+          state.error = `What happened: Could not find Zalo recipient (${detail}). Next step: Verify the phone number from the original post.`;
+          state.notice(state.error, true);
+        } else {
+          context.connected = true;
+          state.notice(`Zalo recipient verified: ${result.draft.recipient?.display_name || 'Contact found'}`);
+        }
       } else if (action === 'approve') {
         if (state.dirty || !draft.send_ready) throw new Error('Save and review your current message and recipient before approving.');
         const result = await state.api(`${endpoint(state.activeId)}/approve`, {method:'POST', body:JSON.stringify({package_hash:draft.package_hash})});
         accept(state, result.draft);
-        state.notice(result.attempt.status === 'sent_confirmed' ? 'Zalo inquiry sent. Awaiting reply.' : result.attempt.error || 'Check the Zalo send outcome.', result.attempt.status !== 'sent_confirmed');
+        state.notice(result.attempt.status === 'sent_confirmed' ? 'Zalo inquiry sent. Awaiting reply.' : (result.attempt.error ? `What happened: Send was not confirmed (${result.attempt.error}). Next step: Check Zalo Web or verify the attempt.` : 'Check the Zalo send outcome.'), result.attempt.status !== 'sent_confirmed');
       } else if (action.startsWith('resolve-')) {
         const result = await state.api(`${endpoint(state.activeId)}/attempts/${attempt.id}/resolve`, {method:'POST', body:JSON.stringify({sent:action === 'resolve-sent'})});
         accept(state, result.draft);
+        state.notice(action === 'resolve-sent' ? 'Inquiry marked as sent. Awaiting reply.' : 'Inquiry marked as not sent. You can edit and retry.');
       }
     })));
   }

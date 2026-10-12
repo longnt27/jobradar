@@ -69,9 +69,9 @@ function formatDescription(value) {
 function renderJobAnalysis(job, score) {
   const status = job.analysis_status;
   const stateMessage = status === 'done' ? `Match reviewed · ${relativeWhen(job.analyzed_at)}`
-    : status === 'failed' ? `Match review failed: ${escapeHtml(job.analysis_error || 'Unknown error')}`
+    : status === 'failed' ? `What happened: Local match review failed after 3 attempts (${escapeHtml(job.analysis_error || 'Model error')}). Next step: Verify Ollama is running in Settings, then click "Try review again" below.`
     : status === 'dismissed' ? 'Failed review dismissed. You can still decide from the posting itself.'
-    : ['pending', 'running'].includes(status) ? 'Job Radar is reading the posting and checking the match.'
+    : ['pending', 'running'].includes(status) ? (job.analysis_error ? `What happened: Previous attempt encountered an issue (${escapeHtml(job.analysis_error)}). Next step: Job Radar is retrying automatically in the background.` : 'Job Radar is reading the posting and checking the match.')
     : 'No detailed match review yet. You can still inspect and triage this job.';
   const retry = status === 'failed' ? `<div class="actions"><button type="button" data-analyze="${job.id}" class="secondary">Try review again</button><button type="button" data-dismiss-analysis="${job.id}" class="secondary">Dismiss failed review</button></div>`
     : status === 'dismissed' ? `<button type="button" data-analyze="${job.id}" class="secondary">Run match review</button>` : '';
@@ -147,23 +147,55 @@ function restoreOpenDisclosures(container, openKeys) {
   });
 }
 
+const MAX_AUTO_RETRIES = 3;
+
 async function api(path, options = {}) {
-  const response = await fetch(path, {
-    headers: options.body instanceof FormData ? (options.headers || {}) : {'Content-Type': 'application/json', ...(options.headers || {})},
-    ...options,
-  });
-  const raw = await response.text();
-  let body;
-  try { body = raw ? JSON.parse(raw) : null; } catch { body = raw; }
-  if (!response.ok) {
-    const detail = body?.detail;
-    const message = typeof detail === 'string' ? detail : detail?.message || `${response.status} ${response.statusText}`;
-    const error = new Error(message);
-    error.detail = detail;
-    error.status = response.status;
+  const retryCount = options._retryCount || 0;
+  try {
+    const response = await fetch(path, {
+      headers: options.body instanceof FormData ? (options.headers || {}) : {'Content-Type': 'application/json', ...(options.headers || {})},
+      ...options,
+    });
+    const raw = await response.text();
+    let body;
+    try { body = raw ? JSON.parse(raw) : null; } catch { body = raw; }
+    if (!response.ok) {
+      if ([502, 503, 504].includes(response.status) && retryCount < MAX_AUTO_RETRIES) {
+        const nextAttempt = retryCount + 1;
+        notice(`Server temporarily busy (${response.status}). Retrying automatically (attempt ${nextAttempt} of ${MAX_AUTO_RETRIES})…`);
+        await new Promise((r) => setTimeout(r, 600 * nextAttempt));
+        const res = await api(path, {...options, _retryCount: nextAttempt});
+        notice('Connection restored. Request completed.');
+        return res;
+      }
+      const detail = body?.detail;
+      const message = typeof detail === 'string' ? detail : detail?.message || `${response.status} ${response.statusText}`;
+      const error = new Error(message);
+      error.detail = detail;
+      error.status = response.status;
+      throw error;
+    }
+    return body;
+  } catch (err) {
+    if (err.status && err.status < 500) {
+      throw err;
+    }
+    if (retryCount < MAX_AUTO_RETRIES) {
+      const nextAttempt = retryCount + 1;
+      notice(`Connection issue. Retrying automatically (attempt ${nextAttempt} of ${MAX_AUTO_RETRIES})…`);
+      await new Promise((r) => setTimeout(r, 600 * nextAttempt));
+      const res = await api(path, {...options, _retryCount: nextAttempt});
+      notice('Connection restored. Request completed.');
+      return res;
+    }
+    const errorMsg = err.message || 'Could not connect to the server';
+    const error = new Error(
+      `What happened: Connection failed after ${MAX_AUTO_RETRIES} attempts (${errorMsg}). Next step: Ensure the Job Radar server is running, then click Try again.`
+    );
+    error.status = err.status || 0;
+    error.detail = err.detail;
     throw error;
   }
-  return body;
 }
 
 function prefersReducedMotion() {
@@ -188,6 +220,99 @@ function clearNotice() {
   node.replaceChildren();
 }
 
+function formatErrorDetails(error, fallbackNextStep = 'Review the details and try again.') {
+  if (!error) return { what: 'An unexpected issue occurred.', next: fallbackNextStep, action: null };
+  const raw = typeof error === 'string' ? error : error.message || String(error);
+  
+  if (raw.includes('Next step:') || raw.includes('next step:')) {
+    const parts = raw.split(/Next step:\s*/i);
+    const what = parts[0].replace(/^What happened:\s*/i, '').trim();
+    const next = parts[1] ? parts[1].trim() : '';
+    return { what: what || raw, next: next || fallbackNextStep, action: null };
+  }
+  
+  let what = raw;
+  let next = fallbackNextStep;
+  let action = null;
+  
+  if (/Failed to fetch|NetworkError|connection refused|ECONNREFUSED/i.test(raw)) {
+    what = 'Could not connect to the local Job Radar server';
+    next = 'Verify that the local server is running in terminal and click Try again.';
+    action = { label: 'Try again', onClick: () => window.location.reload() };
+  } else if (/Choose a drafting provider/i.test(raw)) {
+    what = 'No AI drafting provider is configured';
+    next = 'Open Settings and select Codex CLI, Claude, Antigravity, or ChatGPT Web.';
+    action = { label: 'Open Settings', onClick: () => showTab('settings') };
+  } else if (/not available on this Mac/i.test(raw)) {
+    what = raw;
+    next = 'Select an available provider or local model in Settings.';
+    action = { label: 'Open Settings', onClick: () => showTab('settings') };
+  } else if (/Profile must include a name/i.test(raw)) {
+    what = 'Profile is missing required details (name or skills)';
+    next = 'Open My Profile and complete your personal details and skills before continuing.';
+    action = { label: 'Open Profile', onClick: () => showTab('personal') };
+  } else if (/Choose a local job matching model/i.test(raw) || /No local model/i.test(raw)) {
+    what = 'No local job matching model is selected';
+    next = 'Open Settings and select an installed Ollama model or download the recommended model.';
+    action = { label: 'Open Settings', onClick: () => openSetupPanel('provider-panel') };
+  } else if (/Save your email settings before sending a test/i.test(raw)) {
+    what = 'Email settings have unsaved changes';
+    next = 'Click "Save email settings" before sending a test email.';
+  } else if (/Enter a bot token/i.test(raw)) {
+    what = 'Telegram bot token is missing';
+    next = 'Enter your bot token from @BotFather in Telegram settings.';
+  } else if (/Gmail needs/i.test(raw)) {
+    what = 'Gmail authentication requires an App Password';
+    next = 'Enter your full Gmail address and a 16-character Google App Password.';
+  } else if (/expired|Sign-in needed/i.test(raw)) {
+    what = 'Browser session is expired or signed out';
+    next = 'Click "Sign in again" in Settings to reconnect your session.';
+    action = { label: 'Sign in again', onClick: () => openSocialSignIn() };
+  } else if (/Career page must be an HTTP or HTTPS URL/i.test(raw)) {
+    what = 'The entered career page URL is invalid';
+    next = 'Enter a complete address starting with https:// or http://.';
+  } else if (/Add a project title/i.test(raw)) {
+    what = 'Project title is missing';
+    next = 'Enter a title for your project before saving.';
+  } else if (/Choose an available processing option/i.test(raw)) {
+    what = 'No AI drafting provider selected for this project';
+    next = 'Select a processing provider from the dropdown above before continuing.';
+  } else if (/Enter custom instructions/i.test(raw)) {
+    what = 'Regeneration instructions are empty';
+    next = 'Type what you want rewritten in the instructions box, then click Regenerate.';
+  } else if (/Save your application changes before/i.test(raw)) {
+    what = 'Application has unsaved changes';
+    next = 'Click "Save changes" first, then send to ChatGPT.';
+  } else if (/Keep at most eight/i.test(raw)) {
+    what = 'Maximum project result limit reached (8)';
+    next = 'Remove an older result before adding a new one.';
+  } else if (/Save and review your current message/i.test(raw)) {
+    what = 'Inquiry message has unsaved changes or unverified recipient';
+    next = 'Save your edits and look up the recipient before approving.';
+  } else if (/Save your message edits/i.test(raw)) {
+    what = 'You have unsaved edits in the current inquiry';
+    next = 'Click "Save inquiry" before choosing another contact.';
+  } else if (/quota/i.test(raw)) {
+    what = 'AI provider quota limit reached';
+    next = 'Wait for quota to refresh or retry failed items in Applications Activity.';
+    action = { label: 'View Activity', onClick: () => { showTab('applications'); setApplicationWorkspaceView('activity'); } };
+  }
+
+  return { what, next, action };
+}
+
+function formatNoticeMessage(rawMessage, isError, defaultNextStep) {
+  if (!isError) return { text: String(rawMessage ?? ''), what: '', next: '', action: null };
+  const raw = String(rawMessage ?? '').trim();
+  const { what, next, action } = formatErrorDetails(raw, defaultNextStep);
+  return {
+    text: `What happened: ${what}. Next step: ${next}`,
+    what,
+    next,
+    action,
+  };
+}
+
 function notice(message, error = false, action = null) {
   const node = $('#notice');
   clearTimeout(window.noticeTimeout);
@@ -195,10 +320,30 @@ function notice(message, error = false, action = null) {
   node.className = `toast${error ? ' error' : ''}`;
   node.setAttribute('role', error ? 'alert' : 'status');
   node.setAttribute('aria-live', error ? 'assertive' : 'polite');
-  const messageNode = document.createElement('span');
-  messageNode.className = 'toast-message';
-  messageNode.textContent = message;
-  const children = [messageNode];
+
+  const children = [];
+  const parsed = formatNoticeMessage(message, error);
+
+  if (error && parsed.what && parsed.next) {
+    const content = document.createElement('div');
+    content.className = 'toast-content';
+    const whatSpan = document.createElement('span');
+    whatSpan.className = 'toast-line';
+    whatSpan.innerHTML = `<strong>What happened:</strong> ${escapeHtml(parsed.what)}`;
+    const nextSpan = document.createElement('span');
+    nextSpan.className = 'toast-line';
+    nextSpan.innerHTML = `<strong>Next step:</strong> ${escapeHtml(parsed.next)}`;
+    content.appendChild(whatSpan);
+    content.appendChild(nextSpan);
+    children.push(content);
+    if (!action && parsed.action) action = parsed.action;
+  } else {
+    const messageNode = document.createElement('span');
+    messageNode.className = 'toast-message';
+    messageNode.textContent = typeof message === 'string' ? message : parsed.text;
+    children.push(messageNode);
+  }
+
   if (action?.label && typeof action.onClick === 'function') {
     const actionButton = document.createElement('button');
     actionButton.type = 'button';
@@ -208,10 +353,11 @@ function notice(message, error = false, action = null) {
       clearTimeout(window.noticeTimeout);
       actionButton.disabled = true;
       try { await action.onClick(); clearNotice(); }
-      catch (error) { notice(error.message, true); }
+      catch (err) { notice(err.message, true); }
     });
     children.push(actionButton);
   }
+
   const dismiss = document.createElement('button');
   dismiss.type = 'button';
   dismiss.className = 'toast-dismiss';
@@ -219,6 +365,7 @@ function notice(message, error = false, action = null) {
   dismiss.textContent = '×';
   dismiss.addEventListener('click', clearNotice);
   children.push(dismiss);
+
   node.replaceChildren(...children);
   if (!error) window.noticeTimeout = setTimeout(clearNotice, action ? 9000 : 6000);
 }
@@ -273,8 +420,8 @@ function renderSocialAuth(browser, linkedinPaused = false) {
   const connected = browser.connected_sites || [];
   $('#social-auth-banner').hidden = !expired && !linkedinPaused;
   $('#social-auth-message').textContent = linkedinPaused
-    ? 'LinkedIn automated checks are paused after an account activity warning. Other job sources continue checking.'
-    : expired ? `${socialSiteNames(browser)} sign-in expired. Reconnect to resume checks or approved messages.` : '';
+    ? 'What happened: LinkedIn automated checks are paused after an account activity warning. Next step: Review jobs manually; other sources continue checking.'
+    : expired ? `What happened: ${socialSiteNames(browser)} session expired. Next step: Reconnect to resume checks or approved messages.` : '';
   $('#social-auth-action').hidden = linkedinPaused && !(browser.sites || []).some((site) => site !== 'linkedin');
   const connectedCount = ['linkedin', 'facebook', 'zalo'].filter(site => connected.includes(site)).length;
   const socialReady = !expired && !linkedinPaused && connectedCount === 3 && !['opening', 'open'].includes(browser.state);
@@ -324,9 +471,22 @@ async function loadSetup() {
   setStepStatus('#setup-telegram-status', data.telegram_configured ? `Configured · ${activeTelegramModes} mode${activeTelegramModes === 1 ? '' : 's'}` : 'Optional', data.telegram_configured ? '' : 'muted');
   setStepStatus('#matching-status', data.matching.model ? `Configured · ${data.matching.model}` : 'Choose a model', data.matching.model ? '' : 'warning');
   renderSocialAuth(data.browser, data.linkedin_automation_paused);
-  $('#setup-browser-detail').textContent = data.linkedin_automation_paused
-    ? 'LinkedIn automated checks are paused after an account activity warning. You can review saved jobs and use LinkedIn manually; other sources continue checking.'
-    : data.browser.error || (data.browser.state === 'opening' ? 'Opening Chrome…' : data.browser.state === 'open' ? `Waiting for ${({linkedin:'LinkedIn', facebook:'Facebook', zalo:'Zalo'})[data.browser.active_site]} sign-in in Chrome. The window closes automatically when the account page loads.` : data.browser.state === 'reauth_required' ? `${socialSiteNames(data.browser)} needs a new sign-in. Other sources keep scanning.` : data.browser.last_saved_at ? `Saved session last updated ${when(data.browser.last_saved_at)}. Upcoming scans will verify site access.` : 'Choose a site to begin. Google sign-in opens in regular Chrome.');
+  let browserDetail = 'Choose a site to begin. Google sign-in opens in regular Chrome.';
+  if (data.linkedin_automation_paused) {
+    browserDetail = 'What happened: LinkedIn automated checks are paused after an account activity warning. Next step: Review saved jobs and use LinkedIn manually; other sources continue checking.';
+  } else if (data.browser.error) {
+    const formatted = formatErrorDetails(data.browser.error, 'Click Reconnect or restart the browser session.');
+    browserDetail = `What happened: ${formatted.what} Next step: ${formatted.next}`;
+  } else if (data.browser.state === 'opening') {
+    browserDetail = 'Opening Chrome…';
+  } else if (data.browser.state === 'open') {
+    browserDetail = `Waiting for ${({linkedin:'LinkedIn', facebook:'Facebook', zalo:'Zalo'})[data.browser.active_site]} sign-in in Chrome. The window closes automatically when the account page loads.`;
+  } else if (data.browser.state === 'reauth_required') {
+    browserDetail = `What happened: ${socialSiteNames(data.browser)} session expired. Next step: Click Reconnect below to sign in again. Other sources keep scanning.`;
+  } else if (data.browser.last_saved_at) {
+    browserDetail = `Saved session last updated ${when(data.browser.last_saved_at)}. Upcoming scans will verify site access.`;
+  }
+  $('#setup-browser-detail').textContent = browserDetail;
   const mailForm = $('#setup-smtp-form');
   if (!mailForm.dataset.initialized) {
     mailForm.elements.host.value = data.smtp_host || '';
@@ -653,11 +813,21 @@ async function loadQueue(options = {}) {
   queueWaiting($('#queue-analysis-waiting'), analysis.waiting, 'analysis', () => 'Read job, then check match');
   $('#queue-analysis-failed').innerHTML = analysis.failed.length ? `<div class="queue-waiting-head queue-failed-head">Needs attention <span>${analysis.failed.length}</span></div><div class="queue-scroll">${analysis.failed.map((item) => `<div class="queue-failed-row">${queueRow(item, 'analysis', 'Match review failed', '!')}<button type="button" class="text-button" data-queue-dismiss="${item.id}" aria-label="Dismiss failed analysis for ${escapeHtml(item.title)}">Dismiss</button></div>`).join('')}</div>` : '';
   $('#queue-analysis-failed').querySelectorAll('[data-queue-dismiss]').forEach((button) => button.addEventListener('click', async () => {
-    try { await api(`/api/jobs/${button.dataset.queueDismiss}/dismiss-analysis`, {method:'POST'}); await loadQueue({reason:'action'}); notice('Failed analysis dismissed.'); }
+    beginPending(button, 'Dismissing…');
+    try {
+      await api(`/api/jobs/${button.dataset.queueDismiss}/dismiss-analysis`, {method:'POST'});
+      await loadQueue({reason:'action'});
+      notice('Failed analysis dismissed. The job remains in your database.');
+    }
     catch(error) { notice(error.message, true); }
+    finally { endPending(button); }
   }));
-  if (analysis.service_error) $('#queue-analysis-waiting').insertAdjacentHTML('beforeend', `<p class="queue-attention">${escapeHtml(analysis.service_error)}</p>`);
-  else if (!analysis.model) $('#queue-analysis-waiting').insertAdjacentHTML('beforeend', '<p class="queue-attention">Choose a matching model in Settings to review job fit.</p>');
+  if (analysis.service_error) {
+    const formatted = formatErrorDetails(analysis.service_error, 'Check Ollama or your matching settings in Settings.');
+    $('#queue-analysis-waiting').insertAdjacentHTML('beforeend', `<div class="queue-attention"><strong>What happened:</strong> ${escapeHtml(formatted.what)}<br><strong>Next step:</strong> ${escapeHtml(formatted.next)}</div>`);
+  } else if (!analysis.model) {
+    $('#queue-analysis-waiting').insertAdjacentHTML('beforeend', '<div class="queue-attention"><strong>What happened:</strong> No matching model selected.<br><strong>Next step:</strong> Open Settings and choose a model to review job fit.</div>');
+  }
   $('#queue-draft-active').innerHTML = drafts.active.length
     ? `<div class="queue-now-head">Preparing now</div>${drafts.active.map((item) => queueRow(item, 'draft', item.stage === 'regenerating' ? 'Regenerating' : 'Preparing draft', null, true)).join('')}`
     : '<p class="queue-empty">No draft being prepared.</p>';
@@ -862,6 +1032,7 @@ async function setJobDecisionWithUndo(job, decision, {reason = null, snoozedUnti
         decision:previous, snoozed_until:previous === 'later' ? previousSnooze : null,
       })});
       await loadJobs();
+      notice('Triage action undone. Job restored to previous state.');
     },
   });
   if (askReason && decision === 'ignored') pendingIgnoreJobId = job.id;
@@ -889,12 +1060,14 @@ function bindJobCards(jobs) {
     const snoozedUntil = decision === 'later'
       ? new Date(Date.now() + 3 * 86400 * 1000).toISOString()
       : null;
+    beginPending(button, '…');
     try {
       await setJobDecisionWithUndo(job, decision, {
         snoozedUntil,
         askReason: decision === 'ignored',
       });
     } catch(error) { notice(error.message, true); }
+    finally { endPending(button); }
   }));
 }
 
@@ -1158,18 +1331,29 @@ async function showJob(id, pin = false, loadedJob = null) {
     } catch(error) { notice(error.message, true); }
     finally { endPending(button); }
   }));
-  $('#job-detail').querySelector('[data-analyze]')?.addEventListener('click', async () => {
-    try { await api(`/api/jobs/${id}/analyze`, {method:'POST'}); notice('Match review queued'); await loadJobs(); }
+  $('#job-detail').querySelector('[data-analyze]')?.addEventListener('click', async (event) => {
+    const button = beginPending(event.currentTarget, 'Queueing review…');
+    try {
+      await api(`/api/jobs/${id}/analyze`, {method:'POST'});
+      notice('Match review queued. Retrying up to 3 times in background.');
+      await loadJobs();
+    }
     catch(error) { notice(error.message, true); }
+    finally { endPending(button); }
   });
-  $('#job-detail').querySelector('[data-dismiss-analysis]')?.addEventListener('click', () => dismissFailedAnalysis(id));
+  $('#job-detail').querySelector('[data-dismiss-analysis]')?.addEventListener('click', (event) => {
+    const button = beginPending(event.currentTarget, 'Dismissing…');
+    dismissFailedAnalysis(id).finally(() => endPending(button));
+  });
 
   $('#job-detail').querySelectorAll('[data-detail-decision]').forEach((button) => button.addEventListener('click', async () => {
     const decision = button.dataset.detailDecision;
     const snoozedUntil = decision === 'later' ? new Date(Date.now() + 3 * 86400 * 1000).toISOString() : null;
+    beginPending(button, 'Updating…');
     try {
       await setJobDecisionWithUndo(job, decision, {snoozedUntil, askReason:decision === 'ignored'});
     } catch(error) { notice(error.message, true); }
+    finally { endPending(button); }
   }));
 
   $('#job-outcome-control').addEventListener('change', async (event) => {
@@ -1185,17 +1369,23 @@ async function showJob(id, pin = false, loadedJob = null) {
   });
 
   $('#job-manual-applied')?.addEventListener('click', async (event) => {
+    const button = beginPending(event.currentTarget, 'Updating…');
     const applied = event.currentTarget.dataset.applied === 'true';
     try {
       await api(`/api/jobs/${id}/manual-applied`, {method:'POST', body:JSON.stringify({applied})});
       notice(applied ? 'Recorded as applied outside Job Radar.' : 'External applied mark removed.');
       await loadJobs();
     } catch(error) { notice(error.message, true); }
+    finally { endPending(button); }
   });
 
   $('#job-detail').querySelector('[data-open-draft]')?.addEventListener('click', async (event) => {
-    await showTab('applications');
-    await loadApplications(event.currentTarget.dataset.openDraft);
+    const button = beginPending(event.currentTarget, 'Opening…');
+    try {
+      await showTab('applications');
+      await loadApplications(event.currentTarget.dataset.openDraft);
+    } catch(error) { notice(error.message, true); }
+    finally { endPending(button); }
   });
 
   $('#job-detail').querySelector('[data-prepare]')?.addEventListener('click', async () => {
@@ -1308,7 +1498,7 @@ async function loadSources() {
     ['Facebook groups', coverage.counts.facebook],
     ['Company sites', coverage.counts.career],
   ].map(([label,value]) => `<div><strong>${value}</strong><span>${label}</span></div>`).join('');
-  $('#source-coverage-gaps').textContent = coverage.gaps.length ? `Coverage gaps: ${coverage.gaps.join(' · ')}.` : 'LinkedIn, Facebook, and company sites are configured.';
+  $('#source-coverage-gaps').innerHTML = coverage.gaps.length ? `<strong>What happened:</strong> Coverage gaps detected (${escapeHtml(coverage.gaps.join(' · '))}).<br><strong>Next step:</strong> Add missing sources using the form below or resume inactive sources.` : 'LinkedIn, Facebook, and company sites are configured.';
   $('#source-result-summary').textContent = `${visible.length} of ${sources.length} sources match these filters`;
   $('#source-page-summary').textContent = visible.length ? `Page ${sourcePage} of ${pages} · showing ${(sourcePage - 1) * pageSize + 1}–${Math.min(sourcePage * pageSize, visible.length)}` : 'No pages';
   $('#sources-prev').disabled = sourcePage <= 1;
@@ -1334,12 +1524,15 @@ async function loadSources() {
     const desired = input.checked;
     const label = input.closest('.source-auto');
     const feedback = label.querySelector('.source-auto-status');
+    const card = input.closest('.source-card');
+    const sourceName = card?.querySelector('.item-title')?.textContent || 'source';
     input.disabled = true;
     label.setAttribute('aria-busy', 'true');
     feedback.textContent = 'Saving…';
     try {
       await api(`/api/sources/${input.dataset.toggle}`, {method:'PATCH', body:JSON.stringify({enabled:desired})});
       feedback.textContent = 'Saved';
+      notice(desired ? `Automatic checks enabled for ${sourceName}.` : `Automatic checks paused for ${sourceName}.`);
       window.setTimeout(() => {
         if ($('#sources').classList.contains('active')) loadSources().catch(() => {});
       }, 1200);
@@ -1769,6 +1962,10 @@ async function loadJobAnalysis() {
   const failures = await api('/api/matching/failures');
   $('#matching-failures').hidden = !failures.length;
   $('#matching-failures-title').textContent = `${failures.length} job${failures.length === 1 ? '' : 's'} need attention`;
+  const helpEl = $('#matching-failures-help');
+  if (helpEl) {
+    helpEl.innerHTML = `<strong>What happened:</strong> Match review failed after multiple attempts for ${failures.length} job${failures.length === 1 ? '' : 's'}.<br><strong>Next step:</strong> Check your local model in Settings, then click 'Retry all' or retry jobs individually below.`;
+  }
   $('#matching-retry-all').textContent = `Retry all ${failures.length}`;
   $('#matching-failure-list').innerHTML = failures.map((job) => `<div class="matching-failure-row"><div class="matching-failure-copy"><strong>${escapeHtml(job.title)}</strong><small>${escapeHtml(job.company)} · ${escapeHtml(job.error || 'Local analysis failed')}</small></div><div class="matching-failure-actions"><button type="button" class="secondary" data-matching-open="${job.id}">View job</button><button type="button" class="secondary" data-matching-retry="${job.id}">Retry</button><button type="button" class="secondary" data-matching-dismiss="${job.id}">Dismiss</button></div></div>`).join('');
   $('#matching-failure-list').querySelectorAll('[data-matching-open]').forEach((button) => button.addEventListener('click', async () => {
@@ -1776,9 +1973,14 @@ async function loadJobAnalysis() {
     catch (error) { notice(error.message, true); }
   }));
   $('#matching-failure-list').querySelectorAll('[data-matching-retry]').forEach((button) => button.addEventListener('click', async () => {
-    button.disabled = true;
-    try { await api(`/api/jobs/${button.dataset.matchingRetry}/analyze`, {method:'POST'}); await loadJobs(); notice('Job analysis queued.'); }
-    catch (error) { button.disabled = false; notice(error.message, true); }
+    beginPending(button, 'Queueing…');
+    try {
+      await api(`/api/jobs/${button.dataset.matchingRetry}/analyze`, {method:'POST'});
+      await loadJobs();
+      notice('Job analysis queued. Retrying up to 3 times in background.');
+    }
+    catch (error) { notice(error.message, true); }
+    finally { endPending(button); }
   }));
   $('#matching-failure-list').querySelectorAll('[data-matching-dismiss]').forEach((button) => button.addEventListener('click', () => dismissFailedAnalysis(button.dataset.matchingDismiss)));
   return failures;
@@ -1805,14 +2007,13 @@ $('#provider-panel').addEventListener('toggle', (event) => {
 $('#job-analysis-settings').addEventListener('click', () => openSetupPanel('provider-panel'));
 
 $('#matching-retry-all').addEventListener('click', async (event) => {
-  const button = event.currentTarget;
-  button.disabled = true;
-  button.textContent = 'Queueing…';
+  const button = beginPending(event.currentTarget, 'Queueing all…');
   try {
     const result = await api('/api/matching/retry-failed', {method:'POST'});
     await loadJobs();
     notice(`${result.queued} job${result.queued === 1 ? '' : 's'} queued for match review.`);
-  } catch (error) { button.disabled = false; notice(error.message, true); }
+  } catch (error) { notice(error.message, true); }
+  finally { endPending(button); }
 });
 
 async function movePosition(positionId, delta) {
@@ -1853,6 +2054,7 @@ async function loadPositions() {
     await loadPositions();
   }));
   document.querySelectorAll('[data-save-position]').forEach((button) => button.addEventListener('click', async () => {
+    const pendingButton = beginPending(button, 'Saving…');
     const row = button.closest('[data-position]');
     const field = (name) => row.querySelector(`[data-field="${name}"]`).value.trim();
     try {
@@ -1861,6 +2063,7 @@ async function loadPositions() {
       notice('Position saved');
       await loadPositions();
     } catch(error) { notice(error.message, true); }
+    finally { endPending(pendingButton); }
   }));
   document.querySelectorAll('[data-move-position]').forEach((button) => button.addEventListener('click', () => {
     movePosition(button.closest('[data-position]').dataset.position, Number(button.dataset.movePosition)).catch((error) => notice(error.message, true));
@@ -1868,12 +2071,14 @@ async function loadPositions() {
   document.querySelectorAll('[data-delete-position]').forEach((button) => button.addEventListener('click', async () => {
     const row = positions.find((item) => item.id === button.dataset.deletePosition);
     if (!window.confirm(`Remove ${row?.role || 'this position'} at ${row?.company || 'this company'}? This cannot be undone.`)) return;
+    const pendingButton = beginPending(button, 'Removing…');
     try {
       await api(`/api/positions/${button.dataset.deletePosition}`, {method:'DELETE'});
       if (editingPositionId === button.dataset.deletePosition) editingPositionId = null;
       await loadPositions();
       notice('Position removed');
     } catch(error) { notice(error.message, true); }
+    finally { endPending(pendingButton); }
   }));
 }
 
@@ -2345,9 +2550,9 @@ async function loadAutoApply() {
   const failedAiTotal = ['preparations','project_briefs','draft_projects','regenerations']
     .reduce((total, key) => total + Number(aiFailures[key] || 0), 0);
   $('#ai-failures-panel').hidden = !failedAiTotal && !aiFailures.running;
-  $('#ai-failures-summary').textContent = aiFailures.running
-    ? `Retrying failed AI work… ${failedAiTotal} item${failedAiTotal === 1 ? '' : 's'} still need attention.`
-    : `${failedAiTotal} retryable item${failedAiTotal === 1 ? '' : 's'}: ${aiFailures.preparations} draft preparations, ${aiFailures.project_briefs} project briefs, ${aiFailures.draft_projects} resume updates, ${aiFailures.regenerations} draft revisions.`;
+  $('#ai-failures-summary').innerHTML = aiFailures.running
+    ? `<strong>What happened:</strong> Retrying failed AI work in background.<br><strong>Next step:</strong> ${failedAiTotal} item${failedAiTotal === 1 ? '' : 's'} remain in queue; wait for completion or monitor activity below.`
+    : `<strong>What happened:</strong> ${failedAiTotal} retryable item${failedAiTotal === 1 ? '' : 's'} encountered drafting issues (${aiFailures.preparations} draft preparations, ${aiFailures.project_briefs} project briefs, ${aiFailures.draft_projects} resume updates, ${aiFailures.regenerations} revisions).<br><strong>Next step:</strong> Verify your drafting provider in Settings, then click 'Retry all failed AI work' or retry individual items.`;
   $('#ai-retry-all').disabled = !failedAiTotal || aiFailures.running;
   const form = $('#auto-apply-form');
   if (!form.dataset.initialized) {
@@ -2417,13 +2622,13 @@ $('#auto-apply-form').addEventListener('submit', async (event) => {
 });
 
 $('#queue-existing-drafts').addEventListener('click', async (event) => {
-  const button = event.currentTarget;
-  button.disabled = true;
+  const button = beginPending(event.currentTarget, 'Queueing existing jobs…');
   try {
     const result = await api('/api/auto-apply/queue-existing', {method:'POST'});
     await loadAutoApply();
     notice(result.queued ? `${result.queued} existing job${result.queued === 1 ? '' : 's'} queued under the saved automation policy.` : 'No existing jobs currently pass the saved automation policy.');
-  } catch (error) { notice(error.message, true); button.disabled = false; }
+  } catch (error) { notice(error.message, true); }
+  finally { endPending(button); }
 });
 
 function applicationActionLabel(destination) {
@@ -2617,11 +2822,16 @@ function showPreparationIssue(item) {
   const inProgress = ['queued', 'preparing'].includes(item.status);
   const tone = ['credits','failed','quota'].includes(item.category) ? 'danger' : inProgress ? 'info' : 'warning';
   const alertTitle = item.status === 'queued' ? 'Preparation queued' : item.status === 'preparing' ? 'Preparation in progress' : 'No draft was created';
+  const formattedReason = formatErrorDetails(item.reason, item.retryable ? 'Click Retry preparation to generate the draft now.' : 'Check your drafting provider settings or view the job details.');
   detail.innerHTML = `<div class="application-review-header">
       <div><p class="eyebrow">APPLICATION PREPARATION</p><h2>${escapeHtml(item.job_title)}</h2><p class="item-meta">${escapeHtml(item.company)} · ${item.score} match</p></div>
       <span class="status-badge status-badge--${tone}">${escapeHtml(item.label)}</span>
     </div>
-    <div class="application-alert application-alert--${tone}"><strong>${escapeHtml(alertTitle)}</strong><p>${escapeHtml(item.reason)}</p></div>
+    <div class="application-alert application-alert--${tone}">
+      <strong>${escapeHtml(alertTitle)}</strong>
+      <p><strong>What happened:</strong> ${escapeHtml(formattedReason.what)}</p>
+      <p><strong>Next step:</strong> ${escapeHtml(formattedReason.next)}</p>
+    </div>
     <p class="hint">${item.provider ? `Drafting with ${escapeHtml(providerLabel(item.provider))}. ` : ''}No application has been sent.</p>
     <div class="actions">
       ${inProgress ? `<button type="button" class="primary" disabled aria-busy="true">${item.status === 'queued' ? 'Queued in background' : 'Preparing in background'}</button>` : (item.retryable ? '<button type="button" class="primary" data-retry-preparation>Retry preparation</button>' : '')}
@@ -2655,6 +2865,7 @@ function showPreparationIssue(item) {
         method:'POST', body:JSON.stringify({provider:item.provider || undefined, prepare_anyway:prepareAnyway}),
       });
       if (result.status === 'ready' && result.draft_id) {
+        notice('Application draft is ready for review.');
         await loadApplications(result.draft_id);
         return;
       }
@@ -3507,44 +3718,59 @@ async function loadEvidence(focusId = null) {
       what, why:$('#project-edit-why').value.trim(), how:$('#project-edit-how').value.trim(), results,
       tech_stack:$('#project-edit-stack').value.split(',').map((item) => item.trim()).filter(Boolean)}};
   };
-  $('#project-save').addEventListener('click', async () => {
+  $('#project-save').addEventListener('click', async (event) => {
+    const button = beginPending(event.currentTarget, 'Saving…');
     const status = $('#project-review-status');
     try {
       status.textContent = 'Saving project…';
       await api(`/api/evidence/${card.id}`, {method:'PATCH', body:JSON.stringify(content())});
       await loadEvidence(card.id);
+      notice('Project changes saved.');
       $('#project-review-status').textContent = 'Project changes saved. Resume inclusion is unchanged.';
     } catch(error) { status.textContent = error.message; notice(error.message, true); }
+    finally { endPending(button); }
   });
-  $('#project-approval').addEventListener('click', async () => {
+  $('#project-approval').addEventListener('click', async (event) => {
+    const button = beginPending(event.currentTarget, card.approved ? 'Removing…' : 'Including…');
     const status = $('#project-review-status');
     try {
       status.textContent = card.approved ? 'Removing from resumes…' : 'Including in resumes…';
       await api(`/api/evidence/${card.id}`, {method:'PATCH', body:JSON.stringify({approved:!card.approved})});
       await loadEvidence(card.id);
-      $('#project-review-status').textContent = card.approved ? 'Project removed from future resumes.' : 'Project included in future resumes.';
+      const msg = card.approved ? 'Project removed from future resumes.' : 'Project included in future resumes.';
+      notice(msg);
+      $('#project-review-status').textContent = msg;
     } catch(error) { status.textContent = error.message; notice(error.message, true); }
+    finally { endPending(button); }
   });
-  $('#project-delete').addEventListener('click', async () => {
+  $('#project-delete').addEventListener('click', async (event) => {
     if (!window.confirm(`Delete "${card.title}" from your project library? This cannot be undone.`)) return;
+    const button = beginPending(event.currentTarget, 'Deleting…');
     try {
       await api(`/api/evidence/${card.id}`, {method:'DELETE'});
       selectedProjectId = null;
       await loadEvidence();
-      notice('Project deleted');
+      notice('Project deleted.');
     } catch(error) { notice(error.message, true); }
+    finally { endPending(button); }
   });
   $('#project-regenerate')?.addEventListener('click', async (event) => {
-    const button = event.target;
+    const button = beginPending(event.currentTarget, 'Generating…');
     try {
-      button.disabled = true;
       $('#project-review-status').textContent = 'Generating a new draft from the repository…';
       const provider = $('#project-processing-provider').value;
-      if (!provider || !projectProviderReady) throw new Error('Choose an available processing option above first.');
+      if (!provider || !projectProviderReady) throw new Error('What happened: Processing provider is not available. Next step: Choose an available AI drafting provider above.');
       await api(`/api/evidence/${card.id}/generate`, {method:'POST', body:JSON.stringify({provider})});
       await loadEvidence(card.id);
+      notice('New project draft ready. Review and save it before including in resumes.');
       $('#project-review-status').textContent = 'New draft ready. Review and save it before including it in resumes.';
-    } catch(error) { await loadEvidence(card.id); $('#project-review-status').textContent = error.message; }
+    } catch(error) {
+      await loadEvidence(card.id);
+      $('#project-review-status').textContent = error.message;
+      notice(error.message, true);
+    } finally {
+      endPending(button);
+    }
   });
   renderRepositoryResults($('#repo-filter')?.value || '');
 }
@@ -3577,6 +3803,7 @@ document.querySelectorAll('[data-job-inbox]').forEach((button) => button.addEven
 $('#jobs-clear-filters').addEventListener('click', () => {
   for (const [key, selector] of Object.entries(JOB_FILTERS)) $(selector).value = key === 'sort' ? 'best' : key === 'fit' ? 'eligible' : '';
   applyJobControls();
+  notice('Job filters reset to defaults.');
 });
 $('#jobs-prev').addEventListener('click', () => { jobsPage = Math.max(1, jobsPage - 1); activeJob = null; activeJobPinned = false; syncJobsHash('push'); loadJobs().catch((error) => notice(error.message, true)); });
 $('#jobs-next').addEventListener('click', () => { jobsPage += 1; activeJob = null; activeJobPinned = false; syncJobsHash('push'); loadJobs().catch((error) => notice(error.message, true)); });
@@ -3649,7 +3876,10 @@ $('#sources-prev').addEventListener('click', () => { sourcePage = Math.max(1, so
 $('#sources-next').addEventListener('click', () => { sourcePage += 1; loadSources().catch((error) => notice(error.message, true)); });
 $('#queue-refresh').addEventListener('click', async (event) => {
   const button = beginPending(event.currentTarget, 'Refreshing…');
-  try { await loadQueue({reason:'manual'}); }
+  try {
+    await loadQueue({reason:'manual'});
+    notice('Queue refreshed. All background activity updated.');
+  }
   catch(error) { notice(error.message, true); }
   finally { endPending(button); }
 });
@@ -3667,9 +3897,15 @@ $('#employers-prev').addEventListener('click', () => { employerPage = Math.max(1
 $('#employers-next').addEventListener('click', () => { employerPage += 1; loadEmployers().catch((error) => notice(error.message, true)); });
 
 for (const site of ['linkedin', 'facebook', 'zalo']) {
-  $(`#setup-${site}-start`).addEventListener('click', async () => {
-    try { await api('/api/setup/browser/start', {method:'POST', body:JSON.stringify({site})}); await loadSetup(); }
+  $(`#setup-${site}-start`).addEventListener('click', async (event) => {
+    const button = beginPending(event.currentTarget, 'Opening Chrome…');
+    try {
+      await api('/api/setup/browser/start', {method:'POST', body:JSON.stringify({site})});
+      await loadSetup();
+      notice(`Chrome opened for ${site.charAt(0).toUpperCase() + site.slice(1)} sign-in. Sign in to your account, then return here.`);
+    }
     catch(error) { notice(error.message, true); }
+    finally { endPending(button); }
   });
 }
 
@@ -3700,6 +3936,7 @@ $('#smtp-gmail-preset').addEventListener('click', async () => {
     $('#smtp-send-test').disabled = true;
     $('#smtp-test-result').textContent = 'Save your changes before sending a test.';
     form.elements.user.focus();
+    notice('Gmail preset applied. Enter your Google App Password and save settings.');
   } catch (error) { notice(error.message, true); }
 });
 
@@ -3722,6 +3959,7 @@ $('#smtp-send-test').addEventListener('click', async (event) => {
   try {
     await api('/api/setup/smtp/test', {method:'POST'});
     await loadSetup();
+    notice('Test email accepted by server. Check your inbox to confirm delivery.');
   } catch (error) {
     await loadSetup();
     notice(error.message, true);
@@ -3754,19 +3992,32 @@ $('#setup-telegram-form').addEventListener('submit', async (event) => {
   finally { endPending(pendingButton); }
 });
 
-$('#telegram-find-chat').addEventListener('click', async () => {
+$('#telegram-find-chat').addEventListener('click', async (event) => {
+  const button = beginPending(event.currentTarget, 'Searching…');
   const form = $('#setup-telegram-form');
   const results = $('#telegram-chat-results');
   results.textContent = 'Looking for chats…';
   try {
     const data = await api('/api/setup/telegram/chats', {method:'POST', body:JSON.stringify({token:form.elements.token.value})});
-    if (!data.chats.length) { results.textContent = 'No chats yet. Send your bot a message in Telegram, then try again.'; return; }
+    if (!data.chats.length) {
+      const msg = 'What happened: No active chats found for this bot token. Next step: Send your bot a message in Telegram first, then click Find chat ID again.';
+      results.textContent = 'No chats yet. Send your bot a message in Telegram, then try again.';
+      notice(msg, true);
+      return;
+    }
     results.innerHTML = `<p class="hint">Choose where alerts should go:</p>${data.chats.map((chat) => `<button type="button" class="secondary" data-chat-id="${escapeHtml(chat.id)}">${escapeHtml(chat.name)} · ${escapeHtml(chat.id)}</button>`).join('')}`;
-    results.querySelectorAll('[data-chat-id]').forEach((button) => button.addEventListener('click', () => {
-      form.elements.chat_id.value = button.dataset.chatId;
-      results.textContent = `Selected ${button.dataset.chatId}. Save Telegram to finish.`;
+    results.querySelectorAll('[data-chat-id]').forEach((btn) => btn.addEventListener('click', () => {
+      form.elements.chat_id.value = btn.dataset.chatId;
+      results.textContent = `Selected ${btn.dataset.chatId}. Save Telegram to finish.`;
+      notice(`Selected chat ${btn.dataset.chatId}. Click Save Telegram to finish.`);
     }));
-  } catch(error) { results.textContent = error.message; notice(error.message, true); }
+    notice(`Found ${data.chats.length} chat${data.chats.length === 1 ? '' : 's'}. Choose one below.`);
+  } catch(error) {
+    results.textContent = error.message;
+    notice(error.message, true);
+  } finally {
+    endPending(button);
+  }
 });
 
 $('#setup-telegram-remove').addEventListener('click', async () => {
@@ -3864,23 +4115,37 @@ $('#matching-model-form').addEventListener('submit', async (event) => {
   finally { endPending(pendingButton); const model = event.target.elements.model.value; pendingButton.disabled = !model || model === event.target.dataset.saved; }
 });
 
-$('#matching-download').addEventListener('click', async () => {
+$('#matching-download').addEventListener('click', async (event) => {
+  const button = beginPending(event.currentTarget, 'Starting download…');
   try {
     await api('/api/matching/model/download', {method:'POST'});
     await loadMatchingModels();
     notice('Model download started. Progress is shown in Settings.');
   } catch(error) { notice(error.message, true); }
+  finally { endPending(button); }
 });
 
-$('#matching-download-cancel').addEventListener('click', async () => {
+$('#matching-download-cancel').addEventListener('click', async (event) => {
+  const button = beginPending(event.currentTarget, 'Cancelling…');
   try {
     await api('/api/matching/model/download', {method:'DELETE'});
     await loadMatchingModels();
-    notice('Model download cancelled');
+    notice('Model download cancelled.');
   } catch(error) { notice(error.message, true); }
+  finally { endPending(button); }
 });
 
-$('#matching-refresh').addEventListener('click', () => loadMatchingModels().catch((error) => notice(error.message, true)));
+$('#matching-refresh').addEventListener('click', async (event) => {
+  const button = beginPending(event.currentTarget, 'Refreshing…');
+  try {
+    await loadMatchingModels();
+    notice('Matching models list refreshed.');
+  } catch (error) {
+    notice(error.message, true);
+  } finally {
+    endPending(button);
+  }
+});
 
 $('#provider-form').addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -4012,10 +4277,12 @@ $('#position-form').addEventListener('submit', async (event) => {
 async function inspectSelectedRepository(url, button = null) {
   const provider = $('#project-processing-provider').value;
   if (!provider || !projectProviderReady) {
-    $('#project-add-status').textContent = 'Choose an available processing option for this project first.';
+    const msg = 'What happened: No active processing provider selected. Next step: Choose an available AI drafting provider in the dropdown above.';
+    $('#project-add-status').textContent = msg;
+    notice(msg, true);
     return;
   }
-  if (button) button.disabled = true;
+  const pendingButton = button ? beginPending(button, 'Drafting evidence…') : null;
   $('#project-add-status').textContent = `Reading the repository and drafting project evidence with ${providerLabel(provider)}…`;
   try {
     const result = await api('/api/repositories/inspect', {method:'POST', body:JSON.stringify({url, provider})});
@@ -4023,11 +4290,14 @@ async function inspectSelectedRepository(url, button = null) {
     $('#project-add-status').textContent = result.generation_warning
       ? `Repository added, but the draft needs attention: ${result.generation_warning}`
       : 'Project draft ready. Review the claims below, then save it and choose whether to include it in resumes.';
+    notice('Repository project drafted successfully. Review the details below.');
     scrollNodeIntoView($('#project-editor'), {block:'start'});
   } catch(error) {
     $('#project-add-status').textContent = error.message;
     notice(error.message, true);
-  } finally { if (button && button.isConnected) button.disabled = false; }
+  } finally {
+    if (pendingButton) endPending(pendingButton);
+  }
 }
 
 function parseGitHubEntry(input) {
@@ -4083,13 +4353,24 @@ $('#scan-now').addEventListener('click', async () => {
   finally { endPending(button); }
 });
 
-$('#scan-due').addEventListener('click', async () => {
-  try { const result = await api('/api/scan/due', {method:'POST'}); await loadSources(); notice(result.queued ? `${result.queued} due sources added to the scan queue.` : 'All due sources are already queued or scanning.'); }
-  catch(error) { notice(error.message, true); }
+$('#scan-due').addEventListener('click', async (event) => {
+  const button = beginPending(event.currentTarget, 'Queueing…');
+  try {
+    const result = await api('/api/scan/due', {method:'POST'});
+    await loadSources();
+    notice(result.queued ? `${result.queued} due sources added to the scan queue.` : 'All due sources are already queued or scanning.');
+  } catch(error) { notice(error.message, true); }
+  finally { endPending(button); }
 });
-$('#scan-unscanned').addEventListener('click', async () => {
-  try { const result = await api('/api/scan/unscanned', {method:'POST'}); await loadSources(); notice(result.queued || result.prioritized ? `${result.queued} added and ${result.prioritized} moved forward. ${result.waiting} waiting, ${result.scanning} scanning.` : 'All unscanned sources are already first in the queue or need sign-in.'); }
-  catch(error) { notice(error.message, true); }
+
+$('#scan-unscanned').addEventListener('click', async (event) => {
+  const button = beginPending(event.currentTarget, 'Prioritizing…');
+  try {
+    const result = await api('/api/scan/unscanned', {method:'POST'});
+    await loadSources();
+    notice(result.queued || result.prioritized ? `${result.queued} added and ${result.prioritized} moved forward. ${result.waiting} waiting, ${result.scanning} scanning.` : 'All unscanned sources are already first in the queue or need sign-in.');
+  } catch(error) { notice(error.message, true); }
+  finally { endPending(button); }
 });
 
 window.addEventListener('popstate', () => showTab(location.hash.slice(1) || 'home', 'none'));
