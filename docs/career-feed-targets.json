@@ -121,26 +121,28 @@
     {
       "employer": "MovianAI",
       "category": "technology",
-      "status": "pending",
+      "status": "blocked",
       "career_url": null,
       "adapter": null,
-      "evidence": null
+      "evidence": "Could not establish a verifiable active first-party MovianAI jobs board or posting endpoint. Employer identity and present recruitment channel need confirmation; adding a generic site as an adapter would be fake coverage."
     },
     {
       "employer": "VNPT Group",
       "category": "vnpt",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://tuyendung.vnpt.vn/viec-lam/viec-lam-tap-doan-vnpt-d3240.html",
+      "adapter": "vnpt_parent",
+      "evidence": "The central VNPT recruitment portal has a dedicated parent-company filter currently explicitly stating 'Không tìm thấy việc làm phù hợp'. Collector distinguishes this verified empty result from a parser/network failure and will not misattribute subsidiary jobs to the parent. Mocked collector validation required before release.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "VNPT Technology",
       "category": "vnpt",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://www.vnpt-technology.vn/vi/recruit",
+      "adapter": "vnpt_technology",
+      "evidence": "VNPT Technology's corporate recruitment table links per-job /vi/recruit_detail/{id} posts; individual details show working location, application deadline and complete role description. Collector uses that official first-party listing. Mocked collector validation required before release.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "FPT Corporation",
@@ -630,10 +632,10 @@
     {
       "employer": "Cinnamon AI",
       "category": "technology",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://herp.careers/v1/cinnamonai",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official Cinnamon AI recruitment channels were examined; HERP board does not expose verifiable active Vietnam postings. No verified Vietnam-specific first-party job detail/ATS API to implement; cannot count as a working feed."
     },
     {
       "employer": "Rikkeisoft",
@@ -647,18 +649,19 @@
     {
       "employer": "Rikkei AI",
       "category": "technology",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://tuyendung.rikkeisoft.com/recruitment",
       "adapter": null,
-      "evidence": null
+      "evidence": "Rikkei AI is associated with Rikkeisoft, whose generic recruiting API is already covered. Public listings do not reliably identify Rikkei AI as distinct employing entity, so cloning the Rikkeisoft feed would misattribute positions. Requires distinct employer filter or identifiable first-party board."
     },
     {
       "employer": "Gear Inc",
       "category": "technology",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://gear-inc-2.careers-page.com/",
+      "adapter": "manatal",
+      "evidence": "First-party Gear Inc careers link resolves to its Manatal board with 220 displayed open positions across 23 paginated pages. Adapter requires all advertised job IDs, follows Vietnam-specific detail postings and captures requirements, location and apply URLs. Mocked collector validation required before release.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "NashTech Vietnam",
@@ -726,10 +729,11 @@
     {
       "employer": "Anduin Transactions",
       "category": "technology",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://anduin.hire.trakstar.com/",
+      "adapter": "trakstar",
+      "evidence": "Official Anduin recruiting portal hosted on Trakstar exposes individual /jobs/fk... postings, including Vietnam software engineering roles with job qualifications; collector reads details from the portal, retaining Vietnam scope. Mocked collector validation required before release.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "Sky Mavis",
