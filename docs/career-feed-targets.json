@@ -447,18 +447,18 @@
     {
       "employer": "NAPAS",
       "category": "fintech",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://napas.com.vn/co-hoi-nghe-nghiep",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official NAPAS career archive exists, but recruitment is published in downloadable PDF notices, often multiple roles per notice. A posting-level PDF extraction/splitting adapter with date validation remains required; do not treat notice links as verified job records."
     },
     {
       "employer": "OnePay",
       "category": "fintech",
-      "status": "pending",
+      "status": "blocked",
       "career_url": null,
       "adapter": null,
-      "evidence": null
+      "evidence": "Could not verify a first-party public job listing with individual navigable descriptions and stable posting identifiers. Official domain career discovery needs manual confirmation; no homepage fallback."
     },
     {
       "employer": "SmartPay",
@@ -472,10 +472,10 @@
     {
       "employer": "Moca",
       "category": "fintech",
-      "status": "pending",
+      "status": "blocked",
       "career_url": null,
       "adapter": null,
-      "evidence": null
+      "evidence": "Moca e-wallet terminated operations in 2024; a current standalone official Moca recruitment board could not be verified. Company identity should not be conflated with Grab."
     },
     {
       "employer": "Trusting Social",
@@ -589,34 +589,35 @@
     {
       "employer": "SeaMoney",
       "category": "commerce",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://careers.monee.com/",
       "adapter": null,
-      "evidence": null
+      "evidence": "SeaMoney has rebranded as Monee. Official Monee careers site is available, but Vietnam-specific enumerated posting/detail API and company/country scoping were not verified. Shopee jobs must not be labeled SeaMoney without evidence."
     },
     {
       "employer": "Traveloka",
       "category": "commerce",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://careers.traveloka.com/jobs",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official Traveloka job board and individual job pages are public. However, verified indexed role examples are outside Vietnam and the dynamic board's complete listing/pagination and Vietnam scoping have not been independently verified. Do not mark a country-filtered adapter complete."
     },
     {
       "employer": "Agoda",
       "category": "commerce",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://careersatagoda.com/vacancies/",
+      "adapter": "agoda",
+      "evidence": "Official Agoda careers vacancy listing and first-party /job/<id>-<slug>/ detail pages verified with full posting descriptions and displayed country. Dedicated scoped HTML adapter validates per-posting Vietnam location, stable ID and listing completeness. Parser tests included; live runtime smoke test outstanding.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "Booking.com",
       "category": "commerce",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://jobs.booking.com/",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official Booking.com recruiting portal exists but public request to job pages returned HTTP 403. No accessible first-party pagination/detail transport was verified; avoid treating empty/denied HTML as zero jobs."
     },
     {
       "employer": "NAVER Vietnam",
@@ -743,34 +744,34 @@
     {
       "employer": "Hanoi University of Science and Technology",
       "category": "research",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://hust.edu.vn/",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official HUST publishes recruitment notices, often PDFs; an exhaustive machine-readable role-level hiring board with full requirements, explicit expiry and pagination was not verified. Notice/PDF splitting and expiry filter needed."
     },
     {
       "employer": "VNU University of Engineering and Technology",
       "category": "research",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://uet.vnu.edu.vn/",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official UET recruitment announcements found, including 2026 lecturer recruitment, but no verified uniform individual-job listing/detail feed. Notices require role splitting and deadlines/expiry handling."
     },
     {
       "employer": "Posts and Telecommunications Institute of Technology",
       "category": "research",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://ptit.edu.vn/",
       "adapter": null,
-      "evidence": null
+      "evidence": "PTIT official recruitment announcements exist but no reliably accessible, complete individual-job feed could be verified. PDF or announcement-level extraction, deadlines and pagination remain unresolved."
     },
     {
       "employer": "Phenikaa University",
       "category": "research",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://phenikaa-uni.edu.vn/",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official university recruitment pages exist, but no verified role-level listing/detail schema and complete pagination. Cannot replace structured job records with a generic recruitment/category page."
     },
     {
       "employer": "Qualcomm",
