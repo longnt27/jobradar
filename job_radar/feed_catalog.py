@@ -264,4 +264,25 @@ CAREER_FEEDS: tuple[CareerFeed, ...] = (
     }),
     html("BNP Paribas", "https://apac.bnpparibas/en/work-with-us/apply-now/our-opportunities/?city%5B%5D=ho-chi-minh&city%5B%5D=ho-chi-minh-city", r"^/en/jobs/[^/?#]+/?$",
          description_selector=".jobs__content", location_selector=".jobs__details .crd__specs li:nth-child(2) span"),
+
+    # Agent 9: employer-operated, country-scoped first-party portals.
+    html("Ampere", "https://careers.amperecomputing.com/search/jobs/in/sg-ho-chi-minh-sai-gon",
+         r"^/jobs/\d+-[^/?#]+$", max_results=60, description_selector="main",
+         external_id_pattern=r"/jobs/(\d+)-", location_text_pattern=r"(?m)^Location:\s*([^\n]+)"),
+    CareerFeed("Amazon / AWS Vietnam", "https://www.amazon.jobs/en/search?normalized_country_code%5B%5D=VNM", "json_board", {
+        "api_url": "https://www.amazon.jobs/en/search.json",
+        "params": {"normalized_country_code[]": "VNM", "sort": "recent"},
+        "rows_path": "jobs", "total_field": "hits",
+        "offset_param": "offset", "limit_param": "result_limit", "page_size": 50, "max_pages": 20,
+        "id_field": "id_icims", "title_field": "title", "url_field": "job_path",
+        "required_fields": {"country_code": "VNM"},
+        "description_sections": {"Responsibilities": "description", "Basic qualifications": "basic_qualifications",
+                                 "Preferred qualifications": "preferred_qualifications"},
+        "location_fields": ["normalized_location"], "location_include": r"\bVNM\b",
+        "apply_field": "url_next_step", "published_field": "posted_date",
+    }),
+    CareerFeed("SAP Vietnam", "https://careers.sap.com/go/Vietnam/9513801/", "successfactors", {
+        "max_pages": 2,
+        "location_selector": ".job-location, #job-location, [data-careersite-propertyid=location]",
+    }),
 )
