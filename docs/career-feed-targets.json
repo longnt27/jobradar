@@ -775,66 +775,74 @@
     {
       "employer": "Qualcomm",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "adapter_unverified",
+      "career_url": "https://careers.qualcomm.com/careers",
+      "adapter": "eightfold",
+      "evidence": "Qualcomm's own careers page links to the official Eightfold board; public Eightfold PCSX/classic schemas are documented in third-party open source implementation. Live Vietnam-scoped API responses could not be exercised in this environment; runtime smoke verification required.",
+      "verified_at": null
     },
     {
       "employer": "Samsung R&D Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://www.samsungcareers.com.vn/",
       "adapter": null,
-      "evidence": null
+      "evidence": "Samsung Vietnam's official careers portal provides experience/staff/technician groupings, but vacancy inventory and R&D-specific employer identity are JavaScript-backed. Neither public detail API nor independent R&D-specific, first-party listing schema verified. No placeholder collector.",
+      "verified_at": null
     },
     {
       "employer": "Samsung Electronics Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://www.samsungcareers.com.vn/",
       "adapter": null,
-      "evidence": null
+      "evidence": "Same official Samsung Vietnam careers portal as Samsung R&D; without an evidenced job-level employing entity or accessible role detail API, cannot reliably separate the two legal employers. No shared portal blanket rebranding.",
+      "verified_at": null
     },
     {
       "employer": "LG Electronics R&D Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://globalcareers.lge.com/jobs",
       "adapter": null,
-      "evidence": null
+      "evidence": "LG Electronics global official board is JavaScript-rendered (initial shell reports Loading/0 Results). Vietnam R&D subsidiary role listing/detail API not verified; zero from initial HTML is not an empty verified vacancy list.",
+      "verified_at": null
     },
     {
       "employer": "NXP Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "adapter_unverified",
+      "career_url": "https://nxp.wd3.myworkdayjobs.com/careers",
+      "adapter": "workday_vietnam",
+      "evidence": "Public NXP Workday jobs board uses the employer tenant nxp and careers board. Workday API and Vietnam-scoped search implementation added; live API and detail response not tested.",
+      "verified_at": null
     },
     {
       "employer": "Cadence Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "adapter_unverified",
+      "career_url": "https://cadence.wd1.myworkdayjobs.com/External_Careers",
+      "adapter": "workday_vietnam",
+      "evidence": "Public Cadence Workday External_Careers board identified; tenant API integration added but live search and detail API response not verified.",
+      "verified_at": null
     },
     {
       "employer": "MediaTek Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://careers.mediatek.com/en/jobs",
       "adapter": null,
-      "evidence": null
+      "evidence": "MediaTek official jobs board loaded 621 global jobs in observed search snapshot but its location filter options did not include Vietnam; no verified first-party Vietnam vacancies/source adapter. Global list must not be relabeled MediaTek Vietnam.",
+      "verified_at": null
     },
     {
       "employer": "ARM",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://careers.arm.com/search-jobs",
       "adapter": null,
-      "evidence": null
+      "evidence": "Arm's official global search board exists, but no Vietnam-specific first-party vacancy records or verified complete Vietnam feed URL were established during this pass. Requires live regional inventory verification, not a global homepage adapter.",
+      "verified_at": null
     },
     {
       "employer": "Ampere",
