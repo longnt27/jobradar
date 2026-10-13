@@ -605,11 +605,10 @@
     {
       "employer": "Agoda",
       "category": "commerce",
-      "status": "verified",
+      "status": "pending",
       "career_url": "https://careersatagoda.com/vacancies/",
       "adapter": "agoda",
-      "evidence": "Official Agoda careers vacancy listing and first-party /job/<id>-<slug>/ detail pages verified with full posting descriptions and displayed country. Dedicated scoped HTML adapter validates per-posting Vietnam location, stable ID and listing completeness. Parser tests included; live runtime smoke test outstanding.",
-      "verified_at": "2026-10-13"
+      "evidence": "Official Agoda listings and individual /job/<id>-<slug>/ pages confirmed publicly, displaying per-posting country and full descriptions. Agent 7 adapter and mocked regression tests added; runtime live smoke test and full pagination/load-more confirmation still REQUIRED before marking verified."
     },
     {
       "employer": "Booking.com",
