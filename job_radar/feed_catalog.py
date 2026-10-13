@@ -264,4 +264,33 @@ CAREER_FEEDS: tuple[CareerFeed, ...] = (
     }),
     html("BNP Paribas", "https://apac.bnpparibas/en/work-with-us/apply-now/our-opportunities/?city%5B%5D=ho-chi-minh&city%5B%5D=ho-chi-minh-city", r"^/en/jobs/[^/?#]+/?$",
          description_selector=".jobs__content", location_selector=".jobs__details .crd__specs li:nth-child(2) span"),
+
+    # Agent 6: finance and insurance. The employer identity is kept even on a group ATS.
+    html("Mirae Asset Vietnam", "https://recruitment.mafc.vn/job-search/all-jobs/en",
+         r"^/(?:job|viec-lam)/[^/?#]+\.[a-f0-9]+\.html$", max_pages=8, max_results=120,
+         description_selector="[class*=job-description], [class*=job-detail], main"),
+    html("MB Ageas Life", "https://tuyendung.mblife.vn/job-search/all-jobs/en",
+         r"^/job/[^/?#]+\.[a-f0-9]+\.html$", max_pages=8, max_results=120,
+         description_selector="[class*=job-description], [class*=job-detail], main"),
+    CareerFeed("Bao Viet", "https://www.baoviet.com.vn/vi/tuyen-dung", "baoviet_announcement"),
+    CareerFeed("FWD Vietnam", "https://fwd.wd3.myworkdayjobs.com/FWDcareersite", "workday", {
+        "search_url": "https://fwd.wd3.myworkdayjobs.com/wday/cxs/fwd/FWDcareersite/jobs",
+        "detail_base": "https://fwd.wd3.myworkdayjobs.com/wday/cxs/fwd/FWDcareersite",
+        "search_text": "Vietnam", "location_include": r"Vietnam|Việt Nam",
+    }),
+    CareerFeed("Prudential Vietnam", "https://prudential.wd3.myworkdayjobs.com/prudential", "workday", {
+        "search_url": "https://prudential.wd3.myworkdayjobs.com/wday/cxs/prudential/prudential/jobs",
+        "detail_base": "https://prudential.wd3.myworkdayjobs.com/wday/cxs/prudential/prudential",
+        "applied_facets": {"locationHierarchy1": ["db69e8c8446c11de98360015c5e6daf6"]},
+    }),
+    CareerFeed("Manulife Vietnam", "https://manulife.wd3.myworkdayjobs.com/MFCJH_Jobs", "workday", {
+        "search_url": "https://manulife.wd3.myworkdayjobs.com/wday/cxs/manulife/MFCJH_Jobs/jobs",
+        "detail_base": "https://manulife.wd3.myworkdayjobs.com/wday/cxs/manulife/MFCJH_Jobs",
+        "search_text": "Vietnam", "location_include": r"Vietnam|Việt Nam",
+    }),
+    CareerFeed("AIA Vietnam", "https://aia.wd3.myworkdayjobs.com/External", "workday", {
+        "search_url": "https://aia.wd3.myworkdayjobs.com/wday/cxs/aia/External/jobs",
+        "detail_base": "https://aia.wd3.myworkdayjobs.com/wday/cxs/aia/External",
+        "search_text": "Vietnam", "location_include": r"Vietnam|Việt Nam|VN-AIA",
+    }),
 )
