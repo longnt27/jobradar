@@ -630,7 +630,7 @@ def _target_title(title: str) -> bool:
 
 def _expired_posting(text: str) -> bool:
     """Skip a posting only when its own page shows an explicit past deadline."""
-    label = re.search(r"(?:Application deadline|Closing date|Hạn nộp hồ sơ|Hạn nộp|Thời gian ứng tuyển|Deadline)\s*:?", text[:3000], re.I)
+    label = re.search(r"(?:Application deadline|Closing date|Expired Date|Hạn nộp hồ sơ|Hạn nộp|Thời gian ứng tuyển|Deadline)\s*:?", text[:3000], re.I)
     if not label:
         return False
     dates = re.findall(r"\b(\d{1,2})[/.](\d{1,2})[/.](20\d{2})\b", text[label.end():label.end() + 65])
