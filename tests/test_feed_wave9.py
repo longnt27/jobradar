@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from job_radar.collectors import collect_html_board
-from job_radar.feed_catalog import CAREER_FEEDS
+from job_radar.feed_catalog import CAREER_FEEDS, html
 
 
 def _feed(name):
@@ -17,12 +17,15 @@ def _source(feed):
 
 
 def test_global_wave9_catalog_scope():
-    assert _feed("Ampere").adapter == "html_board"
+    assert "Ampere" not in {feed.employer for feed in CAREER_FEEDS}
     assert _feed("SAP Vietnam").adapter == "successfactors"
 
 
 def test_ampere_specific_job_links_full_detail_and_stable_id(monkeypatch):
-    feed = _feed("Ampere")
+    # Exercise generic HTML extraction without registering the retired board.
+    feed = html("Ampere", "https://careers.amperecomputing.com/search/jobs/in/sg-ho-chi-minh-sai-gon",
+                r"^/jobs/\d+-[^/?#]+$", description_selector="main",
+                external_id_pattern=r"/jobs/(\d+)-", location_text_pattern=r"(?m)^Location:\s*([^\n]+)")
     class Client:
         async def __aenter__(self):
             return self

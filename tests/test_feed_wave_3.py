@@ -8,7 +8,7 @@ import pytest
 
 from job_radar.collectors import _expired_posting, collect_html_board
 from job_radar.career_apis import collect_json_board
-from job_radar.feed_catalog import CAREER_FEEDS
+from job_radar.feed_catalog import CAREER_FEEDS, html
 
 
 DETAIL = ("Develop and maintain production machine learning and data pipelines with reproducible "
@@ -16,7 +16,14 @@ DETAIL = ("Develop and maintain production machine learning and data pipelines w
 
 
 def _source(employer):
-    feed = next(feed for feed in CAREER_FEEDS if feed.employer == employer)
+    if employer == "CMC University":
+        # Preserve generic notice parsing coverage for the retired source.
+        feed = html(employer, "https://cmcu.edu.vn/tin-tuyen-dung/", r"^/thong-bao-tuyen-dung-[^/?#]+/?$",
+                    pagination="wordpress", max_pages=3, description_selector=".entry-content, article",
+                    location_regex=r"Địa chỉ\s*:\s*(.{5,180}?)(?=\s+(?:Hình thức|Liên hệ)\s*:|$)",
+                    require_links=True, strict_detail=True, external_id_from_path=True)
+    else:
+        feed = next(feed for feed in CAREER_FEEDS if feed.employer == employer)
     return {"url": feed.url, "name": employer + " careers", "employer_name": employer,
             "config": {"adapter": feed.adapter, **feed.options}}
 
@@ -136,10 +143,12 @@ def test_scope_only_verified_employers_are_registered():
     manifest = json.loads((Path(__file__).parents[1] / "docs/career-feed-targets.json").read_text(encoding="utf-8"))
     targets = {target["employer"]: target for target in manifest["targets"]}
     available = {feed.employer for feed in CAREER_FEEDS}
-    for employer in ("FPT Software", "CMC University"):
+    for employer in ("FPT Software",):
         assert employer in available
         assert targets[employer]["status"] == "verified"
         assert targets[employer]["adapter"] == ("json_board" if employer == "FPT Software" else "html_board")
+    assert "CMC University" not in available
+    assert targets["CMC University"]["status"] == "removed"
     for employer in ("FPT Corporation", "FPT IS", "FPT.AI", "CMC Corporation", "CMC Cloud"):
         assert employer not in available
         assert targets[employer]["status"] == "blocked"

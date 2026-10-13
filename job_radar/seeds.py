@@ -4,7 +4,7 @@ import json
 from urllib.parse import urlencode
 
 from .db import Database, new_id, now
-from .feed_catalog import CAREER_FEEDS, CAREER_SCAN_INTERVAL_MINUTES
+from .feed_catalog import CAREER_FEEDS, CAREER_SCAN_INTERVAL_MINUTES, RETIRED_CAREER_FEEDS
 from .employer_scope import HCMC_BASED
 from .linkedin_searches import LINKEDIN_SCAN_INTERVAL_MINUTES, recent_search_url
 
@@ -120,6 +120,14 @@ EMPLOYER_ALIASES = {
 def seed(db: Database) -> None:
     timestamp = now()
     with db.connection() as conn:
+        for url, reason in RETIRED_CAREER_FEEDS.items():
+            for source_id, raw_config in conn.execute(
+                "SELECT id,config FROM sources WHERE kind='career' AND url=?", (url,)
+            ).fetchall():
+                config = json.loads(raw_config)
+                config.update(retired=True, retirement_reason=reason)
+                conn.execute("UPDATE sources SET enabled=0,config=? WHERE id=?",
+                             (json.dumps(config), source_id))
         for source_id, url, interval_minutes in conn.execute(
             "SELECT id,url,interval_minutes FROM sources WHERE kind='linkedin' "
             "AND COALESCE(json_extract(config,'$.retired'),0)=0"

@@ -20,7 +20,7 @@ Everything runs on your Mac. Your profile, credentials, sessions, and data stay 
 
 ## Key Capabilities
 
-- **Autonomous Multi-Source Sourcing:** Continuously scans 127 configured company career portals, LinkedIn job search feeds, and curated Facebook recruiting groups every 4 hours.
+- **Autonomous Multi-Source Sourcing:** Continuously scans 123 configured company career portals, LinkedIn job search feeds, and curated Facebook recruiting groups every 4 hours.
 - **Local AI Match Scoring:** Uses a local Ollama model to evaluate real role fit, required/preferred skills, experience depth, and work mode without leaking your data to third parties.
 - **Hard Constraints & Intent Filtering:** Filter by seniority levels, role families, preferred/excluded employers, salary minimums, negative keywords, and location constraints (e.g., Hanoi only or Remote).
 - **Evidence-Grounded Resume Tailoring:** Connect your GitHub to inspect public repositories, generate verified project contribution cards, and selectively map proven results to matching vacancies.
@@ -94,7 +94,7 @@ Open **My profile** and complete the setup steps:
 - Review and click **Approve**. Only approved project cards are eligible to be woven into your tailored resume bullets.
 
 ### 4. Connect Job Sources
-- **Company Career Feeds:** 127 configured company career feeds ([CAREER_FEEDS.md](CAREER_FEEDS.md)) are preconfigured and scanned daily.
+- **Company Career Feeds:** 123 configured company career feeds ([CAREER_FEEDS.md](CAREER_FEEDS.md)) are preconfigured and scanned daily.
 - **LinkedIn & Facebook:** Click **Sign in to LinkedIn** or **Sign in to Facebook** in Profile. Job Radar opens a dedicated Chrome session for you to sign in once, preserves authentication cookies, and reuses the session for automated background scans.
 - Paste additional Facebook group URLs or custom career page URLs in **Job sources** anytime.
 

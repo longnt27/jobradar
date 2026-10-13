@@ -12,7 +12,7 @@ LONG_DESC = "Maintain production data services, deployment monitoring, security 
 
 
 def test_agent_six_feed_configuration():
-    expected = {"Mirae Asset Vietnam", "MB Ageas Life", "Bao Viet",
+    expected = {"MB Ageas Life", "Bao Viet",
                 "FWD Vietnam", "Prudential Vietnam", "Manulife Vietnam", "AIA Vietnam"}
     feed_map = {f.employer: f for f in CAREER_FEEDS}
     assert expected <= set(feed_map)

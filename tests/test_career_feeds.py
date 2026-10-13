@@ -513,7 +513,7 @@ def test_successfactors_search_pagination_preserves_country_and_own_location(mon
     assert any("startrow=25" in url for url in requested)
 
 
-@pytest.mark.parametrize("employer", ["MB Ageas Life", "Mirae Asset Vietnam", "Hyundai Motor Vietnam"])
+@pytest.mark.parametrize("employer", ["MB Ageas Life", "Hyundai Motor Vietnam"])
 def test_talentnetwork_detail_extracts_own_requirements_and_deadline(monkeypatch, employer):
     feed = next(f for f in CAREER_FEEDS if f.employer == employer)
     posting = feed.url.split("/job-search/")[0] + "/job/data-engineer.35ac102e.html"

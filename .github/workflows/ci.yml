@@ -59,6 +59,7 @@ jobs:
         run: |
           uv run pytest -q \
             tests/test_career_feeds.py \
+            tests/test_retired_career_sources.py \
             tests/test_career_apis.py \
             tests/test_vinbus_feed.py \
             tests/test_vingroup_feed_audit.py \

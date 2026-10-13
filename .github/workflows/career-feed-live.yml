@@ -1,6 +1,6 @@
 name: Career feed live smoke
 
-# An explicit [live-feeds] push triggers bounded real-source verification of all 25 new adapters.
+# An explicit [live-feeds] push triggers bounded real-source verification of all 21 active new adapters.
 # On ordinary feature pushes only deterministic collector tests run; weekly/manual
 # checks activate on the default branch after the workflow is merged there.
 on:
@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       scope:
-        description: "Which company feeds to check (integrated = 25 new adapters)"
+        description: "Which company feeds to check (integrated = 21 active new adapters)"
         required: true
         default: integrated
         type: choice
@@ -55,6 +55,7 @@ jobs:
         run: |
           uv run pytest -q \
             tests/test_career_feeds.py \
+            tests/test_retired_career_sources.py \
             tests/test_career_apis.py \
             tests/test_vinbus_feed.py \
             tests/test_vingroup_feed_audit.py \

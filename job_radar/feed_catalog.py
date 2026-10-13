@@ -9,6 +9,15 @@ from dataclasses import dataclass, field
 
 CAREER_SCAN_INTERVAL_MINUTES = 1440
 
+# Removed after the 2026-10-13 local and GitHub-hosted access audit. Keep
+# these URLs for upgrades so existing source history can be retired safely.
+RETIRED_CAREER_FEEDS = {
+    "https://careersatagoda.com/vacancies/": "HTTP 403 Forbidden",
+    "https://careers.amperecomputing.com/search/jobs/in/sg-ho-chi-minh-sai-gon": "HTTP 403 Forbidden",
+    "https://cmcu.edu.vn/tin-tuyen-dung/": "TLS certificate chain verification failed",
+    "https://recruitment.mafc.vn/job-search/all-jobs/en": "TLS certificate chain verification failed",
+}
+
 
 @dataclass(frozen=True)
 class CareerFeed:
@@ -117,10 +126,6 @@ CAREER_FEEDS: tuple[CareerFeed, ...] = (
          title_include=r"\b(?:AI|ML|LLM|NLP)\b|machine learning|computer vision|deep learning|data scien|generative"),
     html("CMC TS", "https://careers.cmcts.com.vn/", TALENT_JOB, max_results=100, description_selector=".content-article, article"),
     html("CMC Telecom", "https://cmctelecom.vn/danh-sach-tuyen-dung/", r"^/recruit/[^/?#]+/?$", description_selector=".recruitment-detail"),
-    html("CMC University", "https://cmcu.edu.vn/tin-tuyen-dung/", r"^/thong-bao-tuyen-dung-[^/?#]+/?$",
-         pagination="wordpress", max_pages=3, max_results=50, description_selector=".entry-content, article",
-         location_regex=r"Địa chỉ\s*:\s*(.{5,180}?)(?=\s+(?:Hình thức|Liên hệ)\s*:|$)",
-         require_links=True, strict_detail=True, external_id_from_path=True),
     html("NTQ Solution", "https://career.ntq.com.vn/careers", r"^/career/[^/?#]+/?$", description_selector=".section-career-detail__job-content__description"),
     html("VNPAY", "https://tuyendung.vnpay.vn/", r"^/tuyen-dung/[^/?#]+\.html$"),
     html("Base.vn", "https://baseinc.talent.vn/alljobs?dept=9", TALENT_JOB, description_selector=".content-article, article"),
@@ -164,7 +169,6 @@ CAREER_FEEDS: tuple[CareerFeed, ...] = (
         "detail_base": "https://nvidia.wd5.myworkdayjobs.com/wday/cxs/nvidia/NVIDIAExternalCareerSite",
         "search_text": "Vietnam",
     }),
-    CareerFeed("Agoda", "https://careersatagoda.com/vacancies/", "agoda"),
     CareerFeed("Shopee", "https://careers.shopee.vn/jobs", "workatsea"),
     CareerFeed("SPX Express", "https://careers.shopee.vn/jobs", "workatsea", {"company_filter": "SPX"}),
     html("Vinschool", "https://tuyendung.vinschool.edu.vn/jobs", TALENT_JOB, description_selector=".content-article, article"),
@@ -312,10 +316,6 @@ CAREER_FEEDS: tuple[CareerFeed, ...] = (
          description_selector=".jobs__content", location_selector=".jobs__details .crd__specs li:nth-child(2) span"),
 
     # Agent 6: finance and insurance. The employer identity is kept even on a group ATS.
-    html("Mirae Asset Vietnam", "https://recruitment.mafc.vn/job-search/all-jobs/en",
-         r"^/(?:job|viec-lam)/[^/?#]+\.[a-f0-9]+\.html$", max_pages=8, max_results=120,
-         description_selector=".job-post-description", deadline_selector=".metadata-list", require_links=True, strict_detail=True,
-         location_selector=".metadata-list_section--blue .metadata-list_items"),
     html("MB Ageas Life", "https://tuyendung.mblife.vn/job-search/all-jobs/en",
          r"^/job/[^/?#]+\.[a-f0-9]+\.html$", max_pages=8, max_results=120,
          description_selector=".job-post-description", deadline_selector=".metadata-list", require_links=True, strict_detail=True,
@@ -343,9 +343,6 @@ CAREER_FEEDS: tuple[CareerFeed, ...] = (
     }),
 
     # Agent 9: employer-operated, country-scoped first-party portals.
-    html("Ampere", "https://careers.amperecomputing.com/search/jobs/in/sg-ho-chi-minh-sai-gon",
-         r"^/jobs/\d+-[^/?#]+$", max_results=60, description_selector="main",
-         external_id_pattern=r"/jobs/(\d+)-", location_text_pattern=r"(?m)^Location:\s*([^\n]+)"),
     CareerFeed("SAP Vietnam", "https://jobs.sap.com/go/Vietnam/9513801/", "successfactors", {
         "max_pages": 2,
         "location_selector": ".job-location, #job-location, [data-careersite-propertyid=location]",

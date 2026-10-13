@@ -4,12 +4,11 @@ import httpx
 import pytest
 
 from job_radar.career_wave7 import collect_agoda
-from job_radar.feed_catalog import CAREER_FEEDS
 
 
 def source():
-    feed = next(feed for feed in CAREER_FEEDS if feed.employer == "Agoda")
-    return {"url": feed.url, "name": "Agoda", "config": {"adapter": feed.adapter}}
+    # Standalone parser coverage: this inaccessible board is no longer seeded.
+    return {"url": "https://careersatagoda.com/vacancies/", "name": "Agoda", "config": {"adapter": "agoda"}}
 
 
 def html_board():

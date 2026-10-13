@@ -253,10 +253,10 @@
     {
       "employer": "CMC University",
       "category": "cmc",
-      "status": "verified",
+      "status": "removed",
       "career_url": "https://cmcu.edu.vn/tin-tuyen-dung/",
       "adapter": "html_board",
-      "evidence": "Official CMC University recruiting archive lists 16 notices over two pages, including 2026-09-17 Hanoi IT/Computer Science Lecturer and 2026-10-07 Digital Training and AI Specialist. Verified complete individual role pages, Hanoi work addresses, application contact and requirements; HTML collector follows WordPress archive pages and records stable posting slugs. Focused mocked pagination/detail tests added.",
+      "evidence": "Official CMC University recruiting archive lists 16 notices over two pages, including 2026-09-17 Hanoi IT/Computer Science Lecturer and 2026-10-07 Digital Training and AI Specialist. Verified complete individual role pages, Hanoi work addresses, application contact and requirements; HTML collector follows WordPress archive pages and records stable posting slugs. Focused mocked pagination/detail tests added. Removed from active sources on 2026-10-13 after repeated HTTP/TLS access failures in both local and GitHub-hosted audit runs; saved source and job history are retained.",
       "verified_at": "2026-10-13",
       "live_check": {
         "date": "2026-10-13",
@@ -681,10 +681,10 @@
     {
       "employer": "Mirae Asset Vietnam",
       "category": "finance",
-      "status": "pending",
+      "status": "removed",
       "career_url": "https://recruitment.mafc.vn/job-search/all-jobs/en",
       "adapter": "html_board",
-      "evidence": "Official Mirae Asset Finance Vietnam recruitment portal. CareerLink HTML adapter added; detail path and multi-page live smoke validation pending.",
+      "evidence": "Official Mirae Asset Finance Vietnam recruitment portal. CareerLink HTML adapter added; detail path and multi-page live smoke validation pending. Removed from active sources on 2026-10-13 after repeated HTTP/TLS access failures in both local and GitHub-hosted audit runs; saved source and job history are retained.",
       "verified_at": null,
       "live_check": {
         "date": "2026-10-13",
@@ -728,10 +728,10 @@
     {
       "employer": "Agoda",
       "category": "commerce",
-      "status": "pending",
+      "status": "removed",
       "career_url": "https://careersatagoda.com/vacancies/",
       "adapter": "agoda",
-      "evidence": "Official Agoda listings and individual /job/<id>-<slug>/ pages confirmed publicly, displaying per-posting country and full descriptions. Agent 7 adapter and mocked regression tests added; runtime live smoke test and full pagination/load-more confirmation still REQUIRED before marking verified.",
+      "evidence": "Official Agoda listings and individual /job/<id>-<slug>/ pages confirmed publicly, displaying per-posting country and full descriptions. Agent 7 adapter and mocked regression tests added; runtime live smoke test and full pagination/load-more confirmation still REQUIRED before marking verified. Removed from active sources on 2026-10-13 after repeated HTTP/TLS access failures in both local and GitHub-hosted audit runs; saved source and job history are retained.",
       "live_check": {
         "date": "2026-10-13",
         "status": "error",
@@ -1009,10 +1009,10 @@
     {
       "employer": "Ampere",
       "category": "global_tech",
-      "status": "verified",
+      "status": "removed",
       "career_url": "https://careers.amperecomputing.com/search/jobs/in/sg-ho-chi-minh-sai-gon",
       "adapter": "html_board",
-      "evidence": "Official Vietnam-scoped page currently lists 8 roles (including Data Engineer and MTE Software Engineer), with independently accessible first-party /jobs/<id>-<slug> details and complete descriptions; checked 2026-10-13. Adapter uses scoped job URLs and stable requisition IDs; focused fixture tests added.",
+      "evidence": "Official Vietnam-scoped page currently lists 8 roles (including Data Engineer and MTE Software Engineer), with independently accessible first-party /jobs/<id>-<slug> details and complete descriptions; checked 2026-10-13. Adapter uses scoped job URLs and stable requisition IDs; focused fixture tests added. Removed from active sources on 2026-10-13 after repeated HTTP/TLS access failures in both local and GitHub-hosted audit runs; saved source and job history are retained.",
       "verified_at": "2026-10-13",
       "live_check": {
         "date": "2026-10-13",
@@ -1204,16 +1204,17 @@
     ],
     "assigned_employers": 80,
     "counts": {
-      "verified": 55,
+      "verified": 53,
       "blocked": 53,
-      "pending": 5,
+      "pending": 3,
+      "removed": 4,
       "adapter_unverified": 1,
       "implemented_unverified": 1
     },
     "live_runtime_verified_in_this_sprint": 14,
     "notes": [
-      "All ten implementation waves are present. Status in targets records implementation/source acceptance; live_check records actual audited collector execution.",
-      "HTTP access failures and zero-job scans remain explicitly unverified at runtime; blocked employers remain unresolved."
+      "Adapter work is complete. Four inaccessible feeds were removed after the runtime audit; blocked directory entries have no active sources.",
+      "The active integrated scope contains 21 feeds: 14 returned complete postings and seven returned no matching jobs during the audit. Zero-job scans remain unproven for full detail extraction."
     ],
     "new_feed_employers": [
       "VinBus",
@@ -1221,10 +1222,8 @@
       "Co-opBank",
       "Public Bank Vietnam",
       "FPT Software",
-      "CMC University",
       "Honda Vietnam",
       "Hyundai Motor Vietnam",
-      "Mirae Asset Vietnam",
       "MB Ageas Life",
       "Bao Viet",
       "FWD Vietnam",
@@ -1234,8 +1233,6 @@
       "Qualcomm",
       "NXP Vietnam",
       "Cadence Vietnam",
-      "Agoda",
-      "Ampere",
       "SAP Vietnam",
       "Gear Inc",
       "Anduin Transactions",
@@ -1251,6 +1248,13 @@
         "error": 4,
         "empty": 7
       }
-    }
+    },
+    "adapter_work_complete": true,
+    "removed_feed_employers": [
+      "Agoda",
+      "Ampere",
+      "CMC University",
+      "Mirae Asset Vietnam"
+    ]
   }
 }

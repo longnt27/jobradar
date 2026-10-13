@@ -512,5 +512,29 @@
       "excluded": "UI tests and browser-driven application flows, per user instruction"
     }
   },
-  "fix_commit": "1f35045"
+  "fix_commit": "1f35045",
+  "source_cleanup": {
+    "date": "2026-10-13",
+    "removed_employers": [
+      "Agoda",
+      "Ampere",
+      "CMC University",
+      "Mirae Asset Vietnam"
+    ],
+    "remaining_configured_career_feeds": 123,
+    "remaining_integrated_feeds": 21,
+    "reason": "Remove the four HTTP/TLS failures from the active catalog; retire matching existing sources without deleting saved history. Adapter implementation work is complete.",
+    "verification": {
+      "backend_tests_passed": 151,
+      "live_api_career_sources": 123,
+      "saved_history_unchanged": {
+        "observations": 6500,
+        "vacancies": 2344,
+        "application_drafts": 38,
+        "submissions": 25,
+        "feedback": 51
+      },
+      "foreign_key_errors": 0
+    }
+  }
 }

@@ -29,12 +29,12 @@ def valid_job() -> ObservedJob:
     )
 
 
-def test_integrated_scope_contains_exact_25_new_feeds():
+def test_integrated_scope_contains_exact_21_active_new_feeds():
     selected = select_feeds("integrated")
     names = [feed.employer for feed in selected]
-    assert len(names) == 25
+    assert len(names) == 21
     assert len(names) == len(set(names))
-    assert {"VinBus", "Qualcomm", "Agoda", "Public Bank Vietnam", "VNPT Group"} <= set(names)
+    assert {"VinBus", "Qualcomm", "Public Bank Vietnam", "VNPT Group"} <= set(names)
 
 
 def test_shards_partition_the_integrated_scope():
@@ -44,7 +44,7 @@ def test_shards_partition_the_integrated_scope():
         for i in range(5)
     ]
     assert sorted(name for group in chunks for name in group) == sorted(full)
-    assert all(len(group) == 5 for group in chunks)
+    assert [len(group) for group in chunks] == [5, 4, 4, 4, 4]
 
 
 def test_contract_rejects_duplicate_and_homepage_and_wrong_employer():
