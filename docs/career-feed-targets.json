@@ -943,20 +943,18 @@
     {
       "employer": "Honda Vietnam",
       "category": "global_tech",
-      "status": "verified",
+      "status": "implemented_unverified",
       "career_url": "https://www.honda.com.vn/tuyen-dung/co-hoi-nghe-nghiep",
       "adapter": "html_board",
-      "evidence": "Official Honda Vietnam career listing and role detail accessible: https://www.honda.com.vn/tuyen-dung/chi-tiet-co-hoi-nghe-nghiep?id=1002 (software-maintenance position). Query job IDs must be preserved; listing/detail adapter uses the existing HTML board collector. Live HTTP collector execution not available in this session.",
-      "verified_at": "2026-10-13"
+      "evidence": "Official Honda Vietnam career listing and role detail accessible: https://www.honda.com.vn/tuyen-dung/chi-tiet-co-hoi-nghe-nghiep?id=1002 (software-maintenance position). Query job IDs must be preserved; listing/detail adapter uses the existing HTML board collector. Live HTTP collector execution not available in this session. Source and example detail URL verified via web search; mocked collector tests authored, but no live execution, HTML shape or pagination verification. Must remain unverified until live smoke."
     },
     {
       "employer": "Hyundai Motor Vietnam",
       "category": "global_tech",
-      "status": "verified",
+      "status": "implemented_unverified",
       "career_url": "https://career.hyundai.thanhcong.vn/job-search/all-jobs/en",
       "adapter": "html_board",
-      "evidence": "Official Hyundai Thanh Cong Vietnam joint venture recruitment board lists four current roles, with individual detail pages, locations, and expiry dates: https://career.hyundai.thanhcong.vn/job-search/all-jobs/en. Company refers to the Vietnamese JV, not Hyundai globally. Live HTTP collector execution not available in this session.",
-      "verified_at": "2026-10-13"
+      "evidence": "Official Hyundai Thanh Cong Vietnam joint venture recruitment board lists four current roles, with individual detail pages, locations, and expiry dates: https://career.hyundai.thanhcong.vn/job-search/all-jobs/en. Company refers to the Vietnamese JV, not Hyundai globally. Live HTTP collector execution not available in this session. Source and example detail URL verified via web search; mocked collector tests authored, but no live execution, HTML shape or pagination verification. Must remain unverified until live smoke."
     }
   ],
   "handoff": {
