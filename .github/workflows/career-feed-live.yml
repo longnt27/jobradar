@@ -69,6 +69,10 @@ jobs:
             tests/test_ci_live_career_feeds.py
 
   live-collector:
+    # Avoid hammering 25 employers on every small parser edit. Opt in on the
+    # feature branch with a commit message containing [live-feeds].
+    # Scheduled and manually-dispatched runs always execute live probes.
+    if: github.event_name != 'push' || contains(github.event.head_commit.message, '[live-feeds]')
     name: Live company feeds (shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
     timeout-minutes: 50
