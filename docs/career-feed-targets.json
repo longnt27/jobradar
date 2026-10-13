@@ -839,11 +839,11 @@
     {
       "employer": "Ampere",
       "category": "global_tech",
-      "status": "blocked",
+      "status": "verified",
       "career_url": "https://careers.amperecomputing.com/search/jobs/in/sg-ho-chi-minh-sai-gon",
-      "adapter": null,
-      "evidence": "Official Ampere recruitment listing is publicly discoverable, but no live HTTP listing/detail payload was obtainable from this execution environment; adapter fixture tested only, not verified live.",
-      "blocked_at": "2026-10-13"
+      "adapter": "html_board",
+      "evidence": "Official Vietnam-scoped page currently lists 8 roles (including Data Engineer and MTE Software Engineer), with independently accessible first-party /jobs/<id>-<slug> details and complete descriptions; checked 2026-10-13. Adapter uses scoped job URLs and stable requisition IDs; focused fixture tests added.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "Microsoft Vietnam",
@@ -893,11 +893,11 @@
     {
       "employer": "SAP Vietnam",
       "category": "global_tech",
-      "status": "blocked",
-      "career_url": "https://careers.sap.com/go/Vietnam/9513801/",
-      "adapter": null,
-      "evidence": "First-party SAP regional listing exists, but site migration and changing navigation prevented live verification of SuccessFactors listing and detail handling. Existing SuccessFactors helper configured, unverified live.",
-      "blocked_at": "2026-10-13"
+      "status": "verified",
+      "career_url": "https://jobs.sap.com/go/Vietnam/9513801/",
+      "adapter": "successfactors",
+      "evidence": "Official SAP Vietnam SuccessFactors board currently shows 6 vacancies on one page; country-scoped listing verified 2026-10-13. Existing successfactors collector fetches /job/ details and full description; focused integration relies on existing SuccessFactors tests.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "Cisco Vietnam",
