@@ -42,7 +42,7 @@ def _employer_id(conn, company: str) -> str | None:
 
 
 def ingest(db: Database, source_id: str, job: ObservedJob) -> tuple[str, bool]:
-    from .dedup import assess, employer_keys, find_match, refresh_vacancy, remember_match, vacancy_records
+    from .dedup import assess, employer_keys, find_match, reconcile_vacancy, refresh_vacancy, remember_match, vacancy_records
 
     url = normalize_url(job.url)
     raw = job.raw_text or job.description
@@ -61,7 +61,7 @@ def ingest(db: Database, source_id: str, job: ObservedJob) -> tuple[str, bool]:
             linked = conn.execute("SELECT vacancy_id FROM vacancy_observations WHERE observation_id=?", (observation_id,)).fetchone()
             if linked:
                 refresh_vacancy(conn, linked["vacancy_id"], profile, matching_model)
-                return linked["vacancy_id"], False
+                return reconcile_vacancy(conn, linked["vacancy_id"], profile, matching_model), False
         else:
             observation_id = new_id()
             conn.execute(

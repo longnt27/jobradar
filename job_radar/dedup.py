@@ -316,17 +316,48 @@ def remember_match(conn: sqlite3.Connection, left: str, right: str, match: Match
                  (*pair, match.reason, match.confidence, timestamp, timestamp))
 
 
-def find_match(conn: sqlite3.Connection, incoming: dict) -> tuple[str, Match] | None:
+def find_match(conn: sqlite3.Connection, incoming: dict, records: list[dict] | None = None) -> tuple[str, Match] | None:
     keys = employer_keys(conn)
     matches = []
-    for candidate in vacancy_records(conn, incoming):
+    records = records if records is not None else vacancy_records(conn, incoming)
+    by_id = {r["id"]: r for r in records}
+    for candidate in records:
         if _distinct(conn, incoming["id"], candidate["id"]):
+            continue
+        pair = sorted((incoming["id"], candidate["id"]))
+        if conn.execute("SELECT 1 FROM duplicate_reviews WHERE left_id=? AND right_id=? AND reason LIKE 'Ambiguous match%'", pair).fetchone():
             continue
         match = assess(incoming, candidate, keys)
         if match and match.automatic:
             matches.append((candidate["id"], match))
-    # Ambiguous identities stay separate rather than creating a bridge between roles.
-    return max(matches, key=lambda item: item[1].confidence) if len(matches) == 1 else None
+    # Multiple candidates are safe only when they also agree with each other.
+    for index, (left, _) in enumerate(matches):
+        for right, _ in matches[index + 1:]:
+            evidence = assess(by_id[left], by_id[right], keys)
+            if not evidence or not evidence.automatic or _distinct(conn, left, right):
+                return None
+    return max(matches, key=lambda item: item[1].confidence) if matches else None
+
+
+def reconcile_vacancy(conn: sqlite3.Connection, vacancy_id: str, profile: dict, model: str) -> str:
+    """A rescan can supply the missing evidence for a previously separate job."""
+    stored = conn.execute("SELECT company FROM vacancies WHERE id=?", (vacancy_id,)).fetchone()
+    records = vacancy_records(conn, dict(stored))
+    incoming = next((r for r in records if r["id"] == vacancy_id), None)
+    match = find_match(conn, incoming, records) if incoming else None
+    if not match:
+        return vacancy_id
+    other_id, evidence = match
+    conn.execute("SAVEPOINT refreshed_duplicate")
+    try:
+        identifier = merge_vacancies(conn, vacancy_id, other_id, evidence.reason, profile, model)
+    except ValueError as error:
+        conn.execute("ROLLBACK TO refreshed_duplicate")
+        conn.execute("RELEASE refreshed_duplicate")
+        remember_match(conn, vacancy_id, other_id, Match(False, str(error), evidence.confidence))
+        return vacancy_id
+    conn.execute("RELEASE refreshed_duplicate")
+    return identifier
 
 
 def refresh_vacancy(conn: sqlite3.Connection, vacancy_id: str, profile: dict, matching_model: str) -> None:

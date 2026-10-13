@@ -51,6 +51,21 @@ def test_new_career_linkedin_and_facebook_sightings_combine_and_rescans_prefer_c
     assert db.one("SELECT COUNT(*) AS n FROM vacancies")["n"] == 1
 
 
+def test_rescan_combines_a_previous_short_sighting_when_full_description_arrives(pool):
+    db, sources = pool
+    career = posting(location="Hanoi")
+    identifier, _ = ingest(db, sources["career"], career)
+    social = replace(career, url="https://www.linkedin.com/jobs/view/2468", description="A short teaser without enough matching evidence.")
+    separate, _ = ingest(db, sources["linkedin"], social)
+    assert separate != identifier
+    social.description = DESCRIPTION
+    combined, is_new = ingest(db, sources["linkedin"], social)
+    assert not is_new
+    assert db.one("SELECT COUNT(*) AS n FROM vacancies")["n"] == 1
+    assert db.one("SELECT COUNT(*) AS n FROM observations")["n"] == 2
+    assert db.one("SELECT description FROM vacancies WHERE id=?", (combined,))["description"] == DESCRIPTION
+
+
 @pytest.mark.parametrize("change", [
     {"title": "Junior AI Engineer (Computer Vision)"},
     {"title": "Senior AI Engineer (LLM)"},
