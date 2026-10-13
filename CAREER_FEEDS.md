@@ -1,6 +1,6 @@
 # Direct company career feeds
 
-Job Radar checks these 102 verified company career listings. Each entry points to an employer career page or its dedicated recruiting portal. A listing is stored only when its own job posting has a relevant title and description. An empty scan means no matching open posting was found by that adapter at scan time; it does not imply the company has no vacancies.
+Job Radar maintains these company career feeds, including three newly implemented global-technology adapters awaiting live verification. Each entry points to an employer career page or its dedicated recruiting portal. A listing is stored only when its own job posting has a relevant title and description. An empty scan means no matching open posting was found by that adapter at scan time; it does not imply the company has no vacancies.
 
 | Company | Career page | Adapter |
 | --- | --- | --- |
@@ -61,6 +61,9 @@ Job Radar checks these 102 verified company career listings. Each entry points t
 | Viettel AI | [Open careers](https://jobs.viettel.vn/search/?q=Viettel+AI) | SuccessFactors |
 | Viettel Software | [Open careers](https://jobs.viettel.vn/search/?q=Viettel+Software) | SuccessFactors |
 | Viettel Research and Development | [Open careers](https://jobs.viettel.vn/search/?q=Viettel+R%26D) | SuccessFactors |
+| Qualcomm | [Open careers](https://careers.qualcomm.com/careers) | Eightfold API (unverified live) |
+| NXP Vietnam | [Open careers](https://nxp.wd3.myworkdayjobs.com/careers) | Workday Vietnam-scoped search (unverified live) |
+| Cadence Vietnam | [Open careers](https://cadence.wd1.myworkdayjobs.com/External_Careers) | Workday Vietnam-scoped search (unverified live) |
 | NVIDIA | [Open careers](https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite) | Workday CXS API |
 | Shopee | [Open careers](https://careers.shopee.vn/jobs) | WorkAtSea ATS API |
 | SPX Express | [Open careers](https://careers.shopee.vn/jobs) | WorkAtSea ATS API |
@@ -110,3 +113,7 @@ Job Radar checks these 102 verified company career listings. Each entry points t
 The [employer directory](job_radar/seeds.py) contains 182 companies after the [HCMC-based exclusions](EMPLOYER_SCOPE.md). Its other 80 entries are leads without an active built-in feed. Their presence in the directory is not a claim that their jobs are collected. Add a verified direct career page from an employer card. General job aggregators are not part of this catalog.
 
 Feed definitions and selectors: [job_radar/feed_catalog.py](job_radar/feed_catalog.py). Collector implementations: [job_radar/collectors.py](job_radar/collectors.py). Older postings with an explicit past deadline are skipped. The app creates no placeholder vacancies.
+
+## Agent 8 verification gap (2026-10-13)
+
+Qualcomm, NXP Vietnam, and Cadence Vietnam are provisionally integrated and covered by mocked parsing/pagination tests, but live API responses were not available for verification in the agent execution environment. Do **not** count them as verified until a successful live listing and posting-detail scan is recorded. Samsung R&D Vietnam, Samsung Electronics Vietnam, LG Electronics R&D Vietnam, MediaTek Vietnam and ARM remain blocked pending independently verifiable Vietnam-scoped inventory and full requisition detail endpoints. See `docs/career-feed-targets.json` for per-employer evidence.
