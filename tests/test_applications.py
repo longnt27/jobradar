@@ -535,3 +535,101 @@ def test_application_page_sorting_by_status_and_recency(tmp_path: Path) -> None:
     assert item_ids == expected
 
 
+def test_viewing_application_marks_job_seen(tmp_path: Path) -> None:
+    client = TestClient(create_app(Settings(tmp_path)))
+    draft = _prepared(client, "https://example.org/apply")
+    job_id = draft["vacancy_id"]
+    db = client.app.state.db
+
+    # Simulate an unseen job and draft
+    db.execute("UPDATE vacancies SET seen_at=NULL WHERE id=?", (job_id,))
+    db.execute("UPDATE application_drafts SET seen_at=NULL WHERE id=?", (draft["id"],))
+
+    job_before = client.get(f"/api/jobs/{job_id}").json()
+    assert job_before["read_state"] == "unseen"
+    assert job_before.get("seen_at") is None
+
+    # Viewing the application marks both the draft and the job as seen
+    response = client.get(f"/api/applications/{draft['id']}")
+    assert response.status_code == 200
+
+    row = db.one("SELECT seen_at FROM application_drafts WHERE id=?", (draft["id"],))
+    assert row["seen_at"] is not None
+
+    job_after = client.get(f"/api/jobs/{job_id}").json()
+    assert job_after["seen_at"] is not None
+    assert job_after["read_state"] == "seen"
+
+    unseen_page = client.get("/api/jobs/page?inbox=unseen").json()
+    assert all(item["id"] != job_id for item in unseen_page["items"])
+
+    all_page = client.get("/api/jobs/page?inbox=all").json()
+    matched = [item for item in all_page["items"] if item["id"] == job_id]
+    assert len(matched) == 1
+    assert matched[0]["read_state"] == "seen"
+
+
+def test_explicit_application_seen_and_patch_mark_job_seen(tmp_path: Path) -> None:
+    client = TestClient(create_app(Settings(tmp_path)))
+    draft = _prepared(client, "https://example.org/apply")
+    job_id = draft["vacancy_id"]
+    db = client.app.state.db
+
+    db.execute("UPDATE vacancies SET seen_at=NULL WHERE id=?", (job_id,))
+    db.execute("UPDATE application_drafts SET seen_at=NULL WHERE id=?", (draft["id"],))
+
+    seen_res = client.post(f"/api/applications/{draft['id']}/seen")
+    assert seen_res.status_code == 200
+    assert seen_res.json()["seen_at"] is not None
+
+    job = client.get(f"/api/jobs/{job_id}").json()
+    assert job["read_state"] == "seen"
+    assert job["seen_at"] is not None
+
+    db.execute("UPDATE vacancies SET seen_at=NULL WHERE id=?", (job_id,))
+    db.execute("UPDATE application_drafts SET seen_at=NULL WHERE id=?", (draft["id"],))
+
+    patch_res = client.patch(
+        f"/api/applications/{draft['id']}",
+        json={"destination": {"kind": "email", "email": "jobs@example.org"}},
+    )
+    assert patch_res.status_code == 200
+    job_after_patch = client.get(f"/api/jobs/{job_id}").json()
+    assert job_after_patch["read_state"] == "seen"
+    assert job_after_patch["seen_at"] is not None
+
+
+def test_database_migration_backfills_seen_jobs_with_applications(tmp_path: Path) -> None:
+    from job_radar.db import Database
+    db_file = tmp_path / "test_migration.sqlite3"
+    db = Database(db_file)
+
+    job_id = "job-unseen-with-app"
+    draft_id = "draft-seen"
+    db.execute(
+        "INSERT INTO vacancies(id,title,company,description,first_seen_at,last_seen_at,created_at,updated_at) "
+        "VALUES(?,?,?,?,datetime('now'),datetime('now'),datetime('now'),datetime('now'))",
+        (job_id, "DevOps Engineer", "Cloud Corp", "Manage cloud infrastructure."),
+    )
+    db.execute(
+        "INSERT INTO application_drafts(id,vacancy_id,status,provider,provider_mode,evidence_ids,resume_data,message_data,form_data,destination,warnings,created_at,updated_at) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,'[]',datetime('now'),datetime('now'))",
+        (draft_id, job_id, "awaiting_review", "codex", "direct", "[]", "{}", "{}", "{}", "{}"),
+    )
+    db.execute(
+        "INSERT INTO auto_application_attempts(vacancy_id,status,requested_by,created_at,updated_at) VALUES(?,?,?,datetime('now'),datetime('now'))",
+        (job_id, "awaiting_review", "manual"),
+    )
+
+    db.execute("UPDATE vacancies SET seen_at=NULL WHERE id=?", (job_id,))
+    db.execute("UPDATE application_drafts SET seen_at=NULL WHERE id=?", (draft_id,))
+    db.execute("DELETE FROM settings WHERE key='jobs_with_seen_applications_v1'")
+
+    db2 = Database(db_file)
+    vac = db2.one("SELECT seen_at FROM vacancies WHERE id=?", (job_id,))
+    d = db2.one("SELECT seen_at FROM application_drafts WHERE id=?", (draft_id,))
+    assert d["seen_at"] is not None
+    assert vac["seen_at"] is not None
+
+
+

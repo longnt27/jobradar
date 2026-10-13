@@ -337,7 +337,9 @@ def refresh_saved_answer_blockers(form: dict) -> dict:
                if field.get("required") and field.get("type") != "file"
                and not str(answers.get(str(field.get("index"))) or "").strip()]
     other = [str(blocker) for blocker in form.get("inspection_blockers", [])
-             if not str(blocker).startswith("Answer required:")]
+             if not str(blocker).startswith("Answer required:")
+             and not str(blocker).startswith("LinkedIn rejected step")
+             and not str(blocker).startswith("LinkedIn did not advance")]
     return {**form, "inspection_blockers": [*missing, *other]}
 
 
@@ -446,6 +448,57 @@ async def _fill_step(page: Page, root, fields: list[dict], answers: dict[str, st
     return missing
 
 
+async def _extract_step_errors(root) -> list[str]:
+    """Find visible error messages or field validation feedback inside the current Easy Apply step."""
+    try:
+        errors = await root.evaluate(r"""node => {
+            const issues = [];
+            const isVisible = el => {
+                const box = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return box.width > 0 && box.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+            };
+            const inputs = node.querySelectorAll("input, select, textarea");
+            inputs.forEach(inp => {
+                const describedBy = inp.getAttribute("aria-describedby");
+                let label = (inp.getAttribute("aria-label") || inp.labels?.[0]?.textContent || "").trim();
+                if (!label) {
+                    const prev = inp.previousElementSibling;
+                    if (prev && ["LABEL", "P", "SPAN"].includes(prev.tagName)) label = prev.textContent.trim();
+                }
+                label = label.replace(/\s*\*\s*$/, "").trim();
+                if (describedBy) {
+                    describedBy.split(/\s+/).forEach(id => {
+                        const helper = document.getElementById(id);
+                        if (helper && isVisible(helper)) {
+                            for (const p of helper.querySelectorAll("p, span")) {
+                                const txt = p.textContent.trim();
+                                if (/invalid|error|required|bắt buộc|không hợp lệ/i.test(txt) && !/character/i.test(txt)) {
+                                    let msg = label ? `${label}: ${txt}` : txt;
+                                    if (/invalid/i.test(txt) && /thu nhập|lương|salary|compensation|kinh nghiệm|experience|năm|year/i.test(label)) {
+                                        msg += " (enter digits only)";
+                                    }
+                                    if (!issues.includes(msg)) issues.push(msg);
+                                }
+                            }
+                        }
+                    });
+                }
+            });
+            const errEls = node.querySelectorAll(".artdeco-inline-feedback--error, [data-test-form-element-error-messages], .fb-form-element__error-text");
+            errEls.forEach(el => {
+                if (isVisible(el)) {
+                    const txt = el.textContent.trim();
+                    if (txt && !issues.includes(txt)) issues.push(txt);
+                }
+            });
+            return issues;
+        }""")
+        return [str(e) for e in errors if e]
+    except Exception:
+        return []
+
+
 async def _advance(page: Page, button, step: int) -> bool:
     for _ in range(30):
         try:
@@ -491,7 +544,11 @@ async def inspect_easy_apply_dialog(page: Page, posting_url: str, existing_answe
             complete = True
             break
         if not await _advance(page, button, step):
-            blockers = ["LinkedIn did not advance to the next application page. Review this step manually."]
+            inline_errors = await _extract_step_errors(root)
+            if inline_errors:
+                blockers = [f"LinkedIn rejected step {step}: {'; '.join(inline_errors)}"]
+            else:
+                blockers = ["LinkedIn did not advance to the next application page. Review this step manually."]
             break
     return {"kind": "linkedin_easy_apply", "fields": fields, "answers": answers,
             "attachments": attachments, "complete": complete, "inspection_blockers": blockers,
@@ -529,7 +586,9 @@ async def submit_easy_apply_dialog(page: Page, reviewed: dict, resume_path: Path
                 except Exception:
                     return "submitted_unconfirmed", f"LinkedIn submit was clicked; confirmation was not detected at {page.url}"
             if not await _advance(page, button, step):
-                return "needs_user_attention", "LinkedIn did not advance after filling the reviewed answers"
+                inline_errors = await _extract_step_errors(root)
+                detail = f"LinkedIn did not advance after filling the reviewed answers: {'; '.join(inline_errors)}" if inline_errors else "LinkedIn did not advance after filling the reviewed answers"
+                return "needs_user_attention", detail
         return "needs_user_attention", "LinkedIn application had more steps than were reviewed"
     except Exception as error:
         return "needs_user_attention", str(error)

@@ -702,6 +702,9 @@ def _apply_projects_reply(draft: dict, reply: str, db: Database, settings: Setti
 def _apply_all_reply(draft: dict, reply: str, db: Database, settings: Settings, instruction: str = "") -> dict:
     data = _extract_json_or_none(reply)
     if isinstance(data, dict):
+        for root_key in ("resume", "application", "draft", "candidate", "revised", "data"):
+            if root_key in data and isinstance(data[root_key], dict):
+                data = {**data, **data[root_key]}
         resume = {**draft["resume_data"]}
         preferences = get_preferences(db)
         count = preference(preferences, "project_count")
@@ -728,9 +731,10 @@ def _apply_all_reply(draft: dict, reply: str, db: Database, settings: Settings, 
                     else:
                         clean_item = dict(item)
                         clean_item["bullets"] = normalized_bullets
-                        projects.append(clean_item)
             if projects:
                 resume["projects"] = _backfill_projects(projects, cards, excluded_text=instruction, count=count, bullet_count=bullet_count)
+        if len(resume.get("projects", [])) < count:
+            resume["projects"] = _backfill_projects(resume.get("projects") or [], cards, excluded_text=instruction, count=count, bullet_count=bullet_count)
         explicit_bold = data.get("bold_phrases") if isinstance(data.get("bold_phrases"), list) else None
         resume["bold_phrases"] = _populate_resume_bold_phrases(resume, explicit_phrases=explicit_bold)
         db.execute("UPDATE application_drafts SET warnings='[]' WHERE id=?", (draft["id"],))
@@ -738,6 +742,64 @@ def _apply_all_reply(draft: dict, reply: str, db: Database, settings: Settings, 
         if "message_data" in data and isinstance(data["message_data"], dict):
             updates["message_data"] = data["message_data"]
         return update_draft(db, settings, draft["id"], updates)
+
+    # Fallback: attempt markdown section parsing if raw reply is structured markdown
+    heading_map = {
+        "summary": "summary",
+        "professional summary": "summary",
+        "experience": "experience",
+        "work experience": "experience",
+        "selected projects": "projects",
+        "projects": "projects",
+        "skills": "skills",
+        "skill groups": "skills",
+        "education": "education",
+        "achievements": "achievements",
+        "message": "message",
+        "application message": "message",
+        "email": "message",
+        "cover letter": "message",
+    }
+    parsed_sections: dict[str, str] = {}
+    current_section = None
+    current_lines = []
+    for line in reply.splitlines():
+        m = re.match(r"^(?:#{1,4}|\*\*)\s*([A-Za-z\s]+?)\s*(?:\*\*)?:?$", line.strip())
+        if m:
+            sec_name = m.group(1).strip().lower()
+            target_sec = heading_map.get(sec_name)
+            if target_sec:
+                if current_section and current_lines:
+                    parsed_sections[current_section] = "\n".join(current_lines).strip()
+                current_section = target_sec
+                current_lines = []
+                continue
+        if current_section is not None:
+            current_lines.append(line)
+    if current_section and current_lines:
+        parsed_sections[current_section] = "\n".join(current_lines).strip()
+
+    if parsed_sections:
+        current_draft = draft
+        for sec, content in parsed_sections.items():
+            if sec == "summary":
+                current_draft = _apply_summary_reply(current_draft, content, db, settings)
+            elif sec == "message":
+                current_draft = _apply_message_reply(current_draft, content, db, settings)
+            elif sec == "experience":
+                current_draft = _apply_experience_reply(current_draft, content, db, settings)
+            elif sec == "projects":
+                current_draft = _apply_projects_reply(current_draft, content, db, settings, instruction=instruction)
+            elif sec == "skills":
+                current_draft = _apply_skills_reply(current_draft, content, db, settings)
+            elif sec == "education":
+                current_draft = _apply_education_reply(current_draft, content, db, settings)
+            elif sec == "achievements":
+                current_draft = _apply_achievements_reply(current_draft, content, db, settings)
+        if current_draft.get("package_hash") != draft.get("package_hash"):
+            db.execute("UPDATE application_drafts SET warnings='[]' WHERE id=?", (draft["id"],))
+            return current_draft
+
     return draft
 
 

@@ -58,6 +58,18 @@ def mark_seen(db: Database, job_id: str) -> dict[str, Any]:
     return row
 
 
+def mark_application_seen(db: Database, draft_id: str) -> dict[str, Any]:
+    draft = db.one("SELECT id,vacancy_id,seen_at FROM application_drafts WHERE id=?", (draft_id,))
+    if not draft:
+        raise KeyError("Application not found")
+    timestamp = now()
+    if not draft.get("seen_at"):
+        db.execute("UPDATE application_drafts SET seen_at=?,updated_at=? WHERE id=?", (timestamp, timestamp, draft_id))
+        draft["seen_at"] = timestamp
+    mark_seen(db, draft["vacancy_id"])
+    return draft
+
+
 def set_decision(
     db: Database,
     job_id: str,
@@ -177,7 +189,7 @@ def enrich_jobs(db: Database, rows: list[dict[str, Any]]) -> list[dict[str, Any]
     placeholders = ",".join("?" for _ in identifiers)
 
     draft_rows = db.all(
-        "SELECT id,vacancy_id,status,updated_at FROM application_drafts "
+        "SELECT id,vacancy_id,status,updated_at,seen_at FROM application_drafts "
         f"WHERE vacancy_id IN ({placeholders}) ORDER BY updated_at DESC",
         tuple(identifiers),
     )
@@ -227,8 +239,11 @@ def enrich_jobs(db: Database, rows: list[dict[str, Any]]) -> list[dict[str, Any]
         row["latest_submission_at"] = submission["sent_at"] if submission else None
         row["latest_draft_status"] = draft["status"] if draft else None
         row["latest_draft_id"] = draft["id"] if draft else None
+        row["latest_draft_seen_at"] = draft.get("seen_at") if draft else None
         row["preparation_status"] = attempt["status"] if attempt else None
         row["preparation_detail"] = attempt["detail"] if attempt else None
         row["preparation_requested_by"] = attempt["requested_by"] if attempt else None
+        if not row.get("seen_at") and draft and draft.get("seen_at"):
+            row["seen_at"] = draft["seen_at"]
         row["read_state"] = "seen" if row.get("seen_at") else "unseen"
     return rows

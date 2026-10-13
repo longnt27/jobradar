@@ -615,6 +615,13 @@ button.danger,.text-button.danger{color:var(--danger-text,#a4382d);border-color:
 .toast-action:hover{background:var(--hover-overlay,rgba(0,0,0,.06));filter:none}
 .toast-dismiss{flex:none;border:0;background:transparent;color:inherit;font-size:18px;line-height:1;cursor:pointer;padding:2px 6px;border-radius:4px}
 .toast-dismiss:hover{background:var(--hover-overlay,rgba(0,0,0,.08))}
+.toast-context{display:flex;align-items:center;gap:6px;margin-bottom:3px;font-size:12px;opacity:.95}
+.toast-context-badge{display:inline-block;padding:1px 5px;border-radius:4px;background:rgba(0,0,0,.15);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.03em}
+.toast-context-title{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.toast-action--context{font-weight:700;text-decoration:underline;cursor:pointer}
+.application-card.has-error{border-color:var(--danger-border,#f0a8a8);background:var(--danger-surface-subtle,#fff5f5)}
+.item-error-preview{margin-top:4px;font-size:11px;color:var(--danger-text,#a12020);line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.application-alert-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
 
 .jobs-page-head{align-items:flex-end}
 .jobs-page-head h2{margin:0 0 5px;font-size:23px;letter-spacing:-.035em}

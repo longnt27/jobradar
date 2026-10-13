@@ -310,3 +310,174 @@ def test_application_workspace_static_contract() -> None:
     assert ".application-attachment-upload[hidden]" in css
     assert "label.is-dirty::after" in css
     assert ".confirm-dialog" in css
+    assert ".application-card.has-error" in css
+    assert ".item-error-preview" in css
+    assert ".toast-context" in css
+    assert "recordApplicationError" in js
+    assert "active-application-error-banner" in js
+
+
+def test_application_error_tracks_originating_application_when_switching_cards(tmp_path: Path) -> None:
+    app = create_app(Settings(tmp_path))
+    app.state.db.execute("UPDATE sources SET enabled=0")
+    client = TestClient(app)
+    profile = client.get("/api/profile").json()
+    profile.update({
+        "name": "Alex Example",
+        "email": "alex@example.org",
+        "experience": [{"company": "Prior Co", "role": "Engineer", "dates": "2024-2026",
+                        "bullets": ["Built Python systems."]}],
+    })
+    client.put("/api/profile", json=profile)
+
+    app1 = _prepare(client, "Stripe", "Backend Engineer", "https://example.org/apply1")
+    app2 = _prepare(client, "Figma", "Design Technologist", "https://example.org/apply2")
+
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
+    thread = Thread(target=server.run, daemon=True)
+    thread.start()
+    try:
+        for _ in range(100):
+            if server.started:
+                break
+            time.sleep(.05)
+        assert server.started
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            try:
+                page = browser.new_page(viewport={"width": 1280, "height": 900})
+                page.set_default_timeout(20000)
+                page.goto(f"http://127.0.0.1:{port}/#applications/{app1['id']}")
+
+                page.locator(f'[data-application="{app1["id"]}"]').wait_for()
+                detail = page.locator("#application-detail")
+                detail.get_by_role("button", name="2 Package Resume & submission").click()
+
+                # Trigger error on app1 by saving invalid LaTeX bullet
+                detail.locator(".application-cv-details summary").click()
+                bullets_input = detail.locator('[data-experience-bullets="0"]')
+                bullets_input.fill("Invalid bullet without item tag")
+                save_btn = detail.locator("#save-draft")
+                save_btn.click()
+
+                # Verify toast identifies app1
+                toast = page.locator("#notice")
+                toast.wait_for(state="visible")
+                assert "Backend Engineer" in toast.inner_text()
+                assert "Stripe" in toast.inner_text()
+                context_btn = toast.locator(".toast-action--context")
+                assert context_btn.is_visible()
+                assert "Open application →" in context_btn.inner_text()
+
+                # Verify app1 card in sidebar shows error badging
+                app1_card = page.locator(f'[data-application="{app1["id"]}"]')
+                assert "has-error" in (app1_card.get_attribute("class") or "")
+                assert "Error" in app1_card.inner_text()
+                assert "Issue:" in app1_card.inner_text()
+
+                # Switch to app2
+                app2_card = page.locator(f'[data-application="{app2["id"]}"]')
+                app2_card.click()
+
+                # Detail shows app2
+                page.locator("#application-detail h2", has_text="Design Technologist").wait_for()
+                assert not page.locator("#active-application-error-banner").is_visible()
+
+                # Toast still identifies app1
+                assert "Backend Engineer" in toast.inner_text()
+                assert "Stripe" in toast.inner_text()
+                assert "has-error" in (app1_card.get_attribute("class") or "")
+
+                # User clicks "Open application →" on the toast to return to app1
+                context_btn.click()
+
+                # App1 detail is opened and displays the active error banner
+                page.locator("#application-detail h2", has_text="Backend Engineer").wait_for()
+                banner = page.locator("#active-application-error-banner")
+                banner.wait_for(state="visible")
+                assert "Recent issue on this application" in banner.inner_text()
+                assert "What happened:" in banner.inner_text()
+                assert "Next step:" in banner.inner_text()
+
+                # Dismiss the error
+                dismiss_btn = banner.locator("#btn-dismiss-app-error")
+                dismiss_btn.click()
+                banner.wait_for(state="hidden")
+                assert "has-error" not in (app1_card.get_attribute("class") or "")
+            finally:
+                browser.close()
+    finally:
+        server.should_exit = True
+        thread.join(timeout=5)
+
+
+def test_viewing_application_marks_job_seen_in_ui(tmp_path: Path) -> None:
+    app = create_app(Settings(tmp_path))
+    app.state.db.execute("UPDATE sources SET enabled=0")
+    client = TestClient(app)
+    profile = client.get("/api/profile").json()
+    profile.update({
+        "name": "Alex Example",
+        "email": "alex@example.org",
+        "experience": [{"company": "Prior Co", "role": "Engineer", "dates": "2024-2026",
+                        "bullets": ["Built Python systems."]}],
+    })
+    client.put("/api/profile", json=profile)
+
+    draft = _prepare(client, "Seen Test Co", "Data Platform Engineer", "https://example.org/apply")
+    job_id = draft["vacancy_id"]
+
+    # Ensure job and draft are unseen initially
+    app.state.db.execute("UPDATE vacancies SET seen_at=NULL WHERE id=?", (job_id,))
+    app.state.db.execute("UPDATE application_drafts SET seen_at=NULL WHERE id=?", (draft["id"],))
+
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
+    thread = Thread(target=server.run, daemon=True)
+    thread.start()
+    try:
+        for _ in range(100):
+            if server.started:
+                break
+            time.sleep(.05)
+        assert server.started
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            try:
+                page = browser.new_page(viewport={"width": 1280, "height": 900})
+                page.set_default_timeout(10000)
+
+                # Open jobs tab first to verify unseen state
+                page.goto(f"http://127.0.0.1:{port}/#jobs")
+                card = page.locator(f'[data-job-card="{job_id}"]')
+                card.wait_for()
+                assert "is-unseen" in (card.get_attribute("class") or "")
+                assert card.locator(".job-unread-dot").count() == 1
+
+                # Navigate to the application in the applications tab
+                page.goto(f"http://127.0.0.1:{port}/#applications/{draft['id']}")
+                page.locator(f'[data-application="{draft["id"]}"]').wait_for()
+                page.locator("#application-detail").wait_for()
+
+                # Verify backend state is updated
+                assert client.get(f"/api/jobs/{job_id}").json()["read_state"] == "seen"
+
+                # Go back to jobs tab, verify unseen styling and dot are gone
+                page.goto(f"http://127.0.0.1:{port}/#jobs")
+                card = page.locator(f'[data-job-card="{job_id}"]')
+                card.wait_for()
+                assert "is-unseen" not in (card.get_attribute("class") or "")
+                assert card.locator(".job-unread-dot").count() == 0
+            finally:
+                browser.close()
+    finally:
+        server.should_exit = True
+        thread.join(timeout=5)
+
+

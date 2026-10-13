@@ -474,11 +474,20 @@ def _tokens(value: str) -> set[str]:
 
 
 _FIT_STOPWORDS = {"and", "the", "for", "with", "from", "using", "build", "develop", "engineer",
-                  "project", "system", "systems", "work", "team", "role", "quality"}
+                  "project", "system", "systems", "work", "team", "role", "quality",
+                  "display", "job", "jobs", "field", "fields", "requirement", "requirements",
+                  "description", "company", "location", "apply", "application", "experience",
+                  "candidate", "candidates", "summary", "responsible", "responsibilities"}
 _LLM_AREAS = {"llm", "rag", "retrieval", "language", "speech", "pronunciation"}
 _VISION_AREAS = {"vision", "perception", "detection", "pose", "motion", "image", "scanning"}
 _LLM_RESULT_AREAS = {"llm", "rag", "retrieval"}
 _VISION_RESULT_AREAS = {"vision", "perception", "detection", "pose", "motion", "image"}
+_AI_TERMS = {"ai", "ml", "machine", "learning", "deep", "neural", "model", "models",
+             "llm", "rag", "vision", "nlp", "speech", "pytorch", "tensorflow", "keras",
+             "embedding", "embeddings", "transformer", "transformers"}
+_AI_TECH = {"pytorch", "tensorflow", "keras", "core ml", "coreml", "yolo", "llm", "rag",
+            "wav2vec", "wav2vec2", "ctc", "pose", "visionkit", "opencv", "scikit-learn",
+            "transformers", "langchain", "langgraph", "fastapi", "numpy", "pandas"}
 
 
 def _fit_terms(value: str) -> set[str]:
@@ -491,9 +500,23 @@ def _result_score(terms: set[str], result: dict) -> int:
 
 
 def _job_domains(terms: set[str]) -> tuple[bool, bool]:
-    llm = bool(terms & {"llm", "rag"} or {"large", "language", "model"} <= terms)
-    vision = bool(terms & {"vision", "perception", "yolo", "detection", "pose"})
+    llm = bool(terms & {"llm", "rag", "retrieval", "nlp", "chatbot", "agent", "agents"} or {"large", "language", "model"} <= terms)
+    vision = bool(terms & {"vision", "perception", "yolo", "detection", "pose", "video", "image", "diffusion", "3d", "motion"})
     return llm, vision
+
+
+def _is_ai_job(terms: set[str]) -> bool:
+    return bool(terms & _AI_TERMS)
+
+
+def _is_ai_project(card: dict) -> bool:
+    details = card.get("details") or {}
+    results = details.get("results") or []
+    areas = _fit_terms(card["title"]) | set().union(*(_fit_terms(str(item.get("area", ""))) for item in results))
+    if areas & (_LLM_AREAS | _VISION_AREAS):
+        return True
+    stack = {s.casefold() for s in details.get("tech_stack", [])}
+    return bool(stack & _AI_TECH)
 
 
 def _relevant_results(job: dict, results: list[dict], requested_ids: list[str] | None = None) -> list[dict]:
@@ -524,16 +547,46 @@ def _project_score(terms: set[str], card: dict) -> int:
                 return 0
             if vision_job and not areas & _VISION_AREAS:
                 return 0
+        if _is_ai_job(terms) and not _is_ai_project(card):
+            return 0
         focus = max((_result_score(terms, item) for item in results), default=0)
-        context = len(terms & _fit_terms(f"{card['title']} {details.get('what', '')} {details.get('how', '')}"))
+        stack_text = " ".join(details.get("tech_stack", []))
+        context = len(terms & _fit_terms(f"{card['title']} {stack_text} {details.get('what', '')} {details.get('how', '')}"))
         return focus * 3 + context
-    return len(terms & _fit_terms(f"{card['title']} {card['claim']} {details}"))
+    return len(terms & _fit_terms(f"{card['title']} {card.get('claim', '')} {details}"))
 
 
 def _select(job: dict, cards: list[dict], count: int = 3) -> list[dict]:
     terms = _fit_terms(f"{job['title']} {job['description']}")
     scored = sorted(enumerate(cards), key=lambda pair: (-_project_score(terms, pair[1]), pair[0]))
-    return [card for _, card in scored if _project_score(terms, card) > 0][:count]
+    selected = [card for _, card in scored if _project_score(terms, card) > 0]
+    required = min(count, len(cards))
+    if len(selected) < required:
+        selected_ids = {c["id"] for c in selected}
+        llm_job, vision_job = _job_domains(terms)
+
+        def _backfill_key(pair: tuple[int, dict]) -> tuple[int, int, int, int]:
+            idx, card = pair
+            details = card.get("details") or {}
+            results = details.get("results") or []
+            areas = _fit_terms(card.get("title", "")) | set().union(*(_fit_terms(str(item.get("area", ""))) for item in results))
+            mismatch = 0
+            if vision_job and not llm_job and (areas & _LLM_RESULT_AREAS):
+                mismatch = 1
+            elif llm_job and not vision_job and (areas & _VISION_AREAS):
+                mismatch = 1
+            ai_flag = 0 if _is_ai_project(card) else 1
+            has_benchmarks = 0 if any(re.search(r"\b(?:F1|PCC|mAP|PA-MPJPE|PSNR|SSIM|\d+(?:\.\d+)?%|\d+[×x]\s*faster)\b", str(item.get("outcome", ""))) for item in results) else 1
+            return (ai_flag, has_benchmarks, mismatch, idx)
+
+        remaining = [pair for pair in enumerate(cards) if pair[1]["id"] not in selected_ids]
+        remaining.sort(key=_backfill_key)
+        for _, c in remaining:
+            selected.append(c)
+            selected_ids.add(c["id"])
+            if len(selected) >= required:
+                break
+    return selected[:count]
 
 
 def _template(job: dict, profile: dict, cards: list[dict]) -> ModelDraft:
@@ -552,13 +605,47 @@ def _template(job: dict, profile: dict, cards: list[dict]) -> ModelDraft:
         english_background = render_prompt(preferences, "local_projects_en")
         vietnamese_background = render_prompt(preferences, "local_projects_vi")
     body = vietnamese_background if vietnamese else english_background
+    bullet_count = preference(preferences, "project_bullet_count")
+    project_bullets = []
+    project_focus = []
+    bold_candidates = []
+    from .chatgpt_handoff import _extract_metric_phrases
+    for card in selected:
+        details = card.get("details") or {}
+        card_results = details.get("results") or []
+        relevant = _relevant_results(job, card_results) if card_results else []
+        outcome = (relevant[0].get("outcome") or "") if relevant else ""
+        curated_bullets = details.get("bullets") or []
+        if bullet_count == 2:
+            if curated_bullets and not re.search(r"\b(?:F1|PCC|mAP|PA-MPJPE|\d+(?:\.\d+)?%|\d+[×x]\s*faster)\b", curated_bullets[0]):
+                intro = curated_bullets[0]
+            else:
+                intro = details.get("what") or card["claim"]
+            result_bullet = outcome or (curated_bullets[1] if len(curated_bullets) > 1 else card["claim"])
+            bullets = [intro, result_bullet]
+        else:
+            bullets = [r.get("outcome", "") for r in relevant if r.get("outcome")] if relevant else curated_bullets or [card["claim"]]
+            bullets = bullets[:bullet_count]
+        project_bullets.append(ProjectBullets(
+            evidence_id=card["id"],
+            bullets=bullets,
+            skills=(details.get("tech_stack") or [])[:5]
+        ))
+        if relevant:
+            project_focus.append(ProjectFocus(
+                evidence_id=card["id"],
+                result_ids=[str(item["id"]) for item in relevant if item.get("id")]
+            ))
+        for b in bullets[1:]:
+            bold_candidates.extend(_extract_metric_phrases(b))
+    for exp in profile.get("experience", []):
+        for eb in exp.get("bullets", []):
+            if re.search(r"\d", str(eb)):
+                bold_candidates.extend(_extract_metric_phrases(str(eb)))
     return ModelDraft(selected_evidence_ids=[card["id"] for card in selected],
-                      project_bullets=[ProjectBullets(evidence_id=card["id"], bullets=
-                          [item["outcome"] for item in _relevant_results(job, card["details"]["results"])]
-                          if card.get("details", {}).get("results") else card.get("details", {}).get("bullets") or [card["claim"]])
-                          for card in selected],
-                      project_focus=[ProjectFocus(evidence_id=card["id"], result_ids=[str(item["id"]) for item in _relevant_results(job, card["details"].get("results") or [])])
-                                     for card in selected if card["details"].get("results")],
+                      project_bullets=project_bullets,
+                      project_focus=project_focus,
+                      bold_phrases=list(dict.fromkeys(bold_candidates))[:8],
                       summary=profile.get("summary", ""),
                       fit_text=body)
 
@@ -579,8 +666,20 @@ def _run_provider(provider: str, job: dict, profile: dict, cards: list[dict], cu
     bullet_count = preference(preferences, "project_bullet_count")
     structure_customized = any(key in (preferences or {}) for key in ("project_count", "project_bullet_count"))
     required_count = min(count, len(cards))
-    for attempt in range(2):
-        model = _provider_json(provider, prompt, ModelDraft)
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            model = _provider_json(provider, prompt, ModelDraft)
+        except RuntimeError as error:
+            last_error = error
+            error_str = str(error).lower()
+            if "quota" in error_str or "not installed" in error_str or "not signed in" in error_str:
+                raise
+            if attempt < 2:
+                prompt += (f"\n\nThe previous output was invalid: {str(error)[:300]}. "
+                           "Return ONLY a strictly valid JSON object matching the required schema.")
+                continue
+            raise
         if not cards or (len(cards) < count and not structure_customized):
             return model
         approved = {card["id"] for card in cards}
@@ -606,7 +705,7 @@ def _run_provider(provider: str, job: dict, profile: dict, cards: list[dict], cu
         )
         if complete_projects and complete_bold and model.fit_text.strip():
             return model
-        if attempt == 0:
+        if attempt < 2:
             prompt += (f"\n\nYour response must select exactly {required_count} distinct approved project IDs in evidence-strength order and provide exactly "
                        f"{bullet_count} project_bullets and three to five selected skills for each ID: what/how first, result second. "
                        "In bold_phrases, quote one short exact measured result from a candidate experience bullet "
@@ -614,7 +713,7 @@ def _run_provider(provider: str, job: dict, profile: dict, cards: list[dict], cu
                        "Return only candidate-fit text in fit_text, with no greeting, education, source, "
                        "call to action, or signature. "
                        "Return a corrected full JSON response.")
-    raise RuntimeError("The drafting model omitted required projects, skills, result emphasis, or candidate identity")
+    raise RuntimeError(f"The drafting model omitted required projects, skills, result emphasis, or candidate identity{f': {last_error}' if last_error else ''}")
 
 
 def _provider_json(provider: str, prompt: str, response_type: type[BaseModel]) -> BaseModel:
@@ -681,11 +780,23 @@ def draft_custom_answers(provider: str, job: dict, profile: dict, cards: list[di
         "approved_evidence": [{key: card[key] for key in ("id", "kind", "title", "claim")} for card in cards],
         "fields": [{key: field.get(key) for key in ("index", "label", "group_label", "max_length")} for field in safe_fields],
     }
-    prompt = (render_prompt(profile.get("writing_preferences"), "form_answers", message_language=_job_language(job)) + json.dumps(payload, ensure_ascii=False)[:30_000])
-    result = _provider_json(provider, prompt, FormAnswers)
-    allowed = {str(field["index"]): field for field in safe_fields}
-    return {item.index: item.answer[:allowed[item.index]["max_length"]] if allowed[item.index]["max_length"] else item.answer
-            for item in result.answers if item.index in allowed}
+    last_error: Exception | None = None
+    for attempt in range(2):
+        try:
+            result = _provider_json(provider, prompt, FormAnswers)
+            allowed = {str(field["index"]): field for field in safe_fields}
+            return {item.index: item.answer[:allowed[item.index]["max_length"]] if allowed[item.index]["max_length"] else item.answer
+                    for item in result.answers if item.index in allowed}
+        except RuntimeError as error:
+            last_error = error
+            error_str = str(error).lower()
+            if "quota" in error_str or "not installed" in error_str or "not signed in" in error_str:
+                raise
+            if attempt == 0:
+                prompt += f"\n\nThe previous output was invalid: {str(error)[:200]}. Return ONLY valid JSON matching the schema."
+                continue
+            raise
+    raise RuntimeError(f"{provider} failed to generate valid form answers: {last_error}")
 
 
 def render_resume(settings: Settings, draft_id: str, resume: dict) -> tuple[str, str]:
@@ -703,9 +814,17 @@ def _selected_resume_projects(job: dict, cards: list[dict], model: ModelDraft,
             selected.append(card)
     count = preference(preferences, "project_count")
     bullet_count = preference(preferences, "project_bullet_count")
-    selected = selected[:count]
     require_structure = len(cards) >= count or any(key in (preferences or {}) for key in ("project_count", "project_bullet_count"))
     required_count = min(count, len(cards))
+    if provider == "template" and len(selected) < required_count:
+        selected_ids = {c["id"] for c in selected}
+        for card in _select(job, cards, required_count):
+            if card["id"] not in selected_ids:
+                selected.append(card)
+                selected_ids.add(card["id"])
+                if len(selected) >= required_count:
+                    break
+    selected = selected[:count]
     if provider != "template" and require_structure and len(selected) < required_count:
         raise ValueError(f"The drafting model selected fewer than {WORDS[required_count]} approved projects")
     tailored = {item.evidence_id: item.bullets for item in model.project_bullets}
@@ -716,12 +835,12 @@ def _selected_resume_projects(job: dict, cards: list[dict], model: ModelDraft,
         results = card["details"].get("results") or []
         chosen = _relevant_results(job, results, requested_focus.get(card["id"])) if results else []
         bullets = tailored.get(card["id"])
-        if provider != "template" and require_structure and (not bullets or len(bullets) != bullet_count or not all(item.strip() for item in bullets)):
+        if provider != "template" and require_structure and (not bullets or len(bullets) != bullet_count or not all(str(item).strip() for item in bullets)):
             raise ValueError(f"The drafting model must write {bullet_count} bullets for every selected project")
         projects.append({
             "id": card["id"], "title": card["title"], "repository_url": card.get("repository_url"),
             "tech_stack": (selected_skills.get(card["id"]) or card["details"].get("tech_stack", []))[:5],
-            "result_ids": [item["id"] for item in chosen],
+            "result_ids": [str(item["id"]) for item in chosen if isinstance(item, dict) and item.get("id")],
             "bullets": bullets or card["details"].get("bullets") or [card["claim"]],
         })
     return selected, projects

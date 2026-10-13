@@ -530,3 +530,42 @@ def test_leadership_summary_rule_distinguishes_real_vs_trainee_leadership() -> N
     rule_tech_lead_for_lead_job = _leadership_summary_rule(tech_lead_profile, lead_job)
     assert "to align with the target leadership role" in rule_tech_lead_for_lead_job
 
+
+def test_run_provider_retries_invalid_json_with_corrective_prompt(monkeypatch) -> None:
+    job = {"title": "AI Engineer", "company": "Example", "description": "Build ML models."}
+    profile = {
+        "name": "Alex",
+        "experience": [{"company": "Co", "role": "Eng", "bullets": ["Improved latency by 25%."]}],
+    }
+    cards = [
+        {"id": "c1", "title": "Model A", "claim": "Built A", "details": {"what": "Built A", "results": [{"outcome": "Accuracy 95%."}]}},
+    ]
+    attempts = []
+
+    def fake_provider(provider, prompt, response_type):
+        attempts.append(prompt)
+        if len(attempts) == 1:
+            raise RuntimeError("codex returned an invalid draft: Expecting value: line 1 column 1")
+        return ModelDraft(
+            summary="AI Engineer with experience in ML models.",
+            selected_evidence_ids=["c1"],
+            project_bullets=[
+                ProjectBullets(
+                    evidence_id="c1",
+                    bullets=["Architected Model A pipeline.", "Accuracy reached 95% on test set."],
+                    skills=["PyTorch", "Python", "FastAPI"],
+                )
+            ],
+            project_focus=[],
+            bold_phrases=["25%", "95%"],
+            fit_text="Candidate fit text highlighting model engineering.",
+        )
+
+    monkeypatch.setattr("job_radar.drafting._provider_json", fake_provider)
+    from job_radar.drafting import _run_provider
+    result = _run_provider("codex", job, profile, cards)
+    assert len(attempts) == 2
+    assert "The previous output was invalid" in attempts[1]
+    assert result.summary == "AI Engineer with experience in ML models."
+    assert result.selected_evidence_ids == ["c1"]
+

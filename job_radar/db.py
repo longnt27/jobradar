@@ -153,6 +153,7 @@ CREATE TABLE IF NOT EXISTS application_drafts (
   resume_hash TEXT,
   project_refresh_error TEXT,
   warnings TEXT NOT NULL DEFAULT '[]',
+  seen_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -334,6 +335,34 @@ class Database:
             draft_columns = {row[1] for row in conn.execute("PRAGMA table_info(application_drafts)")}
             if "project_refresh_error" not in draft_columns:
                 conn.execute("ALTER TABLE application_drafts ADD COLUMN project_refresh_error TEXT")
+            if "seen_at" not in draft_columns:
+                conn.execute("ALTER TABLE application_drafts ADD COLUMN seen_at TEXT")
+            seen_apps_migrated = conn.execute(
+                "SELECT value FROM settings WHERE key='jobs_with_seen_applications_v1'"
+            ).fetchone()
+            if not seen_apps_migrated:
+                conn.execute("""
+                    UPDATE application_drafts SET seen_at=COALESCE(seen_at, updated_at, created_at)
+                    WHERE seen_at IS NULL AND (
+                        EXISTS(SELECT 1 FROM submissions s WHERE s.draft_id=application_drafts.id)
+                        OR EXISTS(SELECT 1 FROM auto_application_attempts a WHERE a.vacancy_id=application_drafts.vacancy_id AND a.requested_by='manual')
+                        OR EXISTS(SELECT 1 FROM auto_application_attempts a WHERE a.vacancy_id=application_drafts.vacancy_id AND a.status IN ('awaiting_review','needs_review','sent'))
+                    )
+                """)
+                conn.execute("""
+                    UPDATE vacancies SET seen_at=COALESCE(seen_at, (
+                        SELECT COALESCE(d.seen_at, d.updated_at, d.created_at, vacancies.updated_at)
+                        FROM application_drafts d WHERE d.vacancy_id=vacancies.id AND d.seen_at IS NOT NULL
+                        ORDER BY d.updated_at DESC LIMIT 1
+                    ))
+                    WHERE seen_at IS NULL AND EXISTS (
+                        SELECT 1 FROM application_drafts d WHERE d.vacancy_id=vacancies.id AND d.seen_at IS NOT NULL
+                    )
+                """)
+                conn.execute(
+                    "INSERT INTO settings(key,value) VALUES('jobs_with_seen_applications_v1','true') "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
+                )
             for name, definition in (
                 ("review_hash", "TEXT"),
                 ("telegram_status", "TEXT NOT NULL DEFAULT 'pending'"),
