@@ -62,6 +62,10 @@ def ainavi(employer: str, domain: str) -> CareerFeed:
     })
 
 CAREER_FEEDS: tuple[CareerFeed, ...] = (
+    CareerFeed("Gear Inc", "https://gear-inc-2.careers-page.com/", "manatal", {"max_pages": 50}),
+    CareerFeed("Anduin Transactions", "https://anduin.hire.trakstar.com/", "trakstar"),
+    CareerFeed("VNPT Technology", "https://www.vnpt-technology.vn/vi/recruit", "vnpt_technology"),
+    CareerFeed("VNPT Group", "https://tuyendung.vnpt.vn/viec-lam/viec-lam-tap-doan-vnpt-d3240.html", "vnpt_parent", {"max_pages": 12}),
     CareerFeed("VinAI", "https://www.vinai.io/careers/", "legacy"),
     CareerFeed("VinDynamics", "https://vindynamics.net/career", "vindynamics"),
     CareerFeed("VinRobotics", "https://vinrobotics.net/career", "vinrobotics"),
