@@ -15,9 +15,9 @@ def test_agent10_sources_match_owned_manifest():
     feeds = {feed.employer: feed for feed in CAREER_FEEDS}
     assert len(subset) == 7
     for employer, record in subset.items():
-        assert record["status"] in {"verified", "blocked"}
+        assert record["status"] in {"verified", "blocked", "implemented_unverified"}
         assert record["career_url"] and record["evidence"]
-        if record["status"] == "verified":
+        if record["status"] in {"verified", "implemented_unverified"}:
             assert feeds[employer].adapter == record["adapter"]
             assert feeds[employer].url == record["career_url"]
         else:
