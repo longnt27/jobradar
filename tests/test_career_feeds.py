@@ -85,6 +85,53 @@ def test_expired_requisition_and_non_job_heading_are_rejected() -> None:
     assert not _target_title("We build AI systems and seek an engineer. " * 10)
 
 
+def test_vncs_global_research_role_uses_only_career_cards_and_post_content(monkeypatch) -> None:
+    feed = next(feed for feed in CAREER_FEEDS if feed.employer == "VNCS Global")
+    title = "NHÂN VIÊN NGHIÊN CỨU & PHÁT TRIỂN (R&D)"
+    posting_url = "https://vncsglobal.vn/nhan-vien-nghien-cuu-phat-trien-rd/"
+    description = "Nghiên cứu và xây dựng AI Agent dựa trên LLM cho AI Pentest và AI SOC. " * 3
+    requested: list[str] = []
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def get(self, url):
+            requested.append(url)
+            if url == feed.url:
+                page = (
+                    '<a href="/ai-solutions/">AI security solutions</a>'
+                    '<article class="elementor-post"><h3 class="elementor-post__title">'
+                    f'<a href="{posting_url}">{title}</a></h3>'
+                    f'<a href="{posting_url}">Xem chi tiết</a></article>'
+                    '<article class="elementor-post"><h3 class="elementor-post__title">'
+                    '<a href="/marketing/">Marketing Executive</a></h3></article>'
+                )
+            else:
+                assert url == posting_url
+                page = (
+                    f'<h1>{title}</h1><article>{"Unrelated news. " * 20}</article>'
+                    f'<div class="elementor-widget-theme-post-content"><p>{description}</p>'
+                    '<a href="mailto:jobs@vncsglobal.vn">Gửi CV ứng tuyển</a></div>'
+                )
+            return httpx.Response(200, text=page, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr("job_radar.collectors._career_client", Client)
+    jobs = asyncio.run(collect_html_board({
+        "url": feed.url, "name": "VNCS Global careers", "employer_name": feed.employer,
+        "config": {"adapter": feed.adapter, **feed.options},
+    }))
+    assert requested == [feed.url, posting_url]
+    assert len(jobs) == 1
+    assert jobs[0].title == title and jobs[0].company == "VNCS Global"
+    assert description.strip() in jobs[0].description
+    assert "Unrelated news" not in jobs[0].description
+    assert jobs[0].apply_url == "mailto:jobs@vncsglobal.vn"
+
+
 def test_company_publication_time_without_timezone_can_be_ranked() -> None:
     score, detail = score_job({
         "title": "AI Engineer", "description": "Build robot perception models.",

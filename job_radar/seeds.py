@@ -66,7 +66,7 @@ EMPLOYER_DIRECTORY: dict[str, str] = {
     "Be Group": "commerce", "Traveloka": "commerce", "Agoda": "commerce",
     "Booking.com": "commerce", "NAVER Vietnam": "technology", "Zalo AI": "technology",
     "VNG": "technology", "VNG Cloud": "technology", "Cinnamon AI": "technology",
-    "Rikkeisoft": "technology", "TMA Solutions": "technology",
+    "Rikkeisoft": "technology", "TMA Solutions": "technology", "VNCS Global": "technology",
     "Rikkei AI": "technology", "Gear Inc": "technology",
     "KMS Technology": "technology", "NashTech Vietnam": "technology",
     "Axon Active": "technology", "NTQ Solution": "technology",
@@ -113,6 +113,7 @@ EMPLOYER_ALIASES = {
     "VinSmart Future": ["VinSmart Future JSC"],
     "FPT Smart Cloud": ["FPT Smart Cloud and AI"],
     "VNPT AI": ["VNPT-AI"],
+    "VNCS Global": ["VNCS Global Solution Technology", "VNCS Global Solution Technology JSC"],
 }
 
 

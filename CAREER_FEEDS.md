@@ -1,6 +1,6 @@
 # Direct company career feeds
 
-Job Radar checks these 66 verified company career listings. Each entry points to an employer career page or its dedicated recruiting portal. A listing is stored only when its own job posting has a relevant title and description. An empty scan means no matching open posting was found by that adapter at scan time; it does not imply the company has no vacancies.
+Job Radar checks these 67 verified company career listings. Each entry points to an employer career page or its dedicated recruiting portal. A listing is stored only when its own job posting has a relevant title and description. An empty scan means no matching open posting was found by that adapter at scan time; it does not imply the company has no vacancies.
 
 | Company | Career page | Adapter |
 | --- | --- | --- |
@@ -70,7 +70,8 @@ Job Radar checks these 66 verified company career listings. Each entry points to
 | SSI | [Open careers](https://tuyendung.ssi.com.vn/tin-tuyen-dung) | HTML board |
 | TCBS | [Open careers](https://www.tcbs.com.vn/ve-chung-toi-cate/tuyen-dung/) | HTML board |
 | FPT Smart Cloud | [Open careers](https://fptsmartcloud.com/co-hoi-nghe-nghiep/) | HTML board |
+| VNCS Global | [Open careers](https://vncsglobal.vn/tuyen-dung/) | HTML board |
 
-The [employer directory](job_radar/seeds.py) contains 181 companies after the [HCMC-based exclusions](EMPLOYER_SCOPE.md). Its other 115 entries are leads without an active built-in feed. Their presence in the directory is not a claim that their jobs are collected. Add a verified direct career page from an employer card. General job aggregators are not part of this catalog.
+The [employer directory](job_radar/seeds.py) contains 182 companies after the [HCMC-based exclusions](EMPLOYER_SCOPE.md). Its other 115 entries are leads without an active built-in feed. Their presence in the directory is not a claim that their jobs are collected. Add a verified direct career page from an employer card. General job aggregators are not part of this catalog.
 
 Feed definitions and selectors: [job_radar/feed_catalog.py](job_radar/feed_catalog.py). Collector implementations: [job_radar/collectors.py](job_radar/collectors.py). Older postings with an explicit past deadline are skipped. The app creates no placeholder vacancies.

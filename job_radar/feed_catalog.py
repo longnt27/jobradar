@@ -108,4 +108,7 @@ CAREER_FEEDS: tuple[CareerFeed, ...] = (
     html("SSI", "https://tuyendung.ssi.com.vn/tin-tuyen-dung", r"^/tin-tuyen-dung/[a-z0-9-]+$", max_pages=3, description_selector="main"),
     html("TCBS", "https://www.tcbs.com.vn/ve-chung-toi-cate/tuyen-dung/", r"^/ve-chung-toi-cate/tuyen-dung/[a-z0-9-]+/?$", max_results=40, description_selector="main, .entry-content, article"),
     html("FPT Smart Cloud", "https://fptsmartcloud.com/co-hoi-nghe-nghiep/", r"^/job_opportunity/[a-z0-9-]+/?$", max_results=40, description_selector="main, .entry-content, article, [class*=job]"),
+    html("VNCS Global", "https://vncsglobal.vn/tuyen-dung/", r"^/[a-z0-9-]+/?$",
+         listing_card_class="elementor-post", listing_title_selector=".elementor-post__title",
+         title_include=r"\S", description_selector=".elementor-widget-theme-post-content"),
 )

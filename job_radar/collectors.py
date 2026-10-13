@@ -353,7 +353,7 @@ async def _collect_linkedin_search_results(page: Page, source: dict) -> list[Obs
 
 
 RECRUITING = re.compile(r"\b(hiring|recruit|vacancy|apply|tuyển dụng|tuyển|cần tìm|cần tuyển|cần gấp|job opening|we are looking)\b|\bcần\s+(?:\d+\s*)?(?:mid|sen|junior|senior|fresher|intern|data|ai|ml|kỹ|lập)", re.I)
-ROLE = re.compile(r"\b(ai|ml|machine learning|engineer|engineering|developer|devops|research|data scientist|data analyst|data analytics|data architect|business analyst|llm|computer vision|software|architect|fullstack|backend|frontend|technical lead|tech lead|cloud|security|cyber|database|network|kỹ sư|lập trình|trí tuệ nhân tạo|công nghệ thông tin|cntt|khoa học dữ liệu|cơ sở dữ liệu|dữ liệu|mô hình|phần mềm|phầm mềm|an ninh|bảo mật|quản trị ứng dụng|phân tích nghiệp vụ|chuyển đổi số|kiểm thử)\b", re.I)
+ROLE = re.compile(r"\b(ai|ml|machine learning|engineer|engineering|developer|devops|research|data scientist|data analyst|data analytics|data architect|business analyst|llm|computer vision|software|architect|fullstack|backend|frontend|technical lead|tech lead|cloud|security|cyber|database|network|kỹ sư|lập trình|nghiên cứu|trí tuệ nhân tạo|công nghệ thông tin|cntt|khoa học dữ liệu|cơ sở dữ liệu|dữ liệu|mô hình|phần mềm|phầm mềm|an ninh|bảo mật|quản trị ứng dụng|phân tích nghiệp vụ|chuyển đổi số|kiểm thử)\b", re.I)
 
 
 async def collect_facebook(context: BrowserContext, source: dict) -> list[ObservedJob]:
