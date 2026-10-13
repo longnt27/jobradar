@@ -150,3 +150,26 @@ def test_coopbank_empty_board_raises_instead_of_reporting_zero(monkeypatch):
     monkeypatch.setattr("job_radar.collectors._career_client", Client)
     with pytest.raises(RuntimeError, match="no verifiable notice links"):
         asyncio.run(collect_bank_notices(feed))
+
+
+def test_coopbank_accepts_first_party_www_redirect(monkeypatch):
+    source = _source("Co-opBank")
+    source["config"]["max_pages"] = 1
+    detail = "https://www.co-opbank.vn/tuyen-dung/ky-su-tri-tue-nhan-tao/"
+    class Client:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *_):
+            return None
+        async def get(self, url):
+            if url == source["url"]:
+                return _response("https://www.co-opbank.vn/tuyen-dung",
+                    f'<main><a href="{detail}">Kỹ sư AI</a></main>')
+            assert url == detail
+            return _response(url, '<article><h1>Kỹ sư AI</h1>'
+                             '<p>Thời gian nhận hồ sơ: đến ngày 31/12/2099</p>'
+                             '<p>' + "Xây dựng hệ thống học máy và hạ tầng phục vụ sản xuất. " * 8
+                             + '</p></article>')
+    monkeypatch.setattr("job_radar.collectors._career_client", Client)
+    jobs = asyncio.run(collect_bank_notices(source))
+    assert len(jobs) == 1 and jobs[0].title == "Kỹ sư AI"

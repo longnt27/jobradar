@@ -35,7 +35,7 @@ def _links(soup: BeautifulSoup, page_url: str, path_pattern: re.Pattern) -> dict
     for anchor in soup.select("a[href]"):
         href = urljoin(page_url, str(anchor.get("href") or "").strip())
         parts = urlsplit(href)
-        if parts.hostname == host and path_pattern.fullmatch(parts.path):
+        if (parts.hostname or "").removeprefix("www.") == (host or "").removeprefix("www.") and path_pattern.fullmatch(parts.path):
             result[href.split("?")[0].split("#")[0]] = anchor.get_text(" ", strip=True)
     return result
 

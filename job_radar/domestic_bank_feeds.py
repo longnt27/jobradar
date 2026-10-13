@@ -114,7 +114,7 @@ async def collect_bank_notices(source: dict) -> list[ObservedJob]:
             for anchor in soup.select("a[href]"):
                 url = urljoin(str(response.url), str(anchor.get("href", "")))
                 parts = urlsplit(url)
-                if parts.hostname != host or not pattern.fullmatch(parts.path):
+                if (parts.hostname or "").removeprefix("www.") != (host or "").removeprefix("www.") or not pattern.fullmatch(parts.path):
                     continue
                 links.setdefault(url.split("#")[0], anchor.get_text(" ", strip=True))
             if len(links) == before:

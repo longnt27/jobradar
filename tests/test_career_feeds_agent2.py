@@ -181,3 +181,29 @@ def test_anduin_rejects_unrelated_detail_title(monkeypatch):
     })
     with pytest.raises(RuntimeError, match="contradicts"):
         asyncio.run(collect_trakstar(src))
+
+
+def test_vnpt_technology_accepts_official_www_to_bare_domain_links(monkeypatch):
+    src = feed_source("VNPT Technology")
+    detail = "https://vnpt-technology.vn/vi/recruit_detail/53"
+    class Client:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *_):
+            return None
+        async def get(self, url, **_):
+            if url == src["url"]:
+                return response(
+                    "https://www.vnpt-technology.vn/vi/recruit",
+                    '<a href="https://vnpt-technology.vn/vi/recruit_detail/53">Kỹ sư Phần mềm AI Junior</a>'
+                )
+            assert url == detail
+            return response(detail, '<h1>Kỹ sư Phần mềm AI Junior</h1><main>'
+                            '<p>Nơi làm việc: Hà Nội</p><p>Hạn chót nhận hồ sơ: 31/12/2099</p>'
+                            '<h2>Mô tả công việc</h2><p>'
+                            + "Nghiên cứu xây dựng hệ thống AI tích hợp dữ liệu. " * 7
+                            + '</p><h2>Thông tin tuyển dụng khác</h2></main>')
+    monkeypatch.setattr("job_radar.collectors._career_client", Client)
+    jobs = asyncio.run(collect_vnpt_technology(src))
+    assert len(jobs) == 1 and jobs[0].external_id == "53"
+    assert jobs[0].location == "Hà Nội"
