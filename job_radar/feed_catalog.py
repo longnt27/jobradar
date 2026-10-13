@@ -262,6 +262,14 @@ CAREER_FEEDS: tuple[CareerFeed, ...] = (
         "detail_rows_path": "items.0", "description_sections": {"": "ExternalDescriptionStr"}, "location_fields": ["PrimaryLocation"],
         "published_field": "ExternalPostedStartDate", "deadline_field": "ExternalPostedEndDate",
     }),
+    # Honda detail pages have stable numeric IDs in their query strings.
+    html("Honda Vietnam", "https://www.honda.com.vn/tuyen-dung/co-hoi-nghe-nghiep",
+         r"^/tuyen-dung/chi-tiet-co-hoi-nghe-nghiep$", keep_query=True,
+         max_results=120, description_selector="main, article"),
+    # Hyundai Thanh Cong is the Hyundai Motor joint venture in Vietnam, not Hyundai globally.
+    html("Hyundai Motor Vietnam", "https://career.hyundai.thanhcong.vn/job-search/all-jobs/en",
+         r"^/job/[^/?#]+\\.html$", max_results=120,
+         description_selector="main, article, .job-detail"),
     html("BNP Paribas", "https://apac.bnpparibas/en/work-with-us/apply-now/our-opportunities/?city%5B%5D=ho-chi-minh&city%5B%5D=ho-chi-minh-city", r"^/en/jobs/[^/?#]+/?$",
          description_selector=".jobs__content", location_selector=".jobs__details .crd__specs li:nth-child(2) span"),
 )
