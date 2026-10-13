@@ -28,6 +28,19 @@ def browser(employer: str, url: str, path: str, **options) -> CareerFeed:
 
 TALENT_JOB = r"^/job/[^/?#]+$"
 
+
+def vingroup(employer: str, company_id: str = "") -> CareerFeed:
+    return CareerFeed(employer, "https://tuyendung.vingroup.net/jobs" + (f"?companyCode={company_id}" if company_id else ""), "json_board", {
+        "api_url": "https://ehiring-api.vinsmartfuture.tech/api/v1/job-posting/search-vgc",
+        "params": {"countryCode": "VN", **({"OrgLv2Id": company_id} if company_id else {})},
+        "rows_path": "data.items", "total_field": "data.totalRecord", "page_param": "PageIndex", "limit_param": "PageSize",
+        "title_field": "title", "title_fields": ["titleCustom", "title"], "url_field": "url", "url_template": "https://tuyendung.vingroup.net/jobs/{id}",
+        "detail_api_url": "https://ehiring-api.vinsmartfuture.tech/api/v1/job-posting/detail-vgc", "detail_api_params": {"id": "{id}"}, "detail_rows_path": "data",
+        "description_sections": {"Responsibilities": "jobDescription", "Requirements": "jobRequirement", "Benefits": "jobBenefit"},
+        "location_fields": ["locationNameVi"], "deadline_field": "deadline", "company_field": "orgLv2Id",
+        "value_maps": {"orgLv2Id": {"45015271": "VinSmart Future", "45002926": "Vinhomes", "45032743": "VinCons", "45001013": "Vinpearl", "45054894": "VinFast"}},
+    })
+
 CAREER_FEEDS: tuple[CareerFeed, ...] = (
     CareerFeed("VinAI", "https://www.vinai.io/careers/", "legacy"),
     CareerFeed("VinDynamics", "https://vindynamics.net/career", "vindynamics"),
@@ -156,5 +169,27 @@ CAREER_FEEDS: tuple[CareerFeed, ...] = (
         "description_sections": {"Responsibilities": "description", "Requirements": "qualifications", "Benefits": "benefits"},
         "location_fields": ["places"], "location_include": "Toàn quốc|Hà Nội|Hồ Chí Minh|Đà Nẵng|Việt Nam|Hải Phòng|Bình Dương|Hà Nam",
         "published_field": "start_date",
+    }),
+    vingroup("Vingroup"),
+    vingroup("VinSmart Future", "45015271"),
+    vingroup("VinFast", "45054894"),
+    vingroup("Vinhomes", "45002926"),
+    vingroup("Vinpearl", "45001013"),
+    CareerFeed("Sky Mavis", "https://jobs.ashbyhq.com/skymavis", "json_board", {
+        "api_url": "https://api.ashbyhq.com/posting-api/job-board/skymavis", "rows_path": "jobs", "title_field": "title", "url_field": "jobUrl",
+        "required_fields": {"isListed": True}, "description_sections": {"": "descriptionHtml"}, "location_fields": ["location", "secondaryLocations"],
+        "location_include": "Vietnam", "mode_field": "workplaceType", "published_field": "publishedAt", "apply_field": "applyUrl",
+    }),
+    html("FPT Digital", "https://digital.fpt.com/tuyen-dung", r"^/career/[^/?#]+/?$", listing_card_class="item", listing_title_selector=".title",
+         description_selector=".fdx-single-career--content", location_selector=".career--location-content .p-place"),
+    html("FPT Semiconductor", "https://fpt-semiconductor.com/careers/", r"^/career/[^/?#]+/?$",
+         description_selector=".career-details-2", location_selector=".career-details-1 .grid-box .item:nth-child(4) .value", max_results=150),
+    html("Finhay", "https://www.finhay.com.vn/nguon-nhan-luc?tab=tuyendung", r"^/co-hoi-nghe-nghiep/[^/?#]+/?$", description_selector=".payload-richtext", location_selector='.payload-richtext li:-soup-contains("Địa điểm làm việc:")'),
+    html("SmartPay", "https://www.smartpayvn.com/tuyen-dung/", r"^/tuyen-dung-[^/?#]+/?$", listing_card_class="job-item-layout", listing_title_selector=".job-title",
+         max_pages=10, description_selector=".post-content", location_selector=".section-post-detail .post-location"),
+    CareerFeed("NAVER Vietnam", "https://navercorp.vn/en/recruitment.html", "json_board", {
+        "api_url": "https://boards-api.greenhouse.io/v1/boards/navervietnam/jobs", "params": {"content": "true"}, "rows_path": "jobs", "total_field": "meta.total",
+        "title_field": "title", "url_field": "absolute_url", "description_sections": {"": "content"}, "location_fields": ["location.name"],
+        "location_include": "Vietnam", "published_field": "first_published",
     }),
 )

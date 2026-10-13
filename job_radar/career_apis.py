@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
-from html import escape
+from html import escape, unescape
 from urllib.parse import quote, urljoin, urlsplit
 
 import httpx
@@ -24,7 +24,7 @@ def names(value) -> str:
     if isinstance(value, list):
         return ", ".join(names(item) for item in value if item)
     if isinstance(value, dict):
-        return str(value.get("name") or value.get("fullLocation") or value.get("city") or "")
+        return str(value.get("name") or value.get("fullLocation") or value.get("city") or value.get("location") or "")
     return str(value or "")
 
 
@@ -106,6 +106,24 @@ async def collect_json_board(source: dict) -> list[ObservedJob]:
         for row in rows:
             if any(field(row, path) for path in config.get("closed_fields", [])):
                 continue
+            if any(field(row, path) != expected for path, expected in config.get("required_fields", {}).items()):
+                continue
+            title_value = next((names(field(row, path)) for path in config.get("title_fields", [config["title_field"]]) if field(row, path)), "")
+            title = BeautifulSoup(title_value, "html.parser").get_text(" ", strip=True)
+            if not _target_title(title):
+                continue
+            if config.get("detail_api_url"):
+                values = {k: quote(str(v), safe="") for k, v in row.items() if isinstance(v, (str, int))}
+                detail_response = await client.get(config["detail_api_url"].format(**values), params={
+                    k: str(v).format(**values) for k, v in config.get("detail_api_params", {}).items()
+                })
+                if detail_response.status_code in {404, 410}:
+                    continue
+                detail_response.raise_for_status()
+                detail_data = field(detail_response.json(), config.get("detail_rows_path", ""))
+                if not isinstance(detail_data, dict):
+                    raise RuntimeError("Career detail API returned an unexpected posting")
+                row = {**row, **detail_data}
             if config.get("deadline_field"):
                 deadline = names(field(row, config["deadline_field"]))
                 if deadline:
@@ -114,9 +132,6 @@ async def collect_json_board(source: dict) -> list[ObservedJob]:
                             continue
                     except ValueError:
                         pass
-            title = BeautifulSoup(names(field(row, config["title_field"])), "html.parser").get_text(" ", strip=True)
-            if not _target_title(title):
-                continue
             location = ", ".join(filter(None, (mapped_names(row, path, config) for path in config.get("location_fields", []))))
             if config.get("location_taxonomy"):
                 location = _terms(row, config["location_taxonomy"])
@@ -134,6 +149,8 @@ async def collect_json_board(source: dict) -> list[ObservedJob]:
                 if not value:
                     continue
                 content = "<ul>" + "".join("<li>" + names(item) + "</li>" for item in value) + "</ul>" if isinstance(value, list) else names(value)
+                if re.search(r"&lt;/?[a-z]", content, re.I):
+                    content = unescape(content)
                 if not re.search(r"</?[a-z][^>]*>", content, re.I):
                     content = escape(content).replace("\n", "<br>")
                 text = _structured_text(BeautifulSoup(content, "html.parser"))
@@ -168,8 +185,14 @@ async def collect_json_board(source: dict) -> list[ObservedJob]:
                     published = date.replace(tzinfo=date.tzinfo or timezone.utc).isoformat()
                 except ValueError:
                     published = None
+            company = source.get("employer_name") or source["name"]
+            if config.get("company_field"):
+                company = mapped_names(row, config["company_field"], config)
+                mapping = config.get("value_maps", {}).get(config["company_field"], {})
+                if not company or (mapping and names(field(row, config["company_field"])) not in mapping):
+                    raise RuntimeError("Career API returned an unrecognized employer")
             jobs.append(ObservedJob(
-                url=url, title=title[:180], company=source.get("employer_name") or source["name"],
+                url=url, title=title[:180], company=company,
                 description=description[:30000], location=location[:250],
                 work_mode=_terms(row, config["mode_taxonomy"]) if config.get("mode_taxonomy") else mapped_names(row, config["mode_field"], config) if config.get("mode_field") else "",
                 external_id=names(field(row, config.get("id_field", "id"))),

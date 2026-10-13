@@ -118,3 +118,75 @@ def test_country_codes_open_deadlines_and_plain_text_requirements(monkeypatch):
     assert len(jobs) == 1 and jobs[0].url == "https://example.org/jobs/ai-1"
     assert jobs[0].location == "Vietnam" and jobs[0].work_mode == "Remote, Hybrid"
     assert "Python programming\nModel evaluation" in jobs[0].description
+
+
+def test_separate_detail_api_preserves_subsidiary_identity_and_custom_title(monkeypatch):
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def get(self, url, params=None):
+            if url.endswith("/search"):
+                data = {"items": [{"id": 357, "title": "Research Specialist", "titleCustom": "Senior AI Engineer", "companyCode": "VF"}], "total": 1}
+            else:
+                assert params == {"id": "357"}
+                data = {"id": 357, "jobDescription": DESCRIPTION, "jobRequirement": "Python\nModel evaluation", "companyCode": "VF"}
+            return httpx.Response(200, json={"data": data}, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr("job_radar.collectors._career_client", Client)
+    jobs = asyncio.run(collect_json_board({"url": "https://example.org/jobs", "name": "Group", "employer_name": "Group", "config": {
+        "api_url": "https://example.org/search", "rows_path": "data.items", "total_field": "data.total",
+        "title_field": "title", "title_fields": ["titleCustom", "title"], "url_field": "url", "url_template": "https://example.org/jobs/{id}",
+        "detail_api_url": "https://example.org/detail", "detail_api_params": {"id": "{id}"}, "detail_rows_path": "data",
+        "description_sections": {"Responsibilities": "jobDescription", "Requirements": "jobRequirement"},
+        "company_field": "companyCode", "value_maps": {"companyCode": {"VF": "VinFast"}},
+    }}))
+    assert len(jobs) == 1 and jobs[0].company == "VinFast"
+    assert jobs[0].title == "Senior AI Engineer" and jobs[0].url == "https://example.org/jobs/357"
+    assert "Requirements\n\nPython\nModel evaluation" in jobs[0].description
+
+
+def test_public_feed_excludes_unlisted_postings_and_keeps_secondary_vietnam_locations(monkeypatch):
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def get(self, url, params=None):
+            rows = [{"id": i, "title": "AI Engineer", "url": f"https://example.org/job/{i}", "isListed": listed,
+                     "location": "Singapore", "secondaryLocations": [{"location": "Vietnam"}], "description": DESCRIPTION}
+                    for i, listed in [(1, True), (2, False)]]
+            return httpx.Response(200, json=rows, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr("job_radar.collectors._career_client", Client)
+    jobs = asyncio.run(collect_json_board({"url": "https://example.org/careers", "name": "Example", "config": {
+        "api_url": "https://example.org/api", "title_field": "title", "url_field": "url", "required_fields": {"isListed": True},
+        "description_sections": {"": "description"}, "location_fields": ["location", "secondaryLocations"], "location_include": "Vietnam",
+    }}))
+    assert len(jobs) == 1 and jobs[0].location == "Singapore, Vietnam"
+
+
+def test_greenhouse_html_entities_remain_readable_paragraphs_and_bullets(monkeypatch):
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def get(self, url, params=None):
+            row = {"id": 1, "title": "AI Engineer", "url": "https://example.org/job/1",
+                   "content": "&lt;p&gt;" + DESCRIPTION + "&lt;/p&gt;&lt;ul&gt;&lt;li&gt;Python &amp; SQL&lt;/li&gt;&lt;/ul&gt;"}
+            return httpx.Response(200, json=[row], request=httpx.Request("GET", url))
+
+    monkeypatch.setattr("job_radar.collectors._career_client", Client)
+    jobs = asyncio.run(collect_json_board({"url": "https://example.org/careers", "name": "Example", "config": {
+        "api_url": "https://example.org/api", "title_field": "title", "url_field": "url", "description_sections": {"": "content"},
+    }}))
+    assert "• Python & SQL" in jobs[0].description
+    assert "<p>" not in jobs[0].description

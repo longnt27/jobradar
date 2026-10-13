@@ -4,26 +4,29 @@
     {
       "employer": "Vingroup",
       "category": "vingroup",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://tuyendung.vingroup.net/jobs",
+      "adapter": "json_board",
+      "evidence": "Official portal and frontend API enumerated all 124 current Vietnam listings. Complete detail API verified; jobs retain their real subsidiary identity. 25 relevant open roles.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "VinFast",
       "category": "vingroup",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://tuyendung.vingroup.net/jobs?companyCode=45054894",
+      "adapter": "json_board",
+      "evidence": "Official Vingroup master data identifies current VinFast company code 45054894. Company-filtered API enumerated all 18 postings and verified 16 relevant full descriptions with requirements and deadlines.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "VinSmart Future",
       "category": "vingroup",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://tuyendung.vingroup.net/jobs?companyCode=45015271",
+      "adapter": "json_board",
+      "evidence": "Official portal company code 45015271 and filtered API verified; all 24 records enumerated; nine relevant open descriptions with requirements and benefits.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "VinSpace",
@@ -84,18 +87,20 @@
     {
       "employer": "Vinhomes",
       "category": "vingroup",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://tuyendung.vingroup.net/jobs?companyCode=45002926",
+      "adapter": "json_board",
+      "evidence": "Official portal master data and filtered API identify 63 current postings for company 45002926; no current title matches configured technical scope. Shared public detail endpoint verified.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "Vinpearl",
       "category": "vingroup",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://tuyendung.vingroup.net/jobs?companyCode=45001013",
+      "adapter": "json_board",
+      "evidence": "Official portal master data and filtered API identify five current postings for company 45001013; no current title matches technical scope. Shared detail endpoint verified.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "VinHMS",
@@ -156,10 +161,11 @@
     {
       "employer": "FPT Digital",
       "category": "fpt",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://digital.fpt.com/tuyen-dung",
+      "adapter": "html_board",
+      "evidence": "Official career listing enumerated seven role links; three relevant full posting descriptions verified. Company-specific title cards and posting locations exclude marketing content.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "FPT IS",
@@ -172,10 +178,11 @@
     {
       "employer": "FPT Semiconductor",
       "category": "fpt",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://fpt-semiconductor.com/careers/",
+      "adapter": "html_board",
+      "evidence": "Official opening-jobs table enumerated postings; 15 unexpired engineering job descriptions verified with responsibilities, requirements and benefits. Own metadata supplies job locations.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "FPT.AI",
@@ -444,10 +451,11 @@
     {
       "employer": "SmartPay",
       "category": "fintech",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://www.smartpayvn.com/tuyen-dung/",
+      "adapter": "html_board",
+      "evidence": "Corporate site links official recruiting list. All nine job cards enumerated and a complete public detail page verified; no current card title matches technical scope.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "Moca",
@@ -484,10 +492,11 @@
     {
       "employer": "Finhay",
       "category": "fintech",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://www.finhay.com.vn/nguon-nhan-luc?tab=tuyendung",
+      "adapter": "html_board",
+      "evidence": "Official recruitment page lists five current positions; Senior Data Engineer posting has complete 7,829-character description and explicit Hanoi work address.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "VPS",
@@ -596,10 +605,11 @@
     {
       "employer": "NAVER Vietnam",
       "category": "technology",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://navercorp.vn/en/recruitment.html",
+      "adapter": "json_board",
+      "evidence": "Official recruitment frontend calls Greenhouse public job API. All ten current jobs enumerated; five relevant Vietnam roles verified with complete, decoded descriptions.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "Cinnamon AI",
@@ -707,10 +717,11 @@
     {
       "employer": "Sky Mavis",
       "category": "technology",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://jobs.ashbyhq.com/skymavis",
+      "adapter": "json_board",
+      "evidence": "Corporate website links Ashby board. Official public API enumerated all six listed jobs; three relevant Vietnam positions with complete descriptions and specific application URLs verified.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "Hanoi University of Science and Technology",

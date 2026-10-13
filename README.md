@@ -94,7 +94,7 @@ Open **My profile** and complete the setup steps:
 - Review and click **Approve**. Only approved project cards are eligible to be woven into your tailored resume bullets.
 
 ### 4. Connect Job Sources
-- **Company Career Feeds:** 74 verified company career listings ([CAREER_FEEDS.md](CAREER_FEEDS.md)) are preconfigured and scanned daily.
+- **Company Career Feeds:** 85 verified company career listings ([CAREER_FEEDS.md](CAREER_FEEDS.md)) are preconfigured and scanned daily.
 - **LinkedIn & Facebook:** Click **Sign in to LinkedIn** or **Sign in to Facebook** in Profile. Job Radar opens a dedicated Chrome session for you to sign in once, preserves authentication cookies, and reuses the session for automated background scans.
 - Paste additional Facebook group URLs or custom career page URLs in **Job sources** anytime.
 
