@@ -278,7 +278,7 @@ CAREER_FEEDS: tuple[CareerFeed, ...] = (
         "required_fields": {"country_code": "VNM"},
         "description_sections": {"Responsibilities": "description", "Basic qualifications": "basic_qualifications",
                                  "Preferred qualifications": "preferred_qualifications"},
-        "location_fields": ["normalized_location"], "location_include": r"\bVNM\b",
+        "location_fields": ["normalized_location"], "location_include": "Vietnam|Viet Nam",
         "apply_field": "url_next_step", "published_field": "posted_date",
     }),
     CareerFeed("SAP Vietnam", "https://careers.sap.com/go/Vietnam/9513801/", "successfactors", {
