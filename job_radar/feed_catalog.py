@@ -281,7 +281,7 @@ CAREER_FEEDS: tuple[CareerFeed, ...] = (
     CareerFeed("Prudential Vietnam", "https://prudential.wd3.myworkdayjobs.com/prudential", "workday", {
         "search_url": "https://prudential.wd3.myworkdayjobs.com/wday/cxs/prudential/prudential/jobs",
         "detail_base": "https://prudential.wd3.myworkdayjobs.com/wday/cxs/prudential/prudential",
-        "applied_facets": {"locationHierarchy1": ["db69e8c8446c11de98360015c5e6daf6"]},
+        "search_text": "Vietnam", "location_include": r"Vietnam|Việt Nam",
     }),
     CareerFeed("Manulife Vietnam", "https://manulife.wd3.myworkdayjobs.com/MFCJH_Jobs", "workday", {
         "search_url": "https://manulife.wd3.myworkdayjobs.com/wday/cxs/manulife/MFCJH_Jobs/jobs",
