@@ -1,0 +1,110 @@
+name: Career feed live smoke
+
+# Feature-branch pushes run the 25 new integrations immediately.
+# Scheduled/manual runs are enabled on default branch after this workflow lands there.
+on:
+  push:
+    branches:
+      - feat/job-feed-integration
+    paths:
+      - ".github/workflows/career-feed-live.yml"
+      - "job_radar/**"
+      - "scripts/ci_live_career_feeds.py"
+      - "tests/test_*feed*.py"
+      - "docs/career-feed-targets.json"
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: "Which company feeds to check (integrated = 25 new adapters)"
+        required: true
+        default: integrated
+        type: choice
+        options:
+          - integrated
+          - provisional
+          - all
+  schedule:
+    - cron: "17 3 * * 1"
+
+concurrency:
+  group: career-feeds-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  collector-unit:
+    name: Offline collector contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install uv
+        run: python -m pip install --disable-pip-version-check uv
+      - name: Install locked dependencies
+        run: uv sync --locked --extra dev
+      - name: Compile every Python module and test
+        run: uv run python -m compileall -q job_radar scripts/ci_live_career_feeds.py tests
+      - name: Run all career collector and probe tests
+        run: |
+          uv run pytest -q \
+            tests/test_career_feeds.py \
+            tests/test_career_apis.py \
+            tests/test_vinbus_feed.py \
+            tests/test_vingroup_feed_audit.py \
+            tests/test_domestic_bank_feeds.py \
+            tests/test_foreign_bank_adapters.py \
+            tests/test_feed_wave_3.py \
+            tests/test_global_tech_c_feeds.py \
+            tests/test_finance_insurance_feeds.py \
+            tests/test_global_tech_feeds.py \
+            tests/test_career_wave7.py \
+            tests/test_feed_wave9.py \
+            tests/test_career_feeds_agent2.py \
+            tests/test_ci_live_career_feeds.py
+
+  live-collector:
+    name: Live company feeds (shard ${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        shard: [0, 1, 2, 3, 4]
+    env:
+      FEED_SCOPE: ${{ inputs.scope || 'integrated' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install uv
+        run: python -m pip install --disable-pip-version-check uv
+      - name: Install locked dependencies
+        run: uv sync --locked --extra dev
+      - name: Install Chromium for browser-based career boards
+        run: uv run playwright install --with-deps chromium
+      - name: Probe real employer listing and job-detail endpoints
+        run: |
+          uv run python scripts/ci_live_career_feeds.py \
+            --scope "$FEED_SCOPE" \
+            --shard-index ${{ matrix.shard }} \
+            --shard-count 5 \
+            --timeout 75 \
+            --concurrency 2 \
+            --output "artifacts/live-feeds/shard-${{ matrix.shard }}.json"
+      - name: Upload response evidence including failed feeds
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-career-feeds-shard-${{ matrix.shard }}
+          path: "artifacts/live-feeds/shard-${{ matrix.shard }}.json"
+          if-no-files-found: warn
+          retention-days: 14
