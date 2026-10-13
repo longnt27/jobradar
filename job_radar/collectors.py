@@ -1313,6 +1313,8 @@ async def collect_workday(source: dict) -> list[ObservedJob]:
                 continue
             url = info.get("externalUrl") or source["url"].split("?")[0].rstrip("/") + path
             location = ", ".join(filter(None, [info.get("location", ""), *info.get("additionalLocations", [])])) or posting.get("locationsText", "")
+            if config.get("location_include") and not re.search(config["location_include"], location, re.I):
+                continue
             jobs.append(ObservedJob(
                 url=url, external_id=info.get("jobReqId") or path,
                 title=title[:180], company=source.get("employer_name") or source["name"],
@@ -1323,6 +1325,7 @@ async def collect_workday(source: dict) -> list[ObservedJob]:
 
 
 from .career_apis import collect_json_board
+from .baoviet import collect_baoviet_announcement
 
 
 CAREER_ADAPTERS = {
@@ -1341,6 +1344,7 @@ CAREER_ADAPTERS = {
     "workatsea": collect_workatsea,
     "workday": collect_workday,
     "json_board": collect_json_board,
+    "baoviet_announcement": collect_baoviet_announcement,
 }
 
 
