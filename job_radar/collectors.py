@@ -1323,6 +1323,7 @@ async def collect_workday(source: dict) -> list[ObservedJob]:
 
 
 from .career_apis import collect_json_board
+from .global_tech_feeds import collect_eightfold, collect_workday_vietnam
 
 
 CAREER_ADAPTERS = {
@@ -1341,6 +1342,8 @@ CAREER_ADAPTERS = {
     "workatsea": collect_workatsea,
     "workday": collect_workday,
     "json_board": collect_json_board,
+    "eightfold": collect_eightfold,
+    "workday_vietnam": collect_workday_vietnam,
 }
 
 
