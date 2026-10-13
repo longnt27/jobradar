@@ -839,66 +839,74 @@
     {
       "employer": "Ampere",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://careers.amperecomputing.com/search/jobs/in/sg-ho-chi-minh-sai-gon",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official Ampere recruitment listing is publicly discoverable, but no live HTTP listing/detail payload was obtainable from this execution environment; adapter fixture tested only, not verified live.",
+      "blocked_at": "2026-10-13"
     },
     {
       "employer": "Microsoft Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://careers.microsoft.com/v2/global/en/home.html",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official Microsoft careers portal confirmed; no reproducible public Vietnam-scoped listing/detail API or complete pagination verified; requires browser/XHR capture.",
+      "blocked_at": "2026-10-13"
     },
     {
       "employer": "Google Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://www.google.com/about/careers/applications/jobs/results/?location=Vietnam",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official Google jobs results portal confirmed; dynamically served listing/detail and pagination were not verifiable here; cannot claim a working adapter.",
+      "blocked_at": "2026-10-13"
     },
     {
       "employer": "Amazon / AWS Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://www.amazon.jobs/en/search?normalized_country_code%5B%5D=VNM",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official Amazon Jobs search confirmed; a documented search.json adapter with mock tests was added, but live JSON schema/HTTP could not be checked from this environment, so this remains unverified pending live smoke.",
+      "blocked_at": "2026-10-13"
     },
     {
       "employer": "IBM Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://www.ibm.com/careers/search",
       "adapter": null,
-      "evidence": null
+      "evidence": "IBM official career search found; dynamic listing/detail semantics and Vietnam-only pagination not verified; blocked until official XHR schema is inspected.",
+      "blocked_at": "2026-10-13"
     },
     {
       "employer": "Oracle Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://careers.oracle.com/en/sites/jobsearch",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official Oracle recruiting portal found; siteNumber-specific requisition listing and Vietnam scoping not verified; do not reuse unrelated Oracle tenant IDs.",
+      "blocked_at": "2026-10-13"
     },
     {
       "employer": "SAP Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://careers.sap.com/go/Vietnam/9513801/",
       "adapter": null,
-      "evidence": null
+      "evidence": "First-party SAP regional listing exists, but site migration and changing navigation prevented live verification of SuccessFactors listing and detail handling. Existing SuccessFactors helper configured, unverified live.",
+      "blocked_at": "2026-10-13"
     },
     {
       "employer": "Cisco Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://careers.cisco.com/global/en.html",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official Cisco careers portal found; dynamically rendered Vietnam result listing and full detail schema not verified; browser/XHR capture required.",
+      "blocked_at": "2026-10-13"
     },
     {
       "employer": "Ericsson Vietnam",
