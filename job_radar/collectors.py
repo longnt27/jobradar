@@ -783,10 +783,9 @@ async def collect_html_board(source: dict) -> list[ObservedJob]:
                     raw_text=description[:30000],
                 ))
             except httpx.HTTPError as error:
-                if config.get("strict_detail") and (not isinstance(error, httpx.HTTPStatusError) or
-                                                    error.response.status_code not in {404, 410}):
-                    raise RuntimeError(f"Career posting could not be fetched: {url}") from error
-                continue
+                if isinstance(error, httpx.HTTPStatusError) and error.response.status_code in {404, 410}:
+                    continue
+                raise
         return jobs
 
 
@@ -991,8 +990,11 @@ async def collect_successfactors(source: dict) -> list[ObservedJob]:
                     apply_url=_application_destination(soup, str(response.url)),
                     raw_text=description[:30000],
                 ))
+            except httpx.HTTPStatusError as error:
+                if error.response.status_code not in {404, 410}:
+                    raise
             except httpx.HTTPError:
-                continue
+                raise
         return jobs
 
 
@@ -1186,7 +1188,7 @@ async def collect_vpbank(source: dict) -> list[ObservedJob]:
                         if jid not in jobs_map:
                             jobs_map[jid] = res
                 except Exception:
-                    break
+                    raise
 
         jobs: list[ObservedJob] = []
         for jid, res in list(jobs_map.items())[:int(config.get("max_results", 80))]:
@@ -1210,7 +1212,7 @@ async def collect_vpbank(source: dict) -> list[ObservedJob]:
                     apply_url=detail_url, raw_text=description[:30000],
                 ))
             except httpx.HTTPError:
-                continue
+                raise
     return jobs
 
 
@@ -1224,18 +1226,23 @@ async def collect_onemount(source: dict) -> list[ObservedJob]:
             page = await browser.new_page()
             detail_page = await browser.new_page()
             jobs_data: list[dict] = []
+            response_errors: list[Exception] = []
 
             async def on_response(response):
                 if "ScreenDataSetGetJobRequests" in response.url:
                     try:
+                        if response.status >= 400:
+                            raise RuntimeError(f"One Mount career API returned HTTP {response.status}")
                         payload = await response.json()
                         items = payload.get("data", {}).get("List", {}).get("List", [])
                         jobs_data.extend(items)
-                    except Exception:
-                        pass
+                    except Exception as error:
+                        response_errors.append(error)
 
             page.on("response", on_response)
             await page.goto(source["url"], wait_until="networkidle", timeout=35000)
+            if response_errors:
+                raise RuntimeError("One Mount career API response could not be parsed") from response_errors[0]
             candidate_items = [
                 item for item in jobs_data
                 if item.get("JobRequest", {}).get("Id") and _target_title(item.get("JobRequest", {}).get("JobName", ""))
@@ -1260,7 +1267,7 @@ async def collect_onemount(source: dict) -> list[ObservedJob]:
                         apply_url=url, raw_text=desc[:30000],
                     ))
                 except Exception:
-                    continue
+                    raise
         finally:
             await browser.close()
     return jobs

@@ -780,6 +780,8 @@ def draft_custom_answers(provider: str, job: dict, profile: dict, cards: list[di
         "approved_evidence": [{key: card[key] for key in ("id", "kind", "title", "claim")} for card in cards],
         "fields": [{key: field.get(key) for key in ("index", "label", "group_label", "max_length")} for field in safe_fields],
     }
+    prompt = (render_prompt(profile.get("writing_preferences"), "form_answers", message_language=_job_language(job))
+              + json.dumps(payload, ensure_ascii=False)[:30_000])
     last_error: Exception | None = None
     for attempt in range(2):
         try:

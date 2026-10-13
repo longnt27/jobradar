@@ -536,5 +536,14 @@
       },
       "foreign_key_errors": 0
     }
+  },
+  "premerge_review": {
+    "date": "2026-10-13",
+    "fixes": [
+      "Propagate unexpected HTTP/TLS failures from HTML, SuccessFactors, VPBank and One Mount collectors; keep deliberate 404/410 handling for stale HTML/SuccessFactors postings.",
+      "Scope announcement-local jr_role requisition codes to their document URL for both incoming and historical observations.",
+      "Restore candidate/evidence prompt initialization for custom form-answer drafting.",
+      "Keep integration PR and tagged merge CI backend-only, with custom-answer and One Mount error regressions included."
+    ]
   }
 }

@@ -42,7 +42,7 @@ def _employer_id(conn, company: str) -> str | None:
 
 
 def ingest(db: Database, source_id: str, job: ObservedJob) -> tuple[str, bool]:
-    from .dedup import assess, employer_keys, find_match, reconcile_vacancy, refresh_vacancy, remember_match, vacancy_records
+    from .dedup import assess, career_requisition, employer_keys, find_match, reconcile_vacancy, refresh_vacancy, remember_match, vacancy_records
 
     url = normalize_url(job.url)
     raw = job.raw_text or job.description
@@ -73,7 +73,7 @@ def ingest(db: Database, source_id: str, job: ObservedJob) -> tuple[str, bool]:
         vacancy_id = new_id()
         incoming = {**job.__dict__, "id": vacancy_id, "urls": [url], "kinds": {source["kind"]},
                     "first_seen_at": timestamp,
-                    "requisitions": [(urlsplit(url).hostname, job.external_id)] if source["kind"] == "career" and job.external_id else []}
+                    "requisitions": [career_requisition(url, job.external_id)] if source["kind"] == "career" and job.external_id else []}
         exact = conn.execute(
             "SELECT vo.vacancy_id FROM observations o JOIN vacancy_observations vo ON vo.observation_id=o.id "
             "WHERE o.url=? AND o.id<>? AND NOT EXISTS(SELECT 1 FROM vacancy_observations p WHERE p.vacancy_id=vo.vacancy_id AND p.merge_reason='user_split') LIMIT 1",

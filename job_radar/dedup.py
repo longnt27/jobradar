@@ -70,6 +70,17 @@ def posting_key(value: str | None) -> str:
     return urlunsplit(("https", parts.hostname.removeprefix("www."), path, urlencode(sorted(query.items())), ""))
 
 
+def career_requisition(url: str, external_id: str) -> tuple[str | None, str]:
+    """Announcement role codes are unique within their document, not the host."""
+    parts = urlsplit(url)
+    query = dict(parse_qsl(parts.query))
+    if "jr_role" in query:
+        role = query.pop("jr_role")
+        announcement = posting_key(urlunsplit(parts._replace(query=urlencode(query))))
+        external_id = f"{announcement}#jr_role={role}"
+    return parts.hostname, external_id
+
+
 _TITLE_NOISE = set("hiring recruitment recruiting tuyen dung can tim nhan vien chuyen gia chuyen vien cap eng fluent fluency onsite on site remote hybrid hn hcm hanoi ha noi vietnam viet nam english".split())
 _LEVELS = {
     "intern": r"\b(intern|internship|trainee|thuc tap|tts)\b",
@@ -292,7 +303,7 @@ def vacancy_records(conn: sqlite3.Connection, incoming: dict | None = None) -> l
         record["kinds"].add(row["kind"])
         record["protected"] |= row["merge_reason"] == "user_split"
         if row["kind"] == "career" and row["external_id"]:
-            record["requisitions"].append((urlsplit(row["url"]).hostname, row["external_id"]))
+            record["requisitions"].append(career_requisition(row["url"], row["external_id"]))
         elif row["kind"] == "career" and (urlsplit(row["url"]).hostname or "").endswith(".talent.vn"):
             identifier = re.search(r"/job/[^/?]+-(\d+)/?$", row["url"])
             if identifier:

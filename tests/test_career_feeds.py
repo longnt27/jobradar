@@ -289,6 +289,50 @@ def test_vpbank_collector_processes_rmk_api_and_details(monkeypatch) -> None:
     assert "Phát triển mô hình trí tuệ nhân tạo" in jobs[0].description
 
 
+@pytest.mark.parametrize("phase", ["listing", "detail"])
+@pytest.mark.parametrize("failure", ["http", "tls"])
+def test_vpbank_request_failures_are_not_empty_scans(monkeypatch, phase, failure):
+    from job_radar.collectors import collect_vpbank
+
+    def respond(request):
+        failed_phase = "listing" if request.method == "POST" else "detail"
+        if phase == failed_phase:
+            if failure == "tls":
+                raise httpx.ConnectError("TLS verification failed", request=request)
+            return httpx.Response(503, request=request)
+        return httpx.Response(200, json={"jobSearchResult": [{"response": {
+            "id": "12167", "unifiedStandardTitle": "AI Engineer",
+            "unifiedUrlTitle": "ai-engineer", "jobLocationShort": ["Hanoi"],
+        }}]}, request=request)
+
+    monkeypatch.setattr("job_radar.collectors._career_client",
+                        lambda: httpx.AsyncClient(transport=httpx.MockTransport(respond)))
+    source = {"name": "VPBank careers", "config": {"queries": ["AI"], "max_pages": 1}}
+    with pytest.raises(httpx.HTTPError):
+        asyncio.run(collect_vpbank(source))
+
+
+@pytest.mark.parametrize("adapter", ["html_board", "successfactors"])
+@pytest.mark.parametrize("status", [503, 429, None])
+def test_career_detail_service_failures_are_not_empty_scans(monkeypatch, adapter, status):
+    from job_radar.collectors import collect_successfactors
+
+    def respond(request):
+        if request.url.path == "/careers":
+            return httpx.Response(200, text='<a class="jobTitle-link" href="/job/ai-engineer-123">AI Engineer</a>', request=request)
+        if status is None:
+            raise httpx.ConnectError("TLS verification failed", request=request)
+        return httpx.Response(status, request=request)
+
+    monkeypatch.setattr("job_radar.collectors._career_client",
+                        lambda: httpx.AsyncClient(transport=httpx.MockTransport(respond)))
+    source = {"name": "Example careers", "url": "https://example.com/careers",
+              "config": {"max_pages": 1, "link_path": r"^/job/[^/]+$"}}
+    collector = collect_html_board if adapter == "html_board" else collect_successfactors
+    with pytest.raises(httpx.HTTPError):
+        asyncio.run(collector(source))
+
+
 def test_workatsea_collector_processes_ats_api(monkeypatch) -> None:
     from job_radar.collectors import collect_workatsea
 

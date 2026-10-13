@@ -14,6 +14,30 @@ from job_radar.drafting import (ApplicationFit, EnglishTranslations, ModelDraft,
 from job_radar.ingest import ObservedJob, ingest
 
 
+def test_custom_form_answers_include_candidate_context_and_safe_fields(monkeypatch):
+    import json
+    from job_radar.drafting import FormAnswers, draft_custom_answers
+
+    prompts = []
+
+    def answer(_provider, prompt, response_type):
+        prompts.append(prompt)
+        assert response_type is FormAnswers
+        return FormAnswers.model_validate({"answers": [{"index": "0", "answer": "Relevant ML experience"},
+                                                       {"index": "1", "answer": "Salary answer"}]})
+
+    monkeypatch.setattr("job_radar.drafting._provider_json", answer)
+    fields = [{"index": 0, "type": "textarea", "label": "Why are you interested?", "max_length": 11},
+              {"index": 1, "type": "textarea", "label": "Expected salary", "max_length": 50}]
+    result = draft_custom_answers("codex", {"title": "AI Engineer"},
+                                  {"name": "Alex", "skills": ["Python"]}, [], fields)
+    assert result == {"0": "Relevant ML"}
+    payload = json.loads(prompts[0][prompts[0].index('{"job":'):])
+    assert payload["candidate"]["name"] == "Alex"
+    assert payload["job"]["title"] == "AI Engineer"
+    assert [field["index"] for field in payload["fields"]] == [0]
+
+
 def test_draft_uses_approved_evidence_and_renders_resume(tmp_path: Path) -> None:
     client = TestClient(create_app(Settings(tmp_path)))
     profile = client.get("/api/profile").json()

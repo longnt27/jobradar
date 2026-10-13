@@ -246,3 +246,25 @@ def test_posting_keys_reject_shared_pages_and_normalize_tracking():
     assert not posting_key("https://example.com/Job/Search")
     assert posting_key("https://www.linkedin.com/jobs/view/ai-engineer-123/?trk=x") == posting_key("https://linkedin.com/jobs/view/123")
     assert posting_key("https://acme.talent.vn/job/ai-engineer-42?utm_source=linkedin") == posting_key("https://acme.talent.vn/job/ai-engineer-42")
+
+
+@pytest.mark.parametrize("role_code", ["Mã số: CV-01<br>", ""])
+def test_announcements_with_reused_local_role_identity_stay_distinct(tmp_path, role_code):
+    from job_radar.baoviet import parse_baoviet_announcement
+    from job_radar.seeds import seed
+
+    db = Database(tmp_path / "jobs.db")
+    seed(db)
+    source_id = db.one("SELECT id FROM sources WHERE name='Bao Viet careers'")["id"]
+    for announcement, description in (
+        ("language-model-team", "Train multilingual language models using transformer architectures and distributed GPU infrastructure. " * 5),
+        ("fraud-model-team", "Detect financial fraud through transaction graph analysis and statistical anomaly detection. " * 5),
+    ):
+        html = (f"<table><tr><td>{role_code}Chức danh: AI Engineer<br>Nơi làm việc: Hanoi</td>"
+                f"<td>{description}</td><td>Python engineering experience</td></tr></table>")
+        job = parse_baoviet_announcement(html, f"https://baoviet.com.vn/vi/{announcement}-tuyen-dung")[0]
+        ingest(db, source_id, job)
+        ingest(db, source_id, job)
+    assert db.one("SELECT COUNT(*) AS n FROM vacancies")["n"] == 2
+    assert db.one("SELECT COUNT(*) AS n FROM observations")["n"] == 2
+    assert deduplicate_pool(db, apply=True)["merged"] == []
