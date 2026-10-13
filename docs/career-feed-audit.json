@@ -1,0 +1,516 @@
+{
+  "date": "2026-10-13",
+  "pulled_sha": "30ff3a4577708f91c0e4dd66d73240b0bb75ac0a",
+  "remote_live_ci": "https://github.com/longnt27/jobradar/actions/runs/38386579197",
+  "scope": "All 25 newly integrated career collectors, existing dedup and source migration, backend-only verification.",
+  "initial_counts": {
+    "ok": 11,
+    "error": 5,
+    "empty": 9
+  },
+  "after_parser_fixes": {
+    "ok": 14,
+    "error": 4,
+    "empty": 7
+  },
+  "fixes": [
+    "Replace obsolete FPT Software HTML listing with its public paginated API.",
+    "Restore full Talentnetwork descriptions, own deadlines and locations for MB Life, Mirae and Hyundai.",
+    "Preserve custom career sources and observation history during catalog seeding.",
+    "Require advertised JSON pagination totals to include unique records.",
+    "Reject Vietnamese-language requirements as evidence of a Vietnam location.",
+    "Honor numeric Retry-After headers without shortening the server cooldown."
+  ],
+  "results": [
+    {
+      "employer": "AIA Vietnam",
+      "adapter": "workday",
+      "source_url": "https://aia.wd3.myworkdayjobs.com/External",
+      "status": "ok",
+      "count": 1,
+      "samples": [
+        {
+          "title": "Data Engineering, Specialist",
+          "url": "https://aia.wd3.myworkdayjobs.com/External/job/Ho-Chi-Minh-City-VN-AIA-Vietnam/Data-Engineering--Specialist_JR-70884",
+          "location": "Ho Chi Minh City, VN-AIA Vietnam",
+          "external_id": "JR-70884",
+          "description_characters": 4592
+        }
+      ],
+      "seconds": 3.32
+    },
+    {
+      "employer": "Agoda",
+      "adapter": "agoda",
+      "source_url": "https://careersatagoda.com/vacancies/",
+      "status": "error",
+      "error_type": "HTTPStatusError",
+      "error": "Client error '403 Forbidden' for url 'https://careersatagoda.com/vacancies/'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "count": 0,
+      "seconds": 0.43
+    },
+    {
+      "employer": "Ampere",
+      "adapter": "html_board",
+      "source_url": "https://careers.amperecomputing.com/search/jobs/in/sg-ho-chi-minh-sai-gon",
+      "status": "error",
+      "error_type": "HTTPStatusError",
+      "error": "Client error '403 Forbidden' for url 'https://careers.amperecomputing.com/search/jobs/in/sg-ho-chi-minh-sai-gon'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "count": 0,
+      "seconds": 0.47
+    },
+    {
+      "employer": "Anduin Transactions",
+      "adapter": "trakstar",
+      "source_url": "https://anduin.hire.trakstar.com/",
+      "status": "ok",
+      "count": 3,
+      "samples": [
+        {
+          "title": "AI Business Operations Associate",
+          "url": "https://anduin.hire.trakstar.com/jobs/fk0zl8s/",
+          "location": "Ho Chi Minh City, Vietnam",
+          "external_id": "fk0zl8s",
+          "description_characters": 4156
+        },
+        {
+          "title": "Software Engineer Intern",
+          "url": "https://anduin.hire.trakstar.com/jobs/fk01m54/",
+          "location": "Ho Chi Minh City, Vietnam",
+          "external_id": "fk01m54",
+          "description_characters": 2480
+        },
+        {
+          "title": "Software Engineer, Product Development",
+          "url": "https://anduin.hire.trakstar.com/jobs/fk01m5a/",
+          "location": "Ho Chi Minh City, Vietnam",
+          "external_id": "fk01m5a",
+          "description_characters": 3186
+        }
+      ],
+      "seconds": 3.34
+    },
+    {
+      "employer": "Bao Viet",
+      "adapter": "baoviet_announcement",
+      "source_url": "https://baoviet.com.vn/vi/tuyen-dung",
+      "status": "ok",
+      "count": 9,
+      "samples": [
+        {
+          "title": "Chuyên viên bảo mật dữ liệu (Data Security)",
+          "url": "https://baoviet.com.vn/vi/trung-tam-cong-nghe-thong-tin-tap-doan-bao-viet-tuyen-dung-nam-2026-cap-nhat-03092026?jr_role=ANBM",
+          "location": "Chi nhánh Trung tâm CNTT, số 71 Ngô Sỹ Liên, phường Văn Miếu - Quốc Tử Giám, Hà Nội",
+          "external_id": "ANBM",
+          "description_characters": 1988
+        },
+        {
+          "title": "Chuyên viên Quản trị cơ sở dữ liệu và ứng dụng CNTT (DBA)",
+          "url": "https://baoviet.com.vn/vi/trung-tam-cong-nghe-thong-tin-tap-doan-bao-viet-tuyen-dung-nam-2026-cap-nhat-03092026?jr_role=VHQT",
+          "location": "Chi nhánh Trung tâm CNTT, số 71 Ngô Sỹ Liên, phường Văn Miếu - Quốc Tử Giám, Hà Nội",
+          "external_id": "VHQT",
+          "description_characters": 2246
+        },
+        {
+          "title": "Chuyên viên Lập trình Backend",
+          "url": "https://baoviet.com.vn/vi/trung-tam-cong-nghe-thong-tin-tap-doan-bao-viet-tuyen-dung-nam-2026-cap-nhat-03092026?jr_role=PTUD",
+          "location": "Chi nhánh Trung tâm CNTT, số 71 Ngô Sỹ Liên, phường Văn Miếu - Quốc Tử Giám, Hà Nội",
+          "external_id": "PTUD",
+          "description_characters": 3084
+        }
+      ],
+      "seconds": 0.74
+    },
+    {
+      "employer": "CMC University",
+      "adapter": "html_board",
+      "source_url": "https://cmcu.edu.vn/tin-tuyen-dung/",
+      "status": "error",
+      "error_type": "ConnectError",
+      "error": "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1032)",
+      "count": 0,
+      "seconds": 0.21
+    },
+    {
+      "employer": "Cadence Vietnam",
+      "adapter": "workday_vietnam",
+      "source_url": "https://cadence.wd1.myworkdayjobs.com/External_Careers",
+      "status": "ok",
+      "count": 1,
+      "samples": [
+        {
+          "title": "Sr Principal Application Engineer – Digital Verification",
+          "url": "https://cadence.wd1.myworkdayjobs.com/External_Careers/job/HO-CHI-MINH-CITY-02/Lead-Application-Engineer---Digital-Verification_R54509",
+          "location": "HO CHI MINH CITY 02",
+          "external_id": "R54509",
+          "description_characters": 2046
+        }
+      ],
+      "seconds": 9.56
+    },
+    {
+      "employer": "Co-opBank",
+      "adapter": "bank_notices",
+      "source_url": "https://co-opbank.vn/tuyen-dung/",
+      "status": "empty",
+      "count": 0,
+      "samples": [],
+      "note": "No relevant postings returned; full job-detail parsing remains unproven",
+      "seconds": 3.62
+    },
+    {
+      "employer": "FPT Software",
+      "count": 33,
+      "status": "ok",
+      "samples": [
+        {
+          "title": "Senior AI Scientist",
+          "location": "Hue, Viet Nam",
+          "url": "https://career.fpt-software.com/jobs/senior-ai-scientist",
+          "chars": 2722
+        },
+        {
+          "title": "Korean Business Analyst (Topik 5+)",
+          "location": "Ha Noi, Viet Nam",
+          "url": "https://career.fpt-software.com/jobs/korean-business-analyst-topik-5",
+          "chars": 3447
+        },
+        {
+          "title": "Fullstack NodeJS AWS Developer",
+          "location": "Ha Noi, Viet Nam",
+          "url": "https://career.fpt-software.com/jobs/fullstack-nodejs-aws-developer",
+          "chars": 2804
+        }
+      ]
+    },
+    {
+      "employer": "FWD Vietnam",
+      "adapter": "workday",
+      "source_url": "https://fwd.wd3.myworkdayjobs.com/FWDcareersite",
+      "status": "ok",
+      "count": 1,
+      "samples": [
+        {
+          "title": "Manager, GA Network",
+          "url": "https://fwd.wd3.myworkdayjobs.com/FWDcareersite/job/Vietnam---Ho-Chi-Minh/Manager--GA-Network_JR-0028095",
+          "location": "Vietnam - Ho Chi Minh",
+          "external_id": "JR-0028095",
+          "description_characters": 2346
+        }
+      ],
+      "seconds": 1.8
+    },
+    {
+      "employer": "Gear Inc",
+      "adapter": "manatal",
+      "source_url": "https://gear-inc-2.careers-page.com/",
+      "status": "ok",
+      "count": 8,
+      "samples": [
+        {
+          "title": "Kỹ Sư Quản Lý Cơ Sở Vật Chất / Facilities Engineer",
+          "url": "https://gear-inc-2.careers-page.com/jobs/253389b4-7174-4e2e-a03b-e591bdd31091",
+          "location": "Hà Nội, Ha Noi, Vietnam",
+          "external_id": "253389b4-7174-4e2e-a03b-e591bdd31091",
+          "description_characters": 2654
+        },
+        {
+          "title": "Nhân viên Gán nhãn Dữ liệu (Tiếng Nhật N3+) BHXH Full Lương + Bảo Hiểm Generali",
+          "url": "https://gear-inc-2.careers-page.com/jobs/5f47ad7d-80ae-4700-8bca-46c01eba2d10",
+          "location": "Ha Noi, Ha Noi, Vietnam",
+          "external_id": "5f47ad7d-80ae-4700-8bca-46c01eba2d10",
+          "description_characters": 1457
+        },
+        {
+          "title": "Nhân viên Xử lý Dữ liệu (Tiếng Nhật N3+) - BHXH Full Lương + Bảo Hiểm Generali",
+          "url": "https://gear-inc-2.careers-page.com/jobs/03008c26-9ca2-4ec7-aef3-0393ff154d27",
+          "location": "Ha Noi, Ha Noi, Vietnam",
+          "external_id": "03008c26-9ca2-4ec7-aef3-0393ff154d27",
+          "description_characters": 1454
+        }
+      ],
+      "seconds": 185.48
+    },
+    {
+      "employer": "Honda Vietnam",
+      "adapter": "html_board",
+      "source_url": "https://www.honda.com.vn/tuyen-dung/co-hoi-nghe-nghiep",
+      "status": "empty",
+      "count": 0,
+      "samples": [],
+      "note": "No relevant postings returned; full job-detail parsing remains unproven",
+      "seconds": 2.5
+    },
+    {
+      "employer": "Hyundai Motor Vietnam",
+      "count": 1,
+      "status": "ok",
+      "samples": [
+        {
+          "title": "Chuyên viên chính Phân tích Nghiệp vụ & Kiểm thử",
+          "location": "Ha Noi",
+          "url": "https://career.hyundai.thanhcong.vn/job/chuyen-vien-chinh-phan-tich-nghiep-vu-kiem-thu.35ac0f5e.html",
+          "chars": 1452
+        }
+      ]
+    },
+    {
+      "employer": "MB Ageas Life",
+      "count": 3,
+      "status": "ok",
+      "samples": [
+        {
+          "title": "Data Engineer, Expert",
+          "location": "Ha Noi",
+          "url": "https://tuyendung.mblife.vn/job/data-engineer-expert.35ac102e.html",
+          "chars": 1838
+        },
+        {
+          "title": "Data Engineer, Officer/ Senior Officer",
+          "location": "Ha Noi",
+          "url": "https://tuyendung.mblife.vn/job/data-engineer-officer-senior-officer.35ac102c.html",
+          "chars": 1469
+        },
+        {
+          "title": "Chuyên viên cao cấp Kiểm toán Công nghệ Thông tin",
+          "location": "Ha Noi",
+          "url": "https://tuyendung.mblife.vn/job/chuyen-vien-cao-cap-kiem-toan-cong-nghe-thong-tin.35ac0f5b.html",
+          "chars": 1664
+        }
+      ]
+    },
+    {
+      "employer": "Manulife Vietnam",
+      "adapter": "workday",
+      "source_url": "https://manulife.wd3.myworkdayjobs.com/MFCJH_Jobs",
+      "status": "ok",
+      "count": 2,
+      "samples": [
+        {
+          "title": "Assistant Manager, Full Stack Software Engineer",
+          "url": "https://manulife.wd3.myworkdayjobs.com/MFCJH_Jobs/job/MITDC-office-Vietnam/Assistant-Manager--Full-Stack-Software-Engineer_JR26030623",
+          "location": "MITDC office, Vietnam",
+          "external_id": "JR26030623",
+          "description_characters": 5173
+        },
+        {
+          "title": "Front End Software Engineer",
+          "url": "https://manulife.wd3.myworkdayjobs.com/MFCJH_Jobs/job/MITDC-office-Vietnam/Front-End-Software-Engineer_JR26031353",
+          "location": "MITDC office, Vietnam",
+          "external_id": "JR26031353",
+          "description_characters": 4918
+        }
+      ],
+      "seconds": 3.24
+    },
+    {
+      "employer": "Mirae Asset Vietnam",
+      "adapter": "html_board",
+      "source_url": "https://recruitment.mafc.vn/job-search/all-jobs/en",
+      "status": "error",
+      "error_type": "ConnectError",
+      "error": "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1032)",
+      "count": 0,
+      "seconds": 0.16
+    },
+    {
+      "employer": "NXP Vietnam",
+      "adapter": "workday_vietnam",
+      "source_url": "https://nxp.wd3.myworkdayjobs.com/careers",
+      "status": "empty",
+      "count": 0,
+      "samples": [],
+      "note": "No relevant postings returned; full job-detail parsing remains unproven",
+      "seconds": 51.45
+    },
+    {
+      "employer": "Prudential Vietnam",
+      "adapter": "workday",
+      "source_url": "https://prudential.wd3.myworkdayjobs.com/prudential",
+      "status": "empty",
+      "count": 0,
+      "samples": [],
+      "note": "No relevant postings returned; full job-detail parsing remains unproven",
+      "seconds": 8.17
+    },
+    {
+      "employer": "Public Bank Vietnam",
+      "adapter": "public_bank",
+      "source_url": "https://publicbank.com.vn/News/Career?cateId=22",
+      "status": "ok",
+      "count": 5,
+      "samples": [
+        {
+          "title": "Lập trình viên phòng Công nghệ thông tin, Hội sở chính",
+          "url": "https://publicbank.com.vn/News/Career?cateId=22&jobradar_role=0f4326ae7b96b9f8",
+          "location": "Hội sở chính, Hà Nội",
+          "external_id": "publicbank-0f4326ae7b96b9f8",
+          "description_characters": 443
+        },
+        {
+          "title": "Chuyên viên an ninh mạng phòng Công nghệ thông tin, Hội sở chính",
+          "url": "https://publicbank.com.vn/News/Career?cateId=22&jobradar_role=0971f549deb052e2",
+          "location": "Hội sở chính, Hà Nội",
+          "external_id": "publicbank-0971f549deb052e2",
+          "description_characters": 506
+        },
+        {
+          "title": "Chuyên viên Phân tích nghiệp vụ phòng Công nghệ thông tin, Hội sở chính",
+          "url": "https://publicbank.com.vn/News/Career?cateId=22&jobradar_role=2a9ac8a217ab2a59",
+          "location": "Hội sở chính, Hà Nội",
+          "external_id": "publicbank-2a9ac8a217ab2a59",
+          "description_characters": 594
+        }
+      ],
+      "seconds": 0.22
+    },
+    {
+      "employer": "Qualcomm",
+      "adapter": "eightfold",
+      "source_url": "https://careers.qualcomm.com/careers",
+      "status": "ok",
+      "count": 20,
+      "samples": [
+        {
+          "title": "Staff, Engineer – Product Stability Test (PDT)",
+          "url": "https://careers.qualcomm.com/careers/job/446720384409",
+          "location": "Ho Chi Minh City, Ho Chi Minh City, VN",
+          "external_id": "446720384409",
+          "description_characters": 7609
+        },
+        {
+          "title": "SoC Physical Design Engineer (Senior to Principal)",
+          "url": "https://careers.qualcomm.com/careers/job/446720845273",
+          "location": "Ho Chi Minh City, Ho Chi Minh City, VN, Hyderabad, TS, IN",
+          "external_id": "446720845273",
+          "description_characters": 6507
+        },
+        {
+          "title": "GenAI Engineer (Up to Staff level)",
+          "url": "https://careers.qualcomm.com/careers/job/446721009705",
+          "location": "Hanoi, Hanoi, VN, Ho Chi Minh City, Ho Chi Minh City, VN",
+          "external_id": "446721009705",
+          "description_characters": 6268
+        }
+      ],
+      "seconds": 14.84
+    },
+    {
+      "employer": "SAP Vietnam",
+      "adapter": "successfactors",
+      "source_url": "https://jobs.sap.com/go/Vietnam/9513801/",
+      "status": "empty",
+      "count": 0,
+      "samples": [],
+      "note": "No relevant postings returned; full job-detail parsing remains unproven",
+      "seconds": 2.07
+    },
+    {
+      "employer": "VNPT Group",
+      "adapter": "vnpt_parent",
+      "source_url": "https://tuyendung.vnpt.vn/viec-lam/viec-lam-tap-doan-vnpt-d3240.html",
+      "status": "empty",
+      "count": 0,
+      "samples": [],
+      "note": "No relevant postings returned; full job-detail parsing remains unproven",
+      "seconds": 0.3
+    },
+    {
+      "employer": "VNPT Technology",
+      "adapter": "vnpt_technology",
+      "source_url": "https://www.vnpt-technology.vn/vi/recruit",
+      "status": "ok",
+      "count": 6,
+      "samples": [
+        {
+          "title": "Kỹ sư Phần mềm AI Junior",
+          "url": "https://vnpt-technology.vn/vi/recruit_detail/53",
+          "location": "Hà Nội",
+          "external_id": "53",
+          "description_characters": 3238
+        },
+        {
+          "title": "Kỹ sư Giải pháp Công nghệ Juinor",
+          "url": "https://vnpt-technology.vn/vi/recruit_detail/52",
+          "location": "Hà Nội",
+          "external_id": "52",
+          "description_characters": 2559
+        },
+        {
+          "title": "Kỹ sư Quản lý Dự án",
+          "url": "https://vnpt-technology.vn/vi/recruit_detail/51",
+          "location": "Hà Nội",
+          "external_id": "51",
+          "description_characters": 3921
+        }
+      ],
+      "seconds": 1.74
+    },
+    {
+      "employer": "Vikki Bank",
+      "adapter": "vikki_bank",
+      "source_url": "https://vikkibank.vn/tuyen-dung/",
+      "status": "ok",
+      "count": 11,
+      "samples": [
+        {
+          "title": "Database Administrator (DBA) – Operations",
+          "url": "https://vikkibank.vn/database-administrator-dba-operations/",
+          "location": "",
+          "external_id": "database-administrator-dba-operations",
+          "description_characters": 1826
+        },
+        {
+          "title": "Infrastructure & Cloud Operations Engineer",
+          "url": "https://vikkibank.vn/infrastructure-cloud-operations-engineer/",
+          "location": "",
+          "external_id": "infrastructure-cloud-operations-engineer",
+          "description_characters": 2206
+        },
+        {
+          "title": "Cloud SOC / Security Specialist",
+          "url": "https://vikkibank.vn/cloud-soc-security-specialist/",
+          "location": "",
+          "external_id": "cloud-soc-security-specialist",
+          "description_characters": 3074
+        }
+      ],
+      "seconds": 18.17
+    },
+    {
+      "employer": "VinBus",
+      "adapter": "html_board",
+      "source_url": "https://vinbus.vn/tuyen-dung/viec-lam",
+      "status": "empty",
+      "count": 0,
+      "samples": [],
+      "note": "No relevant postings returned; full job-detail parsing remains unproven",
+      "seconds": 1.1
+    }
+  ],
+  "limits": [
+    "Agoda and Ampere return HTTP 403; CMC University and Mirae Asset recruitment have incomplete TLS chains in both local and GitHub-hosted probes. No TLS verification was disabled.",
+    "Seven collectors returned no matching jobs; their full posting extraction remains unproven by this runtime scan.",
+    "No production database cleanup was repeated, no app UI checks were performed and no merge to main was attempted."
+  ],
+  "verification": {
+    "focused_backend_tests": 148,
+    "database_upgrade_copy": {
+      "observations_preserved": 6500,
+      "vacancies_preserved": 2344,
+      "application_drafts_preserved": 38,
+      "submissions_preserved": 25,
+      "feedback_preserved": 51,
+      "foreign_key_errors": 0
+    },
+    "dedup_regression": "New multi-role announcements retain separate jobs, matching LinkedIn sightings merge, and career rescans preserve canonical job identity.",
+    "backend_suite": {
+      "files": 47,
+      "passed": 418,
+      "warnings": 1,
+      "seconds": 204.23,
+      "excluded": "UI tests and browser-driven application flows, per user instruction"
+    }
+  },
+  "fix_commit": "1f35045"
+}

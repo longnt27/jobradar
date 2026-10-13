@@ -81,7 +81,13 @@
       "adapter": "html_board",
       "evidence": "2026-10-13 first-party HTML board https://vinbus.vn/tuyen-dung/viec-lam includes actual listing records and ?page=2 pagination; individual live jobs have stable slug URLs (e.g. https://vinbus.vn/chuyen-vien-co-van-dich-vu-bao-duong-sua-chua-ha-noi) with full responsibilities, requirements, contact and location. HTML board links fetch and process details; no current sampled technical-title match. Mocked parsing test included; live collector not runnable in current environment.",
       "reviewed_at": "2026-10-13",
-      "verified_at": "2026-10-13"
+      "verified_at": "2026-10-13",
+      "live_check": {
+        "date": "2026-10-13",
+        "status": "empty",
+        "count": 0,
+        "report": "docs/career-feed-audit.json"
+      }
     },
     {
       "employer": "Vinmec",
@@ -143,7 +149,13 @@
       "career_url": "https://tuyendung.vnpt.vn/viec-lam/viec-lam-tap-doan-vnpt-d3240.html",
       "adapter": "vnpt_parent",
       "evidence": "The central VNPT recruitment portal has a dedicated parent-company filter currently explicitly stating 'Không tìm thấy việc làm phù hợp'. Collector distinguishes this verified empty result from a parser/network failure and will not misattribute subsidiary jobs to the parent. Mocked collector validation required before release.",
-      "verified_at": "2026-10-13"
+      "verified_at": "2026-10-13",
+      "live_check": {
+        "date": "2026-10-13",
+        "status": "empty",
+        "count": 0,
+        "report": "docs/career-feed-audit.json"
+      }
     },
     {
       "employer": "VNPT Technology",
@@ -152,7 +164,13 @@
       "career_url": "https://www.vnpt-technology.vn/vi/recruit",
       "adapter": "vnpt_technology",
       "evidence": "VNPT Technology's corporate recruitment table links per-job /vi/recruit_detail/{id} posts; individual details show working location, application deadline and complete role description. Collector uses that official first-party listing. Mocked collector validation required before release.",
-      "verified_at": "2026-10-13"
+      "verified_at": "2026-10-13",
+      "live_check": {
+        "date": "2026-10-13",
+        "status": "ok",
+        "count": 6,
+        "report": "docs/career-feed-audit.json"
+      }
     },
     {
       "employer": "FPT Corporation",
@@ -168,9 +186,15 @@
       "category": "fpt",
       "status": "verified",
       "career_url": "https://career.fpt-software.com/jobs-search/",
-      "adapter": "html_board",
-      "evidence": "FPT Software-operated WordPress jobs board exposes paginated /jobs/{slug} postings (page_job pagination). Verified live AI Engineer and Data Engineer role pages with responsibilities/requirements and Apply Before deadline. Focused HTML pagination/detail/expiry tests added; end-to-end HTTP smoke requires an environment with direct network access.",
-      "verified_at": "2026-10-13"
+      "adapter": "json_board",
+      "evidence": "Audited Angular frontend calls the public /service/api/v1.0/public/job-postings/search API with zero-based pagination. All 58 advertised records enumerated; 33 current Vietnam roles returned complete responsibilities, requirements, locations, stable IDs and closing dates.",
+      "verified_at": "2026-10-13",
+      "live_check": {
+        "date": "2026-10-13",
+        "status": "ok",
+        "count": 33,
+        "report": "docs/career-feed-audit.json"
+      }
     },
     {
       "employer": "FPT Digital",
@@ -233,7 +257,14 @@
       "career_url": "https://cmcu.edu.vn/tin-tuyen-dung/",
       "adapter": "html_board",
       "evidence": "Official CMC University recruiting archive lists 16 notices over two pages, including 2026-09-17 Hanoi IT/Computer Science Lecturer and 2026-10-07 Digital Training and AI Specialist. Verified complete individual role pages, Hanoi work addresses, application contact and requirements; HTML collector follows WordPress archive pages and records stable posting slugs. Focused mocked pagination/detail tests added.",
-      "verified_at": "2026-10-13"
+      "verified_at": "2026-10-13",
+      "live_check": {
+        "date": "2026-10-13",
+        "status": "error",
+        "count": 0,
+        "report": "docs/career-feed-audit.json",
+        "error": "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1032)"
+      }
     },
     {
       "employer": "Agribank",
@@ -275,7 +306,13 @@
       "career_url": "https://vikkibank.vn/tuyen-dung/",
       "adapter": "vikki_bank",
       "evidence": "Official Vikki recruitment board exposes individual position pages and avia-element-paging listing controls; implemented bounded pagination, detail extraction, role targeting and explicit parse failure. Live production collector run not available from execution environment.",
-      "verified_at": "2026-10-13"
+      "verified_at": "2026-10-13",
+      "live_check": {
+        "date": "2026-10-13",
+        "status": "ok",
+        "count": 11,
+        "report": "docs/career-feed-audit.json"
+      }
     },
     {
       "employer": "Co-opBank",
@@ -284,7 +321,13 @@
       "career_url": "https://co-opbank.vn/tuyen-dung/",
       "adapter": "bank_notices",
       "evidence": "Official Co-opBank recruitment announcements have linked detail pages; conservative parser emits only explicit individual technical roles and rejects multiple technical roles sharing a URL to prevent dedup collision. Live production collector run not available from execution environment.",
-      "verified_at": "2026-10-13"
+      "verified_at": "2026-10-13",
+      "live_check": {
+        "date": "2026-10-13",
+        "status": "empty",
+        "count": 0,
+        "report": "docs/career-feed-audit.json"
+      }
     },
     {
       "employer": "Vietnam Bank for Social Policies",
@@ -327,7 +370,13 @@
       "career_url": "https://publicbank.com.vn/News/Career?cateId=22",
       "adapter": "public_bank",
       "evidence": "Official Public Bank Vietnam careers page lists several roles within one announcement with HR application email. Dedicated parser splits role headings, retains per-role requirements, distinct stable IDs and official navigable page. Limitation: bank supplies no individual posting deep-links; jobradar_role query parameters distinguish records. Parser tests mocked; live HTTP runtime unavailable (DNS blocked).",
-      "verified_at": "2026-10-13"
+      "verified_at": "2026-10-13",
+      "live_check": {
+        "date": "2026-10-13",
+        "status": "ok",
+        "count": 5,
+        "report": "docs/career-feed-audit.json"
+      }
     },
     {
       "employer": "Hong Leong Bank Vietnam",
@@ -461,11 +510,17 @@
     {
       "employer": "MB Ageas Life",
       "category": "insurance",
-      "status": "pending",
+      "status": "verified",
       "career_url": "https://tuyendung.mblife.vn/job-search/all-jobs/en",
       "adapter": "html_board",
-      "evidence": "Former MB Ageas Life now uses MB Life name and official recruitment portal. CareerLink HTML adapter added; live listing/detail parsing still needs validation.",
-      "verified_at": null
+      "evidence": "Official MB Life recruitment portal. Live Talentnetwork .job-post-description and own metadata verified; three current technical jobs returned full requirements and Hanoi locations after correcting the detail selectors.",
+      "verified_at": "2026-10-13",
+      "live_check": {
+        "date": "2026-10-13",
+        "status": "ok",
+        "count": 3,
+        "report": "docs/career-feed-audit.json"
+      }
     },
     {
       "employer": "NAPAS",
@@ -557,11 +612,17 @@
     {
       "employer": "FWD Vietnam",
       "category": "insurance",
-      "status": "pending",
+      "status": "verified",
       "career_url": "https://fwd.wd3.myworkdayjobs.com/FWDcareersite",
       "adapter": "workday",
       "evidence": "Official FWD Vietnam careers routes to FWD Workday site; CXS route configured from public Workday path convention. API response and location coverage not live-tested.",
-      "verified_at": null
+      "verified_at": "2026-10-13",
+      "live_check": {
+        "date": "2026-10-13",
+        "status": "ok",
+        "count": 1,
+        "report": "docs/career-feed-audit.json"
+      }
     },
     {
       "employer": "Prudential Vietnam",
@@ -570,25 +631,43 @@
       "career_url": "https://prudential.wd3.myworkdayjobs.com/prudential",
       "adapter": "workday",
       "evidence": "Official Prudential careers site links Workday. CXS route and Vietnam title search configured, but live API response not verified.",
-      "verified_at": null
+      "verified_at": null,
+      "live_check": {
+        "date": "2026-10-13",
+        "status": "empty",
+        "count": 0,
+        "report": "docs/career-feed-audit.json"
+      }
     },
     {
       "employer": "Manulife Vietnam",
       "category": "insurance",
-      "status": "pending",
+      "status": "verified",
       "career_url": "https://manulife.wd3.myworkdayjobs.com/MFCJH_Jobs",
       "adapter": "workday",
       "evidence": "Official Manulife Workday jobs board found; configured Vietnam search, pending CXS live API verification.",
-      "verified_at": null
+      "verified_at": "2026-10-13",
+      "live_check": {
+        "date": "2026-10-13",
+        "status": "ok",
+        "count": 2,
+        "report": "docs/career-feed-audit.json"
+      }
     },
     {
       "employer": "AIA Vietnam",
       "category": "insurance",
-      "status": "pending",
+      "status": "verified",
       "career_url": "https://aia.wd3.myworkdayjobs.com/External",
       "adapter": "workday",
       "evidence": "AIA Group official corporate Workday board; configured Vietnam search. CXS endpoint and employer scope require live verification.",
-      "verified_at": null
+      "verified_at": "2026-10-13",
+      "live_check": {
+        "date": "2026-10-13",
+        "status": "ok",
+        "count": 1,
+        "report": "docs/career-feed-audit.json"
+      }
     },
     {
       "employer": "Chubb Life Vietnam",
@@ -606,16 +685,29 @@
       "career_url": "https://recruitment.mafc.vn/job-search/all-jobs/en",
       "adapter": "html_board",
       "evidence": "Official Mirae Asset Finance Vietnam recruitment portal. CareerLink HTML adapter added; detail path and multi-page live smoke validation pending.",
-      "verified_at": null
+      "verified_at": null,
+      "live_check": {
+        "date": "2026-10-13",
+        "status": "error",
+        "count": 0,
+        "report": "docs/career-feed-audit.json",
+        "error": "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1032)"
+      }
     },
     {
       "employer": "Bao Viet",
       "category": "finance",
-      "status": "pending",
-      "career_url": "https://www.baoviet.com.vn/vi/tuyen-dung",
+      "status": "verified",
+      "career_url": "https://baoviet.com.vn/vi/tuyen-dung",
       "adapter": "baoviet_announcement",
       "evidence": "Official Tập đoàn Bảo Việt career page links to group ICT recruitment announcements with multiple role rows. Dedicated row-splitting adapter; live HTML selector validation pending.",
-      "verified_at": null
+      "verified_at": "2026-10-13",
+      "live_check": {
+        "date": "2026-10-13",
+        "status": "ok",
+        "count": 9,
+        "report": "docs/career-feed-audit.json"
+      }
     },
     {
       "employer": "SeaMoney",
@@ -639,7 +731,14 @@
       "status": "pending",
       "career_url": "https://careersatagoda.com/vacancies/",
       "adapter": "agoda",
-      "evidence": "Official Agoda listings and individual /job/<id>-<slug>/ pages confirmed publicly, displaying per-posting country and full descriptions. Agent 7 adapter and mocked regression tests added; runtime live smoke test and full pagination/load-more confirmation still REQUIRED before marking verified."
+      "evidence": "Official Agoda listings and individual /job/<id>-<slug>/ pages confirmed publicly, displaying per-posting country and full descriptions. Agent 7 adapter and mocked regression tests added; runtime live smoke test and full pagination/load-more confirmation still REQUIRED before marking verified.",
+      "live_check": {
+        "date": "2026-10-13",
+        "status": "error",
+        "count": 0,
+        "report": "docs/career-feed-audit.json",
+        "error": "Client error '403 Forbidden' for url 'https://careersatagoda.com/vacancies/'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403"
+      }
     },
     {
       "employer": "Booking.com",
@@ -690,7 +789,13 @@
       "career_url": "https://gear-inc-2.careers-page.com/",
       "adapter": "manatal",
       "evidence": "First-party Gear Inc careers link resolves to its Manatal board with 220 displayed open positions across 23 paginated pages. Adapter requires all advertised job IDs, follows Vietnam-specific detail postings and captures requirements, location and apply URLs. Mocked collector validation required before release.",
-      "verified_at": "2026-10-13"
+      "verified_at": "2026-10-13",
+      "live_check": {
+        "date": "2026-10-13",
+        "status": "ok",
+        "count": 8,
+        "report": "docs/career-feed-audit.json"
+      }
     },
     {
       "employer": "NashTech Vietnam",
@@ -762,7 +867,13 @@
       "career_url": "https://anduin.hire.trakstar.com/",
       "adapter": "trakstar",
       "evidence": "Official Anduin recruiting portal hosted on Trakstar exposes individual /jobs/fk... postings, including Vietnam software engineering roles with job qualifications; collector reads details from the portal, retaining Vietnam scope. Mocked collector validation required before release.",
-      "verified_at": "2026-10-13"
+      "verified_at": "2026-10-13",
+      "live_check": {
+        "date": "2026-10-13",
+        "status": "ok",
+        "count": 3,
+        "report": "docs/career-feed-audit.json"
+      }
     },
     {
       "employer": "Sky Mavis",
@@ -808,11 +919,17 @@
     {
       "employer": "Qualcomm",
       "category": "global_tech",
-      "status": "adapter_unverified",
+      "status": "verified",
       "career_url": "https://careers.qualcomm.com/careers",
       "adapter": "eightfold",
       "evidence": "Qualcomm's own careers page links to the official Eightfold board; public Eightfold PCSX/classic schemas are documented in third-party open source implementation. Live Vietnam-scoped API responses could not be exercised in this environment; runtime smoke verification required.",
-      "verified_at": null
+      "verified_at": "2026-10-13",
+      "live_check": {
+        "date": "2026-10-13",
+        "status": "ok",
+        "count": 20,
+        "report": "docs/career-feed-audit.json"
+      }
     },
     {
       "employer": "Samsung R&D Vietnam",
@@ -848,16 +965,28 @@
       "career_url": "https://nxp.wd3.myworkdayjobs.com/careers",
       "adapter": "workday_vietnam",
       "evidence": "Public NXP Workday jobs board uses the employer tenant nxp and careers board. Workday API and Vietnam-scoped search implementation added; live API and detail response not tested.",
-      "verified_at": null
+      "verified_at": null,
+      "live_check": {
+        "date": "2026-10-13",
+        "status": "empty",
+        "count": 0,
+        "report": "docs/career-feed-audit.json"
+      }
     },
     {
       "employer": "Cadence Vietnam",
       "category": "global_tech",
-      "status": "adapter_unverified",
+      "status": "verified",
       "career_url": "https://cadence.wd1.myworkdayjobs.com/External_Careers",
       "adapter": "workday_vietnam",
       "evidence": "Public Cadence Workday External_Careers board identified; tenant API integration added but live search and detail API response not verified.",
-      "verified_at": null
+      "verified_at": "2026-10-13",
+      "live_check": {
+        "date": "2026-10-13",
+        "status": "ok",
+        "count": 1,
+        "report": "docs/career-feed-audit.json"
+      }
     },
     {
       "employer": "MediaTek Vietnam",
@@ -884,7 +1013,14 @@
       "career_url": "https://careers.amperecomputing.com/search/jobs/in/sg-ho-chi-minh-sai-gon",
       "adapter": "html_board",
       "evidence": "Official Vietnam-scoped page currently lists 8 roles (including Data Engineer and MTE Software Engineer), with independently accessible first-party /jobs/<id>-<slug> details and complete descriptions; checked 2026-10-13. Adapter uses scoped job URLs and stable requisition IDs; focused fixture tests added.",
-      "verified_at": "2026-10-13"
+      "verified_at": "2026-10-13",
+      "live_check": {
+        "date": "2026-10-13",
+        "status": "error",
+        "count": 0,
+        "report": "docs/career-feed-audit.json",
+        "error": "Client error '403 Forbidden' for url 'https://careers.amperecomputing.com/search/jobs/in/sg-ho-chi-minh-sai-gon'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403"
+      }
     },
     {
       "employer": "Microsoft Vietnam",
@@ -938,7 +1074,13 @@
       "career_url": "https://jobs.sap.com/go/Vietnam/9513801/",
       "adapter": "successfactors",
       "evidence": "Official SAP Vietnam SuccessFactors board currently shows 6 vacancies on one page; country-scoped listing verified 2026-10-13. Existing successfactors collector fetches /job/ details and full description; focused integration relies on existing SuccessFactors tests.",
-      "verified_at": "2026-10-13"
+      "verified_at": "2026-10-13",
+      "live_check": {
+        "date": "2026-10-13",
+        "status": "empty",
+        "count": 0,
+        "report": "docs/career-feed-audit.json"
+      }
     },
     {
       "employer": "Cisco Vietnam",
@@ -995,15 +1137,28 @@
       "status": "implemented_unverified",
       "career_url": "https://www.honda.com.vn/tuyen-dung/co-hoi-nghe-nghiep",
       "adapter": "html_board",
-      "evidence": "Official Honda Vietnam career listing and role detail accessible: https://www.honda.com.vn/tuyen-dung/chi-tiet-co-hoi-nghe-nghiep?id=1002 (software-maintenance position). Query job IDs must be preserved; listing/detail adapter uses the existing HTML board collector. Live HTTP collector execution not available in this session. Source and example detail URL verified via web search; mocked collector tests authored, but no live execution, HTML shape or pagination verification. Must remain unverified until live smoke."
+      "evidence": "Official Honda Vietnam career listing and role detail accessible: https://www.honda.com.vn/tuyen-dung/chi-tiet-co-hoi-nghe-nghiep?id=1002 (software-maintenance position). Query job IDs must be preserved; listing/detail adapter uses the existing HTML board collector. Live HTTP collector execution not available in this session. Source and example detail URL verified via web search; mocked collector tests authored, but no live execution, HTML shape or pagination verification. Must remain unverified until live smoke.",
+      "live_check": {
+        "date": "2026-10-13",
+        "status": "empty",
+        "count": 0,
+        "report": "docs/career-feed-audit.json"
+      }
     },
     {
       "employer": "Hyundai Motor Vietnam",
       "category": "global_tech",
-      "status": "implemented_unverified",
+      "status": "verified",
       "career_url": "https://career.hyundai.thanhcong.vn/job-search/all-jobs/en",
       "adapter": "html_board",
-      "evidence": "Official Hyundai Thanh Cong Vietnam joint venture recruitment board lists four current roles, with individual detail pages, locations, and expiry dates: https://career.hyundai.thanhcong.vn/job-search/all-jobs/en. Company refers to the Vietnamese JV, not Hyundai globally. Live HTTP collector execution not available in this session. Source and example detail URL verified via web search; mocked collector tests authored, but no live execution, HTML shape or pagination verification. Must remain unverified until live smoke."
+      "evidence": "Official Hyundai Thanh Cong JV recruitment board. Corrected Talentnetwork detail and own deadline/location extraction; live backend collector returned one current Hanoi technical posting with full requirements.",
+      "live_check": {
+        "date": "2026-10-13",
+        "status": "ok",
+        "count": 1,
+        "report": "docs/career-feed-audit.json"
+      },
+      "verified_at": "2026-10-13"
     }
   ],
   "handoff": {
@@ -1029,7 +1184,8 @@
       "Agribank and Social Policies Bank samples are expired; retain closing-date checks. VCBNeo currently rejects direct requests.",
       "All adapters must preserve real employer identity, complete descriptions, posting links, pagination, and new-job ingestion dedup.",
       "The local running service was last restarted before the final adapter batches; restart or redeploy when adopting the pushed branch."
-    ]
+    ],
+    "superseded_by_audit": "docs/career-feed-audit.json"
   },
   "integration": {
     "date": "2026-10-13",
@@ -1048,16 +1204,16 @@
     ],
     "assigned_employers": 80,
     "counts": {
-      "verified": 47,
+      "verified": 55,
       "blocked": 53,
-      "pending": 10,
-      "adapter_unverified": 3,
-      "implemented_unverified": 2
+      "pending": 5,
+      "adapter_unverified": 1,
+      "implemented_unverified": 1
     },
-    "live_runtime_verified_in_this_sprint": 0,
+    "live_runtime_verified_in_this_sprint": 14,
     "notes": [
-      "Merged agent work into feat/job-feed-integration for CI verification. Existing source verification is not proof the collectors were executed live.",
-      "Blocked employers are unresolved; pending/adapter_unverified/implemented_unverified feeds must not be counted as live-validated."
+      "All ten implementation waves are present. Status in targets records implementation/source acceptance; live_check records actual audited collector execution.",
+      "HTTP access failures and zero-job scans remain explicitly unverified at runtime; blocked employers remain unresolved."
     ],
     "new_feed_employers": [
       "VinBus",
@@ -1085,6 +1241,16 @@
       "Anduin Transactions",
       "VNPT Group",
       "VNPT Technology"
-    ]
+    ],
+    "audit": {
+      "date": "2026-10-13",
+      "pulled_sha": "30ff3a4577708f91c0e4dd66d73240b0bb75ac0a",
+      "report": "docs/career-feed-audit.json",
+      "live_counts": {
+        "ok": 14,
+        "error": 4,
+        "empty": 7
+      }
+    }
   }
 }
