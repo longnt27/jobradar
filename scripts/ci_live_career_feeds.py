@@ -146,7 +146,10 @@ async def probe_shard(feeds: list[CareerFeed], timeout: float, max_concurrency: 
 
     async def limited(feed: CareerFeed) -> dict:
         async with semaphore:
-            result = await probe_feed(feed, timeout=timeout)
+            # Manatal enumerates and verifies every public page/role, and
+            # deliberately honors rate limits; allow its bounded longer scan.
+            per_feed_timeout = max(timeout, 240) if feed.adapter == "manatal" else timeout
+            result = await probe_feed(feed, timeout=per_feed_timeout)
             status = result["status"].upper()
             print(f"{status} {feed.employer}: {result['count']} role(s), {result['seconds']}s", flush=True)
             if result["status"] == "error":
