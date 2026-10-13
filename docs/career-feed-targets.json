@@ -276,10 +276,10 @@
     {
       "employer": "Standard Chartered Vietnam",
       "category": "foreign_bank",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://jobs.standardchartered.com/search/?q=&locationsearch=Vietnam",
       "adapter": null,
-      "evidence": null
+      "evidence": "First-party SAP SuccessFactors portal exists. Live HTML exposes a React job-results widget, SAP unified API configuration and per-page X-CSRF-Token; existing static HTML SuccessFactors parser cannot enumerate its listings. API contract/authenticated widget flow needs verified live instrumentation before integration. https://jobs.standardchartered.com/search/?q=&locationsearch=Vietnam"
     },
     {
       "employer": "Woori Bank Vietnam",
@@ -302,10 +302,11 @@
     {
       "employer": "Public Bank Vietnam",
       "category": "foreign_bank",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://publicbank.com.vn/News/Career?cateId=22",
+      "adapter": "public_bank",
+      "evidence": "Official Public Bank Vietnam careers page lists several roles within one announcement with HR application email. Dedicated parser splits role headings, retains per-role requirements, distinct stable IDs and official navigable page. Limitation: bank supplies no individual posting deep-links; jobradar_role query parameters distinguish records. Parser tests mocked; live HTTP runtime unavailable (DNS blocked).",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "Hong Leong Bank Vietnam",
@@ -355,10 +356,10 @@
     {
       "employer": "Mizuho",
       "category": "foreign_bank",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://www.mizuhogroup.com/careers",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official Mizuho global careers presence verified; a Vietnam-specific first-party listing/detail feed and employer scoping are not verified. Do not substitute worldwide vacancies or the EMEA recruiting site. https://www.mizuhogroup.com/careers"
     },
     {
       "employer": "SMBC",
@@ -372,26 +373,26 @@
     {
       "employer": "ICBC",
       "category": "foreign_bank",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://www.icbc.com.cn/",
       "adapter": null,
-      "evidence": null
+      "evidence": "No independently verified, navigable public Vietnamese branch career listing plus detailed postings from ICBC official pages. The corporate homepage is only research evidence; not a feed. https://www.icbc.com.cn/"
     },
     {
       "employer": "Bank of China",
       "category": "foreign_bank",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://www.bankofchina.com/",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official Bank of China careers/branch information exists, but no verified public Vietnam-specific recruitment listing and detail feed. Global or PRC recruitment cannot be silently conflated with Vietnam jobs. https://www.bankofchina.com/"
     },
     {
       "employer": "KEB Hana",
       "category": "foreign_bank",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://www.hanabank.com/",
       "adapter": null,
-      "evidence": null
+      "evidence": "No verified first-party public KEB Hana Vietnam bank recruitment board or per-role postings. Hana Financial or BIDV-affiliated vacancy listings must not be misattributed to KEB Hana. https://www.hanabank.com/"
     },
     {
       "employer": "BNP Paribas",
@@ -414,18 +415,18 @@
     {
       "employer": "Maybank",
       "category": "foreign_bank",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://www.maybank.com/",
       "adapter": null,
-      "evidence": null
+      "evidence": "Maybank group's official presence exists; no verified dedicated Vietnam bank-branch vacancy board with detail, stable requisition IDs and Vietnam scope. Do not confuse Maybank Securities Vietnam with the bank employer. https://www.maybank.com/"
     },
     {
       "employer": "Bangkok Bank",
       "category": "foreign_bank",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://www.bangkokbank.com/",
       "adapter": null,
-      "evidence": null
+      "evidence": "Bangkok Bank operates Vietnam branches but no independently verified first-party public Vietnam branch job listings with per-role details. Global corporate careers does not establish a Vietnam feed. https://www.bangkokbank.com/"
     },
     {
       "employer": "MCredit",
