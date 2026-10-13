@@ -31,58 +31,65 @@
     {
       "employer": "VinSpace",
       "category": "vingroup",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://vinspace.vn/",
       "adapter": null,
-      "evidence": null
+      "evidence": "Agent 1 audit 2026-10-13: No independently verified public first-party job listing/detail board or Vingroup employer code. Do not assume another subsidiary's jobs belong to VinSpace.",
+      "reviewed_at": "2026-10-13"
     },
     {
       "employer": "VinSOC",
       "category": "vingroup",
       "status": "pending",
-      "career_url": null,
+      "career_url": "https://vinsoc.ai/en/career",
       "adapter": null,
-      "evidence": null
+      "evidence": "Agent 1 audit 2026-10-13: Official VinSOC careers site shows specific open roles including Application Security Expert (AI/LLM Systems), but the role-specific canonical URLs and stable detail retrieval have not been verified; cannot safely claim an adapter.",
+      "reviewed_at": "2026-10-13"
     },
     {
       "employer": "VinCSS",
       "category": "vingroup",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://vincss.net/",
       "adapter": null,
-      "evidence": null
+      "evidence": "Agent 1 audit 2026-10-13: No independently verified current first-party recruitment board with stable role-detail links. Name and present corporate ownership require verification before treating postings as Vingroup roles.",
+      "reviewed_at": "2026-10-13"
     },
     {
       "employer": "GSM / Xanh SM",
       "category": "vingroup",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://www.xanhsm.com/",
       "adapter": null,
-      "evidence": null
+      "evidence": "Agent 1 audit 2026-10-13: Official corporate presence and recruiting channels identified, but no independently verified paginated first-party listing plus individual full-detail URLs suitable for ingestion; social/email calls are not a career feed.",
+      "reviewed_at": "2026-10-13"
     },
     {
       "employer": "V-GREEN",
       "category": "vingroup",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://vgreen.net/",
       "adapter": null,
-      "evidence": null
+      "evidence": "Agent 1 audit 2026-10-13: No independently verified first-party open requisition index and full job detail URLs; do not fabricate a board from corporate homepages or external re-posts.",
+      "reviewed_at": "2026-10-13"
     },
     {
       "employer": "VinBus",
       "category": "vingroup",
       "status": "pending",
-      "career_url": null,
+      "career_url": "https://vinbus.vn/tuyen-dung/viec-lam",
       "adapter": null,
-      "evidence": null
+      "evidence": "Agent 1 audit 2026-10-13: Official first-party paginated role listing verified at /tuyen-dung/viec-lam and ?page=2, with named roles and locations; canonical individual job URLs/full descriptions could not be confirmed from retrieved page, so an adapter is not yet verified.",
+      "reviewed_at": "2026-10-13"
     },
     {
       "employer": "Vinmec",
       "category": "vingroup",
       "status": "pending",
-      "career_url": null,
+      "career_url": "https://www.vinmec.com/vie/lam-viec-tai-vinmec/",
       "adapter": null,
-      "evidence": null
+      "evidence": "Agent 1 audit 2026-10-13: Official first-party recruitment list and role/location filter confirmed. Rendered listings currently expose repeating generic application links; stable role-specific details, paging and full requirements are not yet verified, so do not seed as working.",
+      "reviewed_at": "2026-10-13"
     },
     {
       "employer": "Vinhomes",
@@ -105,18 +112,20 @@
     {
       "employer": "VinHMS",
       "category": "vingroup",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://vinhms.com/",
       "adapter": null,
-      "evidence": null
+      "evidence": "Agent 1 audit 2026-10-13: Independent employer status, current recruiting ownership and a first-party per-role public careers board are not verified; possible company transitions require authoritative confirmation.",
+      "reviewed_at": "2026-10-13"
     },
     {
       "employer": "VinID",
       "category": "vingroup",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://careers.onemount.com/job-list",
       "adapter": null,
-      "evidence": null
+      "evidence": "Agent 1 audit 2026-10-13: VinID branding overlaps with One Mount (already catalogued separately). No verified independent current VinID requisition board, and ingesting One Mount jobs under VinID would misattribute employer identity.",
+      "reviewed_at": "2026-10-13"
     },
     {
       "employer": "MovianAI",
