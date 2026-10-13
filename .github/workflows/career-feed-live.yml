@@ -1,7 +1,8 @@
 name: Career feed live smoke
 
-# Feature-branch pushes run the 25 new integrations immediately.
-# Scheduled/manual runs are enabled on default branch after this workflow lands there.
+# An explicit [live-feeds] push triggers bounded real-source verification of all 25 new adapters.
+# On ordinary feature pushes only deterministic collector tests run; weekly/manual
+# checks activate on the default branch after the workflow is merged there.
 on:
   push:
     branches:
