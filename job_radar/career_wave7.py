@@ -134,7 +134,7 @@ async def collect_agoda(source: dict) -> list[ObservedJob]:
             location = _agoda_location(item)
             if not location:
                 raise RuntimeError(f"Agoda job location missing, cannot scope employer feed: {url}")
-            if listed_location and _VIETNAM.search(listed_location) != _VIETNAM.search(location):
+            if listed_location and bool(_VIETNAM.search(listed_location)) != bool(_VIETNAM.search(location)):
                 raise RuntimeError(f"Agoda listing/detail country disagree: {url}")
             if not _VIETNAM.search(location):
                 continue
