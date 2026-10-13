@@ -1,6 +1,6 @@
 # Direct company career feeds
 
-Job Radar checks these 102 verified company career listings. Each entry points to an employer career page or its dedicated recruiting portal. A listing is stored only when its own job posting has a relevant title and description. An empty scan means no matching open posting was found by that adapter at scan time; it does not imply the company has no vacancies.
+Job Radar checks these verified company career listings. Each entry points to an employer career page or its dedicated recruiting portal. A listing is stored only when its own job posting has a relevant title and description. An empty scan means no matching open posting was found by that adapter at scan time; it does not imply the company has no vacancies.
 
 | Company | Career page | Adapter |
 | --- | --- | --- |
@@ -92,6 +92,8 @@ Job Radar checks these 102 verified company career listings. Each entry points t
 | Cake by VPBank | [Open careers](https://cake.vn/tuyen-dung) | Public career JSON API |
 | Timo | [Open careers](https://timo.vn/careers/) | HTML board |
 | Tek Experts | [Open careers](https://careers.teknowledge.com/teknowledge/jobs) | Public career JSON API |
+| Vikki Bank | [Open careers](https://vikkibank.vn/tuyen-dung/) | Official paginated career board |
+| Co-opBank | [Open careers](https://co-opbank.vn/tuyen-dung/) | First-party recruitment notices (conservative) |
 | Eximbank | [Open careers](https://tuyendungeximbank.com/vi/jobs) | Public career JSON API |
 | MCredit | [Open careers](https://tuyendungmcredit.ainavi.com.vn/vi/jobs) | Public career JSON API |
 | VPS | [Open careers](https://www.vps.com.vn/gia-nhap-vps/co-hoi-nghe-nghiep) | Public career JSON API |

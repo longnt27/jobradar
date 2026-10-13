@@ -219,10 +219,10 @@
     {
       "employer": "Agribank",
       "category": "bank",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://www.agribank.com.vn/vn/tuyen-dung",
       "adapter": null,
-      "evidence": null
+      "evidence": "First-party recruitment announcements exist, but the discovered 2026 recruitment round closed on 2026-09-30. Announcements can combine roles in one article; no verified stable per-role source/URL as of 2026-10-13."
     },
     {
       "employer": "Eximbank",
@@ -236,42 +236,44 @@
     {
       "employer": "Bac A Bank",
       "category": "bank",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://tuyendung.baca-bank.vn/",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official recruitment portal discovered but requests failed during verification on 2026-10-13; could not validate listing/detail structure or distinguish zero vacancies from inaccessible board."
     },
     {
       "employer": "VCBNeo",
       "category": "bank",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://vcbneo.com.vn/",
       "adapter": null,
-      "evidence": null
+      "evidence": "First-party vacancy details appear discoverable, but the public listing endpoint rejected requests during verification; cannot substantiate complete navigation/pagination; do not claim a successful zero-job scan."
     },
     {
       "employer": "Vikki Bank",
       "category": "bank",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://vikkibank.vn/tuyen-dung/",
+      "adapter": "vikki_bank",
+      "evidence": "Official Vikki recruitment board exposes individual position pages and avia-element-paging listing controls; implemented bounded pagination, detail extraction, role targeting and explicit parse failure. Live production collector run not available from execution environment.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "Co-opBank",
       "category": "bank",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://co-opbank.vn/tuyen-dung/",
+      "adapter": "bank_notices",
+      "evidence": "Official Co-opBank recruitment announcements have linked detail pages; conservative parser emits only explicit individual technical roles and rejects multiple technical roles sharing a URL to prevent dedup collision. Live production collector run not available from execution environment.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "Vietnam Bank for Social Policies",
       "category": "bank",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://vbsp.org.vn/thong-tin-tuyen-dung",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official VBSP recruitment notifications found, but vacancy rounds are announcement-based and the verified dated 2025 round is expired. No confirmed active, separately addressable technical vacancies as of 2026-10-13."
     },
     {
       "employer": "Standard Chartered Vietnam",

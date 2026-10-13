@@ -232,6 +232,10 @@ CAREER_FEEDS: tuple[CareerFeed, ...] = (
     }),
     html("Timo", "https://timo.vn/careers/", r"^/career/[^/?#]+/?$", description_selector=".tr-single-career__content",
          location_selector=".tr-single-career__meta-item:nth-child(3)", max_results=100),
+    CareerFeed("Vikki Bank", "https://vikkibank.vn/tuyen-dung/", "vikki_bank", {"max_pages": 24}),
+    CareerFeed("Co-opBank", "https://co-opbank.vn/tuyen-dung/", "bank_notices", {
+        "notice_kind": "coopbank", "link_path": r"^/tuyen-dung/[^/?#]+/?$", "max_pages": 8,
+    }),
     ainavi("Eximbank", "tuyendungeximbank.com"),
     ainavi("MCredit", "tuyendungmcredit.ainavi.com.vn"),
     CareerFeed("VPS", "https://www.vps.com.vn/gia-nhap-vps/co-hoi-nghe-nghiep", "json_board", {
