@@ -1,6 +1,6 @@
 # Direct company career feeds
 
-Job Radar checks these 102 verified company career listings. Each entry points to an employer career page or its dedicated recruiting portal. A listing is stored only when its own job posting has a relevant title and description. An empty scan means no matching open posting was found by that adapter at scan time; it does not imply the company has no vacancies.
+Job Radar checks these 103 configured company career listings. Each entry points to an employer career page or its dedicated recruiting portal. A listing is stored only when its own job posting has a relevant title and description. An empty scan means no matching open posting was found by that adapter at scan time; it does not imply the company has no vacancies.
 
 | Company | Career page | Adapter |
 | --- | --- | --- |
@@ -62,7 +62,7 @@ Job Radar checks these 102 verified company career listings. Each entry points t
 | Viettel Software | [Open careers](https://jobs.viettel.vn/search/?q=Viettel+Software) | SuccessFactors |
 | Viettel Research and Development | [Open careers](https://jobs.viettel.vn/search/?q=Viettel+R%26D) | SuccessFactors |
 | NVIDIA | [Open careers](https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite) | Workday CXS API |
-| Shopee | [Open careers](https://careers.shopee.vn/jobs) | WorkAtSea ATS API |
+| Agoda | [Open careers](https://careersatagoda.com/vacancies/) | Official vacancy HTML board, Vietnam scoped |\n| Shopee | [Open careers](https://careers.shopee.vn/jobs) | WorkAtSea ATS API |
 | SPX Express | [Open careers](https://careers.shopee.vn/jobs) | WorkAtSea ATS API |
 | Vinschool | [Open careers](https://tuyendung.vinschool.edu.vn/jobs) | HTML board |
 | FPT University | [Open careers](https://career.fpt.edu.vn/Job/Search) | HTML board |
@@ -107,6 +107,6 @@ Job Radar checks these 102 verified company career listings. Each entry points t
 | SMBC | [Open careers](https://careerasia.smbc.co.jp/SMBC/search/?q=&locationsearch=Viet+Nam) | SuccessFactors |
 | CIMB Vietnam | [Open careers](https://ejox.fa.ap1.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_11) | Public career JSON API |
 
-The [employer directory](job_radar/seeds.py) contains 182 companies after the [HCMC-based exclusions](EMPLOYER_SCOPE.md). Its other 80 entries are leads without an active built-in feed. Their presence in the directory is not a claim that their jobs are collected. Add a verified direct career page from an employer card. General job aggregators are not part of this catalog.
+Agent 7 scope: the [target manifest](docs/career-feed-targets.json) records ten additional employers as blocked pending source, identity, PDF parsing, API or regional scoping verification. Their absence from this table is intentional. The Agoda collector raises on malformed/incomplete listings rather than silently treating them as empty.\n\nThe [employer directory](job_radar/seeds.py) contains 182 companies after the [HCMC-based exclusions](EMPLOYER_SCOPE.md). Its other 80 entries are leads without an active built-in feed. Their presence in the directory is not a claim that their jobs are collected. Add a verified direct career page from an employer card. General job aggregators are not part of this catalog.
 
 Feed definitions and selectors: [job_radar/feed_catalog.py](job_radar/feed_catalog.py). Collector implementations: [job_radar/collectors.py](job_radar/collectors.py). Older postings with an explicit past deadline are skipped. The app creates no placeholder vacancies.
