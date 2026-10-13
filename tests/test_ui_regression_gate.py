@@ -3,6 +3,7 @@ from io import BytesIO
 import json
 import os
 import socket
+import sys
 import time
 from pathlib import Path
 from threading import Thread
@@ -20,7 +21,10 @@ from job_radar.web import create_app
 
 ROOT = Path(__file__).parents[1]
 MANIFEST = json.loads((Path(__file__).with_name("ui_regression_manifest.json")).read_text())
-VISUAL_BASELINES = json.loads((Path(__file__).with_name("ui_visual_baselines.json")).read_text())
+# Screenshot fingerprints are platform-sensitive: the shipped macOS reference
+# and reviewed GitHub Actions Ubuntu reference are intentionally independent.
+BASELINE_FILE = "ui_visual_baselines_linux.json" if sys.platform.startswith("linux") else "ui_visual_baselines.json"
+VISUAL_BASELINES = json.loads((Path(__file__).with_name(BASELINE_FILE)).read_text())
 ARTIFACT_DIR = ROOT / os.environ.get("JOB_RADAR_UI_ARTIFACTS", "artifacts/ui-regression")
 
 

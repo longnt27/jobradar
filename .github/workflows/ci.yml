@@ -80,8 +80,8 @@ jobs:
   ui-regression:
     name: UI regression gate
     # UI screenshots are not a career-collector gate; run on main and PRs to main.
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.base_ref == 'main')
-    runs-on: ubuntu-latest
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.base_ref == 'main') || contains(github.event.head_commit.message, '[ui-baseline]')
+    runs-on: ubuntu-24.04
     timeout-minutes: 12
 
     steps:
