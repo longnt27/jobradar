@@ -117,6 +117,28 @@ CREATE TABLE IF NOT EXISTS vacancy_observations (
   PRIMARY KEY(vacancy_id, observation_id)
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS vacancy_fts USING fts5(vacancy_id UNINDEXED, title, company, description);
+CREATE TABLE IF NOT EXISTS vacancy_redirects (
+  old_id TEXT PRIMARY KEY,
+  vacancy_id TEXT NOT NULL REFERENCES vacancies(id)
+);
+CREATE TABLE IF NOT EXISTS duplicate_reviews (
+  left_id TEXT NOT NULL REFERENCES vacancies(id),
+  right_id TEXT NOT NULL REFERENCES vacancies(id),
+  status TEXT NOT NULL CHECK(status IN ('possible','distinct')),
+  reason TEXT NOT NULL,
+  confidence REAL NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(left_id,right_id)
+);
+CREATE TABLE IF NOT EXISTS vacancy_merge_log (
+  id TEXT PRIMARY KEY,
+  vacancy_id TEXT NOT NULL,
+  removed_id TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  snapshot TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS repository_snapshots (
   id TEXT PRIMARY KEY,
   url TEXT NOT NULL UNIQUE,

@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field, HttpUrl
 from .writing_preferences import create_writing_router, get_preferences
 from .db import Database, new_id, now
 from .discovery import merge_reason_label, source_coverage, split_observation, summarize_discovery
+from .dedup import merge_vacancies
 from .apply import (
     CONFIRMED_SUBMISSION_STATUSES,
     inspect_form,
@@ -296,6 +297,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await scan_manager.stop()
 
     app = FastAPI(title="Job Radar", version="0.1.0", lifespan=lifespan)
+
+    @app.middleware("http")
+    async def follow_combined_job(request, call_next):
+        match = re.match(r"^/api/jobs/([a-f0-9]{32})(/|$)", request.scope["path"])
+        if match:
+            redirect = db.one("SELECT vacancy_id FROM vacancy_redirects WHERE old_id=?", (match[1],))
+            if redirect:
+                path = request.scope["path"].replace(match[1], redirect["vacancy_id"], 1)
+                request.scope["path"] = path
+                request.scope["raw_path"] = path.encode()
+        return await call_next(request)
     app.include_router(create_writing_router(db))
     app.include_router(create_zalo_router(db, settings, scan_manager.browser_lock))
     app.state.db = db
@@ -1283,6 +1295,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   location: str = "", source: str = "", seniority: str = "", fit: str = "", sort: str = "best",
                   page: int = Query(1, ge=1), page_size: int = Query(10, ge=1, le=50)):
         release_due_snoozes(db)
+        if focus_id:
+            redirect = db.one("SELECT vacancy_id FROM vacancy_redirects WHERE old_id=?", (focus_id,))
+            if redirect:
+                focus_id = redirect["vacancy_id"]
         if state and not any((decision, application, outcome)):
             dimension, legacy_value = legacy_job_state_filter(state)
             if dimension == "decision":
@@ -1450,7 +1466,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         for observation in row["observations"]:
             observation["merge_reason_label"] = merge_reason_label(observation["merge_reason"])
         row["sighting_count"] = len(row["observations"])
+        row["possible_duplicates"] = db.all(
+            "SELECT v.id,v.title,v.company,v.location,r.reason,r.confidence FROM duplicate_reviews r "
+            "JOIN vacancies v ON v.id=CASE WHEN r.left_id=? THEN r.right_id ELSE r.left_id END "
+            "WHERE (r.left_id=? OR r.right_id=?) AND r.status='possible' ORDER BY r.confidence DESC LIMIT 10",
+            (job_id, job_id, job_id),
+        )
         return row
+
+    @app.post("/api/jobs/{job_id}/duplicates/{other_id}/merge")
+    def combine_jobs(job_id: str, other_id: str):
+        pair = sorted((job_id, other_id))
+        if not db.one("SELECT 1 FROM duplicate_reviews WHERE left_id=? AND right_id=? AND status='possible'", tuple(pair)):
+            raise HTTPException(404, "Possible duplicate not found")
+        try:
+            with db.connection() as conn:
+                identifier = merge_vacancies(conn, job_id, other_id, "user_confirmed", db.get_setting("profile", {}), db.get_setting("matching_model", ""))
+        except (KeyError, ValueError) as error:
+            raise HTTPException(409, str(error)) from error
+        match_manager.wake()
+        return {"id": identifier}
+
+    @app.post("/api/jobs/{job_id}/duplicates/{other_id}/distinct")
+    def keep_distinct_jobs(job_id: str, other_id: str):
+        pair = sorted((job_id, other_id))
+        if not db.one("SELECT 1 FROM duplicate_reviews WHERE left_id=? AND right_id=?", tuple(pair)):
+            raise HTTPException(404, "Possible duplicate not found")
+        db.execute("UPDATE duplicate_reviews SET status='distinct',reason='Marked distinct by you',updated_at=? WHERE left_id=? AND right_id=?", (now(), *pair))
+        return {"distinct": True}
 
     @app.post("/api/jobs/{job_id}/seen")
     def see_job(job_id: str):

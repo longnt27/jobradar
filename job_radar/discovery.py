@@ -12,6 +12,10 @@ MERGE_REASON_LABELS = {
     "new_vacancy": "First sighting",
     "same_url": "Same posting URL",
     "facebook_content": "Very similar Facebook posting",
+    "same_application": "Same job application and matching requirements",
+    "same_requisition": "Same employer requisition",
+    "cross_source_content": "Matching role and job description across sources",
+    "user_confirmed": "Confirmed as the same job by you",
     "user_split": "Marked distinct by you",
 }
 
@@ -177,6 +181,9 @@ def split_observation(db: Database, vacancy_id: str, observation_id: str) -> str
                      (new_vacancy, title, company, description))
         conn.execute("UPDATE vacancy_observations SET vacancy_id=?,merge_reason='user_split' WHERE observation_id=?",
                      (new_vacancy, observation_id))
+        pair = sorted((vacancy_id, new_vacancy))
+        conn.execute("INSERT OR REPLACE INTO duplicate_reviews VALUES(?,?,'distinct','Marked distinct by you',1,?,?)",
+                     (*pair, timestamp, timestamp))
 
         remaining = conn.execute(
             "SELECT o.payload,o.raw_text,o.published_at,o.first_seen_at,o.last_seen_at "

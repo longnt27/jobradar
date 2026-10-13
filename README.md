@@ -98,6 +98,10 @@ Open **My profile** and complete the setup steps:
 - **LinkedIn & Facebook:** Click **Sign in to LinkedIn** or **Sign in to Facebook** in Profile. Job Radar opens a dedicated Chrome session for you to sign in once, preserves authentication cookies, and reuses the session for automated background scans.
 - Paste additional Facebook group URLs or custom career page URLs in **Job sources** anytime.
 
+Job Radar combines duplicate vacancies across career pages, LinkedIn, and Facebook while preserving each source sighting. Matching uses employer aliases, compatible roles and locations, specific application links or requisitions, and substantial agreement in the job description. Different seniority levels, specializations, locations, or hiring rounds stay separate. Shared recruiter emails and generic application pages are not job identifiers. The company career page supplies the preferred description and application destination; social sightings fill missing details.
+
+Uncertain matches are saved for review and returned as `possible_duplicates` in job details. The backend offers `/api/jobs/{job_id}/duplicates/{other_id}/merge` and `/distinct` actions; distinct decisions and manually split sightings prevent automatic recombination. To clean up previously collected jobs, run `.venv/bin/job-radar dedup` for a preview, then `.venv/bin/job-radar dedup --apply`. The apply command makes a private database backup, preserves application and source history, and records each merge; old job links continue to open the combined vacancy. Run the cleanup while background work is idle.
+
 ### 5. Connect Review Channels (Optional)
 - **Telegram Bot:** Create a bot via [@BotFather](https://t.me/BotFather), enter your token, and click **Find my chat ID**. When a job qualifies for an application, Telegram receives a review message with the exact compiled PDF resume and action buttons.
 - **Email (SMTP):** If sending email applications, configure your SMTP server (e.g., Gmail using an App Password). Click **Send test email** to verify delivery.
