@@ -135,4 +135,26 @@ CAREER_FEEDS: tuple[CareerFeed, ...] = (
         "description_sections": {"Description": "description", "Responsibilities": "category.responsibilities", "Requirements": "category.requirements", "Nice to have": "category.nice_to_have"},
         "location_fields": ["city", "country"], "mode_field": "vacancy_type", "published_field": "created_at",
     }),
+    CareerFeed("VMO", "https://vmogroup.com/recruitment", "json_board", {
+        "api_url": "https://api.vmogroup.com/api/v1/jobs", "params": {"status": "hiring", "sort_by": "date_created", "due_date": "true", "sort_order": "desc"},
+        "rows_path": "data", "total_field": "total_item", "page_param": "page", "limit_param": "page_size",
+        "id_field": "_id", "title_field": "title", "url_field": "url", "url_template": "https://vmogroup.com/recruitment/{title_url}",
+        "description_sections": {"Responsibilities": "short_desc", "Requirements": "ideal_candidates", "Benefits": "benefits"},
+        "location_fields": ["address", "location"], "location_include": "Vietnam", "mode_field": "working_model", "published_field": "date_created", "deadline_field": "due_date",
+        "value_maps": {"location": {"vn": "Vietnam", "jp": "Japan"}, "working_model": {"REMOTE": "Remote", "HYBRID": "Hybrid", "VMO_OFFICE": "On-site"}},
+    }),
+    CareerFeed("Thoughtworks Vietnam", "https://www.thoughtworks.com/careers/vietnam", "json_board", {
+        "api_url": "https://www.thoughtworks.com/rest/careers/jobs", "rows_path": "jobs",
+        "id_field": "sourceSystemId", "title_field": "name", "url_field": "url", "url_template": "https://www.thoughtworks.com/careers/jobs/{sourceSystemId}",
+        "location_fields": ["location", "country"], "location_include": "Vietnam", "mode_field": "locationType", "published_field": "updatedAt",
+        "detail_selector": ".cmp-job-details",
+    }),
+    CareerFeed("Rikkeisoft", "https://tuyendung.rikkeisoft.com/recruitment", "json_board", {
+        "api_url": "https://tuyendung.rikkeisoft.com/api/front/recruitment", "rows_path": "data.jobs.data", "total_field": "data.jobs.total",
+        "page_param": "page", "limit_param": "size", "id_field": "_id", "title_field": "name", "url_field": "url",
+        "url_template": "https://tuyendung.rikkeisoft.com/recruitment/detail/{slug}", "closed_fields": ["expired"], "deadline_field": "end_date",
+        "description_sections": {"Responsibilities": "description", "Requirements": "qualifications", "Benefits": "benefits"},
+        "location_fields": ["places"], "location_include": "Toàn quốc|Hà Nội|Hồ Chí Minh|Đà Nẵng|Việt Nam|Hải Phòng|Bình Dương|Hà Nam",
+        "published_field": "start_date",
+    }),
 )

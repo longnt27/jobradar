@@ -612,10 +612,11 @@
     {
       "employer": "Rikkeisoft",
       "category": "technology",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://tuyendung.rikkeisoft.com/recruitment",
+      "adapter": "json_board",
+      "evidence": "Official recruitment frontend exposes the public front/recruitment API. All 1,718 listed records enumerated across 18 pages; expired records and overseas locations excluded; two relevant open Vietnam postings verified with full qualifications and benefits.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "Rikkei AI",
@@ -654,10 +655,11 @@
     {
       "employer": "VMO",
       "category": "technology",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://vmogroup.com/recruitment",
+      "adapter": "json_board",
+      "evidence": "Public API linked by the official recruitment frontend enumerated all 23 open, unexpired roles; ten relevant Vietnam descriptions include responsibilities, requirements and benefits. Country and work-mode codes are normalized.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "Sotatek",
@@ -688,10 +690,11 @@
     {
       "employer": "Thoughtworks Vietnam",
       "category": "technology",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://www.thoughtworks.com/careers/vietnam",
+      "adapter": "json_board",
+      "evidence": "Official Vietnam page exposes the public jobs endpoint; entire global listing fetched and Vietnam postings filtered by country; two relevant full posting descriptions verified.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "Anduin Transactions",

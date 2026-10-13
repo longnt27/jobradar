@@ -1,6 +1,6 @@
 # Direct company career feeds
 
-Job Radar checks these 71 verified company career listings. Each entry points to an employer career page or its dedicated recruiting portal. A listing is stored only when its own job posting has a relevant title and description. An empty scan means no matching open posting was found by that adapter at scan time; it does not imply the company has no vacancies.
+Job Radar checks these 74 verified company career listings. Each entry points to an employer career page or its dedicated recruiting portal. A listing is stored only when its own job posting has a relevant title and description. An empty scan means no matching open posting was found by that adapter at scan time; it does not imply the company has no vacancies.
 
 | Company | Career page | Adapter |
 | --- | --- | --- |
@@ -75,7 +75,10 @@ Job Radar checks these 71 verified company career listings. Each entry points to
 | NashTech Vietnam | [Open careers](https://careers.nashtechglobal.com/jobs-finder/) | Public career JSON API |
 | Sotatek | [Open careers](https://www.sotatek.com/careers-list/) | Public career JSON API |
 | EPAM Vietnam | [Open careers](https://careers.epam.com/en/jobs/vietnam) | Public career JSON API |
+| VMO | [Open careers](https://vmogroup.com/recruitment) | Public career JSON API |
+| Thoughtworks Vietnam | [Open careers](https://www.thoughtworks.com/careers/vietnam) | Public career JSON API |
+| Rikkeisoft | [Open careers](https://tuyendung.rikkeisoft.com/recruitment) | Public career JSON API |
 
-The [employer directory](job_radar/seeds.py) contains 182 companies after the [HCMC-based exclusions](EMPLOYER_SCOPE.md). Its other 111 entries are leads without an active built-in feed. Their presence in the directory is not a claim that their jobs are collected. Add a verified direct career page from an employer card. General job aggregators are not part of this catalog.
+The [employer directory](job_radar/seeds.py) contains 182 companies after the [HCMC-based exclusions](EMPLOYER_SCOPE.md). Its other 108 entries are leads without an active built-in feed. Their presence in the directory is not a claim that their jobs are collected. Add a verified direct career page from an employer card. General job aggregators are not part of this catalog.
 
 Feed definitions and selectors: [job_radar/feed_catalog.py](job_radar/feed_catalog.py). Collector implementations: [job_radar/collectors.py](job_radar/collectors.py). Older postings with an explicit past deadline are skipped. The app creates no placeholder vacancies.

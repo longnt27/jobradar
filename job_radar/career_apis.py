@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
+from html import escape
 from urllib.parse import quote, urljoin, urlsplit
 
 import httpx
@@ -25,6 +26,15 @@ def names(value) -> str:
     if isinstance(value, dict):
         return str(value.get("name") or value.get("fullLocation") or value.get("city") or "")
     return str(value or "")
+
+
+def mapped_names(row: dict, path: str, config: dict) -> str:
+    value = field(row, path)
+    mapping = config.get("value_maps", {}).get(path, {})
+    if not mapping:
+        return names(value)
+    values = value if isinstance(value, list) else [value]
+    return ", ".join(mapping.get(names(item), names(item)) for item in values if item)
 
 
 def _terms(row: dict, taxonomy: str) -> str:
@@ -96,10 +106,18 @@ async def collect_json_board(source: dict) -> list[ObservedJob]:
         for row in rows:
             if any(field(row, path) for path in config.get("closed_fields", [])):
                 continue
+            if config.get("deadline_field"):
+                deadline = names(field(row, config["deadline_field"]))
+                if deadline:
+                    try:
+                        if datetime.fromisoformat(deadline.replace("Z", "+00:00")).date() < datetime.now(timezone.utc).date():
+                            continue
+                    except ValueError:
+                        pass
             title = BeautifulSoup(names(field(row, config["title_field"])), "html.parser").get_text(" ", strip=True)
             if not _target_title(title):
                 continue
-            location = ", ".join(filter(None, (names(field(row, path)) for path in config.get("location_fields", []))))
+            location = ", ".join(filter(None, (mapped_names(row, path, config) for path in config.get("location_fields", []))))
             if config.get("location_taxonomy"):
                 location = _terms(row, config["location_taxonomy"])
             if config.get("location_include") and not re.search(config["location_include"], location, re.I):
@@ -116,6 +134,8 @@ async def collect_json_board(source: dict) -> list[ObservedJob]:
                 if not value:
                     continue
                 content = "<ul>" + "".join("<li>" + names(item) + "</li>" for item in value) + "</ul>" if isinstance(value, list) else names(value)
+                if not re.search(r"</?[a-z][^>]*>", content, re.I):
+                    content = escape(content).replace("\n", "<br>")
                 text = _structured_text(BeautifulSoup(content, "html.parser"))
                 if text:
                     sections.append(f"{label}\n\n{text}" if label else text)
@@ -151,7 +171,7 @@ async def collect_json_board(source: dict) -> list[ObservedJob]:
             jobs.append(ObservedJob(
                 url=url, title=title[:180], company=source.get("employer_name") or source["name"],
                 description=description[:30000], location=location[:250],
-                work_mode=_terms(row, config["mode_taxonomy"]) if config.get("mode_taxonomy") else names(field(row, config.get("mode_field", ""))) if config.get("mode_field") else "",
+                work_mode=_terms(row, config["mode_taxonomy"]) if config.get("mode_taxonomy") else mapped_names(row, config["mode_field"], config) if config.get("mode_field") else "",
                 external_id=names(field(row, config.get("id_field", "id"))),
                 apply_url=names(field(row, config["apply_field"])) if config.get("apply_field") else url,
                 published_at=published, raw_text=description[:30000],

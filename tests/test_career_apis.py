@@ -91,3 +91,30 @@ def test_wordpress_job_terms_deadline_and_detail_content(monkeypatch):
     assert "Closing date" not in jobs[0].description
     assert _expired_posting("Closing date: 31.12.2020")
     assert not _expired_posting("Closing date: 31.12.2099")
+
+
+def test_country_codes_open_deadlines_and_plain_text_requirements(monkeypatch):
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def get(self, url, params=None):
+            rows = [{"id": i, "title": "AI Engineer", "slug": f"ai-{i}", "country": country,
+                     "due": due, "mode": ["REMOTE", "HYBRID"], "description": DESCRIPTION,
+                     "requirements": "Python programming\nModel evaluation"}
+                    for i, country, due in [(1, "vn", "2099-12-31"), (2, "vn", "2000-01-01"), (3, "jp", "2099-12-31")]]
+            return httpx.Response(200, json=rows, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr("job_radar.collectors._career_client", Client)
+    jobs = asyncio.run(collect_json_board({"url": "https://example.org/careers", "name": "Example", "config": {
+        "api_url": "https://example.org/api", "title_field": "title", "url_field": "url", "url_template": "https://example.org/jobs/{slug}",
+        "description_sections": {"": "description", "Requirements": "requirements"}, "deadline_field": "due",
+        "location_fields": ["country"], "location_include": "Vietnam", "mode_field": "mode",
+        "value_maps": {"country": {"vn": "Vietnam", "jp": "Japan"}, "mode": {"REMOTE": "Remote", "HYBRID": "Hybrid"}},
+    }}))
+    assert len(jobs) == 1 and jobs[0].url == "https://example.org/jobs/ai-1"
+    assert jobs[0].location == "Vietnam" and jobs[0].work_mode == "Remote, Hybrid"
+    assert "Python programming\nModel evaluation" in jobs[0].description
