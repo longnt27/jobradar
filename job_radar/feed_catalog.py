@@ -111,4 +111,28 @@ CAREER_FEEDS: tuple[CareerFeed, ...] = (
     html("VNCS Global", "https://vncsglobal.vn/tuyen-dung/", r"^/[a-z0-9-]+/?$",
          listing_card_class="elementor-post", listing_title_selector=".elementor-post__title",
          title_include=r"\S", description_selector=".elementor-widget-theme-post-content"),
+    html("Sun Asterisk", "https://sun-asterisk.vn/recruitment-category/software-engineer/", r"^/recruitment/[a-z0-9-]+/?$",
+         pagination="wordpress", max_pages=8, description_selector=".single-recruitment-content",
+         location_selector=".single-recruitment-content .recruitment-item-location"),
+    CareerFeed("NashTech Vietnam", "https://careers.nashtechglobal.com/jobs-finder/", "json_board", {
+        "api_url": "https://careers.nashtechglobal.com/wp-json/wp/v2/job", "params": {"_embed": 1},
+        "page_param": "page", "limit_param": "per_page", "title_field": "title.rendered", "url_field": "link",
+        "description_sections": {"": "content.rendered"}, "published_field": "date_gmt",
+        "location_taxonomy": "location", "mode_taxonomy": "workplace-type", "location_include": "Vietnam",
+        "detail_selector": ".section-content", "location_selector": ".location-container",
+    }),
+    CareerFeed("Sotatek", "https://www.sotatek.com/careers-list/", "json_board", {
+        "api_url": "https://www.sotatek.com/wp-admin/admin-ajax.php", "method": "POST",
+        "params": {"action": "Filter_job", "data_form": ""}, "rows_path": "data.data_result", "total_field": "data.total_post",
+        "id_field": "ID", "title_field": "title", "url_field": "post_link",
+        "location_fields": ["job_child_term.name", "job_parent_term.name"], "detail_selector": ".job-content",
+    }),
+    CareerFeed("EPAM Vietnam", "https://careers.epam.com/en/jobs/vietnam", "json_board", {
+        "api_url": "https://careers.epam.com/api/jobs/v2/search/careers-i18n",
+        "params": {"facets": "country=4060741400349324343", "lang": "en", "websiteLocale": "en-us", "sortBy": "relevance;relocation=asc"},
+        "rows_path": "data.jobs", "total_field": "data.total", "offset_param": "from", "limit_param": "size",
+        "title_field": "name", "url_field": "seo.url", "id_field": "unique_id", "closed_fields": ["is_expired", "is_hidden"],
+        "description_sections": {"Description": "description", "Responsibilities": "category.responsibilities", "Requirements": "category.requirements", "Nice to have": "category.nice_to_have"},
+        "location_fields": ["city", "country"], "mode_field": "vacancy_type", "published_field": "created_at",
+    }),
 )

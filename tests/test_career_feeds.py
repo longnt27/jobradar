@@ -141,6 +141,28 @@ def test_company_publication_time_without_timezone_can_be_ranked() -> None:
     assert detail["components"]["freshness"] >= 0
 
 
+def test_explicit_location_selector_does_not_borrow_related_job_locations(monkeypatch) -> None:
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def get(self, url):
+            if url.endswith("/careers"):
+                page = '<a href="/job/42">AI Engineer</a>'
+            else:
+                page = '<h1>AI Engineer</h1><main class="posting"><p>' + "Build AI systems with Python. " * 10 + '</p></main><aside class="location">Tokyo</aside>'
+            return httpx.Response(200, text=page, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr("job_radar.collectors._career_client", Client)
+    jobs = asyncio.run(collect_html_board({"url": "https://example.org/careers", "name": "Example", "config": {
+        "link_path": r"^/job/\d+$", "description_selector": ".posting", "location_selector": ".posting .location",
+    }}))
+    assert len(jobs) == 1 and jobs[0].location == ""
+
+
 def test_career_application_destination_prefers_apply_link_email_then_posting() -> None:
     posting = "https://example.org/jobs/42"
     linked = BeautifulSoup('<a href="/apply/42">Apply now</a><p>Email jobs@example.org</p>', "html.parser")

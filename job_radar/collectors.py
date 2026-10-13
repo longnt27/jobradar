@@ -619,7 +619,7 @@ def _career_client() -> httpx.AsyncClient:
     return httpx.AsyncClient(
         follow_redirects=True, timeout=30,
         limits=httpx.Limits(max_connections=6),
-        headers={"User-Agent": "Mozilla/5.0 (compatible; JobRadar/0.1; personal job discovery)"},
+        headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36"},
     )
 
 
@@ -630,10 +630,10 @@ def _target_title(title: str) -> bool:
 
 def _expired_posting(text: str) -> bool:
     """Skip a posting only when its own page shows an explicit past deadline."""
-    label = re.search(r"(?:Application deadline|Hạn nộp hồ sơ|Hạn nộp|Thời gian ứng tuyển|Deadline)\s*:?", text[:3000], re.I)
+    label = re.search(r"(?:Application deadline|Closing date|Hạn nộp hồ sơ|Hạn nộp|Thời gian ứng tuyển|Deadline)\s*:?", text[:3000], re.I)
     if not label:
         return False
-    dates = re.findall(r"\b(\d{1,2})/(\d{1,2})/(20\d{2})\b", text[label.end():label.end() + 65])
+    dates = re.findall(r"\b(\d{1,2})[/.](\d{1,2})[/.](20\d{2})\b", text[label.end():label.end() + 65])
     if not dates:
         return False
     day, month, year = dates[-1]
@@ -736,7 +736,8 @@ async def collect_html_board(source: dict) -> list[ObservedJob]:
                 description = _detail_description(item, config.get("description_selector", ""))
                 if len(description) < 100 or _expired_posting(item.get_text(" ", strip=True)):
                     continue
-                location = _text(item, ("[class*=job-location]", "[class*=location]", "[data-test*=location]"))[:250]
+                location_selectors = (config["location_selector"],) if config.get("location_selector") else ("[class*=job-location]", "[class*=location]", "[data-test*=location]")
+                location = _text(item, location_selectors)[:250]
                 jobs.append(ObservedJob(
                     url=str(detail.url) if config.get("keep_query") else str(detail.url).split("?")[0], title=title[:180],
                     company=source.get("employer_name") or source["name"],
@@ -1291,6 +1292,9 @@ async def collect_workday(source: dict) -> list[ObservedJob]:
     return jobs
 
 
+from .career_apis import collect_json_board
+
+
 CAREER_ADAPTERS = {
     "legacy": collect_career,
     "html_board": collect_html_board,
@@ -1306,6 +1310,7 @@ CAREER_ADAPTERS = {
     "onemount": collect_onemount,
     "workatsea": collect_workatsea,
     "workday": collect_workday,
+    "json_board": collect_json_board,
 }
 
 

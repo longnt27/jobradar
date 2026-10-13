@@ -636,18 +636,20 @@
     {
       "employer": "NashTech Vietnam",
       "category": "technology",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://careers.nashtechglobal.com/jobs-finder/",
+      "adapter": "json_board",
+      "evidence": "Official careers-linked WordPress job API enumerated all nine published postings; four relevant Vietnam roles verified with full descriptions and closing dates.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "Sun Asterisk",
       "category": "technology",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://sun-asterisk.vn/recruitment-category/software-engineer/",
+      "adapter": "html_board",
+      "evidence": "Official Vietnam recruitment category and all seven linked postings verified; complete job descriptions; related-job locations are excluded.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "VMO",
@@ -660,10 +662,11 @@
     {
       "employer": "Sotatek",
       "category": "technology",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://www.sotatek.com/careers-list/",
+      "adapter": "json_board",
+      "evidence": "Official career listing uses public Filter_job API; all 18 advertised records enumerated and five relevant posting descriptions verified.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "Tek Experts",
@@ -676,10 +679,11 @@
     {
       "employer": "EPAM Vietnam",
       "category": "technology",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://careers.epam.com/en/jobs/vietnam",
+      "adapter": "json_board",
+      "evidence": "Official Vietnam careers page links this portal; public search API paginated all 21 Vietnam postings and verified 17 relevant full descriptions, including requirements.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "Thoughtworks Vietnam",
