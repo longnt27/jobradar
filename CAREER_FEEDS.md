@@ -110,3 +110,21 @@ Job Radar checks these 102 verified company career listings. Each entry points t
 The [employer directory](job_radar/seeds.py) contains 182 companies after the [HCMC-based exclusions](EMPLOYER_SCOPE.md). Its other 80 entries are leads without an active built-in feed. Their presence in the directory is not a claim that their jobs are collected. Add a verified direct career page from an employer card. General job aggregators are not part of this catalog.
 
 Feed definitions and selectors: [job_radar/feed_catalog.py](job_radar/feed_catalog.py). Collector implementations: [job_radar/collectors.py](job_radar/collectors.py). Older postings with an explicit past deadline are skipped. The app creates no placeholder vacancies.
+
+## Agent 6 finance and insurance candidates (pending live acceptance)
+
+The adapters below are wired on `feat/feed-wave-6`, but **are not yet live-verified** and should not be counted among the confirmed feeds until a full listing and posting-detail smoke test passes.
+
+| Employer | First-party careers | Implementation | Status |
+| --- | --- | --- | --- |
+| Mirae Asset Finance Vietnam | [Recruitment](https://recruitment.mafc.vn/job-search/all-jobs/en) | CareerLink HTML board | Pending path and pagination verification |
+| MB Ageas Life (now MB Life) | [Recruitment](https://tuyendung.mblife.vn/job-search/all-jobs/en) | CareerLink HTML board | Pending path and pagination verification |
+| Bao Viet | [Recruitment](https://www.baoviet.com.vn/vi/tuyen-dung) | Company announcements parsed into individual table-row jobs | Pending live HTML verification |
+| FWD Vietnam | [Workday](https://fwd.wd3.myworkdayjobs.com/FWDcareersite) | Workday CXS | Pending CXS response verification |
+| Prudential Vietnam | [Workday](https://prudential.wd3.myworkdayjobs.com/prudential) | Workday CXS | Pending CXS response verification |
+| Manulife Vietnam | [Workday](https://manulife.wd3.myworkdayjobs.com/MFCJH_Jobs) | Workday CXS | Pending CXS response verification |
+| AIA Vietnam | [Workday](https://aia.wd3.myworkdayjobs.com/External) | Workday CXS | Pending CXS response and employer-scope verification |
+| HD SAISON | [Company recruitment](https://tuyendung.hdsaison.com.vn/vn/co-hoi-nghe-nghiep.html) | None | Blocked: need working /p-N listing access |
+| Chubb Life Vietnam | [Staff recruitment](https://www.chubb.com/vn-vn/careers/staff-recruitment.html) | None | Blocked: only contact details, not a verified public job board |
+
+To complete acceptance: verify listing source and detail response, enumerate all pages, check empty-board behavior and descriptions, then change only the corresponding manifest item from `pending` to `verified`. Do not count this implementation as nine verified employers.
