@@ -1,0 +1,925 @@
+{
+  "scope": "The 115 employers without a built-in career feed when the integration goal began on 2026-10-13. Each must receive a verified adapter.",
+  "targets": [
+    {
+      "employer": "Vingroup",
+      "category": "vingroup",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "VinFast",
+      "category": "vingroup",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "VinSmart Future",
+      "category": "vingroup",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "VinSpace",
+      "category": "vingroup",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "VinSOC",
+      "category": "vingroup",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "VinCSS",
+      "category": "vingroup",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "GSM / Xanh SM",
+      "category": "vingroup",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "V-GREEN",
+      "category": "vingroup",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "VinBus",
+      "category": "vingroup",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Vinmec",
+      "category": "vingroup",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Vinhomes",
+      "category": "vingroup",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Vinpearl",
+      "category": "vingroup",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "VinHMS",
+      "category": "vingroup",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "VinID",
+      "category": "vingroup",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "MovianAI",
+      "category": "technology",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "VNPT Group",
+      "category": "vnpt",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "VNPT Technology",
+      "category": "vnpt",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "FPT Corporation",
+      "category": "fpt",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "FPT Software",
+      "category": "fpt",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "FPT Digital",
+      "category": "fpt",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "FPT IS",
+      "category": "fpt",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "FPT Semiconductor",
+      "category": "fpt",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "FPT.AI",
+      "category": "fpt",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "CMC Corporation",
+      "category": "cmc",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "CMC Cloud",
+      "category": "cmc",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "CMC University",
+      "category": "cmc",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Agribank",
+      "category": "bank",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Eximbank",
+      "category": "bank",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Bac A Bank",
+      "category": "bank",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "VCBNeo",
+      "category": "bank",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Vikki Bank",
+      "category": "bank",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Co-opBank",
+      "category": "bank",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Vietnam Bank for Social Policies",
+      "category": "bank",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Standard Chartered Vietnam",
+      "category": "foreign_bank",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Woori Bank Vietnam",
+      "category": "foreign_bank",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "CIMB Vietnam",
+      "category": "foreign_bank",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Public Bank Vietnam",
+      "category": "foreign_bank",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Hong Leong Bank Vietnam",
+      "category": "foreign_bank",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "ANZ Vietnam",
+      "category": "foreign_bank",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Citi Vietnam",
+      "category": "foreign_bank",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "DBS",
+      "category": "foreign_bank",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "MUFG",
+      "category": "foreign_bank",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Mizuho",
+      "category": "foreign_bank",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "SMBC",
+      "category": "foreign_bank",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "ICBC",
+      "category": "foreign_bank",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Bank of China",
+      "category": "foreign_bank",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "KEB Hana",
+      "category": "foreign_bank",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "BNP Paribas",
+      "category": "foreign_bank",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Deutsche Bank",
+      "category": "foreign_bank",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Maybank",
+      "category": "foreign_bank",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Bangkok Bank",
+      "category": "foreign_bank",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "MCredit",
+      "category": "finance",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "MB Ageas Life",
+      "category": "insurance",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "NAPAS",
+      "category": "fintech",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "OnePay",
+      "category": "fintech",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "SmartPay",
+      "category": "fintech",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Moca",
+      "category": "fintech",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Trusting Social",
+      "category": "fintech",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Cake by VPBank",
+      "category": "fintech",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Timo",
+      "category": "fintech",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Finhay",
+      "category": "fintech",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "VPS",
+      "category": "finance",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "HD SAISON",
+      "category": "finance",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "FWD Vietnam",
+      "category": "insurance",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Prudential Vietnam",
+      "category": "insurance",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Manulife Vietnam",
+      "category": "insurance",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "AIA Vietnam",
+      "category": "insurance",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Chubb Life Vietnam",
+      "category": "insurance",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Mirae Asset Vietnam",
+      "category": "finance",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Bao Viet",
+      "category": "finance",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "SeaMoney",
+      "category": "commerce",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Traveloka",
+      "category": "commerce",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Agoda",
+      "category": "commerce",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Booking.com",
+      "category": "commerce",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "NAVER Vietnam",
+      "category": "technology",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Cinnamon AI",
+      "category": "technology",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Rikkeisoft",
+      "category": "technology",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Rikkei AI",
+      "category": "technology",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Gear Inc",
+      "category": "technology",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "NashTech Vietnam",
+      "category": "technology",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Sun Asterisk",
+      "category": "technology",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "VMO",
+      "category": "technology",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Sotatek",
+      "category": "technology",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Tek Experts",
+      "category": "technology",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "EPAM Vietnam",
+      "category": "technology",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Thoughtworks Vietnam",
+      "category": "technology",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Anduin Transactions",
+      "category": "technology",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Sky Mavis",
+      "category": "technology",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Hanoi University of Science and Technology",
+      "category": "research",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "VNU University of Engineering and Technology",
+      "category": "research",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Posts and Telecommunications Institute of Technology",
+      "category": "research",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Phenikaa University",
+      "category": "research",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Qualcomm",
+      "category": "global_tech",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Samsung R&D Vietnam",
+      "category": "global_tech",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Samsung Electronics Vietnam",
+      "category": "global_tech",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "LG Electronics R&D Vietnam",
+      "category": "global_tech",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "NXP Vietnam",
+      "category": "global_tech",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Cadence Vietnam",
+      "category": "global_tech",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "MediaTek Vietnam",
+      "category": "global_tech",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "ARM",
+      "category": "global_tech",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Ampere",
+      "category": "global_tech",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Microsoft Vietnam",
+      "category": "global_tech",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Google Vietnam",
+      "category": "global_tech",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Amazon / AWS Vietnam",
+      "category": "global_tech",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "IBM Vietnam",
+      "category": "global_tech",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Oracle Vietnam",
+      "category": "global_tech",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "SAP Vietnam",
+      "category": "global_tech",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Cisco Vietnam",
+      "category": "global_tech",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Ericsson Vietnam",
+      "category": "global_tech",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Nokia Vietnam",
+      "category": "global_tech",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Huawei Vietnam",
+      "category": "global_tech",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Panasonic Vietnam",
+      "category": "global_tech",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Toyota Vietnam",
+      "category": "global_tech",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Honda Vietnam",
+      "category": "global_tech",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    },
+    {
+      "employer": "Hyundai Motor Vietnam",
+      "category": "global_tech",
+      "status": "pending",
+      "career_url": null,
+      "adapter": null,
+      "evidence": null
+    }
+  ]
+}
