@@ -1,10 +1,11 @@
 # Direct company career feeds
 
-Job Radar checks these 102 verified company career listings. Each entry points to an employer career page or its dedicated recruiting portal. A listing is stored only when its own job posting has a relevant title and description. An empty scan means no matching open posting was found by that adapter at scan time; it does not imply the company has no vacancies.
+Job Radar checks these 103 verified company career listings. Each entry points to an employer career page or its dedicated recruiting portal. A listing is stored only when its own job posting has a relevant title and description. An empty scan means no matching open posting was found by that adapter at scan time; it does not imply the company has no vacancies.
 
 | Company | Career page | Adapter |
 | --- | --- | --- |
 | VinAI | [Open careers](https://www.vinai.io/careers/) | HTML links |
+| VinBus | [Open careers](https://vinbus.vn/tuyen-dung/viec-lam) | HTML board (paginated) |
 | VinDynamics | [Open careers](https://vindynamics.net/career) | Company career API |
 | VinRobotics | [Open careers](https://vinrobotics.net/career) | Company career API |
 | VinMotion | [Open careers](https://vinmotion.net/vi/career) | HTML board |

@@ -63,7 +63,7 @@ def ainavi(employer: str, domain: str) -> CareerFeed:
 
 CAREER_FEEDS: tuple[CareerFeed, ...] = (
     CareerFeed("VinAI", "https://www.vinai.io/careers/", "legacy"),
-    CareerFeed("VinDynamics", "https://vindynamics.net/career", "vindynamics"),
+    html("VinBus", "https://vinbus.vn/tuyen-dung/viec-lam", r"^/[a-z0-9-]+$",\n         max_pages=10, max_results=100, description_selector="main"),\n    CareerFeed("VinDynamics", "https://vindynamics.net/career", "vindynamics"),
     CareerFeed("VinRobotics", "https://vinrobotics.net/career", "vinrobotics"),
     html("VinMotion", "https://vinmotion.net/vi/career", r"^/vi/career/[^/?#]+$", max_results=100, description_selector="main"),
     html("VinUni", "https://vinuni.talent.vn/jobs", TALENT_JOB, max_results=100, description_selector=".content-article, article"),
