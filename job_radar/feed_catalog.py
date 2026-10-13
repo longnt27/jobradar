@@ -133,6 +133,7 @@ CAREER_FEEDS: tuple[CareerFeed, ...] = (
         "detail_base": "https://nvidia.wd5.myworkdayjobs.com/wday/cxs/nvidia/NVIDIAExternalCareerSite",
         "search_text": "Vietnam",
     }),
+    CareerFeed("Agoda", "https://careersatagoda.com/vacancies/", "agoda"),
     CareerFeed("Shopee", "https://careers.shopee.vn/jobs", "workatsea"),
     CareerFeed("SPX Express", "https://careers.shopee.vn/jobs", "workatsea", {"company_filter": "SPX"}),
     html("Vinschool", "https://tuyendung.vinschool.edu.vn/jobs", TALENT_JOB, description_selector=".content-article, article"),
