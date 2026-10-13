@@ -19,8 +19,6 @@ def parse_baoviet_announcement(html: str, url: str) -> list[ObservedJob]:
         return []
     output = []
     seen = set()
-    title_node = soup.select_one("h1")
-    parent_title = title_node.get_text(" ", strip=True) if title_node else ""
     email_match = re.search(r"[\w.+-]+@[\w.-]+\.[a-z]{2,}", soup.get_text(" ", strip=True), re.I)
     apply_url = f"mailto:{email_match.group(0)}" if email_match else _application_destination(soup, url)
     for table in soup.select("table"):
@@ -28,7 +26,11 @@ def parse_baoviet_announcement(html: str, url: str) -> list[ObservedJob]:
             cells = row.find_all(["td", "th"], recursive=False)
             if len(cells) < 3:
                 continue
-            header = cells[0].get_text(" ", strip=True)
+            role_cell = next((idx for idx, cell in enumerate(cells[:-2])
+                              if re.search(r"Chức danh\s*:", cell.get_text(" ", strip=True), re.I)), None)
+            if role_cell is None:
+                continue
+            header = cells[role_cell].get_text(" ", strip=True)
             match = re.search(r"Chức danh\s*:\s*(.+?)(?=Số lượng\s*:|Nơi làm việc\s*:|$)", header, re.I)
             if not match:
                 continue
@@ -40,7 +42,7 @@ def parse_baoviet_announcement(html: str, url: str) -> list[ObservedJob]:
             if identity in seen:
                 continue
             description = "\n\n".join(filter(None, [
-                _structured_text(cells[1]), _structured_text(cells[2])
+                _structured_text(cells[role_cell + 1]), _structured_text(cells[role_cell + 2])
             ]))
             if len(description) < 100:
                 continue
