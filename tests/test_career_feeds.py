@@ -443,3 +443,71 @@ def test_workday_collector_queries_cxs_and_retrieves_detail(monkeypatch) -> None
     assert jobs[0].location == "Vietnam, Hanoi"
     assert "enterprise clients using NVIDIA GPUs" in jobs[0].description
 
+
+def test_workday_paginates_country_facets_and_retains_vietnam_additional_locations(monkeypatch) -> None:
+    from job_radar.collectors import collect_workday
+    offsets = []
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def post(self, url, json):
+            assert json["appliedFacets"] == {"Country": ["VN"]}
+            offset = json["offset"]
+            offsets.append(offset)
+            return httpx.Response(200, json={"total": 2 if offset == 0 else 0, "jobPostings": [{
+                "title": "AI Engineer", "externalPath": f"/job/Global/AI_{offset}", "locationsText": "3 Locations",
+            }]}, request=httpx.Request("POST", url))
+
+        async def get(self, url):
+            return httpx.Response(200, json={"jobPostingInfo": {
+                "jobReqId": url.rsplit("_", 1)[-1], "location": "Singapore", "additionalLocations": ["Vietnam, Hanoi"],
+                "jobDescription": "<p>Develop production AI services with Python and model evaluation.</p>" * 5,
+                "startDate": "2026-10-01",
+            }}, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr("job_radar.collectors._career_client", Client)
+    jobs = asyncio.run(collect_workday({"url": "https://example.org/Careers", "name": "Example", "config": {
+        "search_url": "https://example.org/api/jobs", "detail_base": "https://example.org/api", "applied_facets": {"Country": ["VN"]},
+    }}))
+    assert offsets == [0, 1] and len(jobs) == 2
+    assert jobs[0].url == "https://example.org/Careers/job/Global/AI_0"
+    assert jobs[0].location == "Singapore, Vietnam, Hanoi"
+    assert jobs[0].published_at == "2026-10-01"
+
+
+def test_successfactors_search_pagination_preserves_country_and_own_location(monkeypatch) -> None:
+    from job_radar.collectors import collect_successfactors
+    requested = []
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def get(self, url):
+            requested.append(url)
+            if "/job/" in url:
+                page = '<h1>AI Engineer</h1><span data-office="true">Hanoi, Vietnam</span><div class="location">Search by Location</div><div class="jobdescription">' + "Build AI services with Python. " * 10 + '</div>'
+            elif "startrow=50" in url:
+                page = '<main>No jobs</main>'
+            elif "startrow=25" in url:
+                page = '<a class="jobTitle-link" href="/job/ai/42">AI Engineer</a>'
+            else:
+                page = '<a class="jobTitle-link" href="/job/sales/1">Sales Manager</a>'
+            return httpx.Response(200, text=page, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr("job_radar.collectors._career_client", Client)
+    jobs = asyncio.run(collect_successfactors({"url": "https://example.org/search/?locationsearch=Viet+Nam", "name": "Example", "config": {
+        "max_pages": 4, "search_page_size": 25, "location_selector": "[data-office]",
+    }}))
+    assert len(jobs) == 1 and jobs[0].location == "Hanoi, Vietnam"
+    assert all("locationsearch=Viet+Nam" in url for url in requested if "/job/" not in url)
+    assert any("startrow=25" in url for url in requested)
+

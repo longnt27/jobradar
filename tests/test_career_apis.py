@@ -190,3 +190,48 @@ def test_greenhouse_html_entities_remain_readable_paragraphs_and_bullets(monkeyp
     }}))
     assert "• Python & SQL" in jobs[0].description
     assert "<p>" not in jobs[0].description
+
+
+def test_nested_api_rows_and_array_fields_produce_specific_posting_urls(monkeypatch):
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def get(self, url, params=None):
+            row = {"id": 9, "contents": [{"title": "Data Engineer", "slug": "data-engineer", "content": DESCRIPTION}],
+                   "addresses": [{"provinceName": "Hà Nội"}]}
+            return httpx.Response(200, json={"items": [{"data": row}]}, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr("job_radar.collectors._career_client", Client)
+    jobs = asyncio.run(collect_json_board({"url": "https://example.org/careers", "name": "Example", "config": {
+        "api_url": "https://example.org/api", "rows_path": "items", "row_path": "data", "title_field": "contents.0.title", "url_field": "url",
+        "url_template": "https://example.org/jobs/{slug}", "template_fields": {"slug": "contents.0.slug"},
+        "description_sections": {"": "contents.0.content"}, "location_fields": ["addresses"],
+    }}))
+    assert len(jobs) == 1 and jobs[0].url == "https://example.org/jobs/data-engineer"
+    assert jobs[0].title == "Data Engineer" and jobs[0].location == "Hà Nội"
+
+
+def test_api_finder_pagination_uses_actual_offsets_in_query_templates(monkeypatch):
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def get(self, url, params=None):
+            offset = int(params["finder"].split("offset=")[-1])
+            row = {"id": offset + 1, "title": "AI Engineer", "url": f"https://example.org/job/{offset}", "content": DESCRIPTION}
+            return httpx.Response(200, json={"items": [{"jobs": [row], "total": 2}]}, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr("job_radar.collectors._career_client", Client)
+    jobs = asyncio.run(collect_json_board({"url": "https://example.org/careers", "name": "Example", "config": {
+        "api_url": "https://example.org/api", "rows_path": "items.0.jobs", "total_field": "items.0.total", "pagination": "offset",
+        "params_templates": {"finder": "findReqs;limit={limit},offset={offset}"}, "title_field": "title", "url_field": "url",
+        "description_sections": {"": "content"},
+    }}))
+    assert len(jobs) == 2 and [j.external_id for j in jobs] == ["1", "2"]

@@ -1,6 +1,6 @@
 # Direct company career feeds
 
-Job Radar checks these 85 verified company career listings. Each entry points to an employer career page or its dedicated recruiting portal. A listing is stored only when its own job posting has a relevant title and description. An empty scan means no matching open posting was found by that adapter at scan time; it does not imply the company has no vacancies.
+Job Radar checks these 102 verified company career listings. Each entry points to an employer career page or its dedicated recruiting portal. A listing is stored only when its own job posting has a relevant title and description. An empty scan means no matching open posting was found by that adapter at scan time; it does not imply the company has no vacancies.
 
 | Company | Career page | Adapter |
 | --- | --- | --- |
@@ -89,7 +89,24 @@ Job Radar checks these 85 verified company career listings. Each entry points to
 | Finhay | [Open careers](https://www.finhay.com.vn/nguon-nhan-luc?tab=tuyendung) | HTML board |
 | SmartPay | [Open careers](https://www.smartpayvn.com/tuyen-dung/) | HTML board |
 | NAVER Vietnam | [Open careers](https://navercorp.vn/en/recruitment.html) | Public career JSON API |
+| Cake by VPBank | [Open careers](https://cake.vn/tuyen-dung) | Public career JSON API |
+| Timo | [Open careers](https://timo.vn/careers/) | HTML board |
+| Tek Experts | [Open careers](https://careers.teknowledge.com/teknowledge/jobs) | Public career JSON API |
+| Eximbank | [Open careers](https://tuyendungeximbank.com/vi/jobs) | Public career JSON API |
+| MCredit | [Open careers](https://tuyendungmcredit.ainavi.com.vn/vi/jobs) | Public career JSON API |
+| VPS | [Open careers](https://www.vps.com.vn/gia-nhap-vps/co-hoi-nghe-nghiep) | Public career JSON API |
+| Trusting Social | [Open careers](https://trustingsocial.com/careers/) | Public career JSON API |
+| Hong Leong Bank Vietnam | [Open careers](https://hlb.wd3.myworkdayjobs.com/HLBCareers) | Workday CXS API |
+| DBS | [Open careers](https://dbs.wd3.myworkdayjobs.com/DBS_Careers) | Workday CXS API |
+| Deutsche Bank | [Open careers](https://db.wd3.myworkdayjobs.com/DBWebsite) | Workday CXS API |
+| Woori Bank Vietnam | [Open careers](https://woori.com.vn/thong-tin-tuyen-dung/) | HTML board |
+| MUFG | [Open careers](https://mufgub.wd3.myworkdayjobs.com/MUFG-Careers) | Workday CXS API |
+| Citi Vietnam | [Open careers](https://citi.wd5.myworkdayjobs.com/2) | Workday CXS API |
+| ANZ Vietnam | [Open careers](https://careers.anz.com/search/?q=&locationsearch=Vietnam) | SuccessFactors |
+| BNP Paribas | [Open careers](https://apac.bnpparibas/en/work-with-us/apply-now/our-opportunities/?city%5B%5D=ho-chi-minh&city%5B%5D=ho-chi-minh-city) | HTML board |
+| SMBC | [Open careers](https://careerasia.smbc.co.jp/SMBC/search/?q=&locationsearch=Viet+Nam) | SuccessFactors |
+| CIMB Vietnam | [Open careers](https://ejox.fa.ap1.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_11) | Public career JSON API |
 
-The [employer directory](job_radar/seeds.py) contains 182 companies after the [HCMC-based exclusions](EMPLOYER_SCOPE.md). Its other 97 entries are leads without an active built-in feed. Their presence in the directory is not a claim that their jobs are collected. Add a verified direct career page from an employer card. General job aggregators are not part of this catalog.
+The [employer directory](job_radar/seeds.py) contains 182 companies after the [HCMC-based exclusions](EMPLOYER_SCOPE.md). Its other 80 entries are leads without an active built-in feed. Their presence in the directory is not a claim that their jobs are collected. Add a verified direct career page from an employer card. General job aggregators are not part of this catalog.
 
 Feed definitions and selectors: [job_radar/feed_catalog.py](job_radar/feed_catalog.py). Collector implementations: [job_radar/collectors.py](job_radar/collectors.py). Older postings with an explicit past deadline are skipped. The app creates no placeholder vacancies.

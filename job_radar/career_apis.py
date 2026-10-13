@@ -14,6 +14,9 @@ from .ingest import ObservedJob
 
 def field(value, path: str):
     for part in path.split(".") if path else []:
+        if isinstance(value, list) and part.isdigit() and int(part) < len(value):
+            value = value[int(part)]
+            continue
         if not isinstance(value, dict) or part not in value:
             return None
         value = value[part]
@@ -24,7 +27,7 @@ def names(value) -> str:
     if isinstance(value, list):
         return ", ".join(names(item) for item in value if item)
     if isinstance(value, dict):
-        return str(value.get("name") or value.get("fullLocation") or value.get("city") or value.get("location") or "")
+        return str(value.get("name") or value.get("fullLocation") or value.get("city") or value.get("location") or value.get("provinceName") or "")
     return str(value or "")
 
 
@@ -35,6 +38,12 @@ def mapped_names(row: dict, path: str, config: dict) -> str:
         return names(value)
     values = value if isinstance(value, list) else [value]
     return ", ".join(mapping.get(names(item), names(item)) for item in values if item)
+
+
+def template_values(row: dict, config: dict) -> dict:
+    values = {k: quote(str(v), safe="") for k, v in row.items() if isinstance(v, (str, int))}
+    values.update({k: quote(names(field(row, path)), safe="") for k, path in config.get("template_fields", {}).items()})
+    return values
 
 
 def _terms(row: dict, taxonomy: str) -> str:
@@ -56,6 +65,7 @@ async def collect_json_board(source: dict) -> list[ObservedJob]:
     async with _career_client() as client:
         for page in range(1, max_pages + 1):
             params = {**config.get("params", {})}
+            params.update({key: value.format(page=page, offset=offset, limit=page_size) for key, value in config.get("params_templates", {}).items()})
             if config.get("limit_param"):
                 params[config["limit_param"]] = page_size
             if config.get("page_param"):
@@ -80,6 +90,8 @@ async def collect_json_board(source: dict) -> list[ObservedJob]:
                 break
             previous = len(seen)
             for row in batch:
+                if config.get("row_path"):
+                    row = field(row, config["row_path"])
                 if not isinstance(row, dict):
                     raise RuntimeError("Career API returned an invalid posting")
                 identity = names(field(row, config.get("id_field", "id"))) or names(field(row, config["url_field"]))
@@ -93,7 +105,7 @@ async def collect_json_board(source: dict) -> list[ObservedJob]:
             offset += len(batch)
             if total is not None and offset >= total:
                 break
-            if not config.get("page_param") and not config.get("offset_param"):
+            if not config.get("page_param") and not config.get("offset_param") and not config.get("pagination"):
                 if total is not None and offset < total:
                     raise RuntimeError("Career API needs pagination to collect its full listing")
                 break
@@ -113,7 +125,7 @@ async def collect_json_board(source: dict) -> list[ObservedJob]:
             if not _target_title(title):
                 continue
             if config.get("detail_api_url"):
-                values = {k: quote(str(v), safe="") for k, v in row.items() if isinstance(v, (str, int))}
+                values = template_values(row, config)
                 detail_response = await client.get(config["detail_api_url"].format(**values), params={
                     k: str(v).format(**values) for k, v in config.get("detail_api_params", {}).items()
                 })
@@ -139,7 +151,7 @@ async def collect_json_board(source: dict) -> list[ObservedJob]:
                 continue
             url = names(field(row, config["url_field"]))
             if not url and config.get("url_template"):
-                url = config["url_template"].format(**{k: quote(str(v), safe="") for k, v in row.items() if isinstance(v, (str, int))})
+                url = config["url_template"].format(**template_values(row, config))
             url = urljoin(source["url"], url)
             if urlsplit(url).scheme not in {"http", "https"} or url.rstrip("/") == source["url"].rstrip("/"):
                 raise RuntimeError("Career API posting is missing a specific posting URL")

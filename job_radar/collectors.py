@@ -914,7 +914,12 @@ async def collect_successfactors(source: dict) -> list[ObservedJob]:
             for page in range(min(int(config.get("max_pages", 1)), 8)):
                 listing_url = urljoin(board, f"{page * 10}/") if "/go/" in board and page else board
                 if page and "/go/" not in board:
-                    break
+                    if not config.get("search_page_size"):
+                        break
+                    parts = urlsplit(board)
+                    query = dict(parse_qsl(parts.query))
+                    query["startrow"] = str(page * int(config["search_page_size"]))
+                    listing_url = urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), ""))
                 response = await client.get(listing_url)
                 response.raise_for_status()
                 soup = BeautifulSoup(response.text, "html.parser")
@@ -927,8 +932,6 @@ async def collect_successfactors(source: dict) -> list[ObservedJob]:
                     links[url] = title
                     found += 1
                 if not soup.select('a.jobTitle-link[href*="/job/"]'):
-                    break
-                if page and found == 0:
                     break
         jobs: list[ObservedJob] = []
         for url, label in list(links.items())[:120]:
@@ -944,7 +947,7 @@ async def collect_successfactors(source: dict) -> list[ObservedJob]:
                     url=str(response.url), title=title[:180],
                     company=source.get("employer_name") or source["name"],
                     description=description[:30000],
-                    location=_text(soup, (".job-location", "[class*=location]"))[:250],
+                    location=_text(soup, (config["location_selector"],) if config.get("location_selector") else (".job-location", "#job-location", "[data-careersite-propertyid=location]"))[:250],
                     apply_url=_application_destination(soup, str(response.url)),
                     raw_text=description[:30000],
                 ))
@@ -1254,41 +1257,68 @@ async def collect_workatsea(source: dict) -> list[ObservedJob]:
 
 
 async def collect_workday(source: dict) -> list[ObservedJob]:
-    """Collect postings from Workday CXS API."""
+    """Collect every posting in the configured Workday country facets."""
     config = source.get("config", {})
-    search_url = config["search_url"]
-    detail_base = config["detail_base"]
-    search_text = config.get("search_text", "Vietnam")
     jobs: list[ObservedJob] = []
+    postings = []
+    seen = set()
+    offset = 0
+    total = None
     async with _career_client() as client:
-        payload = {"appliedFacets": {}, "limit": 20, "offset": 0, "searchText": search_text}
-        resp = await client.post(search_url, json=payload)
-        resp.raise_for_status()
-        data = resp.json()
-        postings = data.get("jobPostings", [])
-        for p in postings:
-            title = str(p.get("title", "")).strip()
-            path = str(p.get("externalPath", ""))
-            loc = str(p.get("locationsText", ""))
-            if not title or not path or not _target_title(title):
+        for _ in range(int(config.get("max_pages", 50))):
+            payload = {"appliedFacets": config.get("applied_facets", {}), "limit": 20, "offset": offset,
+                       "searchText": config.get("search_text", "" if config.get("applied_facets") else "Vietnam")}
+            response = await client.post(config["search_url"], json=payload)
+            response.raise_for_status()
+            data = response.json()
+            batch = data.get("jobPostings")
+            if not isinstance(batch, list):
+                raise RuntimeError("Workday returned an unexpected job listing")
+            if total is None and data.get("total") is not None:
+                total = int(data["total"])
+            if not batch:
+                if total is not None and offset < total:
+                    raise RuntimeError("Workday ended before all advertised postings were returned")
+                break
+            previous = len(seen)
+            for posting in batch:
+                path = posting.get("externalPath") if isinstance(posting, dict) else None
+                if not path:
+                    raise RuntimeError("Workday posting is missing its path")
+                if path not in seen:
+                    postings.append(posting)
+                    seen.add(path)
+            if len(seen) == previous:
+                raise RuntimeError("Workday repeated a page instead of completing pagination")
+            offset += len(batch)
+            if (total is not None and offset >= total) or (total is None and len(batch) < 20):
+                break
+        else:
+            raise RuntimeError("Workday exceeded its configured pagination limit")
+
+        for posting in postings:
+            title = str(posting.get("title", "")).strip()
+            path = posting["externalPath"]
+            if not _target_title(title):
                 continue
-            detail_api = detail_base + path
-            try:
-                d_resp = await client.get(detail_api)
-                d_resp.raise_for_status()
-                info = d_resp.json().get("jobPostingInfo", {})
-                desc = _structured_text(BeautifulSoup(info.get("jobDescription", ""), "html.parser"))
-                if len(desc) < 100 or _expired_posting(desc):
-                    continue
-                apply_url = info.get("externalUrl") or detail_api
-                jobs.append(ObservedJob(
-                    url=apply_url, external_id=info.get("jobReqId") or path,
-                    title=title[:180], company=source.get("employer_name") or "NVIDIA",
-                    description=desc[:30000], location=loc[:250],
-                    apply_url=apply_url, raw_text=desc[:30000],
-                ))
-            except Exception:
+            response = await client.get(config["detail_base"] + path)
+            if response.status_code in {404, 410}:
                 continue
+            response.raise_for_status()
+            info = response.json().get("jobPostingInfo")
+            if not isinstance(info, dict):
+                raise RuntimeError("Workday returned an unexpected posting detail")
+            description = _structured_text(BeautifulSoup(info.get("jobDescription", ""), "html.parser"))
+            if len(description) < 100 or _expired_posting(description):
+                continue
+            url = info.get("externalUrl") or source["url"].split("?")[0].rstrip("/") + path
+            location = ", ".join(filter(None, [info.get("location", ""), *info.get("additionalLocations", [])])) or posting.get("locationsText", "")
+            jobs.append(ObservedJob(
+                url=url, external_id=info.get("jobReqId") or path,
+                title=title[:180], company=source.get("employer_name") or source["name"],
+                description=description[:30000], location=location[:250], apply_url=url,
+                published_at=info.get("startDate"), raw_text=description[:30000],
+            ))
     return jobs
 
 

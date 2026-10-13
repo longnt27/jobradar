@@ -227,10 +227,11 @@
     {
       "employer": "Eximbank",
       "category": "bank",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://tuyendungeximbank.com/vi/jobs",
+      "adapter": "json_board",
+      "evidence": "Official public listing and posting data verified on 2026-10-13; collector returned 2 matching roles. Full API/list pagination and complete descriptions verified. Zero matching roles means the current advertised titles did not match the technical title filter.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "Bac A Bank",
@@ -283,18 +284,20 @@
     {
       "employer": "Woori Bank Vietnam",
       "category": "foreign_bank",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://woori.com.vn/thong-tin-tuyen-dung/",
+      "adapter": "html_board",
+      "evidence": "Official public listing and posting data verified on 2026-10-13; collector returned 3 matching roles. Full API/list pagination and complete descriptions verified. Zero matching roles means the current advertised titles did not match the technical title filter.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "CIMB Vietnam",
       "category": "foreign_bank",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://ejox.fa.ap1.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_11",
+      "adapter": "json_board",
+      "evidence": "Official public listing and posting data verified on 2026-10-13; collector returned 3 matching roles. Full API/list pagination and complete descriptions verified. Zero matching roles means the current advertised titles did not match the technical title filter.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "Public Bank Vietnam",
@@ -307,42 +310,47 @@
     {
       "employer": "Hong Leong Bank Vietnam",
       "category": "foreign_bank",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://hlb.wd3.myworkdayjobs.com/HLBCareers",
+      "adapter": "workday",
+      "evidence": "Official public listing and posting data verified on 2026-10-13; collector returned 0 matching roles. Full API/list pagination and complete descriptions verified. Zero matching roles means the current advertised titles did not match the technical title filter.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "ANZ Vietnam",
       "category": "foreign_bank",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://careers.anz.com/search/?q=&locationsearch=Vietnam",
+      "adapter": "successfactors",
+      "evidence": "Official public listing and posting data verified on 2026-10-13; collector returned 0 matching roles. Full API/list pagination and complete descriptions verified. Zero matching roles means the current advertised titles did not match the technical title filter.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "Citi Vietnam",
       "category": "foreign_bank",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://citi.wd5.myworkdayjobs.com/2",
+      "adapter": "workday",
+      "evidence": "Official public listing and posting data verified on 2026-10-13; collector returned 1 matching roles. Full API/list pagination and complete descriptions verified. Zero matching roles means the current advertised titles did not match the technical title filter.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "DBS",
       "category": "foreign_bank",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://dbs.wd3.myworkdayjobs.com/DBS_Careers",
+      "adapter": "workday",
+      "evidence": "Official public listing and posting data verified on 2026-10-13; collector returned 0 matching roles. Full API/list pagination and complete descriptions verified. Zero matching roles means the current advertised titles did not match the technical title filter.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "MUFG",
       "category": "foreign_bank",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://mufgub.wd3.myworkdayjobs.com/MUFG-Careers",
+      "adapter": "workday",
+      "evidence": "Official public listing and posting data verified on 2026-10-13; collector returned 0 matching roles. Full API/list pagination and complete descriptions verified. Zero matching roles means the current advertised titles did not match the technical title filter.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "Mizuho",
@@ -355,10 +363,11 @@
     {
       "employer": "SMBC",
       "category": "foreign_bank",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://careerasia.smbc.co.jp/SMBC/search/?q=&locationsearch=Viet+Nam",
+      "adapter": "successfactors",
+      "evidence": "Official public listing and posting data verified on 2026-10-13; collector returned 1 matching roles. Full API/list pagination and complete descriptions verified. Zero matching roles means the current advertised titles did not match the technical title filter.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "ICBC",
@@ -387,18 +396,20 @@
     {
       "employer": "BNP Paribas",
       "category": "foreign_bank",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://apac.bnpparibas/en/work-with-us/apply-now/our-opportunities/?city%5B%5D=ho-chi-minh&city%5B%5D=ho-chi-minh-city",
+      "adapter": "html_board",
+      "evidence": "Official public listing and posting data verified on 2026-10-13; collector returned 0 matching roles. Full API/list pagination and complete descriptions verified. Zero matching roles means the current advertised titles did not match the technical title filter.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "Deutsche Bank",
       "category": "foreign_bank",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://db.wd3.myworkdayjobs.com/DBWebsite",
+      "adapter": "workday",
+      "evidence": "Official public listing and posting data verified on 2026-10-13; collector returned 0 matching roles. Full API/list pagination and complete descriptions verified. Zero matching roles means the current advertised titles did not match the technical title filter.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "Maybank",
@@ -419,10 +430,11 @@
     {
       "employer": "MCredit",
       "category": "finance",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://tuyendungmcredit.ainavi.com.vn/vi/jobs",
+      "adapter": "json_board",
+      "evidence": "Official public listing and posting data verified on 2026-10-13; collector returned 1 matching roles. Full API/list pagination and complete descriptions verified. Zero matching roles means the current advertised titles did not match the technical title filter.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "MB Ageas Life",
@@ -468,26 +480,29 @@
     {
       "employer": "Trusting Social",
       "category": "fintech",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://trustingsocial.com/careers/",
+      "adapter": "json_board",
+      "evidence": "Official public listing and posting data verified on 2026-10-13; collector returned 12 matching roles. Full API/list pagination and complete descriptions verified. Zero matching roles means the current advertised titles did not match the technical title filter.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "Cake by VPBank",
       "category": "fintech",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://cake.vn/tuyen-dung",
+      "adapter": "json_board",
+      "evidence": "Official public listing and posting data verified on 2026-10-13; collector returned 8 matching roles. Full API/list pagination and complete descriptions verified. Zero matching roles means the current advertised titles did not match the technical title filter.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "Timo",
       "category": "fintech",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://timo.vn/careers/",
+      "adapter": "html_board",
+      "evidence": "Official public listing and posting data verified on 2026-10-13; collector returned 7 matching roles. Full API/list pagination and complete descriptions verified. Zero matching roles means the current advertised titles did not match the technical title filter.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "Finhay",
@@ -501,10 +516,11 @@
     {
       "employer": "VPS",
       "category": "finance",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://www.vps.com.vn/gia-nhap-vps/co-hoi-nghe-nghiep",
+      "adapter": "json_board",
+      "evidence": "Official public listing and posting data verified on 2026-10-13; collector returned 14 matching roles. Full API/list pagination and complete descriptions verified. Zero matching roles means the current advertised titles did not match the technical title filter.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "HD SAISON",
@@ -683,10 +699,11 @@
     {
       "employer": "Tek Experts",
       "category": "technology",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://careers.teknowledge.com/teknowledge/jobs",
+      "adapter": "json_board",
+      "evidence": "Official public listing and posting data verified on 2026-10-13; collector returned 2 matching roles. Full API/list pagination and complete descriptions verified. Zero matching roles means the current advertised titles did not match the technical title filter.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "EPAM Vietnam",
@@ -939,5 +956,30 @@
       "adapter": null,
       "evidence": null
     }
-  ]
+  ],
+  "handoff": {
+    "date": "2026-10-13",
+    "branch": "feat/job-feed-integration",
+    "requested_next_step": "Interns continue the pending adapters; pull and audit their changes afterward. Merge to main remains pending.",
+    "completed_original_targets": 35,
+    "remaining_original_targets": 80,
+    "total_builtin_feeds": 102,
+    "dedup_cleanup": {
+      "before": 2289,
+      "after": 2220,
+      "merged": 69,
+      "backup": "~/Library/Application Support/JobRadar/job_radar-before-dedup-20261013T074617923331Z.sqlite3",
+      "report": "/private/tmp/job-radar-live-dedup-report-20261013.json"
+    },
+    "notes": [
+      "Backend-only changes and validation; do not run UI checks for this task.",
+      "Some remaining employers have renamed/acquired brands or no current first-party posting; verify scope rather than add guessed homepage adapters.",
+      "Eximbank collection uses the verified public Ainavi API; direct frontend HTTP TLS chain fails locally. MCredit currently lacks structured location unless DeltaData is decoded.",
+      "Standard Chartered requires the public SAP unified API with a page CSRF token; existing HTML SuccessFactors is insufficient.",
+      "Vikki needs avia-element-paging; HD SAISON needs /p-N pagination; Bao Viet and Public Bank announcements require separate role parsing.",
+      "Agribank and Social Policies Bank samples are expired; retain closing-date checks. VCBNeo currently rejects direct requests.",
+      "All adapters must preserve real employer identity, complete descriptions, posting links, pagination, and new-job ingestion dedup.",
+      "The local running service was last restarted before the final adapter batches; restart or redeploy when adopting the pushed branch."
+    ]
+  }
 }

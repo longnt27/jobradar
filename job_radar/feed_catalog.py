@@ -41,6 +41,26 @@ def vingroup(employer: str, company_id: str = "") -> CareerFeed:
         "value_maps": {"orgLv2Id": {"45015271": "VinSmart Future", "45002926": "Vinhomes", "45032743": "VinCons", "45001013": "Vinpearl", "45054894": "VinFast"}},
     })
 
+
+def workday(employer: str, host: str, tenant: str, board: str, facet: str) -> CareerFeed:
+    base = f"https://{host}/wday/cxs/{tenant}/{board}"
+    return CareerFeed(employer, f"https://{host}/{board}", "workday", {
+        "search_url": base + "/jobs", "detail_base": base,
+        "applied_facets": {facet: ["db69e8c8446c11de98360015c5e6daf6"]},
+    })
+
+
+def ainavi(employer: str, domain: str) -> CareerFeed:
+    base = "https://centralize-api.ainavi.com.vn/api/recruitment/Recruitment/"
+    return CareerFeed(employer, f"https://{domain}/vi/jobs", "json_board", {
+        "api_url": base + "GetRecruitmentsByDomain", "params": {"Domain": domain}, "rows_path": "items", "total_field": "totalRecord",
+        "page_param": "pageIndex", "limit_param": "pageSize", "title_field": "name", "url_field": "url", "url_template": f"https://{domain}/vi/jobs/{{slug}}",
+        "detail_api_url": base + "GetRecruitmentBySlug", "detail_api_params": {"Domain": domain, "Slug": "{slug}"},
+        "description_sections": {"Responsibilities": "description", "Requirements": "requirement", "Benefits": "benefit"},
+        "published_field": "createdTime", "deadline_field": "recruitmentPublish.endTime", "required_fields": {"recruitmentPublish.isPublished": True},
+        "location_fields": ["workingNewAddresses", "workingAddresses"],
+    })
+
 CAREER_FEEDS: tuple[CareerFeed, ...] = (
     CareerFeed("VinAI", "https://www.vinai.io/careers/", "legacy"),
     CareerFeed("VinDynamics", "https://vindynamics.net/career", "vindynamics"),
@@ -192,4 +212,56 @@ CAREER_FEEDS: tuple[CareerFeed, ...] = (
         "title_field": "title", "url_field": "absolute_url", "description_sections": {"": "content"}, "location_fields": ["location.name"],
         "location_include": "Vietnam", "published_field": "first_published",
     }),
+    CareerFeed("Trusting Social", "https://trustingsocial.com/careers/", "json_board", {
+        "api_url": "https://trustingsocial.com/page-data/careers/page-data.json", "rows_path": "result.data.allRecruiterboxOpening.nodes",
+        "id_field": "rawID", "title_field": "title", "url_field": "url", "url_template": "https://trustingsocial.com/careers/openings/{slug}",
+        "required_fields": {"state": "Published"}, "detail_api_url": "https://trustingsocial.com/page-data/careers/openings/{slug}/page-data.json",
+        "detail_rows_path": "result.data.recruiterboxOpening", "description_sections": {"": "description"},
+        "location_fields": ["location.city", "location.country"], "location_include": "Vietnam", "apply_field": "hosted_url",
+    }),
+    CareerFeed("Cake by VPBank", "https://cake.vn/tuyen-dung", "json_board", {
+        "api_url": "https://home.internal.cake.vn/api/ats/public/job-post/all", "rows_path": "data", "title_field": "title", "url_field": "url",
+        "url_template": "https://cake.vn/tuyen-dung/jobs/{key}", "description_sections": {"": "job_content"},
+        "location_fields": ["office.name", "office.address"], "published_field": "created_at", "closed_fields": ["is_deleted"],
+    }),
+    CareerFeed("Tek Experts", "https://careers.teknowledge.com/teknowledge/jobs", "json_board", {
+        "api_url": "https://careers.teknowledge.com/api/jobs", "params": {"country": "Vietnam"}, "rows_path": "jobs", "row_path": "data", "total_field": "totalCount",
+        "page_param": "page", "limit_param": "limit", "id_field": "req_id", "title_field": "title", "url_field": "url",
+        "url_template": "https://careers.teknowledge.com/tek-experts/jobs/{slug}?lang=en-us", "description_sections": {"": "description"},
+        "location_fields": ["city", "country"], "published_field": "posted_date", "apply_field": "apply_url",
+    }),
+    html("Timo", "https://timo.vn/careers/", r"^/career/[^/?#]+/?$", description_selector=".tr-single-career__content",
+         location_selector=".tr-single-career__meta-item:nth-child(3)", max_results=100),
+    ainavi("Eximbank", "tuyendungeximbank.com"),
+    ainavi("MCredit", "tuyendungmcredit.ainavi.com.vn"),
+    CareerFeed("VPS", "https://www.vps.com.vn/gia-nhap-vps/co-hoi-nghe-nghiep", "json_board", {
+        "api_url": "https://www.vps.com.vn/api/v1/posts", "params": {"type": 3, "language": "vi"}, "rows_path": "data.results", "total_field": "data.total",
+        "page_param": "page", "limit_param": "pageSize", "title_field": "contents.0.title", "url_field": "url",
+        "template_fields": {"slug": "contents.0.slug"}, "url_template": "https://www.vps.com.vn/gia-nhap-vps/co-hoi-nghe-nghiep/chi-tiet-cong-viec/{slug}",
+        "detail_api_url": "https://www.vps.com.vn/api/v1/posts/{slug}", "detail_api_params": {"language": "vi"}, "detail_rows_path": "data.results",
+        "description_sections": {"": "contents.0.content"}, "location_fields": ["recruitmentContent.locations"],
+        "published_field": "publishedAt", "deadline_field": "recruitmentContent.endTime",
+    }),
+    workday("Hong Leong Bank Vietnam", "hlb.wd3.myworkdayjobs.com", "hlb", "HLBCareers", "locationCountry"),
+    workday("DBS", "dbs.wd3.myworkdayjobs.com", "dbs", "DBS_Careers", "locationCountry"),
+    workday("Citi Vietnam", "citi.wd5.myworkdayjobs.com", "citi", "2", "Country_and_Jurisdiction"),
+    workday("Deutsche Bank", "db.wd3.myworkdayjobs.com", "db", "DBWebsite", "Country"),
+    workday("MUFG", "mufgub.wd3.myworkdayjobs.com", "mufgub", "MUFG-Careers", "Country"),
+    html("Woori Bank Vietnam", "https://woori.com.vn/thong-tin-tuyen-dung/", r"^/tuyen-dung/[^/?#]+/?$", pagination="wordpress", max_pages=6,
+         description_selector="#content-main", location_selector=".content-main--item:first-child .content-main--item__right"),
+    CareerFeed("ANZ Vietnam", "https://careers.anz.com/search/?q=&locationsearch=Vietnam", "successfactors", {"max_pages": 4, "search_page_size": 25}),
+    CareerFeed("SMBC", "https://careerasia.smbc.co.jp/SMBC/search/?q=&locationsearch=Viet+Nam", "successfactors", {
+        "max_pages": 4, "search_page_size": 25, "location_selector": "[data-careersite-propertyid=customfield1]",
+    }),
+    CareerFeed("CIMB Vietnam", "https://ejox.fa.ap1.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_11", "json_board", {
+        "api_url": "https://ejox.fa.ap1.oraclecloud.com/hcmRestApi/resources/latest/recruitingCEJobRequisitions",
+        "params": {"onlyData": "true", "expand": "requisitionList"}, "params_templates": {"finder": "findReqs;siteNumber=CX_11,limit={limit},offset={offset}"},
+        "rows_path": "items.0.requisitionList", "total_field": "items.0.TotalJobsCount", "pagination": "offset", "id_field": "Id", "title_field": "Title", "url_field": "url",
+        "url_template": "https://ejox.fa.ap1.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_11/job/{Id}", "required_fields": {"PrimaryLocationCountry": "VN"},
+        "detail_api_url": "https://ejox.fa.ap1.oraclecloud.com/hcmRestApi/resources/latest/recruitingCEJobRequisitionDetails", "detail_api_params": {"onlyData": "true", "expand": "all", "finder": "ById;Id={Id}"},
+        "detail_rows_path": "items.0", "description_sections": {"": "ExternalDescriptionStr"}, "location_fields": ["PrimaryLocation"],
+        "published_field": "ExternalPostedStartDate", "deadline_field": "ExternalPostedEndDate",
+    }),
+    html("BNP Paribas", "https://apac.bnpparibas/en/work-with-us/apply-now/our-opportunities/?city%5B%5D=ho-chi-minh&city%5B%5D=ho-chi-minh-city", r"^/en/jobs/[^/?#]+/?$",
+         description_selector=".jobs__content", location_selector=".jobs__details .crd__specs li:nth-child(2) span"),
 )
