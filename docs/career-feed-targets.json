@@ -903,58 +903,60 @@
     {
       "employer": "Ericsson Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://jobs.ericsson.com/careers",
       "adapter": null,
-      "evidence": null
+      "evidence": "Ericsson's official global careers site uses a JavaScript-rendered recruitment board; Vietnam-specific listings, stable public listing endpoint and detail extraction have not been validated. Do not register a homepage-only adapter."
     },
     {
       "employer": "Nokia Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://jobs.nokia.com/en/sites/CX_1",
       "adapter": null,
-      "evidence": null
+      "evidence": "Nokia uses an Oracle Candidate Experience board. Vietnam-only requisition listing and Oracle HCM request/response contract were not verified; guessing hcmRestApi endpoint or site number would create false empty results."
     },
     {
       "employer": "Huawei Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://career.huawei.com/en",
       "adapter": null,
-      "evidence": null
+      "evidence": "Huawei global official recruitment portal exists, but its Vietnam job listing endpoint and posting-detail schema could not be confirmed. A generic corporate jobs landing page is not a working feed."
     },
     {
       "employer": "Panasonic Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://www.panasonic.com/vn/corporate/careers.html",
       "adapter": null,
-      "evidence": null
+      "evidence": "Panasonic Vietnam official corporate career link directs candidates to VietnamWorks; sprint excludes generic aggregators. https://careers.vn.panasonic.com/search/ serves Panasonic Sales Vietnam (a particular subsidiary), not verified coverage of all Panasonic Vietnam entities; do not mislabel it."
     },
     {
       "employer": "Toyota Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://www.toyota.com.vn/tuyen-dung/recruitment",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official Toyota Vietnam recruiting site exposes a search/filter interface, but current job-link markup, pagination, role-detail shape and an independently verifiable live opening were not established. Collector would be speculative."
     },
     {
       "employer": "Honda Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://www.honda.com.vn/tuyen-dung/co-hoi-nghe-nghiep",
+      "adapter": "html_board",
+      "evidence": "Official Honda Vietnam career listing and role detail accessible: https://www.honda.com.vn/tuyen-dung/chi-tiet-co-hoi-nghe-nghiep?id=1002 (software-maintenance position). Query job IDs must be preserved; listing/detail adapter uses the existing HTML board collector. Live HTTP collector execution not available in this session.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "Hyundai Motor Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://career.hyundai.thanhcong.vn/job-search/all-jobs/en",
+      "adapter": "html_board",
+      "evidence": "Official Hyundai Thanh Cong Vietnam joint venture recruitment board lists four current roles, with individual detail pages, locations, and expiry dates: https://career.hyundai.thanhcong.vn/job-search/all-jobs/en. Company refers to the Vietnamese JV, not Hyundai globally. Live HTTP collector execution not available in this session.",
+      "verified_at": "2026-10-13"
     }
   ],
   "handoff": {
