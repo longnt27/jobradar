@@ -128,6 +128,19 @@ CAREER_FEEDS: tuple[CareerFeed, ...] = (
     CareerFeed("Viettel AI", "https://jobs.viettel.vn/search/?q=Viettel+AI", "successfactors", {"queries": ["Viettel AI", "Không gian mạng"], "max_pages": 2}),
     CareerFeed("Viettel Software", "https://jobs.viettel.vn/search/?q=Viettel+Software", "successfactors", {"queries": ["Viettel Software", "Trung tâm Phần mềm"], "max_pages": 2}),
     CareerFeed("Viettel Research and Development", "https://jobs.viettel.vn/search/?q=Viettel+R%26D", "successfactors", {"queries": ["Viettel R&D", "Viện Hàng không Vũ trụ"], "max_pages": 2}),
+    CareerFeed("Qualcomm", "https://careers.qualcomm.com/careers", "eightfold", {
+        "domain": "qualcomm.com", "location_query": "Vietnam", "max_pages": 100,
+    }),
+    CareerFeed("NXP Vietnam", "https://nxp.wd3.myworkdayjobs.com/careers", "workday_vietnam", {
+        "search_url": "https://nxp.wd3.myworkdayjobs.com/wday/cxs/nxp/careers/jobs",
+        "detail_base": "https://nxp.wd3.myworkdayjobs.com/wday/cxs/nxp/careers",
+        "search_texts": ["Vietnam", "Ho Chi Minh", "Hanoi"], "max_pages": 100,
+    }),
+    CareerFeed("Cadence Vietnam", "https://cadence.wd1.myworkdayjobs.com/External_Careers", "workday_vietnam", {
+        "search_url": "https://cadence.wd1.myworkdayjobs.com/wday/cxs/cadence/External_Careers/jobs",
+        "detail_base": "https://cadence.wd1.myworkdayjobs.com/wday/cxs/cadence/External_Careers",
+        "search_texts": ["Vietnam", "Ho Chi Minh", "Hanoi"], "max_pages": 100,
+    }),
     CareerFeed("NVIDIA", "https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite", "workday", {
         "search_url": "https://nvidia.wd5.myworkdayjobs.com/wday/cxs/nvidia/NVIDIAExternalCareerSite/jobs",
         "detail_base": "https://nvidia.wd5.myworkdayjobs.com/wday/cxs/nvidia/NVIDIAExternalCareerSite",
