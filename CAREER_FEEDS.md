@@ -1,6 +1,6 @@
 # Direct company career feeds
 
-Job Radar checks these 102 verified company career listings. Each entry points to an employer career page or its dedicated recruiting portal. A listing is stored only when its own job posting has a relevant title and description. An empty scan means no matching open posting was found by that adapter at scan time; it does not imply the company has no vacancies.
+Job Radar checks these employer career listings. Each entry points to an employer career page or its dedicated recruiting portal. A listing is stored only when its own job posting has a relevant title and description. An empty scan means no matching open posting was found by that adapter at scan time; it does not imply the company has no vacancies.
 
 | Company | Career page | Adapter |
 | --- | --- | --- |
@@ -48,6 +48,10 @@ Job Radar checks these 102 verified company career listings. Each entry points t
 | MISA | [Open careers](https://www.misa.vn/tuyen-dung/) | HTML board |
 | Sapo | [Open careers](https://tuyendung.sapo.vn/) | HTML board |
 | Cốc Cốc | [Open careers](https://careers.coccoc.com/jobs) | Browser board |
+| Gear Inc | [Open careers](https://gear-inc-2.careers-page.com/) | Manatal board (all pages, Vietnam scoped) |
+| Anduin Transactions | [Open careers](https://anduin.hire.trakstar.com/) | Trakstar first-party career board |
+| VNPT Group | [Open careers](https://tuyendung.vnpt.vn/viec-lam/viec-lam-tap-doan-vnpt-d3240.html) | VNPT parent-only HTML board (explicitly empty at verification) |
+| VNPT Technology | [Open careers](https://www.vnpt-technology.vn/vi/recruit) | Corporate job detail pages and deadlines |
 | VNPT AI | [Open careers](https://tuyendung.vnpt.vn/viec-lam/don-vi-cong-ty-vnpt-ai-d3678304.html) | HTML board |
 | VNPT IT | [Open careers](https://tuyendung.vnpt.vn/viec-lam/don-vi-cong-ty-cong-nghe-thong-tin-vnpt-d9621.html) | HTML board |
 | VNPT Net | [Open careers](https://tuyendung.vnpt.vn/viec-lam/don-vi-tong-cong-ty-ha-tang-mang-d8381.html) | HTML board |
