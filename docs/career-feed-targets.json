@@ -145,18 +145,20 @@
     {
       "employer": "FPT Corporation",
       "category": "fpt",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://tuyendung.fpt.com.vn/",
       "adapter": null,
-      "evidence": null
+      "evidence": "FPT corporate careers page https://fpt.com/vi/co-hoi-nghe-nghiep links this official hiring portal, but its public listing returns HTTP 403 from the available verification client. No independently readable listing/detail or API could be established; do not fabricate a homepage feed.",
+      "checked_at": "2026-10-13"
     },
     {
       "employer": "FPT Software",
       "category": "fpt",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://career.fpt-software.com/jobs-search/",
+      "adapter": "html_board",
+      "evidence": "FPT Software-operated WordPress jobs board exposes paginated /jobs/{slug} postings (page_job pagination). Verified live AI Engineer and Data Engineer role pages with responsibilities/requirements and Apply Before deadline. Focused HTML pagination/detail/expiry tests added; end-to-end HTTP smoke requires an environment with direct network access.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "FPT Digital",
@@ -170,10 +172,11 @@
     {
       "employer": "FPT IS",
       "category": "fpt",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://careers.fptis.com/vi",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official FPT IS site https://fpt-is.com/co-hoi-nghe-nghiep/ points to careers.fptis.com, but direct access is HTTP 403. Branded Ainavi portal https://90221475.iviec.vn/vi/jobs lists paginated roles and individual URLs including Data Engineer, but its details require an API not successfully verified in this environment; it also lists [FSEMI] subsidiary roles, so generic scraping risks misattribution. Existing Ainavi adapter is a candidate pending live detail/API and employer-scoping checks.",
+      "checked_at": "2026-10-13"
     },
     {
       "employer": "FPT Semiconductor",
@@ -187,34 +190,38 @@
     {
       "employer": "FPT.AI",
       "category": "fpt",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://fptsmartcloud.com/co-hoi-nghe-nghiep/",
       "adapter": null,
-      "evidence": null
+      "evidence": "FPT.AI is an AI product/brand recruited through FPT Smart Cloud. The official FPT Smart Cloud posting pages describe FPT.AI roles, and the FPT Smart Cloud feed already exists; no separate employer-scoped FPT.AI first-party board was verified. Creating an alias feed would duplicate and misattribute FPT Smart Cloud vacancies.",
+      "checked_at": "2026-10-13"
     },
     {
       "employer": "CMC Corporation",
       "category": "cmc",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://tuyendung.cmc.com.vn/",
       "adapter": null,
-      "evidence": null
+      "evidence": "CMC Corporation publicly identifies tuyendung.cmc.com.vn as its official careers site in its anti-recruitment-scam notices (https://www.cmc.com.vn/insight-detail/warning-of-scammers-masquerading-as-cmc-staff-to-take-money-202204126585.html). Official site currently inaccessible to the verification client, and no navigable first-party listing + details were verified; its subsidiaries already have their own separate feeds.",
+      "checked_at": "2026-10-13"
     },
     {
       "employer": "CMC Cloud",
       "category": "cmc",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://cmctelecom.vn/danh-sach-tuyen-dung/",
       "adapter": null,
-      "evidence": null
+      "evidence": "CMC Cloud is a service/brand operated by CMC Telecom (see https://cmctelecom.vn/san-pham/dien-toan-dam-may/), whose own official careers board already has a verified feed. No independently scoped CMC Cloud recruitment board or employer identity was verified; a separate alias would duplicate CMC Telecom postings.",
+      "checked_at": "2026-10-13"
     },
     {
       "employer": "CMC University",
       "category": "cmc",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://cmcu.edu.vn/tin-tuyen-dung/",
+      "adapter": "html_board",
+      "evidence": "Official CMC University recruiting archive lists 16 notices over two pages, including 2026-09-17 Hanoi IT/Computer Science Lecturer and 2026-10-07 Digital Training and AI Specialist. Verified complete individual role pages, Hanoi work addresses, application contact and requirements; HTML collector follows WordPress archive pages and records stable posting slugs. Focused mocked pagination/detail tests added.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "Agribank",

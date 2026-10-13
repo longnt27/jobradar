@@ -1,6 +1,6 @@
 # Direct company career feeds
 
-Job Radar checks these 102 verified company career listings. Each entry points to an employer career page or its dedicated recruiting portal. A listing is stored only when its own job posting has a relevant title and description. An empty scan means no matching open posting was found by that adapter at scan time; it does not imply the company has no vacancies.
+Job Radar checks these 104 company career listings backed by official first-party job sources. Each entry points to an employer career page or its dedicated recruiting portal. A listing is stored only when its own job posting has a relevant title and description. An empty scan means no matching open posting was found by that adapter at scan time; it does not imply the company has no vacancies.
 
 | Company | Career page | Adapter |
 | --- | --- | --- |
@@ -12,6 +12,7 @@ Job Radar checks these 102 verified company career listings. Each entry points t
 | Viettel Group | [Open careers](https://jobs.viettel.vn/search/?q=AI) | SuccessFactors |
 | FPT Education | [Open careers](https://career.fpt.edu.vn/Job/Search) | HTML board |
 | FPT Telecom | [Open careers](https://fptjobs.com/tuyen-dung) | Browser board |
+| FPT Software | [Open careers](https://career.fpt-software.com/jobs-search/) | HTML board (page_job pagination) |
 | Techcombank | [Open careers](https://www.techcombankjobs.com/go/Data-%26-Analytics/549144/) | SuccessFactors |
 | Vietcombank | [Open careers](https://tuyendung.vietcombank.com.vn/go/IT/572944/) | SuccessFactors |
 | MB Bank | [Open careers](https://careers.mbbank.com.vn/list-of-posts) | Company career API |
@@ -36,6 +37,7 @@ Job Radar checks these 102 verified company career listings. Each entry points t
 | CMC Global | [Open careers](https://cmcglobal.com.vn/career/) | HTML board |
 | CMC TS | [Open careers](https://careers.cmcts.com.vn/) | HTML board |
 | CMC Telecom | [Open careers](https://cmctelecom.vn/danh-sach-tuyen-dung/) | HTML board |
+| CMC University | [Open careers](https://cmcu.edu.vn/tin-tuyen-dung/) | HTML board (WordPress pagination) |
 | NTQ Solution | [Open careers](https://career.ntq.com.vn/careers) | HTML board |
 | VNPAY | [Open careers](https://tuyendung.vnpay.vn/) | HTML board |
 | Base.vn | [Open careers](https://baseinc.talent.vn/alljobs?dept=9) | HTML board |
@@ -107,6 +109,6 @@ Job Radar checks these 102 verified company career listings. Each entry points t
 | SMBC | [Open careers](https://careerasia.smbc.co.jp/SMBC/search/?q=&locationsearch=Viet+Nam) | SuccessFactors |
 | CIMB Vietnam | [Open careers](https://ejox.fa.ap1.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_11) | Public career JSON API |
 
-The [employer directory](job_radar/seeds.py) contains 182 companies after the [HCMC-based exclusions](EMPLOYER_SCOPE.md). Its other 80 entries are leads without an active built-in feed. Their presence in the directory is not a claim that their jobs are collected. Add a verified direct career page from an employer card. General job aggregators are not part of this catalog.
+The [employer directory](job_radar/seeds.py) contains 182 companies after the [HCMC-based exclusions](EMPLOYER_SCOPE.md). Its other 78 entries remain leads without a verified built-in feed; see docs/career-feed-targets.json for explicit blockers. Their presence in the directory is not a claim that their jobs are collected. Add a verified direct career page from an employer card. General job aggregators are not part of this catalog.
 
 Feed definitions and selectors: [job_radar/feed_catalog.py](job_radar/feed_catalog.py). Collector implementations: [job_radar/collectors.py](job_radar/collectors.py). Older postings with an explicit past deadline are skipped. The app creates no placeholder vacancies.

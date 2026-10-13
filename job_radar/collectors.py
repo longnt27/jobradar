@@ -629,18 +629,29 @@ def _target_title(title: str) -> bool:
 
 
 def _expired_posting(text: str) -> bool:
-    """Skip a posting only when its own page shows an explicit past deadline."""
-    label = re.search(r"(?:Application deadline|Closing date|Hạn nộp hồ sơ|Hạn nộp|Thời gian ứng tuyển|Deadline)\s*:?", text[:3000], re.I)
+    """Skip postings with an explicit past deadline in numeric or English date format."""
+    label = re.search(
+        r"(?:Application deadline|Apply before|Closing date|Hạn nộp hồ sơ|Hạn nộp|Thời gian ứng tuyển|Deadline)\s*:?",
+        text[:3000], re.I,
+    )
     if not label:
         return False
-    dates = re.findall(r"\b(\d{1,2})[/.](\d{1,2})[/.](20\d{2})\b", text[label.end():label.end() + 65])
-    if not dates:
-        return False
-    day, month, year = dates[-1]
-    try:
-        return datetime(int(year), int(month), int(day)).date() < datetime.now(timezone.utc).date()
-    except ValueError:
-        return False
+    deadline_text = text[label.end():label.end() + 90]
+    numeric = re.search(r"\b(\d{1,2})[/.](\d{1,2})[/.](20\d{2})\b", deadline_text)
+    if numeric:
+        day, month, year = map(int, numeric.groups())
+        try:
+            return datetime(year, month, day).date() < datetime.now(timezone.utc).date()
+        except ValueError:
+            return False
+    named = re.search(r"\b([A-Za-z]{3,9})\s+(\d{1,2}),?\s+(20\d{2})\b", deadline_text)
+    if named:
+        for fmt in ("%B %d %Y", "%b %d %Y"):
+            try:
+                return datetime.strptime(" ".join(named.groups()), fmt).date() < datetime.now(timezone.utc).date()
+            except ValueError:
+                continue
+    return False
 
 
 def _detail_description(soup: BeautifulSoup, preferred: str = "") -> str:
@@ -690,7 +701,7 @@ async def collect_html_board(source: dict) -> list[ObservedJob]:
                 else:
                     parts = urlsplit(source["url"])
                     query = dict(parse_qsl(parts.query))
-                    query["page"] = str(page + 1)
+                    query[config.get("pagination_param", "page")] = str(page + 1)
                     listing_url = urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), ""))
                 response = await client.get(listing_url)
                 if response.status_code == 404:
@@ -704,7 +715,7 @@ async def collect_html_board(source: dict) -> list[ObservedJob]:
                 if parts.hostname not in allowed_hosts or not pattern.fullmatch(parts.path):
                     continue
                 label = anchor.get_text(" ", strip=True)
-                if not label or len(label) > 180 or label.casefold() in {"apply", "apply now", "ứng tuyển", "ứng tuyển ngay", "learn more", "xem chi tiết"}:
+                if not label or len(label) > 180 or label.casefold() in {"apply", "apply now", "ứng tuyển", "ứng tuyển ngay", "learn more", "read more", "view details", "common.viewdetails", "xem chi tiết"}:
                     label = ""
                 if config.get("listing_card_class") and config.get("listing_title_selector"):
                     card = anchor.find_parent(class_=config["listing_card_class"])
@@ -719,6 +730,8 @@ async def collect_html_board(source: dict) -> list[ObservedJob]:
                     links[clean_url] = label
             if len(links) == before and not title_include:
                 break
+        if not links and config.get("require_links"):
+            raise RuntimeError(f"Career board exposed no posting links: {source['url']}")
         jobs: list[ObservedJob] = []
         candidate_links = {u: l for u, l in links.items() if not l or _target_title(l)}
         for url, label in list(candidate_links.items())[:int(config.get("max_results", 80))]:
@@ -738,14 +751,24 @@ async def collect_html_board(source: dict) -> list[ObservedJob]:
                     continue
                 location_selectors = (config["location_selector"],) if config.get("location_selector") else ("[class*=job-location]", "[class*=location]", "[data-test*=location]")
                 location = _text(item, location_selectors)[:250]
+                if config.get("location_regex"):
+                    match = re.search(config["location_regex"], item.get_text(" ", strip=True), re.I)
+                    if match:
+                        location = match.group(1).strip()[:250]
                 jobs.append(ObservedJob(
                     url=str(detail.url) if config.get("keep_query") else str(detail.url).split("?")[0], title=title[:180],
                     company=source.get("employer_name") or source["name"],
                     description=description[:30000], location=location,
+                    external_id=(urlsplit(str(detail.url)).path.rstrip("/").rsplit("/", 1)[-1]
+                                 if config.get("external_id_from_path") else None),
                     apply_url=_application_destination(item, str(detail.url)),
+                    published_at=_meta(item, "article:published_time") or None,
                     raw_text=description[:30000],
                 ))
-            except httpx.HTTPError:
+            except httpx.HTTPError as error:
+                if config.get("strict_detail") and (not isinstance(error, httpx.HTTPStatusError) or
+                                                    error.response.status_code not in {404, 410}):
+                    raise RuntimeError(f"Career posting could not be fetched: {url}") from error
                 continue
         return jobs
 
