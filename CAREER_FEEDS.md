@@ -1,6 +1,6 @@
 # Direct company career feeds
 
-Job Radar checks these 102 verified company career listings. Each entry points to an employer career page or its dedicated recruiting portal. A listing is stored only when its own job posting has a relevant title and description. An empty scan means no matching open posting was found by that adapter at scan time; it does not imply the company has no vacancies.
+Job Radar checks the built-in company career listings (102 before wave 9, plus verified new feeds). Each entry points to an employer career page or its dedicated recruiting portal. A listing is stored only when its own job posting has a relevant title and description. An empty scan means no matching open posting was found by that adapter at scan time; it does not imply the company has no vacancies.
 
 | Company | Career page | Adapter |
 | --- | --- | --- |
@@ -106,6 +106,9 @@ Job Radar checks these 102 verified company career listings. Each entry points t
 | BNP Paribas | [Open careers](https://apac.bnpparibas/en/work-with-us/apply-now/our-opportunities/?city%5B%5D=ho-chi-minh&city%5B%5D=ho-chi-minh-city) | HTML board |
 | SMBC | [Open careers](https://careerasia.smbc.co.jp/SMBC/search/?q=&locationsearch=Viet+Nam) | SuccessFactors |
 | CIMB Vietnam | [Open careers](https://ejox.fa.ap1.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_11) | Public career JSON API |
+
+| Ampere | [Open careers](https://careers.amperecomputing.com/search/jobs/in/sg-ho-chi-minh-sai-gon) | HTML board, Vietnam-scoped |
+| SAP Vietnam | [Open careers](https://jobs.sap.com/go/Vietnam/9513801/) | SuccessFactors, Vietnam-scoped |
 
 The [employer directory](job_radar/seeds.py) contains 182 companies after the [HCMC-based exclusions](EMPLOYER_SCOPE.md). Its other 80 entries are leads without an active built-in feed. Their presence in the directory is not a claim that their jobs are collected. Add a verified direct career page from an employer card. General job aggregators are not part of this catalog.
 
