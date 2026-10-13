@@ -111,3 +111,8 @@ def test_hyundai_collects_listing_to_full_detail(monkeypatch):
     assert jobs[0].company == "Hyundai Motor Vietnam"
     assert jobs[0].url.endswith(job_url)
     assert "kiểm thử phần mềm" in jobs[0].description
+
+def test_hyundai_expiry_is_respected():
+    from job_radar.collectors import _expired_posting
+    assert _expired_posting("Expired Date: 01/01/2020")
+    assert not _expired_posting("Expired Date: 01/01/2099")
