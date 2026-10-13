@@ -70,25 +70,36 @@ async def collect_manatal(source: dict) -> list[ObservedJob]:
     base = source["url"].split("?")[0].rstrip("/") + "/"
     postings: dict[str, str] = {}
     async with _career_client() as client:
+        if hasattr(client, "headers"):
+            client.headers["User-Agent"] = "JobRadar/0.1 (public recruitment feed health check)"
+        pace = max(0.0, min(8.0, float(source.get("config", {}).get("pace_seconds", 0))))
+        request_count = 0
+
+        async def polite_get(url: str):
+            nonlocal request_count
+            if request_count and pace:
+                await asyncio.sleep(pace)
+            request_count += 1
+            for attempt in range(3):
+                response = await client.get(url)
+                if response.status_code != 429:
+                    return response
+                if attempt == 2:
+                    response.raise_for_status()
+                # A published Retry-After overrides the bounded default
+                # cooldown. Never ignore a rate limit and never forge a login.
+                raw_delay = response.headers.get("Retry-After", "")
+                try:
+                    wait = min(45.0, max(2.0, float(raw_delay)))
+                except ValueError:
+                    wait = 15.0 * (attempt + 1)
+                await asyncio.sleep(wait)
+            raise AssertionError("unreachable")
+
         total = pages = None
         for page in range(1, int(source.get("config", {}).get("max_pages", 50)) + 1):
             url = base if page == 1 else f"{base}?page={page}"
-            if page > 1 and float(source.get("config", {}).get("pace_seconds", 0)):
-                # Avoid aggressive pagination of public employer sites.
-                await asyncio.sleep(min(5.0, float(source["config"]["pace_seconds"])))
-            response = await client.get(url)
-            if response.status_code == 429:
-                # Honor the site's rate limit; bounded backoff, never a bypass.
-                for attempt in range(2):
-                    raw_delay = response.headers.get("Retry-After", "")
-                    try:
-                        retry_seconds = min(15.0, max(2.0, float(raw_delay)))
-                    except ValueError:
-                        retry_seconds = 3.0 * (attempt + 1)
-                    await asyncio.sleep(retry_seconds)
-                    response = await client.get(url)
-                    if response.status_code != 429:
-                        break
+            response = await polite_get(url)
             response.raise_for_status()
             soup = _soup(response.text)
             visible = soup.get_text(" ", strip=True)
@@ -119,7 +130,7 @@ async def collect_manatal(source: dict) -> list[ObservedJob]:
         for url, label in postings.items():
             if label and not _target_title(label):
                 continue
-            response = await client.get(url)
+            response = await polite_get(url)
             if response.status_code in {404, 410}:
                 continue
             response.raise_for_status()

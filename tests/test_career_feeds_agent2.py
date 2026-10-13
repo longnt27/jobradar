@@ -207,3 +207,59 @@ def test_vnpt_technology_accepts_official_www_to_bare_domain_links(monkeypatch):
     jobs = asyncio.run(collect_vnpt_technology(src))
     assert len(jobs) == 1 and jobs[0].external_id == "53"
     assert jobs[0].location == "Hà Nội"
+
+
+def test_manatal_retries_throttled_detail_without_losing_all_jobs(monkeypatch):
+    import job_radar.career_feeds_agent2 as module
+    sleeps = []
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+    monkeypatch.setattr(module.asyncio, "sleep", fake_sleep)
+    source = feed_source("Gear Inc")
+    source["config"] = {"max_pages": 1, "pace_seconds": 0}
+    base = source["url"]
+    job_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    job_url = base + "jobs/" + job_id
+    calls = []
+    class Client:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *_):
+            return None
+        async def get(self, url):
+            calls.append(url)
+            if url == base:
+                return response(url, '<main>1 Open Position Page 1 of 1<a href="/jobs/' + job_id + '">AI Engineer</a></main>')
+            if calls.count(job_url) == 1:
+                return httpx.Response(429, headers={"Retry-After":"3"}, request=httpx.Request("GET",url))
+            return response(url, '<main><h1>AI Engineer</h1><p>Vietnam</p><h2>Job Description:</h2>'
+                            + "Build production AI and machine learning platforms. " * 8
+                            + "<h3>Requirements</h3><p>Python and statistical modelling.</p></main>")
+    monkeypatch.setattr("job_radar.collectors._career_client", Client)
+    jobs = asyncio.run(collect_manatal(source))
+    assert len(jobs) == 1 and jobs[0].external_id == job_id
+    assert calls.count(job_url) == 2 and 3.0 in sleeps
+
+
+def test_manatal_does_not_suppress_exhausted_rate_limits(monkeypatch):
+    import job_radar.career_feeds_agent2 as module
+    async def fake_sleep(_seconds):
+        return None
+    monkeypatch.setattr(module.asyncio, "sleep", fake_sleep)
+    source = feed_source("Gear Inc")
+    source["config"] = {"max_pages": 1, "pace_seconds": 0}
+    base = source["url"]
+    job_id = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+    job_url = base + "jobs/" + job_id
+    class Client:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *_):
+            return None
+        async def get(self, url):
+            if url == base:
+                return response(url, '<main>1 Open Position Page 1 of 1<a href="/jobs/' + job_id + '">AI Engineer</a></main>')
+            return httpx.Response(429, request=httpx.Request("GET",url))
+    monkeypatch.setattr("job_radar.collectors._career_client", Client)
+    with pytest.raises(httpx.HTTPStatusError):
+        asyncio.run(collect_manatal(source))
