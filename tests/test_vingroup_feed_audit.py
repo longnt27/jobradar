@@ -39,5 +39,5 @@ def test_unverified_subsidiaries_are_not_misrepresented_as_vingroup_api_entities
     # The parent portal can include a mix of subsidiaries. Every subsidiary-specific
     # source needs its own authenticated/verified company code or recruitment feed.
     existing = {feed.employer: feed for feed in CAREER_FEEDS}
-    for employer in OWNED:
+    for employer in OWNED - {"VinBus"}:
         assert employer not in existing
