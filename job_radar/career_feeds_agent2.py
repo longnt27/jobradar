@@ -90,9 +90,11 @@ async def collect_manatal(source: dict) -> list[ObservedJob]:
                 # cooldown. Never ignore a rate limit and never forge a login.
                 raw_delay = response.headers.get("Retry-After", "")
                 try:
-                    wait = min(45.0, max(2.0, float(raw_delay)))
+                    wait = max(2.0, float(raw_delay))
                 except ValueError:
                     wait = 15.0 * (attempt + 1)
+                if wait > 45.0:
+                    response.raise_for_status()
                 await asyncio.sleep(wait)
             raise AssertionError("unreachable")
 

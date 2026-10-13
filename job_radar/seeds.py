@@ -151,15 +151,13 @@ def seed(db: Database) -> None:
             conn.execute("UPDATE employers SET career_url=COALESCE(career_url,?) WHERE id=?", (feed.url, employer[0]))
             config = json.dumps({"adapter": feed.adapter, **feed.options})
             existing_feed = conn.execute(
-                "SELECT id,url,config FROM sources WHERE kind='career' AND employer_id=?",
-                (employer[0],),
+                "SELECT id,url,config FROM sources WHERE kind='career' AND employer_id=? AND name=? ORDER BY created_at,id",
+                (employer[0], f"{feed.employer} careers"),
             ).fetchone()
             if existing_feed:
                 if existing_feed[1] != feed.url or existing_feed[2] != config:
                     conn.execute("UPDATE sources SET url=?,name=?,config=?,interval_minutes=? WHERE id=?",
                                  (feed.url, f"{feed.employer} careers", config, CAREER_SCAN_INTERVAL_MINUTES, existing_feed[0]))
-                conn.execute("DELETE FROM sources WHERE kind='career' AND employer_id=? AND id<>?",
-                             (employer[0], existing_feed[0]))
             else:
                 conn.execute(
                     "INSERT INTO sources(id,kind,name,url,employer_id,interval_minutes,config,created_at) VALUES(?,?,?,?,?,?,?,?)",

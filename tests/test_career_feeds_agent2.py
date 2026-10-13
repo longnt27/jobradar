@@ -263,3 +263,22 @@ def test_manatal_does_not_suppress_exhausted_rate_limits(monkeypatch):
     monkeypatch.setattr("job_radar.collectors._career_client", Client)
     with pytest.raises(httpx.HTTPStatusError):
         asyncio.run(collect_manatal(source))
+
+
+def test_manatal_does_not_retry_before_long_server_retry_after(monkeypatch):
+    calls = []
+    async def no_sleep(_):
+        pass
+    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+    class Client:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *_):
+            return None
+        async def get(self, url):
+            calls.append(url)
+            return httpx.Response(429, headers={"Retry-After": "120"}, request=httpx.Request("GET", url))
+    monkeypatch.setattr("job_radar.collectors._career_client", Client)
+    with pytest.raises(httpx.HTTPStatusError):
+        asyncio.run(collect_manatal(feed_source("Gear Inc")))
+    assert len(calls) == 1

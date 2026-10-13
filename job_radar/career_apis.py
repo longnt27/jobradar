@@ -63,7 +63,8 @@ async def collect_json_board(source: dict) -> list[ObservedJob]:
     total = None
     max_pages = int(config.get("max_pages", 30))
     async with _career_client() as client:
-        for page in range(1, max_pages + 1):
+        page_start = int(config.get("page_start", 1))
+        for page in range(page_start, page_start + max_pages):
             params = {**config.get("params", {})}
             params.update({key: value.format(page=page, offset=offset, limit=page_size) for key, value in config.get("params_templates", {}).items()})
             if config.get("limit_param"):
@@ -104,6 +105,8 @@ async def collect_json_board(source: dict) -> list[ObservedJob]:
                 raise RuntimeError("Career API repeated a page instead of completing pagination")
             offset += len(batch)
             if total is not None and offset >= total:
+                if len(seen) < total:
+                    raise RuntimeError("Career API returned fewer unique postings than advertised")
                 break
             if not config.get("page_param") and not config.get("offset_param") and not config.get("pagination"):
                 if total is not None and offset < total:

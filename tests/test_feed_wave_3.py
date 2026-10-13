@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 from job_radar.collectors import _expired_posting, collect_html_board
+from job_radar.career_apis import collect_json_board
 from job_radar.feed_catalog import CAREER_FEEDS
 
 
@@ -24,8 +25,8 @@ def _response(url, body="", status=200):
     return httpx.Response(status, text=body, request=httpx.Request("GET", url))
 
 
-def test_fpt_software_uses_page_job_pagination_and_keeps_role_details(monkeypatch):
-    seen = []
+def test_fpt_software_public_api_keeps_first_page_requirements_and_identity(monkeypatch):
+    pages = []
 
     class Client:
         async def __aenter__(self):
@@ -34,35 +35,24 @@ def test_fpt_software_uses_page_job_pagination_and_keeps_role_details(monkeypatc
         async def __aexit__(self, *_):
             return None
 
-        async def get(self, url):
-            seen.append(url)
-            if url.endswith("/jobs-search/"):
-                return _response(url, '<a href="/jobs/data-engineer-123">View Details</a>')
-            if "page_job=2" in url:
-                return _response(url, '<a href="/jobs/ai-engineer-456">common.viewDetails</a>')
-            if "page_job=" in url:
-                return _response(url, "<main>No more jobs</main>")
-            if "/jobs/" in url:
-                slug = url.split("/jobs/")[1]
-                title = "Data Engineer" if slug.startswith("data-") else "AI Engineer"
-                return _response(url, (f"<article><h1>{title}</h1><main><div class='job-location'>"
-                                      f"Ha Noi, Viet Nam</div><p>{DETAIL}</p>"
-                                      "<p>Apply Before: December 31, 2099</p></main>"
-                                      "<a href='https://career.fpt-software.com/apply/123'>Apply Now</a></article>"))
-            raise AssertionError(url)
+        async def get(self, url, params=None):
+            pages.append(params["page"])
+            rows = [{"id": 123, "slug": "ai-engineer", "title": "AI Engineer"},
+                    {"id": 124, "slug": "sales", "title": "Account Manager"}] if params["page"] == 0 else [
+                        {"id": 456, "slug": "data-engineer", "title": "Data Engineer"}]
+            for row in rows:
+                row.update(description="<p>Responsibilities: " + DETAIL + "</p><h2>Requirements</h2><p>Python and SQL</p>",
+                           locationName="Ha Noi, Viet Nam", closingDate="2099-12-31", postedDate="2026-10-01", isActive=True)
+            return httpx.Response(200, json={"content": rows, "totalElements": 3}, request=httpx.Request("GET", url))
 
     monkeypatch.setattr("job_radar.collectors._career_client", Client)
-    source = _source("FPT Software")
-    source["config"]["max_pages"] = 3
-    jobs = asyncio.run(collect_html_board(source))
+    jobs = asyncio.run(collect_json_board(_source("FPT Software")))
+    assert pages == [0, 1]
     assert {job.title for job in jobs} == {"AI Engineer", "Data Engineer"}
-    assert all(job.company == "FPT Software" and job.external_id for job in jobs)
-    assert {job.external_id for job in jobs} == {"data-engineer-123", "ai-engineer-456"}
-    assert all(job.location == "Ha Noi, Viet Nam" for job in jobs)
-    assert all("machine learning" in job.description for job in jobs)
-    assert all(job.apply_url == "https://career.fpt-software.com/apply/123" for job in jobs)
-    assert any("page_job=2" in url for url in seen)
-    assert not any("?page=" in url for url in seen)
+    assert {job.external_id for job in jobs} == {"123", "456"}
+    assert all(job.company == "FPT Software" and job.location == "Ha Noi, Viet Nam" for job in jobs)
+    assert all("Requirements" in job.description and "Python and SQL" in job.description for job in jobs)
+    assert {job.url for job in jobs} == {"https://career.fpt-software.com/jobs/ai-engineer", "https://career.fpt-software.com/jobs/data-engineer"}
 
 
 def test_cmc_university_recruitment_notices_keep_contact_and_location(monkeypatch):
@@ -100,7 +90,7 @@ def test_cmc_university_recruitment_notices_keep_contact_and_location(monkeypatc
     assert all("machine learning" in job.description for job in jobs)
 
 
-@pytest.mark.parametrize("employer", ["FPT Software", "CMC University"])
+@pytest.mark.parametrize("employer", ["CMC University"])
 def test_known_nonempty_career_boards_do_not_silently_become_empty(monkeypatch, employer):
     class Client:
         async def __aenter__(self):
@@ -119,7 +109,7 @@ def test_known_nonempty_career_boards_do_not_silently_become_empty(monkeypatch, 
         asyncio.run(collect_html_board(source))
 
 
-def test_unexpected_job_detail_failure_is_not_an_empty_feed(monkeypatch):
+def test_unexpected_public_api_failure_is_not_an_empty_feed(monkeypatch):
     class Client:
         async def __aenter__(self):
             return self
@@ -127,18 +117,12 @@ def test_unexpected_job_detail_failure_is_not_an_empty_feed(monkeypatch):
         async def __aexit__(self, *_):
             return None
 
-        async def get(self, url):
-            if url.endswith("/jobs-search/"):
-                return _response(url, "<a href='/jobs/ai-engineer-456'>View Details</a>")
-            if "page_job=" in url:
-                return _response(url, "")
-            return _response(url, status=503)
+        async def get(self, url, params=None):
+            return httpx.Response(503, request=httpx.Request("GET", url))
 
     monkeypatch.setattr("job_radar.collectors._career_client", Client)
-    source = _source("FPT Software")
-    source["config"]["max_pages"] = 1
-    with pytest.raises(RuntimeError, match="could not be fetched"):
-        asyncio.run(collect_html_board(source))
+    with pytest.raises(httpx.HTTPStatusError):
+        asyncio.run(collect_json_board(_source("FPT Software")))
 
 
 def test_english_and_numeric_deadline_expiry():
@@ -155,7 +139,7 @@ def test_scope_only_verified_employers_are_registered():
     for employer in ("FPT Software", "CMC University"):
         assert employer in available
         assert targets[employer]["status"] == "verified"
-        assert targets[employer]["adapter"] == "html_board"
+        assert targets[employer]["adapter"] == ("json_board" if employer == "FPT Software" else "html_board")
     for employer in ("FPT Corporation", "FPT IS", "FPT.AI", "CMC Corporation", "CMC Cloud"):
         assert employer not in available
         assert targets[employer]["status"] == "blocked"

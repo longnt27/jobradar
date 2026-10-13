@@ -631,7 +631,7 @@ def _target_title(title: str) -> bool:
 def _expired_posting(text: str) -> bool:
     """Skip a posting only when its own page shows an explicit past deadline."""
     label = re.search(
-        r"(?:Application deadline|Apply before|Closing date|Expired Date|Hạn nộp hồ sơ|Hạn nộp|Thời gian ứng tuyển|Deadline)\s*:?",
+        r"(?:Application deadline|Apply before|Closing date|Expired Date|Deadline to Apply|Hạn chót nhận hồ sơ|Thời gian nhận hồ sơ|Hạn nộp hồ sơ|Hạn nộp|Thời gian ứng tuyển|Deadline)\s*:?",
         text[:3000], re.I,
     )
     if not label:
@@ -748,7 +748,13 @@ async def collect_html_board(source: dict) -> list[ObservedJob]:
                 for tag in item(["script", "style", "nav", "footer", "header"]):
                     tag.decompose()
                 description = _detail_description(item, config.get("description_selector", ""))
-                if len(description) < 100 or _expired_posting(item.get_text(" ", strip=True)):
+                if len(description) < 100:
+                    if config.get("strict_detail"):
+                        raise RuntimeError(f"Career posting has no complete description: {url}")
+                    continue
+                deadline_node = item.select_one(config["deadline_selector"]) if config.get("deadline_selector") else None
+                deadline_text = deadline_node.get_text(" ", strip=True) if deadline_node else item.get_text(" ", strip=True)
+                if _expired_posting(deadline_text):
                     continue
                 location_selectors = (config["location_selector"],) if config.get("location_selector") else ("[class*=job-location]", "[class*=location]", "[data-test*=location]")
                 location = _text(item, location_selectors)[:250]

@@ -76,9 +76,14 @@ CAREER_FEEDS: tuple[CareerFeed, ...] = (
     CareerFeed("Viettel Group", "https://jobs.viettel.vn/search/?q=AI", "successfactors", {"queries": ["AI", "kỹ sư", "Data Scientist", "Viettel High Tech", "Viettel Cyber Security"], "max_pages": 2}),
     html("FPT Education", "https://career.fpt.edu.vn/Job/Search", r"^/Job/Detail/\d+$", description_selector=".job_description_content"),
     browser("FPT Telecom", "https://fptjobs.com/tuyen-dung", r"^/[a-z0-9-]+-\d+$", listing_selector="a.link-overlay[href]", listing_ready_selector="a.link-overlay[href*='-'][title]", description_selector="main"),
-    html("FPT Software", "https://career.fpt-software.com/jobs-search/", r"^/jobs/[a-z0-9][a-z0-9-]+/?$",
-         pagination_param="page_job", max_pages=10, max_results=180, description_selector="main, article",
-         require_links=True, strict_detail=True, external_id_from_path=True),
+    CareerFeed("FPT Software", "https://career.fpt-software.com/jobs-search/", "json_board", {
+        "api_url": "https://career.fpt-software.com/service/api/v1.0/public/job-postings/search",
+        "params": {"sortBy": "postedDate", "sortDir": "desc"}, "rows_path": "content", "total_field": "totalElements",
+        "page_param": "page", "page_start": 0, "limit_param": "size", "title_field": "title", "url_field": "url",
+        "url_template": "https://career.fpt-software.com/jobs/{slug}", "description_sections": {"": "description"},
+        "location_fields": ["locationName"], "location_include": r"\bViet\s*Nam\b|Việt Nam", "published_field": "postedDate",
+        "deadline_field": "closingDate", "required_fields": {"isActive": True},
+    }),
     CareerFeed("Techcombank", "https://www.techcombankjobs.com/go/Data-%26-Analytics/549144/", "successfactors", {
         "boards": ["https://www.techcombankjobs.com/go/Data-%26-Analytics/549144/", "https://www.techcombankjobs.com/go/Technology/548944/"], "max_pages": 4,
     }),
@@ -300,18 +305,21 @@ CAREER_FEEDS: tuple[CareerFeed, ...] = (
          max_results=120, description_selector="main, article"),
     # Hyundai Thanh Cong is the Hyundai Motor joint venture in Vietnam, not Hyundai globally.
     html("Hyundai Motor Vietnam", "https://career.hyundai.thanhcong.vn/job-search/all-jobs/en",
-         r"^/job/[^/?#]+\.html$", max_results=120,
-         description_selector="main, article, .job-detail"),
+         r"^/job/[^/?#]+\.html$", max_results=120, require_links=True, strict_detail=True,
+         description_selector=".job-post-description", deadline_selector=".metadata-list",
+         location_selector=".metadata-list_section--blue .metadata-list_items"),
     html("BNP Paribas", "https://apac.bnpparibas/en/work-with-us/apply-now/our-opportunities/?city%5B%5D=ho-chi-minh&city%5B%5D=ho-chi-minh-city", r"^/en/jobs/[^/?#]+/?$",
          description_selector=".jobs__content", location_selector=".jobs__details .crd__specs li:nth-child(2) span"),
 
     # Agent 6: finance and insurance. The employer identity is kept even on a group ATS.
     html("Mirae Asset Vietnam", "https://recruitment.mafc.vn/job-search/all-jobs/en",
          r"^/(?:job|viec-lam)/[^/?#]+\.[a-f0-9]+\.html$", max_pages=8, max_results=120,
-         description_selector="[class*=job-description], [class*=job-detail], main"),
+         description_selector=".job-post-description", deadline_selector=".metadata-list", require_links=True, strict_detail=True,
+         location_selector=".metadata-list_section--blue .metadata-list_items"),
     html("MB Ageas Life", "https://tuyendung.mblife.vn/job-search/all-jobs/en",
          r"^/job/[^/?#]+\.[a-f0-9]+\.html$", max_pages=8, max_results=120,
-         description_selector="[class*=job-description], [class*=job-detail], main"),
+         description_selector=".job-post-description", deadline_selector=".metadata-list", require_links=True, strict_detail=True,
+         location_selector=".metadata-list_section--blue .metadata-list_items"),
     CareerFeed("Bao Viet", "https://baoviet.com.vn/vi/tuyen-dung", "baoviet_announcement"),
     CareerFeed("FWD Vietnam", "https://fwd.wd3.myworkdayjobs.com/FWDcareersite", "workday", {
         "search_url": "https://fwd.wd3.myworkdayjobs.com/wday/cxs/fwd/FWDcareersite/jobs",

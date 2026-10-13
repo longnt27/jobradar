@@ -235,3 +235,48 @@ def test_api_finder_pagination_uses_actual_offsets_in_query_templates(monkeypatc
         "description_sections": {"": "content"},
     }}))
     assert len(jobs) == 2 and [j.external_id for j in jobs] == ["1", "2"]
+
+
+def test_zero_based_api_pagination_includes_first_page(monkeypatch):
+    requests = []
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def get(self, url, params=None):
+            page = params["page"]
+            requests.append(page)
+            row = {"id": page, "title": "AI Engineer", "url": f"https://example.org/jobs/{page}", "description": DESCRIPTION}
+            return httpx.Response(200, json={"content": [row], "totalElements": 2}, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr("job_radar.collectors._career_client", Client)
+    jobs = asyncio.run(collect_json_board({"url": "https://example.org/careers", "name": "Example", "config": {
+        "api_url": "https://example.org/api", "page_param": "page", "page_start": 0, "rows_path": "content", "total_field": "totalElements",
+        "title_field": "title", "url_field": "url", "description_sections": {"": "description"},
+    }}))
+    assert requests == [0, 1] and len(jobs) == 2
+
+
+def test_overlap_cannot_hide_missing_jobs_from_advertised_total(monkeypatch):
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def get(self, url, params=None):
+            ids = [1, 2] if params["page"] == 1 else [2, 3]
+            rows = [{"id": i, "title": "AI Engineer", "url": f"https://example.org/jobs/{i}", "description": DESCRIPTION} for i in ids]
+            return httpx.Response(200, json={"jobs": rows, "total": 4}, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr("job_radar.collectors._career_client", Client)
+    with pytest.raises(RuntimeError, match="advertised"):
+        asyncio.run(collect_json_board({"url": "https://example.org/careers", "name": "Example", "config": {
+            "api_url": "https://example.org/api", "page_param": "page", "rows_path": "jobs", "total_field": "total",
+            "title_field": "title", "url_field": "url", "description_sections": {"": "description"},
+        }}))

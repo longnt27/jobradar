@@ -7,6 +7,7 @@ import pytest
 from job_radar.collectors import CAREER_ADAPTERS
 from job_radar.feed_catalog import CAREER_FEEDS
 from job_radar.global_tech_feeds import collect_eightfold, collect_workday_vietnam
+from job_radar.global_tech_feeds import _in_vietnam
 
 
 def feed(name):
@@ -28,6 +29,12 @@ def test_registered_employer_adapter(name, adapter):
     assert item.adapter == adapter
     assert adapter in CAREER_ADAPTERS
     assert item.options
+
+
+def test_vietnam_country_filter_does_not_accept_language_requirements():
+    assert _in_vietnam("Hanoi, Vietnam")
+    assert not _in_vietnam("Vietnamese-speaking, California, United States")
+    assert not _in_vietnam("Vietnamese Operations, Singapore")
 
 
 def test_eightfold_pcsx_pagination_and_details(monkeypatch):
@@ -200,3 +207,22 @@ def test_eightfold_429_remains_hard_error_when_retries_exhausted(monkeypatch):
     monkeypatch.setattr("job_radar.collectors._career_client", Client)
     with pytest.raises(httpx.HTTPStatusError):
         asyncio.run(collect_eightfold(source("Qualcomm")))
+
+
+def test_eightfold_does_not_retry_before_long_server_retry_after(monkeypatch):
+    calls = []
+    async def no_sleep(_):
+        pass
+    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+    class Client:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *_):
+            return None
+        async def get(self, url, params):
+            calls.append(url)
+            return httpx.Response(429, headers={"Retry-After": "120"}, request=httpx.Request("GET", url))
+    monkeypatch.setattr("job_radar.collectors._career_client", Client)
+    with pytest.raises(httpx.HTTPStatusError):
+        asyncio.run(collect_eightfold(source("Qualcomm")))
+    assert len(calls) == 1

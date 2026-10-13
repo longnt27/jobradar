@@ -66,6 +66,30 @@ def test_rescan_combines_a_previous_short_sighting_when_full_description_arrives
     assert db.one("SELECT description FROM vacancies WHERE id=?", (combined,))["description"] == DESCRIPTION
 
 
+def test_new_multi_role_announcements_keep_roles_distinct_and_merge_social_sightings(pool):
+    from job_radar.baoviet import parse_baoviet_announcement
+
+    db, sources = pool
+    html = f'''<p>Hòm thư nhận CV: careers@baoviet.com.vn</p><table>
+      <tr><td>Mã số: CV-01<br>Chức danh: AI Engineer (Computer Vision)<br>Nơi làm việc: Hanoi</td>
+          <td>{DESCRIPTION}</td><td>Production model evaluation and Python experience.</td></tr>
+      <tr><td>Mã số: DE-02<br>Chức danh: Data Engineer<br>Nơi làm việc: Hanoi</td>
+          <td>Build production data pipelines, warehouses and orchestration systems with SQL and Python.</td>
+          <td>Data modelling, ETL, database administration and reliable data platform operations.</td></tr>
+    </table>'''
+    jobs = parse_baoviet_announcement(html, "https://baoviet.com.vn/vi/it-recruitment-2026")
+    first = ingest(db, sources["career"], jobs[0])[0]
+    second = ingest(db, sources["career"], jobs[1])[0]
+    assert first != second
+    social = replace(jobs[0], url="https://www.linkedin.com/jobs/view/314159", external_id="314159")
+    assert ingest(db, sources["linkedin"], social) == (first, False)
+    assert ingest(db, sources["career"], jobs[0]) == (first, False)
+    assert db.one("SELECT COUNT(*) AS n FROM vacancies")["n"] == 2
+    assert db.one("SELECT COUNT(*) AS n FROM observations")["n"] == 3
+    with db.connection() as conn:
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
 @pytest.mark.parametrize("change", [
     {"title": "Junior AI Engineer (Computer Vision)"},
     {"title": "Senior AI Engineer (LLM)"},

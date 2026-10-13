@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 
 import httpx
+import pytest
 
 from bs4 import BeautifulSoup
 
@@ -510,4 +511,55 @@ def test_successfactors_search_pagination_preserves_country_and_own_location(mon
     assert len(jobs) == 1 and jobs[0].location == "Hanoi, Vietnam"
     assert all("locationsearch=Viet+Nam" in url for url in requested if "/job/" not in url)
     assert any("startrow=25" in url for url in requested)
+
+
+@pytest.mark.parametrize("employer", ["MB Ageas Life", "Mirae Asset Vietnam", "Hyundai Motor Vietnam"])
+def test_talentnetwork_detail_extracts_own_requirements_and_deadline(monkeypatch, employer):
+    feed = next(f for f in CAREER_FEEDS if f.employer == employer)
+    posting = feed.url.split("/job-search/")[0] + "/job/data-engineer.35ac102e.html"
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def get(self, url):
+            if url == feed.url:
+                page = f'<a href="{posting}">Data Engineer</a>'
+            elif "/job/" not in url:
+                page = "<main>Listing ended</main>"
+            else:
+                page = ('<h1>Data Engineer</h1><div class="metadata-list">'
+                        '<div class="metadata-list_section metadata-list_section--blue"><h4>Work Location</h4><ul class="metadata-list_items"><li>Hà Nội</li></ul></div>'
+                        '<div class="metadata-list_section"><h4>Deadline to Apply</h4><ul><li>31/12/2099</li></ul></div></div>'
+                        '<div class="job-post-description"><h2>Job Description</h2><p>'
+                        + "Develop production data pipelines with Python. " * 5
+                        + '</p><h2>Job Requirement</h2><p>SQL and reproducible model evaluation.</p></div>'
+                        '<aside>Expired Date: 01/01/2000 Related job requirements.</aside>')
+            return httpx.Response(200, text=page, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr("job_radar.collectors._career_client", Client)
+    jobs = asyncio.run(collect_html_board({"url": feed.url, "name": employer, "employer_name": employer, "config": feed.options}))
+    assert len(jobs) == 1 and jobs[0].location == "Hà Nội"
+    assert "Job Requirement" in jobs[0].description and "SQL" in jobs[0].description
+    assert "Related job" not in jobs[0].description
+
+
+def test_seed_retains_custom_career_sources_and_their_observation_history(tmp_path):
+    from job_radar.db import new_id, now
+    from job_radar.ingest import ObservedJob, ingest
+
+    db = Database(tmp_path / "jobs.db")
+    seed(db)
+    employer = db.one("SELECT id FROM employers WHERE name='FPT Software'")["id"]
+    source_id = new_id()
+    db.execute("INSERT INTO sources(id,kind,name,url,employer_id,config,created_at) VALUES(?,'career',?,?,?,?,?)",
+               (source_id, "FPT R&D careers", "https://fpt.example/rd/jobs", employer, '{"adapter":"legacy"}', now()))
+    vacancy_id, _ = ingest(db, source_id, ObservedJob("https://fpt.example/rd/jobs/42", "AI Engineer", "FPT Software", "Build AI services and evaluate production models. " * 5))
+    seed(db)
+    assert db.one("SELECT url,config FROM sources WHERE id=?", (source_id,)) == {"url": "https://fpt.example/rd/jobs", "config": '{"adapter":"legacy"}'}
+    assert db.one("SELECT COUNT(*) AS n FROM observations WHERE source_id=?", (source_id,))["n"] == 1
+    assert db.one("SELECT id FROM vacancies WHERE id=?", (vacancy_id,))
 

@@ -17,9 +17,9 @@ from .ingest import ObservedJob
 
 
 VIETNAM_LOCATION = re.compile(
-    r"\b(?:viet[ -]?nam|vi[eệ]t nam|hanoi|ha noi|hà nội|ha noi|"
+    r"\b(?:viet[ -]?nam|vi[eệ]t nam|hanoi|ha noi|hà nội|"
     r"ho chi minh|hồ chí minh|hcmc|sai gon|saigon|da nang|đà nẵng|"
-    r"hai phong|hải phòng|vietnamese)\b",
+    r"hai phong|hải phòng)\b",
     re.I,
 )
 
@@ -105,9 +105,11 @@ async def collect_eightfold(source: dict) -> list[ObservedJob]:
                     reply.raise_for_status()
                 raw_delay = reply.headers.get("Retry-After", "")
                 try:
-                    delay = max(2.0, min(15.0, float(raw_delay)))
+                    delay = max(2.0, float(raw_delay))
                 except ValueError:
                     delay = 3.0 * (attempt + 1)
+                if delay > 15.0:
+                    reply.raise_for_status()
                 await asyncio.sleep(delay)
             raise AssertionError("unreachable")
 
