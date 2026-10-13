@@ -1058,6 +1058,33 @@
     "notes": [
       "Merged agent work into feat/job-feed-integration for CI verification. Existing source verification is not proof the collectors were executed live.",
       "Blocked employers are unresolved; pending/adapter_unverified/implemented_unverified feeds must not be counted as live-validated."
+    ],
+    "new_feed_employers": [
+      "VinBus",
+      "Vikki Bank",
+      "Co-opBank",
+      "Public Bank Vietnam",
+      "FPT Software",
+      "CMC University",
+      "Honda Vietnam",
+      "Hyundai Motor Vietnam",
+      "Mirae Asset Vietnam",
+      "MB Ageas Life",
+      "Bao Viet",
+      "FWD Vietnam",
+      "Prudential Vietnam",
+      "Manulife Vietnam",
+      "AIA Vietnam",
+      "Qualcomm",
+      "NXP Vietnam",
+      "Cadence Vietnam",
+      "Agoda",
+      "Ampere",
+      "SAP Vietnam",
+      "Gear Inc",
+      "Anduin Transactions",
+      "VNPT Group",
+      "VNPT Technology"
     ]
   }
 }
