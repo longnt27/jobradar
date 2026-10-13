@@ -249,6 +249,7 @@ CAREER_FEEDS: tuple[CareerFeed, ...] = (
     workday("MUFG", "mufgub.wd3.myworkdayjobs.com", "mufgub", "MUFG-Careers", "Country"),
     html("Woori Bank Vietnam", "https://woori.com.vn/thong-tin-tuyen-dung/", r"^/tuyen-dung/[^/?#]+/?$", pagination="wordpress", max_pages=6,
          description_selector="#content-main", location_selector=".content-main--item:first-child .content-main--item__right"),
+    CareerFeed("Public Bank Vietnam", "https://publicbank.com.vn/News/Career?cateId=22", "public_bank"),
     CareerFeed("ANZ Vietnam", "https://careers.anz.com/search/?q=&locationsearch=Vietnam", "successfactors", {"max_pages": 4, "search_page_size": 25}),
     CareerFeed("SMBC", "https://careerasia.smbc.co.jp/SMBC/search/?q=&locationsearch=Viet+Nam", "successfactors", {
         "max_pages": 4, "search_page_size": 25, "location_selector": "[data-careersite-propertyid=customfield1]",
