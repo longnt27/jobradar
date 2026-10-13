@@ -281,7 +281,7 @@ CAREER_FEEDS: tuple[CareerFeed, ...] = (
         "location_fields": ["normalized_location"], "location_include": "Vietnam|Viet Nam",
         "apply_field": "url_next_step", "published_field": "posted_date",
     }),
-    CareerFeed("SAP Vietnam", "https://careers.sap.com/go/Vietnam/9513801/", "successfactors", {
+    CareerFeed("SAP Vietnam", "https://jobs.sap.com/go/Vietnam/9513801/", "successfactors", {
         "max_pages": 2,
         "location_selector": ".job-location, #job-location, [data-careersite-propertyid=location]",
     }),
