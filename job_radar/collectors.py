@@ -1323,6 +1323,9 @@ async def collect_workday(source: dict) -> list[ObservedJob]:
 
 
 from .career_apis import collect_json_board
+from .career_feeds_agent2 import (
+    collect_manatal, collect_trakstar, collect_vnpt_technology, collect_vnpt_parent,
+)
 
 
 CAREER_ADAPTERS = {
@@ -1341,6 +1344,10 @@ CAREER_ADAPTERS = {
     "workatsea": collect_workatsea,
     "workday": collect_workday,
     "json_board": collect_json_board,
+    "manatal": collect_manatal,
+    "trakstar": collect_trakstar,
+    "vnpt_technology": collect_vnpt_technology,
+    "vnpt_parent": collect_vnpt_parent,
 }
 
 
