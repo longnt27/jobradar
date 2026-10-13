@@ -739,7 +739,7 @@ async def collect_html_board(source: dict) -> list[ObservedJob]:
                 location_selectors = (config["location_selector"],) if config.get("location_selector") else ("[class*=job-location]", "[class*=location]", "[data-test*=location]")
                 location = _text(item, location_selectors)[:250]
                 if not location and config.get("location_text_pattern"):
-                    match = re.search(config["location_text_pattern"], item.get_text("\\n", strip=True), re.I)
+                    match = re.search(config["location_text_pattern"], item.get_text("\n", strip=True), re.I)
                     if match:
                         location = match.group(1).strip()[:250]
                 external_id = None
