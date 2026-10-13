@@ -20,6 +20,16 @@ SITES = {
     "cmc": "https://cmcu.edu.vn/tin-tuyen-dung/",
     "mirae": "https://recruitment.mafc.vn/job-search/all-jobs/en",
     "gear": "https://gear-inc-2.careers-page.com/",
+    "anduin-board": "https://anduin.hire.trakstar.com/",
+    "cmc-www": "https://www.cmcu.edu.vn/tin-tuyen-dung/",
+    "mirae-www": "https://www.recruitment.mafc.vn/job-search/all-jobs/en",
+    "baoviet-www": "https://www.baoviet.com.vn/vi/tuyen-dung",
+    "baoviet-bare": "https://baoviet.com.vn/vi/tuyen-dung",
+    "ampere": "https://careers.amperecomputing.com/search/jobs/in/sg-ho-chi-minh-sai-gon",
+    "sap": "https://jobs.sap.com/go/Vietnam/9513801/",
+    "fpt": "https://career.fpt-software.com/jobs-search/",
+    "agoda": "https://careersatagoda.com/vacancies/",
+    "qualcomm": "https://careers.qualcomm.com/api/pcsx/search?domain=qualcomm.com&location=Vietnam&start=0",
 }
 async def inspect(name, url, verify=None):
     async with httpx.AsyncClient(follow_redirects=True, timeout=18, verify=verify if verify else True,
