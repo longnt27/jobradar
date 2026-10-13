@@ -1,6 +1,6 @@
 # Direct company career feeds
 
-Job Radar checks these 102 verified company career listings. Each entry points to an employer career page or its dedicated recruiting portal. A listing is stored only when its own job posting has a relevant title and description. An empty scan means no matching open posting was found by that adapter at scan time; it does not imply the company has no vacancies.
+Job Radar checks these 103 verified company career listings. Each entry points to an employer career page or its dedicated recruiting portal. A listing is stored only when its own job posting has a relevant title and description. An empty scan means no matching open posting was found by that adapter at scan time; it does not imply the company has no vacancies.
 
 | Company | Career page | Adapter |
 | --- | --- | --- |
@@ -99,6 +99,7 @@ Job Radar checks these 102 verified company career listings. Each entry points t
 | Hong Leong Bank Vietnam | [Open careers](https://hlb.wd3.myworkdayjobs.com/HLBCareers) | Workday CXS API |
 | DBS | [Open careers](https://dbs.wd3.myworkdayjobs.com/DBS_Careers) | Workday CXS API |
 | Deutsche Bank | [Open careers](https://db.wd3.myworkdayjobs.com/DBWebsite) | Workday CXS API |
+| Public Bank Vietnam | [Open careers](https://publicbank.com.vn/News/Career?cateId=22) | Public Bank multi-role page parser (no bank-provided deep links) |
 | Woori Bank Vietnam | [Open careers](https://woori.com.vn/thong-tin-tuyen-dung/) | HTML board |
 | MUFG | [Open careers](https://mufgub.wd3.myworkdayjobs.com/MUFG-Careers) | Workday CXS API |
 | Citi Vietnam | [Open careers](https://citi.wd5.myworkdayjobs.com/2) | Workday CXS API |
