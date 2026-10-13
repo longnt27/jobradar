@@ -1222,6 +1222,75 @@ async def collect_onemount(source: dict) -> list[ObservedJob]:
     return jobs
 
 
+async def collect_workatsea(source: dict) -> list[ObservedJob]:
+    """Collect postings from Sea / Shopee WorkAtSea ATS API."""
+    employer = source.get("employer_name") or source["name"]
+    company_filter = source.get("config", {}).get("company_filter", "")
+    url = "https://ats.workatsea.com/ats/api/v1/user/job/list/?limit=100&offset=0"
+    jobs: list[ObservedJob] = []
+    async with _career_client() as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        items = resp.json().get("data", {}).get("job_list", [])
+        for item in items:
+            title = str(item.get("job_name", "")).strip()
+            jid = str(item.get("id", ""))
+            if not title or not jid or not _target_title(title):
+                continue
+            if company_filter and company_filter.casefold() not in title.casefold():
+                continue
+            desc_html = (item.get("job_description") or "") + "\n" + (item.get("requirements") or "")
+            desc = _structured_text(BeautifulSoup(desc_html, "html.parser"))
+            if len(desc) < 100 or _expired_posting(desc):
+                continue
+            detail_url = f"https://careers.shopee.vn/job-detail/{jid}"
+            jobs.append(ObservedJob(
+                url=detail_url, external_id=jid, title=title[:180],
+                company=employer, description=desc[:30000],
+                apply_url=detail_url, raw_text=desc[:30000],
+            ))
+    return jobs
+
+
+async def collect_workday(source: dict) -> list[ObservedJob]:
+    """Collect postings from Workday CXS API."""
+    config = source.get("config", {})
+    search_url = config["search_url"]
+    detail_base = config["detail_base"]
+    search_text = config.get("search_text", "Vietnam")
+    jobs: list[ObservedJob] = []
+    async with _career_client() as client:
+        payload = {"appliedFacets": {}, "limit": 20, "offset": 0, "searchText": search_text}
+        resp = await client.post(search_url, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+        postings = data.get("jobPostings", [])
+        for p in postings:
+            title = str(p.get("title", "")).strip()
+            path = str(p.get("externalPath", ""))
+            loc = str(p.get("locationsText", ""))
+            if not title or not path or not _target_title(title):
+                continue
+            detail_api = detail_base + path
+            try:
+                d_resp = await client.get(detail_api)
+                d_resp.raise_for_status()
+                info = d_resp.json().get("jobPostingInfo", {})
+                desc = _structured_text(BeautifulSoup(info.get("jobDescription", ""), "html.parser"))
+                if len(desc) < 100 or _expired_posting(desc):
+                    continue
+                apply_url = info.get("externalUrl") or detail_api
+                jobs.append(ObservedJob(
+                    url=apply_url, external_id=info.get("jobReqId") or path,
+                    title=title[:180], company=source.get("employer_name") or "NVIDIA",
+                    description=desc[:30000], location=loc[:250],
+                    apply_url=apply_url, raw_text=desc[:30000],
+                ))
+            except Exception:
+                continue
+    return jobs
+
+
 CAREER_ADAPTERS = {
     "legacy": collect_career,
     "html_board": collect_html_board,
@@ -1235,6 +1304,8 @@ CAREER_ADAPTERS = {
     "mbbank": collect_mbbank,
     "vpbank": collect_vpbank,
     "onemount": collect_onemount,
+    "workatsea": collect_workatsea,
+    "workday": collect_workday,
 }
 
 

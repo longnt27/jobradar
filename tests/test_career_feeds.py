@@ -15,10 +15,14 @@ from job_radar.seeds import seed
 
 
 def test_company_feeds_are_seeded_idempotently(tmp_path: Path) -> None:
-    assert len(CAREER_FEEDS) == len({feed.employer for feed in CAREER_FEEDS}) >= 40
-    assert {"VinDynamics", "VinRobotics", "VinMotion", "Techcombank", "Vietcombank", "MB Bank", "VPBank", "GPBank", "BIDV", "VNPT AI", "CMC Telecom", "PVcomBank", "SHB", "NCB", "KienlongBank", "One Mount", "SmartOSC"} <= {
-        feed.employer for feed in CAREER_FEEDS
-    }
+    assert len(CAREER_FEEDS) == len({feed.employer for feed in CAREER_FEEDS}) >= 60
+    assert {
+        "VinDynamics", "VinRobotics", "VinMotion", "Techcombank", "Vietcombank",
+        "MB Bank", "VPBank", "GPBank", "BIDV", "VNPT AI", "CMC Telecom",
+        "PVcomBank", "SHB", "NCB", "KienlongBank", "One Mount", "SmartOSC",
+        "NVIDIA", "Shopee", "SPX Express", "Vinschool", "FPT University", "9Pay",
+        "SSI", "TCBS", "FPT Smart Cloud", "Viettel High Tech", "Viettel Cyber Security",
+    } <= {feed.employer for feed in CAREER_FEEDS}
     assert not {feed.employer for feed in CAREER_FEEDS} & HCMC_BASED.keys()
     assert all("linkedin.com" not in feed.url and "facebook.com" not in feed.url for feed in CAREER_FEEDS)
 
@@ -213,4 +217,160 @@ def test_vpbank_collector_processes_rmk_api_and_details(monkeypatch) -> None:
     assert jobs[0].external_id == "12167"
     assert "https://tuyendung.vpbank.com.vn/job/CVCC-Khoa-hoc-du-lieu-AI-Engineer/12167-vi_VN" in jobs[0].url
     assert "Phát triển mô hình trí tuệ nhân tạo" in jobs[0].description
+
+
+def test_workatsea_collector_processes_ats_api(monkeypatch) -> None:
+    from job_radar.collectors import collect_workatsea
+
+    source = {
+        "employer_name": "Shopee",
+        "name": "Shopee careers",
+        "url": "https://careers.shopee.vn/jobs",
+        "config": {},
+    }
+    api_response = {
+        "code": 0,
+        "data": {
+            "job_list": [
+                {
+                    "id": 101,
+                    "job_name": "Senior Software Engineer - AI / Machine Learning",
+                    "job_description": "<p>Design and deploy deep learning models for recommendations.</p>" * 5,
+                    "requirements": "<p>5+ years of experience with PyTorch and distributed training.</p>" * 5,
+                },
+                {
+                    "id": 102,
+                    "job_name": "SPX - Operations Lead",
+                    "job_description": "<p>Operations management.</p>",
+                    "requirements": "<p>Degree in Logistics.</p>",
+                },
+                {
+                    "id": 103,
+                    "job_name": "Customer Support Agent",
+                    "job_description": "<p>Customer support calls.</p>",
+                    "requirements": "<p>Customer support skills.</p>",
+                },
+            ]
+        }
+    }
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def get(self, url, **kwargs):
+            return httpx.Response(200, json=api_response, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr("job_radar.collectors._career_client", Client)
+    jobs = asyncio.run(collect_workatsea(source))
+    assert len(jobs) == 1
+    assert jobs[0].title == "Senior Software Engineer - AI / Machine Learning"
+    assert jobs[0].company == "Shopee"
+    assert jobs[0].external_id == "101"
+    assert jobs[0].url == "https://careers.shopee.vn/job-detail/101"
+    assert "Design and deploy deep learning models" in jobs[0].description
+
+    spx_source = {
+        "employer_name": "SPX Express",
+        "name": "SPX Express careers",
+        "url": "https://careers.shopee.vn/jobs",
+        "config": {"company_filter": "SPX"},
+    }
+    api_response_spx = {
+        "code": 0,
+        "data": {
+            "job_list": [
+                {
+                    "id": 201,
+                    "job_name": "SPX - Lead Software Engineer, Logistics Optimization",
+                    "job_description": "<p>Architect large-scale logistics routing and tracking systems with Python and Golang.</p>" * 5,
+                    "requirements": "<p>Proficiency in algorithmic graph optimization and cloud services.</p>" * 5,
+                },
+                {
+                    "id": 202,
+                    "job_name": "Lead Software Engineer, Fintech",
+                    "job_description": "<p>Fintech systems.</p>" * 5,
+                    "requirements": "<p>Fintech experience.</p>" * 5,
+                },
+            ]
+        }
+    }
+
+    class SpxClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def get(self, url, **kwargs):
+            return httpx.Response(200, json=api_response_spx, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr("job_radar.collectors._career_client", SpxClient)
+    spx_jobs = asyncio.run(collect_workatsea(spx_source))
+    assert len(spx_jobs) == 1
+    assert spx_jobs[0].title == "SPX - Lead Software Engineer, Logistics Optimization"
+    assert spx_jobs[0].company == "SPX Express"
+    assert spx_jobs[0].external_id == "201"
+
+
+def test_workday_collector_queries_cxs_and_retrieves_detail(monkeypatch) -> None:
+    from job_radar.collectors import collect_workday
+
+    source = {
+        "employer_name": "NVIDIA",
+        "name": "NVIDIA careers",
+        "url": "https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite",
+        "config": {
+            "search_url": "https://nvidia.wd5.myworkdayjobs.com/wday/cxs/nvidia/NVIDIAExternalCareerSite/jobs",
+            "detail_base": "https://nvidia.wd5.myworkdayjobs.com/wday/cxs/nvidia/NVIDIAExternalCareerSite",
+            "search_text": "Vietnam",
+        },
+    }
+    search_json = {
+        "jobPostings": [
+            {
+                "title": "Senior Solutions Architect - Generative AI",
+                "externalPath": "/job/Vietnam/Senior-Solutions-Architect---GenAI_JR198",
+                "locationsText": "Vietnam, Hanoi",
+            },
+            {
+                "title": "Regional Sales Manager",
+                "externalPath": "/job/Vietnam/Sales-Manager_JR199",
+                "locationsText": "Vietnam, Hanoi",
+            },
+        ]
+    }
+    detail_json = {
+        "jobPostingInfo": {
+            "jobReqId": "JR198",
+            "jobDescription": "<p>Accelerate generative AI adoption across enterprise clients using NVIDIA GPUs and NeMo stack.</p>" * 5,
+            "externalUrl": "https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite/job/Vietnam/Senior-Solutions-Architect_JR198",
+        }
+    }
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def post(self, url, **kwargs):
+            return httpx.Response(200, json=search_json, request=httpx.Request("POST", url))
+
+        async def get(self, url, **kwargs):
+            return httpx.Response(200, json=detail_json, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr("job_radar.collectors._career_client", Client)
+    jobs = asyncio.run(collect_workday(source))
+    assert len(jobs) == 1
+    assert jobs[0].title == "Senior Solutions Architect - Generative AI"
+    assert jobs[0].company == "NVIDIA"
+    assert jobs[0].external_id == "JR198"
+    assert jobs[0].location == "Vietnam, Hanoi"
+    assert "enterprise clients using NVIDIA GPUs" in jobs[0].description
 

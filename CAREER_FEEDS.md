@@ -1,6 +1,6 @@
 # Direct company career feeds
 
-Job Radar checks these 48 verified company career listings every four hours. Each entry points to an employer career page or its dedicated recruiting portal. A listing is stored only when its own job posting has a relevant title and description. An empty scan means no matching open posting was found by that adapter at scan time; it does not imply the company has no vacancies.
+Job Radar checks these 66 verified company career listings. Each entry points to an employer career page or its dedicated recruiting portal. A listing is stored only when its own job posting has a relevant title and description. An empty scan means no matching open posting was found by that adapter at scan time; it does not imply the company has no vacancies.
 
 | Company | Career page | Adapter |
 | --- | --- | --- |
@@ -52,7 +52,25 @@ Job Radar checks these 48 verified company career listings every four hours. Eac
 | VNPT IT | [Open careers](https://tuyendung.vnpt.vn/viec-lam/don-vi-cong-ty-cong-nghe-thong-tin-vnpt-d9621.html) | HTML board |
 | VNPT Net | [Open careers](https://tuyendung.vnpt.vn/viec-lam/don-vi-tong-cong-ty-ha-tang-mang-d8381.html) | HTML board |
 | VNPT Media | [Open careers](https://tuyendung.vnpt.vn/viec-lam/don-vi-tong-cong-ty-truyen-thong-d8606.html) | HTML board |
+| Viettel High Tech | [Open careers](https://jobs.viettel.vn/search/?q=Viettel+High+Tech) | SuccessFactors |
+| Viettel Cyber Security | [Open careers](https://jobs.viettel.vn/search/?q=Viettel+Cyber+Security) | SuccessFactors |
+| Viettel Solutions | [Open careers](https://jobs.viettel.vn/search/?q=Viettel+Solutions) | SuccessFactors |
+| Viettel Digital | [Open careers](https://jobs.viettel.vn/search/?q=Viettel+Digital) | SuccessFactors |
+| Viettel Telecom | [Open careers](https://jobs.viettel.vn/search/?q=Viettel+Telecom) | SuccessFactors |
+| Viettel IDC | [Open careers](https://jobs.viettel.vn/search/?q=Viettel+IDC) | SuccessFactors |
+| Viettel AI | [Open careers](https://jobs.viettel.vn/search/?q=Viettel+AI) | SuccessFactors |
+| Viettel Software | [Open careers](https://jobs.viettel.vn/search/?q=Viettel+Software) | SuccessFactors |
+| Viettel Research and Development | [Open careers](https://jobs.viettel.vn/search/?q=Viettel+R%26D) | SuccessFactors |
+| NVIDIA | [Open careers](https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite) | Workday CXS API |
+| Shopee | [Open careers](https://careers.shopee.vn/jobs) | WorkAtSea ATS API |
+| SPX Express | [Open careers](https://careers.shopee.vn/jobs) | WorkAtSea ATS API |
+| Vinschool | [Open careers](https://tuyendung.vinschool.edu.vn/jobs) | HTML board |
+| FPT University | [Open careers](https://career.fpt.edu.vn/Job/Search) | HTML board |
+| 9Pay | [Open careers](https://9pay.vn/tuyen-dung) | HTML board |
+| SSI | [Open careers](https://tuyendung.ssi.com.vn/tin-tuyen-dung) | HTML board |
+| TCBS | [Open careers](https://www.tcbs.com.vn/ve-chung-toi-cate/tuyen-dung/) | HTML board |
+| FPT Smart Cloud | [Open careers](https://fptsmartcloud.com/co-hoi-nghe-nghiep/) | HTML board |
 
-The [employer directory](job_radar/seeds.py) contains 181 companies after the [HCMC-based exclusions](EMPLOYER_SCOPE.md). Its other 133 entries are leads without an active built-in feed. Their presence in the directory is not a claim that their jobs are collected. Add a verified direct career page from an employer card. General job aggregators are not part of this catalog.
+The [employer directory](job_radar/seeds.py) contains 181 companies after the [HCMC-based exclusions](EMPLOYER_SCOPE.md). Its other 115 entries are leads without an active built-in feed. Their presence in the directory is not a claim that their jobs are collected. Add a verified direct career page from an employer card. General job aggregators are not part of this catalog.
 
 Feed definitions and selectors: [job_radar/feed_catalog.py](job_radar/feed_catalog.py). Collector implementations: [job_radar/collectors.py](job_radar/collectors.py). Older postings with an explicit past deadline are skipped. The app creates no placeholder vacancies.
