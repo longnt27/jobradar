@@ -812,7 +812,9 @@ def send_readiness(db: Database, settings: Settings, draft: dict) -> list[str]:
                     reasons.append(f"Choose an option: {group[0].get('group_label') or group[0].get('label') or group[0]['name']}")
     elif draft["destination"].get("kind") == "linkedin_easy_apply":
         form = draft["form_data"]
-        if (form.get("kind") != "linkedin_easy_apply" or not form.get("complete") or
+        if form.get("inspection_blockers"):
+            reasons.extend(form["inspection_blockers"])
+        elif (form.get("kind") != "linkedin_easy_apply" or not form.get("complete") or
                 not form.get("signature") or form.get("destination_url") != draft["destination"].get("url")):
             reasons.append("Inspect every LinkedIn application step before sending")
         for field in form.get("fields", []):

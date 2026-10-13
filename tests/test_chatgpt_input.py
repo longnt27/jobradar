@@ -840,5 +840,125 @@ def test_apply_chatgpt_reply_enforces_three_projects_and_two_bullets(tmp_path: P
     assert any("91.5%" in phrase or "35%" in phrase for phrase in resume["bold_phrases"])
 
 
+def test_chatgpt_input_retries_invalid_json_with_corrective_prompt(tmp_path: Path, monkeypatch) -> None:
+    client = TestClient(create_app(Settings(tmp_path)))
+    profile = client.get("/api/profile").json()
+    profile.update({"name": "Alex Example", "email": "alex@example.org"})
+    client.put("/api/profile", json=profile)
+    client.post("/api/positions", json={"company": "Co", "role": "Eng", "dates": "2024–2026", "bullets": ["Built ML."]})
+    job = client.post("/api/jobs/import", json={"company": "Example", "title": "AI Engineer",
+        "description": "Build ML models.", "apply_url": "https://example.org/apply"}).json()
+    draft = prepare_draft(client.app.state.db, client.app.state.settings, job["id"], "template")
+    calls = []
+
+    async def fake_enter(prompt, **_kwargs):
+        calls.append(prompt)
+        if len(calls) == 1:
+            return {"status": "entered", "reply": "This is plain text with no JSON and no headers."}
+        return {"status": "entered", "reply": json.dumps({"summary": "Revised ML Engineer summary with PyTorch."})}
+
+    monkeypatch.setattr(client.app.state.chatgpt_input, "enter", fake_enter)
+    response = client.post(f"/api/applications/{draft['id']}/chatgpt-input", json={"section": "all", "instruction": "Update draft"})
+    assert response.status_code == 200
+    assert len(calls) == 2
+    assert "The previous response could not be applied" in calls[1]
+    after = client.get(f"/api/applications/{draft['id']}").json()
+    assert "Revised ML Engineer summary with PyTorch." in after["resume_data"]["summary"]
+
+
+def test_chatgpt_input_raises_422_when_invalid_json_cannot_be_applied(tmp_path: Path, monkeypatch) -> None:
+    client = TestClient(create_app(Settings(tmp_path)))
+    profile = client.get("/api/profile").json()
+    profile.update({"name": "Alex Example", "email": "alex@example.org"})
+    client.put("/api/profile", json=profile)
+    client.post("/api/positions", json={"company": "Co", "role": "Eng", "dates": "2024–2026", "bullets": ["Built ML."]})
+    job = client.post("/api/jobs/import", json={"company": "Example", "title": "AI Engineer",
+        "description": "Build ML models.", "apply_url": "https://example.org/apply"}).json()
+    draft = prepare_draft(client.app.state.db, client.app.state.settings, job["id"], "template")
+    calls = []
+
+    async def fake_enter(prompt, **_kwargs):
+        calls.append(prompt)
+        return {"status": "entered", "reply": "Totally unparseable output without JSON and no headers."}
+
+    monkeypatch.setattr(client.app.state.chatgpt_input, "enter", fake_enter)
+    response = client.post(f"/api/applications/{draft['id']}/chatgpt-input", json={"section": "all", "instruction": "Update draft"})
+    assert response.status_code == 422
+    assert "Could not apply ChatGPT response" in response.text
+    assert len(calls) == 2
+
+
+def test_chatgpt_input_raises_401_when_sign_in_required(tmp_path: Path, monkeypatch) -> None:
+    client = TestClient(create_app(Settings(tmp_path)))
+    profile = client.get("/api/profile").json()
+    profile.update({"name": "Alex Example", "email": "alex@example.org"})
+    client.put("/api/profile", json=profile)
+    client.post("/api/positions", json={"company": "Co", "role": "Eng", "dates": "2024–2026", "bullets": ["Built ML."]})
+    job = client.post("/api/jobs/import", json={"company": "Example", "title": "AI Engineer",
+        "description": "Build ML models.", "apply_url": "https://example.org/apply"}).json()
+    draft = prepare_draft(client.app.state.db, client.app.state.settings, job["id"], "template")
+
+    async def fake_enter(_prompt, **_kwargs):
+        return {"status": "sign_in_required", "detail": "Sign in to ChatGPT in Settings > Drafting provider, then try again."}
+
+    monkeypatch.setattr(client.app.state.chatgpt_input, "enter", fake_enter)
+    response = client.post(f"/api/applications/{draft['id']}/chatgpt-input", json={"section": "summary", "instruction": "Update summary"})
+    assert response.status_code == 401
+    assert "Sign in to ChatGPT" in response.text
+
+
+def test_chatgpt_web_auto_apply_requires_sign_in_and_does_not_set_awaiting_review(tmp_path: Path, monkeypatch) -> None:
+    app = create_app(Settings(tmp_path))
+    profile = {"name": "Alex Example", "email": "alex@example.org", "drafting_provider": "chatgpt_web",
+               "experience": [{"company": "Co", "role": "Eng", "bullets": ["Built ML."]}]}
+    app.state.db.set_setting("profile", profile)
+    source_id = app.state.db.one("SELECT id FROM sources LIMIT 1")["id"]
+    from job_radar.ingest import ObservedJob, ingest
+    job_id, _ = ingest(app.state.db, source_id, ObservedJob("https://example.org/j1", "AI Engineer", "Example", "Build AI", apply_url="mailto:jobs@example.org"))
+    app.state.db.execute("UPDATE vacancies SET score=90,analysis_status='done',analysis_model='test:small' WHERE id=?", (job_id,))
+    app.state.auto_apply_manager.queue_manual(job_id, "chatgpt_web", prepare_anyway=True)
+    # Ensure chatgpt_input reports not logged in
+    monkeypatch.setattr(app.state.chatgpt_input, "status", lambda: {"logged_in": False})
+    asyncio.run(app.state.auto_apply_manager._process(job_id))
+    attempt = app.state.db.one("SELECT status,detail FROM auto_application_attempts WHERE vacancy_id=?", (job_id,))
+    # MUST be needs_review, NOT awaiting_review
+    assert attempt["status"] == "needs_review"
+    assert "ChatGPT Web is not signed in" in attempt["detail"]
+
+
+def test_chatgpt_web_auto_apply_retries_invalid_json_and_records_failure(tmp_path: Path, monkeypatch) -> None:
+    app = create_app(Settings(tmp_path))
+    profile = {"name": "Alex Example", "email": "alex@example.org", "drafting_provider": "chatgpt_web",
+               "experience": [{"company": "Co", "role": "Eng", "bullets": ["Built ML."]}]}
+    app.state.db.set_setting("profile", profile)
+    source_id = app.state.db.one("SELECT id FROM sources LIMIT 1")["id"]
+    from job_radar.ingest import ObservedJob, ingest
+    job_id, _ = ingest(app.state.db, source_id, ObservedJob("https://example.org/j2", "AI Engineer", "Example", "Build AI", apply_url="mailto:jobs@example.org"))
+    app.state.db.execute("UPDATE vacancies SET score=90,analysis_status='done',analysis_model='test:small' WHERE id=?", (job_id,))
+    app.state.auto_apply_manager.queue_manual(job_id, "chatgpt_web", prepare_anyway=True)
+    monkeypatch.setattr(app.state.chatgpt_input, "status", lambda: {"logged_in": True})
+    enters = []
+
+    async def fake_enter(prompt, **_kwargs):
+        enters.append(prompt)
+        return {"status": "entered", "reply": "Not valid JSON at all and no headers"}
+
+    monkeypatch.setattr(app.state.chatgpt_input, "enter", fake_enter)
+    asyncio.run(app.state.auto_apply_manager._process(job_id))
+    # It should have retried with corrective prompt
+    assert len(enters) == 2
+    assert "The previous response could not be applied" in enters[1]
+    attempt = app.state.db.one("SELECT status,retry_count,detail FROM auto_application_attempts WHERE vacancy_id=?", (job_id,))
+    # It should be queued for retry attempt 1/3, and draft cleaned up (NOT awaiting_review)
+    assert attempt["status"] == "queued"
+    assert attempt["retry_count"] == 1
+    assert "Retrying preparation (attempt 1/3)" in attempt["detail"]
+    assert "ChatGPT Web drafting failed" in attempt["detail"]
+    # Verify no broken draft was left in application_drafts
+    draft = app.state.db.one("SELECT id FROM application_drafts WHERE vacancy_id=?", (job_id,))
+    assert draft is None
+
+
+
 
 

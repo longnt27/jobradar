@@ -4,7 +4,7 @@ import json
 from urllib.parse import urlencode
 
 from .db import Database, new_id, now
-from .feed_catalog import CAREER_FEEDS, CAREER_SCAN_INTERVAL_MINUTES
+from .feed_catalog import CAREER_FEEDS, CAREER_SCAN_INTERVAL_MINUTES, RETIRED_CAREER_FEEDS
 from .employer_scope import HCMC_BASED
 from .linkedin_searches import LINKEDIN_SCAN_INTERVAL_MINUTES, recent_search_url
 
@@ -66,7 +66,7 @@ EMPLOYER_DIRECTORY: dict[str, str] = {
     "Be Group": "commerce", "Traveloka": "commerce", "Agoda": "commerce",
     "Booking.com": "commerce", "NAVER Vietnam": "technology", "Zalo AI": "technology",
     "VNG": "technology", "VNG Cloud": "technology", "Cinnamon AI": "technology",
-    "Rikkeisoft": "technology", "TMA Solutions": "technology",
+    "Rikkeisoft": "technology", "TMA Solutions": "technology", "VNCS Global": "technology",
     "Rikkei AI": "technology", "Gear Inc": "technology",
     "KMS Technology": "technology", "NashTech Vietnam": "technology",
     "Axon Active": "technology", "NTQ Solution": "technology",
@@ -113,12 +113,21 @@ EMPLOYER_ALIASES = {
     "VinSmart Future": ["VinSmart Future JSC"],
     "FPT Smart Cloud": ["FPT Smart Cloud and AI"],
     "VNPT AI": ["VNPT-AI"],
+    "VNCS Global": ["VNCS Global Solution Technology", "VNCS Global Solution Technology JSC"],
 }
 
 
 def seed(db: Database) -> None:
     timestamp = now()
     with db.connection() as conn:
+        for url, reason in RETIRED_CAREER_FEEDS.items():
+            for source_id, raw_config in conn.execute(
+                "SELECT id,config FROM sources WHERE kind='career' AND url=?", (url,)
+            ).fetchall():
+                config = json.loads(raw_config)
+                config.update(retired=True, retirement_reason=reason)
+                conn.execute("UPDATE sources SET enabled=0,config=? WHERE id=?",
+                             (json.dumps(config), source_id))
         for source_id, url, interval_minutes in conn.execute(
             "SELECT id,url,interval_minutes FROM sources WHERE kind='linkedin' "
             "AND COALESCE(json_extract(config,'$.retired'),0)=0"
@@ -150,12 +159,13 @@ def seed(db: Database) -> None:
             conn.execute("UPDATE employers SET career_url=COALESCE(career_url,?) WHERE id=?", (feed.url, employer[0]))
             config = json.dumps({"adapter": feed.adapter, **feed.options})
             existing_feed = conn.execute(
-                "SELECT id,config FROM sources WHERE kind='career' AND employer_id=? AND url=?",
-                (employer[0], feed.url),
+                "SELECT id,url,config FROM sources WHERE kind='career' AND employer_id=? AND name=? ORDER BY created_at,id",
+                (employer[0], f"{feed.employer} careers"),
             ).fetchone()
             if existing_feed:
-                if existing_feed[1] != config:
-                    conn.execute("UPDATE sources SET config=? WHERE id=?", (config, existing_feed[0]))
+                if existing_feed[1] != feed.url or existing_feed[2] != config:
+                    conn.execute("UPDATE sources SET url=?,name=?,config=?,interval_minutes=? WHERE id=?",
+                                 (feed.url, f"{feed.employer} careers", config, CAREER_SCAN_INTERVAL_MINUTES, existing_feed[0]))
             else:
                 conn.execute(
                     "INSERT INTO sources(id,kind,name,url,employer_id,interval_minutes,config,created_at) VALUES(?,?,?,?,?,?,?,?)",

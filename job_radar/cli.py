@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 
 import uvicorn
 
@@ -23,6 +24,8 @@ def main() -> None:
     sub.add_parser("uninstall-service", help="Stop and remove the macOS background service")
     sub.add_parser("configure-smtp", help="Save SMTP credentials in a restricted local file")
     sub.add_parser("configure-telegram", help="Save Telegram bot settings for application reviews")
+    dedup_parser = sub.add_parser("dedup", help="Preview or combine duplicate jobs across sources")
+    dedup_parser.add_argument("--apply", action="store_true", help="Back up the database and apply confident merges")
     args = parser.parse_args()
     settings = Settings.from_env()
     if args.command in (None, "serve"):
@@ -46,6 +49,23 @@ def main() -> None:
         configure_smtp(settings)
     elif args.command == "configure-telegram":
         configure_telegram(settings)
+    elif args.command == "dedup":
+        from datetime import datetime, timezone
+        import sqlite3
+        from .dedup import deduplicate_pool
+
+        db = Database(settings.database_path)
+        backup = None
+        if args.apply:
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+            backup = settings.data_dir / f"job_radar-before-dedup-{stamp}.sqlite3"
+            backup.touch(mode=0o600, exist_ok=False)
+            with db.connection() as source:
+                with sqlite3.connect(backup) as destination:
+                    source.backup(destination)
+        result = deduplicate_pool(db, apply=args.apply)
+        result["backup"] = str(backup) if backup else None
+        print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

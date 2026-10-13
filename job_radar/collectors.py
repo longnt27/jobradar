@@ -353,7 +353,7 @@ async def _collect_linkedin_search_results(page: Page, source: dict) -> list[Obs
 
 
 RECRUITING = re.compile(r"\b(hiring|recruit|vacancy|apply|tuyển dụng|tuyển|cần tìm|cần tuyển|cần gấp|job opening|we are looking)\b|\bcần\s+(?:\d+\s*)?(?:mid|sen|junior|senior|fresher|intern|data|ai|ml|kỹ|lập)", re.I)
-ROLE = re.compile(r"\b(ai|ml|machine learning|engineer|engineering|developer|devops|research|data scientist|data analyst|data analytics|data architect|business analyst|llm|computer vision|software|architect|fullstack|backend|frontend|technical lead|tech lead|cloud|security|cyber|database|network|kỹ sư|lập trình|trí tuệ nhân tạo|công nghệ thông tin|khoa học dữ liệu|phần mềm|phầm mềm|an ninh|bảo mật|quản trị ứng dụng|cơ sở dữ liệu|phân tích nghiệp vụ|chuyển đổi số|kiểm thử)\b", re.I)
+ROLE = re.compile(r"\b(ai|ml|machine learning|engineer|engineering|developer|devops|research|data scientist|data analyst|data analytics|data architect|business analyst|llm|computer vision|software|architect|fullstack|backend|frontend|technical lead|tech lead|cloud|security|cyber|database|network|kỹ sư|lập trình|nghiên cứu|trí tuệ nhân tạo|công nghệ thông tin|cntt|khoa học dữ liệu|cơ sở dữ liệu|dữ liệu|mô hình|phần mềm|phầm mềm|an ninh|bảo mật|quản trị ứng dụng|phân tích nghiệp vụ|chuyển đổi số|kiểm thử)\b", re.I)
 
 
 async def collect_facebook(context: BrowserContext, source: dict) -> list[ObservedJob]:
@@ -619,7 +619,7 @@ def _career_client() -> httpx.AsyncClient:
     return httpx.AsyncClient(
         follow_redirects=True, timeout=30,
         limits=httpx.Limits(max_connections=6),
-        headers={"User-Agent": "Mozilla/5.0 (compatible; JobRadar/0.1; personal job discovery)"},
+        headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36"},
     )
 
 
@@ -630,17 +630,29 @@ def _target_title(title: str) -> bool:
 
 def _expired_posting(text: str) -> bool:
     """Skip a posting only when its own page shows an explicit past deadline."""
-    label = re.search(r"(?:Application deadline|Hạn nộp hồ sơ|Hạn nộp|Thời gian ứng tuyển|Deadline)\s*:?", text[:3000], re.I)
+    label = re.search(
+        r"(?:Application deadline|Apply before|Closing date|Expired Date|Deadline to Apply|Hạn chót nhận hồ sơ|Thời gian nhận hồ sơ|Hạn nộp hồ sơ|Hạn nộp|Thời gian ứng tuyển|Deadline)\s*:?",
+        text[:3000], re.I,
+    )
     if not label:
         return False
-    dates = re.findall(r"\b(\d{1,2})/(\d{1,2})/(20\d{2})\b", text[label.end():label.end() + 65])
-    if not dates:
-        return False
-    day, month, year = dates[-1]
-    try:
-        return datetime(int(year), int(month), int(day)).date() < datetime.now(timezone.utc).date()
-    except ValueError:
-        return False
+    deadline_text = text[label.end():label.end() + 90]
+    numeric_matches = list(re.finditer(r"\b(\d{1,2})[/.](\d{1,2})[/.](20\d{2})\b", deadline_text))
+    numeric = numeric_matches[-1] if numeric_matches else None
+    if numeric:
+        day, month, year = map(int, numeric.groups())
+        try:
+            return datetime(year, month, day).date() < datetime.now(timezone.utc).date()
+        except ValueError:
+            return False
+    named = re.search(r"\b([A-Za-z]{3,9})\s+(\d{1,2}),?\s+(20\d{2})\b", deadline_text)
+    if named:
+        for fmt in ("%B %d %Y", "%b %d %Y"):
+            try:
+                return datetime.strptime(" ".join(named.groups()), fmt).date() < datetime.now(timezone.utc).date()
+            except ValueError:
+                continue
+    return False
 
 
 def _detail_description(soup: BeautifulSoup, preferred: str = "") -> str:
@@ -690,7 +702,7 @@ async def collect_html_board(source: dict) -> list[ObservedJob]:
                 else:
                     parts = urlsplit(source["url"])
                     query = dict(parse_qsl(parts.query))
-                    query["page"] = str(page + 1)
+                    query[config.get("pagination_param", "page")] = str(page + 1)
                     listing_url = urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), ""))
                 response = await client.get(listing_url)
                 if response.status_code == 404:
@@ -704,7 +716,7 @@ async def collect_html_board(source: dict) -> list[ObservedJob]:
                 if parts.hostname not in allowed_hosts or not pattern.fullmatch(parts.path):
                     continue
                 label = anchor.get_text(" ", strip=True)
-                if not label or len(label) > 180 or label.casefold() in {"apply", "apply now", "ứng tuyển", "ứng tuyển ngay", "learn more", "xem chi tiết"}:
+                if not label or len(label) > 180 or label.casefold() in {"apply", "apply now", "ứng tuyển", "ứng tuyển ngay", "learn more", "read more", "view details", "common.viewdetails", "xem chi tiết"}:
                     label = ""
                 if config.get("listing_card_class") and config.get("listing_title_selector"):
                     card = anchor.find_parent(class_=config["listing_card_class"])
@@ -715,12 +727,15 @@ async def collect_html_board(source: dict) -> list[ObservedJob]:
                 clean_url = url.split("#")[0]
                 if not config.get("keep_query"):
                     clean_url = clean_url.split("?")[0]
-                if clean_url not in links or (label and _target_title(label)):
+                if clean_url not in links or (label and _target_title(label) and not _target_title(links.get(clean_url, ""))):
                     links[clean_url] = label
             if len(links) == before and not title_include:
                 break
+        if not links and config.get("require_links"):
+            raise RuntimeError(f"Career board exposed no posting links: {source['url']}")
         jobs: list[ObservedJob] = []
-        for url, label in list(links.items())[:int(config.get("max_results", 80))]:
+        candidate_links = {u: l for u, l in links.items() if not l or _target_title(l)}
+        for url, label in list(candidate_links.items())[:int(config.get("max_results", 80))]:
             if label and not _target_title(label):
                 continue
             try:
@@ -733,18 +748,44 @@ async def collect_html_board(source: dict) -> list[ObservedJob]:
                 for tag in item(["script", "style", "nav", "footer", "header"]):
                     tag.decompose()
                 description = _detail_description(item, config.get("description_selector", ""))
-                if len(description) < 100 or _expired_posting(item.get_text(" ", strip=True)):
+                if len(description) < 100:
+                    if config.get("strict_detail"):
+                        raise RuntimeError(f"Career posting has no complete description: {url}")
                     continue
-                location = _text(item, ("[class*=job-location]", "[class*=location]", "[data-test*=location]"))[:250]
+                deadline_node = item.select_one(config["deadline_selector"]) if config.get("deadline_selector") else None
+                deadline_text = deadline_node.get_text(" ", strip=True) if deadline_node else item.get_text(" ", strip=True)
+                if _expired_posting(deadline_text):
+                    continue
+                location_selectors = (config["location_selector"],) if config.get("location_selector") else ("[class*=job-location]", "[class*=location]", "[data-test*=location]")
+                location = _text(item, location_selectors)[:250]
+                if config.get("location_regex"):
+                    match = re.search(config["location_regex"], item.get_text(" ", strip=True), re.I)
+                    if match:
+                        location = match.group(1).strip()[:250]
+                if not location and config.get("location_text_pattern"):
+                    match = re.search(config["location_text_pattern"], item.get_text("\n", strip=True), re.I)
+                    if match:
+                        location = match.group(1).strip()[:250]
+                external_id = None
+                if config.get("external_id_pattern"):
+                    match = re.search(config["external_id_pattern"], str(detail.url))
+                    if match:
+                        external_id = match.group(1)
+                if external_id is None and config.get("external_id_from_path"):
+                    external_id = urlsplit(str(detail.url)).path.rstrip("/").rsplit("/", 1)[-1]
                 jobs.append(ObservedJob(
+                    external_id=external_id,
                     url=str(detail.url) if config.get("keep_query") else str(detail.url).split("?")[0], title=title[:180],
                     company=source.get("employer_name") or source["name"],
                     description=description[:30000], location=location,
                     apply_url=_application_destination(item, str(detail.url)),
+                    published_at=_meta(item, "article:published_time") or None,
                     raw_text=description[:30000],
                 ))
-            except httpx.HTTPError:
-                continue
+            except httpx.HTTPError as error:
+                if isinstance(error, httpx.HTTPStatusError) and error.response.status_code in {404, 410}:
+                    continue
+                raise
         return jobs
 
 
@@ -783,7 +824,8 @@ async def collect_browser_board(source: dict) -> list[ObservedJob]:
                 except Exception:
                     break
             jobs = []
-            for url, label in list(links.items())[:int(config.get("max_results", 120))]:
+            candidate_links = {u: l for u, l in links.items() if not l or _target_title(l)}
+            for url, label in list(candidate_links.items())[:int(config.get("max_results", 120))]:
                 if label and not _target_title(label):
                     continue
                 try:
@@ -793,8 +835,13 @@ async def collect_browser_board(source: dict) -> list[ObservedJob]:
                             "minimum => (document.querySelector('main')?.innerText.length || 0) >= minimum",
                             arg=int(config["detail_ready_min_chars"]), timeout=12000,
                         )
+                    elif config.get("detail_ready_selector"):
+                        await detail.locator(config["detail_ready_selector"]).first.wait_for(state="attached", timeout=12000)
                     else:
-                        await detail.locator("h1").first.wait_for(state="attached", timeout=12000)
+                        try:
+                            await detail.locator("h1").first.wait_for(state="attached", timeout=12000)
+                        except Exception:
+                            await detail.locator("body").first.wait_for(state="attached", timeout=5000)
                     soup = BeautifulSoup(await detail.content(), "html.parser")
                     title = _detail_title(soup, label)
                     if not _target_title(title):
@@ -906,7 +953,12 @@ async def collect_successfactors(source: dict) -> list[ObservedJob]:
             for page in range(min(int(config.get("max_pages", 1)), 8)):
                 listing_url = urljoin(board, f"{page * 10}/") if "/go/" in board and page else board
                 if page and "/go/" not in board:
-                    break
+                    if not config.get("search_page_size"):
+                        break
+                    parts = urlsplit(board)
+                    query = dict(parse_qsl(parts.query))
+                    query["startrow"] = str(page * int(config["search_page_size"]))
+                    listing_url = urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), ""))
                 response = await client.get(listing_url)
                 response.raise_for_status()
                 soup = BeautifulSoup(response.text, "html.parser")
@@ -919,8 +971,6 @@ async def collect_successfactors(source: dict) -> list[ObservedJob]:
                     links[url] = title
                     found += 1
                 if not soup.select('a.jobTitle-link[href*="/job/"]'):
-                    break
-                if page and found == 0:
                     break
         jobs: list[ObservedJob] = []
         for url, label in list(links.items())[:120]:
@@ -936,12 +986,15 @@ async def collect_successfactors(source: dict) -> list[ObservedJob]:
                     url=str(response.url), title=title[:180],
                     company=source.get("employer_name") or source["name"],
                     description=description[:30000],
-                    location=_text(soup, (".job-location", "[class*=location]"))[:250],
+                    location=_text(soup, (config["location_selector"],) if config.get("location_selector") else (".job-location", "#job-location", "[data-careersite-propertyid=location]"))[:250],
                     apply_url=_application_destination(soup, str(response.url)),
                     raw_text=description[:30000],
                 ))
+            except httpx.HTTPStatusError as error:
+                if error.response.status_code not in {404, 410}:
+                    raise
             except httpx.HTTPError:
-                continue
+                raise
         return jobs
 
 
@@ -1093,6 +1146,243 @@ async def collect_mbbank(source: dict) -> list[ObservedJob]:
         return jobs
 
 
+async def collect_vpbank(source: dict) -> list[ObservedJob]:
+    """Collect postings from VPBank's official career portal via SuccessFactors RMK API."""
+    config = source.get("config", {})
+    queries = config.get("queries") or ["AI", "Data", "IT", "kỹ sư", "developer", "software", "chuyên viên"]
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; JobRadar/0.1; personal job discovery)",
+        "Content-Type": "application/json",
+        "Referer": "https://tuyendung.vpbank.com.vn/search/?locale=vi_VN",
+    }
+    jobs_map: dict[str, dict] = {}
+    async with _career_client() as client:
+        for kw in queries:
+            for page in range(min(int(config.get("max_pages", 3)), 5)):
+                payload = {
+                    "locale": "vi_VN",
+                    "pageNumber": page,
+                    "sortBy": "",
+                    "keywords": kw,
+                    "location": "",
+                    "facetFilters": {},
+                    "brand": "",
+                    "skills": [],
+                    "categoryId": 0,
+                    "alertId": "",
+                    "rcmCandidateId": "",
+                }
+                try:
+                    resp = await client.post("https://tuyendung.vpbank.com.vn/services/recruiting/v1/jobs", json=payload, headers=headers)
+                    resp.raise_for_status()
+                    data = resp.json()
+                    items = data.get("jobSearchResult", [])
+                    if not items:
+                        break
+                    for item in items:
+                        res = item.get("response", {})
+                        jid = str(res.get("id", ""))
+                        title = str(res.get("unifiedStandardTitle", "")).strip()
+                        if not jid or not title or not _target_title(title):
+                            continue
+                        if jid not in jobs_map:
+                            jobs_map[jid] = res
+                except Exception:
+                    raise
+
+        jobs: list[ObservedJob] = []
+        for jid, res in list(jobs_map.items())[:int(config.get("max_results", 80))]:
+            url_title = res.get("unifiedUrlTitle") or "job"
+            detail_url = f"https://tuyendung.vpbank.com.vn/job/{url_title}/{jid}-vi_VN"
+            title = str(res.get("unifiedStandardTitle", "")).strip()
+            locations = res.get("jobLocationShort", [])
+            location = ", ".join(loc.strip().rstrip(",") for loc in locations if loc)
+            try:
+                detail_resp = await client.get(detail_url)
+                detail_resp.raise_for_status()
+                soup = BeautifulSoup(detail_resp.text, "html.parser")
+                desc_node = soup.select_one(".joblayouttoken, .jobDisplay")
+                description = _structured_text(desc_node) if desc_node else ""
+                if len(description) < 100 or _expired_posting(description):
+                    continue
+                jobs.append(ObservedJob(
+                    url=detail_url, external_id=jid, title=title[:180],
+                    company=source.get("employer_name") or "VPBank",
+                    description=description[:30000], location=location[:250],
+                    apply_url=detail_url, raw_text=description[:30000],
+                ))
+            except httpx.HTTPError:
+                raise
+    return jobs
+
+
+async def collect_onemount(source: dict) -> list[ObservedJob]:
+    """Read postings from One Mount careers via Playwright and OutSystems service interception."""
+    jobs: list[ObservedJob] = []
+    config = source.get("config", {})
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            detail_page = await browser.new_page()
+            jobs_data: list[dict] = []
+            response_errors: list[Exception] = []
+
+            async def on_response(response):
+                if "ScreenDataSetGetJobRequests" in response.url:
+                    try:
+                        if response.status >= 400:
+                            raise RuntimeError(f"One Mount career API returned HTTP {response.status}")
+                        payload = await response.json()
+                        items = payload.get("data", {}).get("List", {}).get("List", [])
+                        jobs_data.extend(items)
+                    except Exception as error:
+                        response_errors.append(error)
+
+            page.on("response", on_response)
+            await page.goto(source["url"], wait_until="networkidle", timeout=35000)
+            if response_errors:
+                raise RuntimeError("One Mount career API response could not be parsed") from response_errors[0]
+            candidate_items = [
+                item for item in jobs_data
+                if item.get("JobRequest", {}).get("Id") and _target_title(item.get("JobRequest", {}).get("JobName", ""))
+            ]
+            for item in candidate_items[:int(config.get("max_results", 40))]:
+                jr = item.get("JobRequest", {})
+                jid = str(jr["Id"])
+                title = jr.get("JobName", "").strip()
+                location = jr.get("Location", "").replace("#", "").strip()
+                url = f"https://careers.onemount.com/jobs/{jid}"
+                try:
+                    await detail_page.goto(url, wait_until="networkidle", timeout=25000)
+                    soup = BeautifulSoup(await detail_page.content(), "html.parser")
+                    tab = soup.select_one(".tabs-content, .tabs-content-tab")
+                    desc = _structured_text(tab) if tab else soup.get_text(" ", strip=True)
+                    if len(desc) < 100 or _expired_posting(desc):
+                        continue
+                    jobs.append(ObservedJob(
+                        url=url, external_id=jid, title=title[:180],
+                        company=source.get("employer_name") or "One Mount",
+                        description=desc[:30000], location=location[:250],
+                        apply_url=url, raw_text=desc[:30000],
+                    ))
+                except Exception:
+                    raise
+        finally:
+            await browser.close()
+    return jobs
+
+
+async def collect_workatsea(source: dict) -> list[ObservedJob]:
+    """Collect postings from Sea / Shopee WorkAtSea ATS API."""
+    employer = source.get("employer_name") or source["name"]
+    company_filter = source.get("config", {}).get("company_filter", "")
+    url = "https://ats.workatsea.com/ats/api/v1/user/job/list/?limit=100&offset=0"
+    jobs: list[ObservedJob] = []
+    async with _career_client() as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        items = resp.json().get("data", {}).get("job_list", [])
+        for item in items:
+            title = str(item.get("job_name", "")).strip()
+            jid = str(item.get("id", ""))
+            if not title or not jid or not _target_title(title):
+                continue
+            if company_filter and company_filter.casefold() not in title.casefold():
+                continue
+            desc_html = (item.get("job_description") or "") + "\n" + (item.get("requirements") or "")
+            desc = _structured_text(BeautifulSoup(desc_html, "html.parser"))
+            if len(desc) < 100 or _expired_posting(desc):
+                continue
+            detail_url = f"https://careers.shopee.vn/job-detail/{jid}"
+            jobs.append(ObservedJob(
+                url=detail_url, external_id=jid, title=title[:180],
+                company=employer, description=desc[:30000],
+                apply_url=detail_url, raw_text=desc[:30000],
+            ))
+    return jobs
+
+
+async def collect_workday(source: dict) -> list[ObservedJob]:
+    """Collect every posting in the configured Workday country facets."""
+    config = source.get("config", {})
+    jobs: list[ObservedJob] = []
+    postings = []
+    seen = set()
+    offset = 0
+    total = None
+    async with _career_client() as client:
+        for _ in range(int(config.get("max_pages", 50))):
+            payload = {"appliedFacets": config.get("applied_facets", {}), "limit": 20, "offset": offset,
+                       "searchText": config.get("search_text", "" if config.get("applied_facets") else "Vietnam")}
+            response = await client.post(config["search_url"], json=payload)
+            response.raise_for_status()
+            data = response.json()
+            batch = data.get("jobPostings")
+            if not isinstance(batch, list):
+                raise RuntimeError("Workday returned an unexpected job listing")
+            if total is None and data.get("total") is not None:
+                total = int(data["total"])
+            if not batch:
+                if total is not None and offset < total:
+                    raise RuntimeError("Workday ended before all advertised postings were returned")
+                break
+            previous = len(seen)
+            for posting in batch:
+                path = posting.get("externalPath") if isinstance(posting, dict) else None
+                if not path:
+                    raise RuntimeError("Workday posting is missing its path")
+                if path not in seen:
+                    postings.append(posting)
+                    seen.add(path)
+            if len(seen) == previous:
+                raise RuntimeError("Workday repeated a page instead of completing pagination")
+            offset += len(batch)
+            if (total is not None and offset >= total) or (total is None and len(batch) < 20):
+                break
+        else:
+            raise RuntimeError("Workday exceeded its configured pagination limit")
+
+        for posting in postings:
+            title = str(posting.get("title", "")).strip()
+            path = posting["externalPath"]
+            if not _target_title(title):
+                continue
+            response = await client.get(config["detail_base"] + path)
+            if response.status_code in {404, 410}:
+                continue
+            response.raise_for_status()
+            info = response.json().get("jobPostingInfo")
+            if not isinstance(info, dict):
+                raise RuntimeError("Workday returned an unexpected posting detail")
+            description = _structured_text(BeautifulSoup(info.get("jobDescription", ""), "html.parser"))
+            if len(description) < 100 or _expired_posting(description):
+                continue
+            url = info.get("externalUrl") or source["url"].split("?")[0].rstrip("/") + path
+            location = ", ".join(filter(None, [info.get("location", ""), *info.get("additionalLocations", [])])) or posting.get("locationsText", "")
+            if config.get("location_include") and not re.search(config["location_include"], location, re.I):
+                continue
+            jobs.append(ObservedJob(
+                url=url, external_id=info.get("jobReqId") or path,
+                title=title[:180], company=source.get("employer_name") or source["name"],
+                description=description[:30000], location=location[:250], apply_url=url,
+                published_at=info.get("startDate"), raw_text=description[:30000],
+            ))
+    return jobs
+
+
+from .career_apis import collect_json_board
+from .domestic_bank_feeds import collect_bank_notices, collect_vikki_bank
+from .foreign_bank_adapters import collect_public_bank
+from .baoviet import collect_baoviet_announcement
+from .global_tech_feeds import collect_eightfold, collect_workday_vietnam
+from .career_feeds_agent2 import (
+    collect_manatal, collect_trakstar, collect_vnpt_technology, collect_vnpt_parent,
+)
+
+
+from .career_wave7 import collect_agoda
+
 CAREER_ADAPTERS = {
     "legacy": collect_career,
     "html_board": collect_html_board,
@@ -1104,6 +1394,22 @@ CAREER_ADAPTERS = {
     "vinrobotics": collect_vinrobotics,
     "smartrecruiters": collect_smartrecruiters,
     "mbbank": collect_mbbank,
+    "vpbank": collect_vpbank,
+    "onemount": collect_onemount,
+    "workatsea": collect_workatsea,
+    "workday": collect_workday,
+    "json_board": collect_json_board,
+    "bank_notices": collect_bank_notices,
+    "vikki_bank": collect_vikki_bank,
+    "public_bank": collect_public_bank,
+    "baoviet_announcement": collect_baoviet_announcement,
+    "eightfold": collect_eightfold,
+    "workday_vietnam": collect_workday_vietnam,
+    "agoda": collect_agoda,
+    "manatal": collect_manatal,
+    "trakstar": collect_trakstar,
+    "vnpt_technology": collect_vnpt_technology,
+    "vnpt_parent": collect_vnpt_parent,
 }
 
 

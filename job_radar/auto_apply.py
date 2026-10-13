@@ -546,11 +546,19 @@ class AutoApplyManager:
             except Exception as error:
                 log.debug("Pre-draft LinkedIn check for %s: %s", job_id, error)
 
-        provider = attempt["requested_provider"] if manual else self.db.get_setting("profile", {}).get("drafting_provider", "")
+        provider = (attempt.get("requested_provider") if manual else None) or self.db.get_setting("profile", {}).get("drafting_provider", "")
         if not provider:
             self._set_status(job_id, "needs_review", "Choose an application drafting provider in My profile.")
             return
-        draft = await asyncio.to_thread(prepare_draft, self.db, self.settings, job_id, provider, existing_draft_id)
+        try:
+            draft = await asyncio.to_thread(prepare_draft, self.db, self.settings, job_id, provider, existing_draft_id)
+        except ValueError as error:
+            self._set_status(job_id, "needs_review", str(error))
+            return
+        except RuntimeError as error:
+            if await self._record_failure(job_id, f"AI drafting failed: {error}"):
+                return
+            return
         self._set_status(job_id, "preparing", "Draft prepared; checking application details", draft["id"])
         if not manual and not self._still_eligible(job_id):
             self._set_status(job_id, "needs_review", "Automatic preparation paused or job score changed.", draft["id"])
@@ -596,21 +604,53 @@ class AutoApplyManager:
             if not self.chatgpt_input or not self.chatgpt_input.status().get("logged_in"):
                 self._set_status(
                     job_id,
-                    "awaiting_review" if not send_readiness(self.db, self.settings, draft) else "needs_review",
-                    "Starter draft created. Sign in to ChatGPT in Settings to complete drafting.",
+                    "needs_review",
+                    "ChatGPT Web is not signed in. Sign in to ChatGPT in Settings to complete drafting.",
                     draft["id"],
                 )
                 await self.notify_review(draft["id"])
                 return
             self._set_status(job_id, "preparing", "Drafting application in ChatGPT Web...", draft["id"])
-            try:
-                prompt = application_prompt(self.db, draft["id"], "all", "")
-                result = await self.chatgpt_input.enter(prompt)
-                if result.get("reply"):
-                    apply_chatgpt_reply(self.db, self.settings, draft["id"], "all", result["reply"], "")
+            chatgpt_success = False
+            last_chatgpt_error = ""
+            current_prompt = application_prompt(self.db, draft["id"], "all", "")
+            for prompt_attempt in range(2):
+                try:
+                    result = await self.chatgpt_input.enter(current_prompt, timeout=360.0)
+                    if result.get("status") == "sign_in_required":
+                        raise RuntimeError("ChatGPT Web is not signed in; sign in to ChatGPT in Settings to complete drafting.")
+                    if result.get("status") == "failed":
+                        raise RuntimeError(result.get("detail") or "ChatGPT Web communication failed")
+                    reply = result.get("reply") or ""
+                    if not reply.strip():
+                        raise RuntimeError(result.get("detail") or "ChatGPT Web returned an empty response")
+                    apply_chatgpt_reply(self.db, self.settings, draft["id"], "all", reply, "")
                     draft = get_draft(self.db, draft["id"])
-            except Exception as error:
-                log.warning("ChatGPT Web drafting for %s encountered: %s", job_id, error)
+                    chatgpt_success = True
+                    break
+                except Exception as error:
+                    last_chatgpt_error = str(error)
+                    log.warning("ChatGPT Web drafting prompt attempt %d failed for %s: %s", prompt_attempt + 1, job_id, error)
+                    if prompt_attempt == 0 and not ("not signed in" in str(error).lower() or "sign_in_required" in str(error).lower()):
+                        current_prompt = (
+                            f"The previous response could not be applied: {str(error)[:300]}.\n"
+                            "Return ONLY valid JSON matching the required schema with all fields populated."
+                        )
+                        continue
+                    break
+            if not chatgpt_success:
+                if "not signed in" in last_chatgpt_error.lower():
+                    self._set_status(
+                        job_id,
+                        "needs_review",
+                        "ChatGPT Web is not signed in. Sign in to ChatGPT in Settings to complete drafting.",
+                        draft["id"],
+                    )
+                    await self.notify_review(draft["id"])
+                    return
+                if await self._record_failure(job_id, f"ChatGPT Web drafting failed: {last_chatgpt_error}", draft["id"]):
+                    return
+                return
         blockers = send_readiness(self.db, self.settings, draft)
         if blockers:
             self._set_status(job_id, "needs_review", "; ".join(blockers), draft["id"])
@@ -667,7 +707,15 @@ class AutoApplyManager:
             return
         draft = get_draft(self.db, draft_id)
         blockers = send_readiness(self.db, self.settings, draft)
-        status = "needs_review" if blockers else "awaiting_review"
+        existing_attempt = self.db.one("SELECT detail,status FROM auto_application_attempts WHERE draft_id=?", (draft_id,))
+        detail_text = (existing_attempt.get("detail") or "").lower() if existing_attempt else ""
+        is_failure_detail = any(kw in detail_text for kw in ("not signed in", "sign in", "failed", "needs attention", "attention:", "paused"))
+        preserved_detail = (
+            existing_attempt["detail"]
+            if existing_attempt and existing_attempt.get("status") == "needs_review" and is_failure_detail
+            else None
+        )
+        status = "needs_review" if (blockers or preserved_detail) else "awaiting_review"
         if (
             deliver_telegram and attempt["review_hash"] == draft["package_hash"]
             and attempt["status"] == status
@@ -682,7 +730,7 @@ class AutoApplyManager:
             (
                 draft["package_hash"],
                 status,
-                "; ".join(blockers) if blockers else "Review the complete application before approving.",
+                preserved_detail or ("; ".join(blockers) if blockers else "Review the complete application before approving."),
                 "pending" if deliver_telegram else "web_only",
                 previous_message_id if deliver_telegram else None,
                 now(),
@@ -819,10 +867,32 @@ class AutoApplyManager:
             previous_draft = get_draft(self.db, draft_id)
             if previous_draft.get("provider") == "chatgpt_web" and self.chatgpt_input and self.chatgpt_input.status().get("logged_in"):
                 prompt_text = application_prompt(self.db, draft_id, section, prompt)
-                result = await self.chatgpt_input.enter(prompt_text, timeout=360.0 if section == "all" else 240.0)
-                if not result.get("reply"):
-                    raise RuntimeError(result.get("detail") or "No reply received from ChatGPT Web")
-                draft = apply_chatgpt_reply(self.db, self.settings, draft_id, section, result["reply"], prompt)
+                applied = False
+                last_regen_error = ""
+                timeout = 360.0 if section == "all" else 240.0
+                for attempt_idx in range(2):
+                    result = await self.chatgpt_input.enter(prompt_text, timeout=timeout)
+                    if result.get("status") == "sign_in_required":
+                        raise RuntimeError("ChatGPT Web is not signed in; sign in to ChatGPT in Settings to complete drafting.")
+                    if result.get("status") == "failed":
+                        raise RuntimeError(result.get("detail") or "ChatGPT Web communication failed")
+                    reply = result.get("reply") or ""
+                    if not reply.strip():
+                        raise RuntimeError(result.get("detail") or "No reply received from ChatGPT Web")
+                    try:
+                        draft = apply_chatgpt_reply(self.db, self.settings, draft_id, section, reply, prompt)
+                        applied = True
+                        break
+                    except Exception as err:
+                        last_regen_error = str(err)
+                        log.warning("Regenerate ChatGPT Web apply attempt %d failed: %s", attempt_idx + 1, err)
+                        if attempt_idx == 0:
+                            prompt_text = (
+                                f"The previous response could not be applied: {str(err)[:300]}.\n"
+                                "Return ONLY valid JSON matching the required schema with all fields populated."
+                            )
+                if not applied:
+                    raise RuntimeError(f"ChatGPT Web regeneration failed: {last_regen_error}")
                 regeneration_changes = []
                 regenerated_section = section
             else:

@@ -23,6 +23,8 @@ function scoreBadge(job) {
 }
 let activeJob = null;
 let activeJobPinned = false;
+let currentJobDetail = null;
+let jobsListCache = [];
 let jobsPage = 1;
 let jobsInboxMode = 'since_last_visit';
 let jobsVisitBoundary = null;
@@ -313,7 +315,114 @@ function formatNoticeMessage(rawMessage, isError, defaultNextStep) {
   };
 }
 
-function notice(message, error = false, action = null) {
+const applicationErrors = new Map();
+
+function recordApplicationError(id, error, draftOrItem = null) {
+  if (!id) return null;
+  const parsed = formatErrorDetails(error);
+  const info = {
+    id,
+    what: parsed.what,
+    next: parsed.next,
+    title: draftOrItem?.job_title || draftOrItem?.title || 'Application',
+    company: draftOrItem?.company || '',
+    timestamp: Date.now(),
+  };
+  applicationErrors.set(id, info);
+  if (typeof renderApplicationList === 'function' && Array.isArray(applicationDrafts)) {
+    renderApplicationList();
+  }
+  return info;
+}
+
+function clearApplicationError(id) {
+  if (id && applicationErrors.has(id)) {
+    applicationErrors.delete(id);
+    if (typeof renderApplicationList === 'function' && Array.isArray(applicationDrafts)) {
+      renderApplicationList();
+    }
+  }
+}
+
+function resolveNoticeContext(explicitContext) {
+  if (explicitContext) {
+    if (explicitContext.type && (explicitContext.title || explicitContext.job_title)) {
+      return {
+        type: explicitContext.type,
+        id: explicitContext.id || explicitContext.vacancy_id,
+        title: explicitContext.title || explicitContext.job_title || 'Application',
+        company: explicitContext.company || '',
+        onClick: explicitContext.onClick,
+      };
+    }
+    if (explicitContext.id || explicitContext.vacancy_id) {
+      const isPrep = explicitContext.vacancy_id && !explicitContext.package_hash && !explicitContext.resume_data;
+      return {
+        type: explicitContext.type || (isPrep ? 'preparation' : 'application'),
+        id: explicitContext.id || explicitContext.vacancy_id,
+        title: explicitContext.title || explicitContext.job_title || 'Application',
+        company: explicitContext.company || '',
+        onClick: explicitContext.onClick,
+      };
+    }
+    if (explicitContext.title) {
+      return {
+        type: explicitContext.type || 'job',
+        id: explicitContext.id,
+        title: explicitContext.title,
+        company: explicitContext.company || '',
+        onClick: explicitContext.onClick,
+      };
+    }
+  }
+  try {
+    if ($('#applications')?.classList.contains('active')) {
+      if (activeApplicationId && Array.isArray(applicationDrafts)) {
+        const draft = applicationDrafts.find((d) => d.id === activeApplicationId);
+        if (draft) {
+          return {
+            type: 'application',
+            id: draft.id,
+            title: draft.job_title || 'Application',
+            company: draft.company || '',
+          };
+        }
+      }
+      if (activePreparationJobId && Array.isArray(applicationPreparations)) {
+        const prep = applicationPreparations.find((p) => p.vacancy_id === activePreparationJobId);
+        if (prep) {
+          return {
+            type: 'preparation',
+            id: prep.vacancy_id,
+            title: prep.job_title || 'Application preparation',
+            company: prep.company || '',
+          };
+        }
+      }
+    } else if ($('#jobs')?.classList.contains('active')) {
+      if (activeJob) {
+        const job = (typeof currentJobDetail !== 'undefined' && currentJobDetail && currentJobDetail.id === activeJob)
+          ? currentJobDetail
+          : ((typeof jobsListCache !== 'undefined' && Array.isArray(jobsListCache))
+            ? jobsListCache.find((j) => j.id === activeJob)
+            : null);
+        if (job) {
+          return {
+            type: 'job',
+            id: job.id,
+            title: job.title || 'Job',
+            company: job.company || '',
+          };
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+function notice(message, error = false, action = null, context = null) {
   const node = $('#notice');
   clearTimeout(window.noticeTimeout);
   node.hidden = false;
@@ -321,12 +430,27 @@ function notice(message, error = false, action = null) {
   node.setAttribute('role', error ? 'alert' : 'status');
   node.setAttribute('aria-live', error ? 'assertive' : 'polite');
 
+  if (action && typeof action === 'object' && !action.onClick) {
+    if (action.context) context = action.context;
+    if (action.action) action = action.action;
+  }
+
+  const targetContext = resolveNoticeContext(context);
   const children = [];
   const parsed = formatNoticeMessage(message, error);
 
   if (error && parsed.what && parsed.next) {
     const content = document.createElement('div');
     content.className = 'toast-content';
+
+    if (targetContext && targetContext.title) {
+      const contextDiv = document.createElement('div');
+      contextDiv.className = 'toast-context';
+      const label = targetContext.type === 'job' ? 'Job' : 'Application';
+      contextDiv.innerHTML = `<span class="toast-context-badge">${escapeHtml(label)}</span><strong class="toast-context-title">${escapeHtml(targetContext.title)}${targetContext.company ? ` · ${escapeHtml(targetContext.company)}` : ''}</strong>`;
+      content.appendChild(contextDiv);
+    }
+
     const whatSpan = document.createElement('span');
     whatSpan.className = 'toast-line';
     whatSpan.innerHTML = `<strong>What happened:</strong> ${escapeHtml(parsed.what)}`;
@@ -342,6 +466,33 @@ function notice(message, error = false, action = null) {
     messageNode.className = 'toast-message';
     messageNode.textContent = typeof message === 'string' ? message : parsed.text;
     children.push(messageNode);
+  }
+
+  if (error && targetContext && targetContext.id) {
+    const gotoButton = document.createElement('button');
+    gotoButton.type = 'button';
+    gotoButton.className = 'toast-action toast-action--context';
+    const label = targetContext.type === 'job' ? 'job' : 'application';
+    gotoButton.textContent = `Open ${label} →`;
+    gotoButton.setAttribute('aria-label', `Open ${targetContext.title}`);
+    gotoButton.addEventListener('click', async () => {
+      clearNotice();
+      if (typeof targetContext.onClick === 'function') {
+        await targetContext.onClick();
+      } else if (targetContext.type === 'application') {
+        await showTab('applications');
+        await loadApplications(targetContext.id);
+      } else if (targetContext.type === 'preparation') {
+        await showTab('applications');
+        const prep = Array.isArray(applicationPreparations) ? applicationPreparations.find((p) => p.vacancy_id === targetContext.id) : null;
+        if (prep) showPreparationIssue(prep);
+        else await loadApplications();
+      } else if (targetContext.type === 'job') {
+        await showTab('jobs');
+        await openJobInJobs(targetContext.id);
+      }
+    });
+    children.push(gotoButton);
   }
 
   if (action?.label && typeof action.onClick === 'function') {
@@ -1137,6 +1288,7 @@ async function loadJobs() {
   syncStrongThresholdUi(intent);
   if (jobsPage > result.pages) { jobsPage = result.pages; syncJobsHash(); return loadJobs(); }
   const jobs = result.items;
+  jobsListCache = jobs;
   if (activeJobPinned && activeJob && !jobs.some((job) => job.id === activeJob) && jobsPage > 1) {
     jobsPage = 1;
     syncJobsHash();
@@ -1190,6 +1342,29 @@ async function loadJobs() {
   }
 }
 
+function markJobUiSeen(id, seenAt = new Date().toISOString()) {
+  document.querySelector(`[data-job-card="${id}"]`)?.classList.remove('is-unseen');
+  document.querySelector(`[data-job="${id}"] .job-unread-dot`)?.remove();
+  if (currentJobDetail && currentJobDetail.id === id && currentJobDetail.read_state === 'unseen') {
+    currentJobDetail.read_state = 'seen';
+    currentJobDetail.seen_at = seenAt;
+  }
+  if (Array.isArray(jobsListCache)) {
+    const cached = jobsListCache.find((j) => j.id === id);
+    if (cached && cached.read_state === 'unseen') {
+      cached.read_state = 'seen';
+      cached.seen_at = seenAt;
+      const countEl = $('#jobs-unseen-count');
+      if (countEl) {
+        const count = Number(countEl.textContent);
+        if (Number.isFinite(count) && count > 0) {
+          countEl.textContent = String(count - 1);
+        }
+      }
+    }
+  }
+}
+
 async function showJob(id, pin = false, loadedJob = null) {
   activeJob = id;
   activeJobPinned = pin;
@@ -1199,12 +1374,12 @@ async function showJob(id, pin = false, loadedJob = null) {
     node.setAttribute('aria-pressed', selected ? 'true' : 'false');
   });
   const job = loadedJob || await api(`/api/jobs/${id}`);
+  currentJobDetail = job;
   if (job.read_state === 'unseen') {
     const seen = await api(`/api/jobs/${id}/seen`, {method:'POST', body:'{}'});
     job.seen_at = seen.seen_at;
     job.read_state = 'seen';
-    document.querySelector(`[data-job-card="${id}"]`)?.classList.remove('is-unseen');
-    document.querySelector(`[data-job="${id}"] .job-unread-dot`)?.remove();
+    markJobUiSeen(id, seen.seen_at);
   }
   const [profile, setup] = await Promise.all([api('/api/profile'), api('/api/setup')]);
   const provider = profile.drafting_provider || '';
@@ -2364,8 +2539,11 @@ function visibleApplicationPreparations() {
 function renderApplicationList(total = applicationsTotal) {
   const preparations = visibleApplicationPreparations();
   const summary = $('#application-list-summary');
+  const issueCount = applicationErrors.size;
+  const issuesNotice = issueCount > 0 ? ` · ${issueCount} with recent error${issueCount === 1 ? '' : 's'}` : '';
   summary.textContent = `${total} prepared application${total === 1 ? '' : 's'}` +
     (preparations.length ? ` · ${preparations.length} waiting for a draft` : '') +
+    issuesNotice +
     (total ? ` · page ${applicationsPage} of ${applicationsPages}` : '');
   $('#applications-page-summary').textContent = total ? `Page ${applicationsPage} of ${applicationsPages}` : 'No applications';
   $('#applications-prev').disabled = applicationsPage <= 1;
@@ -2402,9 +2580,14 @@ function renderApplicationList(total = applicationsTotal) {
       const inProgress = ['queued', 'preparing'].includes(item.status);
       const tone = ['credits','failed','quota'].includes(item.category) ? 'danger' : inProgress ? 'info' : 'warning';
       const statusNote = item.status === 'queued' ? 'Queued in background' : item.status === 'preparing' ? 'Preparing draft' : 'No draft yet';
-      return `<button type="button" class="item clickable application-card surface-action ${selected ? 'is-selected' : ''}" data-preparation="${item.vacancy_id}" aria-pressed="${selected ? 'true' : 'false'}">
+      const prepErr = applicationErrors.get(item.vacancy_id) || (['credits','failed','quota'].includes(item.category) ? { what: formatErrorDetails(item.reason).what } : null);
+      return `<button type="button" class="item clickable application-card surface-action ${selected ? 'is-selected' : ''} ${prepErr ? 'has-error' : ''}" data-preparation="${item.vacancy_id}" aria-pressed="${selected ? 'true' : 'false'}">
         <div class="item-title">${escapeHtml(item.job_title)}</div>
-        <div class="application-card-status"><span class="status-badge status-badge--${tone}">${escapeHtml(item.label)}</span></div>
+        <div class="application-card-status">
+          <span class="status-badge status-badge--${tone}">${escapeHtml(item.label)}</span>
+          ${prepErr ? '<span class="status-badge status-badge--danger">Error</span>' : ''}
+        </div>
+        ${prepErr ? `<div class="item-error-preview" title="${escapeHtml(prepErr.what)}"><strong>Issue:</strong> ${escapeHtml(prepErr.what)}</div>` : ''}
         <div class="item-meta">${escapeHtml(item.company)} · ${item.score} match · ${statusNote}</div>
         <div class="item-meta">Updated ${when(item.updated_at)}</div>
       </button>`;
@@ -2413,9 +2596,14 @@ function renderApplicationList(total = applicationsTotal) {
     const selected = draft.id === activeApplicationId;
     const tone = applicationReviewTone(draft);
     const delivery = draft.latest_submission?.outcome?.label;
-    return `<button type="button" class="item clickable application-card surface-action ${selected ? 'is-selected' : ''}" data-application="${draft.id}" aria-pressed="${selected ? 'true' : 'false'}">
+    const errInfo = applicationErrors.get(draft.id);
+    return `<button type="button" class="item clickable application-card surface-action ${selected ? 'is-selected' : ''} ${errInfo ? 'has-error' : ''}" data-application="${draft.id}" aria-pressed="${selected ? 'true' : 'false'}">
       <div class="item-title">${escapeHtml(draft.job_title)}</div>
-      <div class="application-card-status"><span class="status-badge status-badge--${tone}">${escapeHtml(applicationReviewLabel(draft))}</span></div>
+      <div class="application-card-status">
+        <span class="status-badge status-badge--${tone}">${escapeHtml(applicationReviewLabel(draft))}</span>
+        ${errInfo ? '<span class="status-badge status-badge--danger">Error</span>' : ''}
+      </div>
+      ${errInfo ? `<div class="item-error-preview" title="${escapeHtml(errInfo.what)}"><strong>Issue:</strong> ${escapeHtml(errInfo.what)}</div>` : ''}
       <div class="item-meta">${escapeHtml(draft.company)} · ${escapeHtml(providerLabel(draft.provider_mode))}</div>
       <div class="item-meta">Updated ${when(draft.updated_at)}${delivery ? ` · ${escapeHtml(delivery)}` : ''}</div>
     </button>`;
@@ -2819,6 +3007,10 @@ function showPreparationIssue(item) {
   activeApplicationId = null;
   activePreparationJobId = item.vacancy_id;
   renderApplicationList();
+  if (item?.vacancy_id) {
+    api(`/api/jobs/${item.vacancy_id}/seen`, {method:'POST', body:'{}'}).catch(() => {});
+    markJobUiSeen(item.vacancy_id);
+  }
   const detail = $('#application-detail');
   const inProgress = ['queued', 'preparing'].includes(item.status);
   const tone = ['credits','failed','quota'].includes(item.category) ? 'danger' : inProgress ? 'info' : 'warning';
@@ -2839,17 +3031,22 @@ function showPreparationIssue(item) {
       <button type="button" class="secondary" data-preparation-job>View job in Jobs</button>
       <button type="button" class="secondary danger" data-ignore-preparation>Ignore job</button>
     </div>`;
+  const prepContext = { type: 'preparation', id: item.vacancy_id, title: item.job_title, company: item.company };
   detail.querySelector('[data-ignore-preparation]')?.addEventListener('click', async () => {
     try {
       await api(`/api/jobs/${item.vacancy_id}/decision`, {method:'POST', body:JSON.stringify({decision:'ignored', reason:'Preparation dismissed'})});
+      clearApplicationError(item.vacancy_id);
       notice('Job marked as ignored.', false);
       activePreparationJobId = null;
       detail.innerHTML = '<div class="panel empty"><p>Job marked as ignored.</p></div>';
       await loadApplications();
-    } catch (error) { notice(error.message, true); }
+    } catch (error) {
+      recordApplicationError(item.vacancy_id, error, item);
+      notice(error.message, true, null, prepContext);
+    }
   });
   detail.querySelector('[data-preparation-job]').addEventListener('click', () =>
-    openApplicationJob(item.vacancy_id).catch((error) => notice(error.message, true)));
+    openApplicationJob(item.vacancy_id).catch((error) => notice(error.message, true, null, prepContext)));
   detail.querySelector('[data-retry-preparation]')?.addEventListener('click', async (event) => {
     const button = event.currentTarget;
     beginPending(button, 'Checking application method…');
@@ -2865,6 +3062,7 @@ function showPreparationIssue(item) {
       const result = await api(`/api/jobs/${item.vacancy_id}/prepare`, {
         method:'POST', body:JSON.stringify({provider:item.provider || undefined, prepare_anyway:prepareAnyway}),
       });
+      clearApplicationError(item.vacancy_id);
       if (result.status === 'ready' && result.draft_id) {
         notice('Application draft is ready for review.');
         await loadApplications(result.draft_id);
@@ -2872,7 +3070,10 @@ function showPreparationIssue(item) {
       }
       notice('Application preparation queued. It will appear here when the draft is ready.');
       await loadApplications();
-    } catch (error) { notice(error.message, true); }
+    } catch (error) {
+      recordApplicationError(item.vacancy_id, error, item);
+      notice(error.message, true, null, prepContext);
+    }
     finally { if (button.isConnected) endPending(button); }
   });
   detail.focus({preventScroll:true});
@@ -2917,6 +3118,9 @@ async function showApplication(id, preferredScreen = null) {
     throw error;
   }
   const job = draft.job || await api(`/api/jobs/${draft.vacancy_id}`).catch(() => ({}));
+  if (draft?.vacancy_id) {
+    markJobUiSeen(draft.vacancy_id, draft.seen_at);
+  }
   let currentScreen = preferredScreen || 'first-glance';
   activeApplicationScreen = currentScreen;
 
@@ -2982,6 +3186,17 @@ async function showApplication(id, preferredScreen = null) {
   const detailScroll = detail?.scrollTop || 0;
   const pageScroll = window.scrollY;
 
+  const activeError = applicationErrors.get(id);
+  const activeErrorBanner = activeError ? `
+    <div id="active-application-error-banner" class="application-alert application-alert--danger" role="alert" style="margin-bottom:1rem;">
+      <div class="application-alert-header">
+        <strong>Recent issue on this application</strong>
+        <button type="button" class="text-button" id="btn-dismiss-app-error" style="font-size:12px;padding:2px 6px;">Dismiss</button>
+      </div>
+      <p><strong>What happened:</strong> ${escapeHtml(activeError.what)}</p>
+      <p><strong>Next step:</strong> ${escapeHtml(activeError.next)}</p>
+    </div>` : '';
+
   detail.innerHTML = `
     <div class="application-review-header">
       <div>
@@ -2993,6 +3208,8 @@ async function showApplication(id, preferredScreen = null) {
         <span class="status-badge status-badge--${reviewTone}">${escapeHtml(applicationReviewLabel(draft))}</span>
       </div>
     </div>
+
+    ${activeErrorBanner}
 
     <nav class="application-screen-nav application-review-nav" aria-label="Application review screens">
       <button type="button" data-app-screen="first-glance" aria-current="${currentScreen === 'first-glance'}">
@@ -3148,13 +3365,15 @@ async function showApplication(id, preferredScreen = null) {
         </div>` : ''}
         ${canInspect ? `
         <div class="application-form-inspection-banner surface-status">
-          <p class="hint">Job Radar uses a browser to discover the questions on this form and prefill answers from your profile.</p>
+          <p class="hint">${destination.kind === 'linkedin_easy_apply' && !formData.complete && !(formData.inspection_blockers?.length)
+            ? 'Answers for current steps are saved. Click <strong>Inspect remaining steps</strong> to navigate forward and reach the final review page.'
+            : 'Job Radar uses a browser to discover the questions on this form and prefill answers from your profile.'}</p>
           <div class="actions" style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
-            <button id="inspect-form-inline" type="button" class="secondary">${destination.kind === 'linkedin_easy_apply' && !formData.complete ? 'Inspect remaining steps' : 'Inspect form fields'}</button>
+            <button id="inspect-form-inline" type="button" class="${destination.kind === 'linkedin_easy_apply' && !formData.complete && !(formData.inspection_blockers?.length) ? 'primary' : 'secondary'}">${destination.kind === 'linkedin_easy_apply' && !formData.complete ? 'Inspect remaining steps' : 'Inspect form fields'}</button>
             ${(draft.job_source_kind === 'linkedin' || (draft.job_posting_url && draft.job_posting_url.includes('linkedin.com'))) ? `<button id="btn-switch-linkedin-msg" type="button" class="text-button">Or switch to direct LinkedIn message</button>` : ''}
           </div>
         </div>` : ''}
-        ${formData.inspection_blockers?.length ? applicationAlert('warning', 'More answers needed to inspect every step', formData.inspection_blockers) : ''}
+        ${formData.inspection_blockers?.length ? applicationAlert('warning', 'Inspection attention needed', formData.inspection_blockers) : ''}
         <div class="application-form-fields">${renderApplicationFormFields(formData.fields || [], draft)}</div>
       </section>
 
@@ -3205,6 +3424,37 @@ async function showApplication(id, preferredScreen = null) {
       </div>
     </div>`;
 
+  const draftContext = { type: 'application', id, title: draft.job_title, company: draft.company };
+  const showActiveApplicationErrorBanner = (errInfo) => {
+    let banner = detail.querySelector('#active-application-error-banner');
+    if (!banner) {
+      const header = detail.querySelector('.application-review-header');
+      if (header) {
+        header.insertAdjacentHTML('afterend', `
+          <div id="active-application-error-banner" class="application-alert application-alert--danger" role="alert" style="margin-bottom:1rem;">
+            <div class="application-alert-header">
+              <strong>Recent issue on this application</strong>
+              <button type="button" class="text-button" id="btn-dismiss-app-error" style="font-size:12px;padding:2px 6px;">Dismiss</button>
+            </div>
+            <p><strong>What happened:</strong> ${escapeHtml(errInfo.what)}</p>
+            <p><strong>Next step:</strong> ${escapeHtml(errInfo.next)}</p>
+          </div>`);
+        detail.querySelector('#btn-dismiss-app-error')?.addEventListener('click', () => {
+          clearApplicationError(id);
+          detail.querySelector('#active-application-error-banner')?.remove();
+        });
+      }
+    } else {
+      banner.querySelector('p:nth-of-type(1)').innerHTML = `<strong>What happened:</strong> ${escapeHtml(errInfo.what)}`;
+      banner.querySelector('p:nth-of-type(2)').innerHTML = `<strong>Next step:</strong> ${escapeHtml(errInfo.next)}`;
+    }
+  };
+
+  detail.querySelector('#btn-dismiss-app-error')?.addEventListener('click', () => {
+    clearApplicationError(id);
+    detail.querySelector('#active-application-error-banner')?.remove();
+  });
+
   const loadResumePreview = async () => {
     const preview = detail.querySelector('.application-preview-pages');
     const button = detail.querySelector('#load-resume-preview');
@@ -3220,7 +3470,7 @@ async function showApplication(id, preferredScreen = null) {
     } catch (error) {
       button.disabled = false;
       button.textContent = 'Try PDF preview again';
-      notice(error.message, true);
+      notice(error.message, true, null, draftContext);
     }
   };
   detail.querySelector('#load-resume-preview')?.addEventListener('click', loadResumePreview);
@@ -3230,6 +3480,8 @@ async function showApplication(id, preferredScreen = null) {
     const button = beginPending(event.currentTarget, 'Checking LinkedIn…');
     try {
       const result = await api(`/api/applications/${id}/discover-apply`, {method:'POST'});
+      clearApplicationError(id);
+      detail.querySelector('#active-application-error-banner')?.remove();
       if (result.action.kind === 'web') {
         await loadApplications(id, 'package');
         notice(result.inspection_error
@@ -3240,9 +3492,13 @@ async function showApplication(id, preferredScreen = null) {
         notice(result.inspection_error ? `LinkedIn Easy Apply found, but inspection needs attention: ${result.inspection_error}` : 'LinkedIn Easy Apply fields are ready for review. Complete missing answers, save, then inspect again.');
       } else {
         await loadApplications(id, 'package');
-        notice(result.action.detail || 'No external application form was found.', true);
+        notice(result.action.detail || 'No external application form was found.', true, null, draftContext);
       }
-    } catch(error) { notice(error.message, true); }
+    } catch(error) {
+      const errInfo = recordApplicationError(id, error, draft);
+      if (errInfo) showActiveApplicationErrorBanner(errInfo);
+      notice(error.message, true, null, draftContext);
+    }
     finally { if (button.isConnected) endPending(button); }
   });
 
@@ -3314,7 +3570,7 @@ async function showApplication(id, preferredScreen = null) {
 
   $('#regenerate-draft')?.addEventListener('click', async () => {
     const prompt = $('#regenerate-prompt').value.trim();
-    if (!prompt) { notice('Enter custom instructions to regenerate the draft.', true); return; }
+    if (!prompt) { notice('Enter custom instructions to regenerate the draft.', true, null, draftContext); return; }
     const button = $('#regenerate-draft');
     beginPending(button, 'Regenerating…');
     showApplicationRegenerating(id);
@@ -3322,18 +3578,22 @@ async function showApplication(id, preferredScreen = null) {
       const section = $('#regenerate-section').value;
       const result = await api(`/api/applications/${id}/regenerate`, {method:'POST', body:JSON.stringify({prompt, section})});
       applicationReviewChanges[id] = result.changes || [];
+      clearApplicationError(id);
+      detail.querySelector('#active-application-error-banner')?.remove();
       await loadApplications(id, 'package');
       notice(section === 'all' ? 'New draft prepared for review.' : 'Selected section regenerated. Untouched content was preserved.');
     } catch(error) {
+      const errInfo = recordApplicationError(id, error, draft);
       try { await loadApplications(id, 'package'); } catch (refreshError) { console.warn('Could not refresh application status', refreshError); }
-      notice(error.message, true);
+      if (errInfo) showActiveApplicationErrorBanner(errInfo);
+      notice(error.message, true, null, draftContext);
     } finally {
       if (button.isConnected) endPending(button);
     }
   });
 
   $('#chatgpt-input')?.addEventListener('click', async (event) => {
-    if (dirtySections.size) { notice('Save your application changes before sending its context to ChatGPT.', true); return; }
+    if (dirtySections.size) { notice('Save your application changes before sending its context to ChatGPT.', true, null, draftContext); return; }
     const button = beginPending(event.currentTarget, 'Regenerating…');
     showApplicationRegenerating(id);
     try {
@@ -3342,12 +3602,18 @@ async function showApplication(id, preferredScreen = null) {
         method:'POST',
         body:JSON.stringify({section, instruction:$('#regenerate-prompt').value.trim()}),
       });
+      clearApplicationError(id);
+      detail.querySelector('#active-application-error-banner')?.remove();
       await loadApplications(id, 'package');
       notice(result.detail || (section === 'all' ? 'New draft prepared for review.' : 'Selected section regenerated. Untouched content was preserved.'),
-        result.status !== 'entered' && result.status !== 'received');
+        result.status !== 'entered' && result.status !== 'received',
+        null,
+        draftContext);
     } catch(error) {
+      const errInfo = recordApplicationError(id, error, draft);
       try { await loadApplications(id, 'package'); } catch (refreshError) { console.warn('Could not refresh application status', refreshError); }
-      notice(error.message, true);
+      if (errInfo) showActiveApplicationErrorBanner(errInfo);
+      notice(error.message, true, null, draftContext);
     }
     finally { if (button.isConnected) endPending(button); }
   });
@@ -3358,6 +3624,8 @@ async function showApplication(id, preferredScreen = null) {
     try {
       const messageOnly = dirtySections.size === 1 && dirtySections.has('message_data');
       const saved = await saveApplication(id, draft, dirtySections);
+      clearApplicationError(id);
+      detail.querySelector('#active-application-error-banner')?.remove();
       if (messageOnly) {
         Object.assign(draft, saved);
         dirtySections.clear();
@@ -3377,10 +3645,12 @@ async function showApplication(id, preferredScreen = null) {
       notice(saved.form_data?.kind === 'linkedin_easy_apply' && !saved.form_data.complete
         ? saved.form_data.inspection_blockers?.length
           ? 'Answers saved. Complete the remaining required fields, then inspect again.'
-          : 'Answers saved. Inspect remaining LinkedIn steps to continue.'
+          : 'Answers saved. Click "Inspect remaining steps" below to continue.'
         : 'Application saved');
     } catch(error) {
-      notice(error.message, true);
+      const errInfo = recordApplicationError(id, error, draft);
+      if (errInfo) showActiveApplicationErrorBanner(errInfo);
+      notice(error.message, true, null, draftContext);
     } finally {
       if (button.isConnected) {
         endPending(button);
@@ -3396,10 +3666,14 @@ async function showApplication(id, preferredScreen = null) {
       try {
         if (!saveButton.disabled) await saveApplication(id, draft, dirtySections);
         await api(`/api/applications/${id}/inspect`, {method:'POST'});
+        clearApplicationError(id);
+        detail.querySelector('#active-application-error-banner')?.remove();
         await loadApplications(id, 'package');
         notice('Application form inspected.');
       } catch(error) {
-        notice(error.message, true);
+        const errInfo = recordApplicationError(id, error, draft);
+        if (errInfo) showActiveApplicationErrorBanner(errInfo);
+        notice(error.message, true, null, draftContext);
       } finally {
         if (button.isConnected) endPending(button);
       }
@@ -3411,12 +3685,16 @@ async function showApplication(id, preferredScreen = null) {
     try {
       const result = await api(`/api/applications/${id}/approve`, {method:'POST', body:JSON.stringify({package_hash:draft.package_hash})});
       const outcome = result.outcome || {};
+      clearApplicationError(id);
+      detail.querySelector('#active-application-error-banner')?.remove();
       await loadApplications(id, 'first-glance');
       const message = `${outcome.label || 'Application updated'}${result.receipt || result.error ? `: ${result.receipt || result.error}` : ''}`;
       $('#application-outcome').textContent = message;
-      notice(message, outcome.key === 'submission_uncertain');
+      notice(message, outcome.key === 'submission_uncertain', null, draftContext);
     } catch(error) {
-      notice(error.message, true);
+      const errInfo = recordApplicationError(id, error, draft);
+      if (errInfo) showActiveApplicationErrorBanner(errInfo);
+      notice(error.message, true, null, draftContext);
     } finally {
       if (button.isConnected) endPending(button);
     }
@@ -3456,7 +3734,7 @@ async function showApplication(id, preferredScreen = null) {
   detail.querySelector('#btn-next-to-package')?.addEventListener('click', () => switchScreen('package'));
   detail.querySelector('#btn-sticky-back-first-glance')?.addEventListener('click', () => switchScreen('first-glance'));
   detail.querySelector('#btn-view-job-in-jobs')?.addEventListener('click', () => {
-    openApplicationJob(draft.vacancy_id).catch((error) => notice(error.message, true));
+    openApplicationJob(draft.vacancy_id).catch((error) => notice(error.message, true, null, draftContext));
   });
 
   const handleDiscard = async () => {
@@ -3483,12 +3761,16 @@ async function showApplication(id, preferredScreen = null) {
 
     try {
       await api(`/api/applications/${id}?ignore_job=true`, {method:'DELETE'});
+      clearApplicationError(id);
+      detail.querySelector('#active-application-error-banner')?.remove();
       notice('Application draft discarded and job marked as ignored.', false);
       activeApplicationId = null;
       detail.innerHTML = '<div class="panel empty"><p>Draft discarded.</p></div>';
       await loadApplications();
     } catch (error) {
-      notice(error.message, true);
+      const errInfo = recordApplicationError(id, error, draft);
+      if (errInfo) showActiveApplicationErrorBanner(errInfo);
+      notice(error.message, true, null, draftContext);
     }
   };
 

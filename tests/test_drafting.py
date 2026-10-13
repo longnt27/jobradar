@@ -14,6 +14,30 @@ from job_radar.drafting import (ApplicationFit, EnglishTranslations, ModelDraft,
 from job_radar.ingest import ObservedJob, ingest
 
 
+def test_custom_form_answers_include_candidate_context_and_safe_fields(monkeypatch):
+    import json
+    from job_radar.drafting import FormAnswers, draft_custom_answers
+
+    prompts = []
+
+    def answer(_provider, prompt, response_type):
+        prompts.append(prompt)
+        assert response_type is FormAnswers
+        return FormAnswers.model_validate({"answers": [{"index": "0", "answer": "Relevant ML experience"},
+                                                       {"index": "1", "answer": "Salary answer"}]})
+
+    monkeypatch.setattr("job_radar.drafting._provider_json", answer)
+    fields = [{"index": 0, "type": "textarea", "label": "Why are you interested?", "max_length": 11},
+              {"index": 1, "type": "textarea", "label": "Expected salary", "max_length": 50}]
+    result = draft_custom_answers("codex", {"title": "AI Engineer"},
+                                  {"name": "Alex", "skills": ["Python"]}, [], fields)
+    assert result == {"0": "Relevant ML"}
+    payload = json.loads(prompts[0][prompts[0].index('{"job":'):])
+    assert payload["candidate"]["name"] == "Alex"
+    assert payload["job"]["title"] == "AI Engineer"
+    assert [field["index"] for field in payload["fields"]] == [0]
+
+
 def test_draft_uses_approved_evidence_and_renders_resume(tmp_path: Path) -> None:
     client = TestClient(create_app(Settings(tmp_path)))
     profile = client.get("/api/profile").json()
@@ -529,4 +553,43 @@ def test_leadership_summary_rule_distinguishes_real_vs_trainee_leadership() -> N
     assert _is_leadership_job(lead_job)
     rule_tech_lead_for_lead_job = _leadership_summary_rule(tech_lead_profile, lead_job)
     assert "to align with the target leadership role" in rule_tech_lead_for_lead_job
+
+
+def test_run_provider_retries_invalid_json_with_corrective_prompt(monkeypatch) -> None:
+    job = {"title": "AI Engineer", "company": "Example", "description": "Build ML models."}
+    profile = {
+        "name": "Alex",
+        "experience": [{"company": "Co", "role": "Eng", "bullets": ["Improved latency by 25%."]}],
+    }
+    cards = [
+        {"id": "c1", "title": "Model A", "claim": "Built A", "details": {"what": "Built A", "results": [{"outcome": "Accuracy 95%."}]}},
+    ]
+    attempts = []
+
+    def fake_provider(provider, prompt, response_type):
+        attempts.append(prompt)
+        if len(attempts) == 1:
+            raise RuntimeError("codex returned an invalid draft: Expecting value: line 1 column 1")
+        return ModelDraft(
+            summary="AI Engineer with experience in ML models.",
+            selected_evidence_ids=["c1"],
+            project_bullets=[
+                ProjectBullets(
+                    evidence_id="c1",
+                    bullets=["Architected Model A pipeline.", "Accuracy reached 95% on test set."],
+                    skills=["PyTorch", "Python", "FastAPI"],
+                )
+            ],
+            project_focus=[],
+            bold_phrases=["25%", "95%"],
+            fit_text="Candidate fit text highlighting model engineering.",
+        )
+
+    monkeypatch.setattr("job_radar.drafting._provider_json", fake_provider)
+    from job_radar.drafting import _run_provider
+    result = _run_provider("codex", job, profile, cards)
+    assert len(attempts) == 2
+    assert "The previous output was invalid" in attempts[1]
+    assert result.summary == "AI Engineer with experience in ML models."
+    assert result.selected_evidence_ids == ["c1"]
 

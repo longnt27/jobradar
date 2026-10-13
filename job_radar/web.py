@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field, HttpUrl
 from .writing_preferences import create_writing_router, get_preferences
 from .db import Database, new_id, now
 from .discovery import merge_reason_label, source_coverage, split_observation, summarize_discovery
+from .dedup import merge_vacancies
 from .apply import (
     CONFIRMED_SUBMISSION_STATUSES,
     inspect_form,
@@ -53,7 +54,7 @@ from .linkedin_application import discover_linkedin_apply
 from .github import list_public_repositories
 from .mail_config import save_smtp, send_test_email, smtp_config, smtp_config_fingerprint
 from .local_analysis import clean_saved_analysis, list_local_models, validate_local_model
-from .job_inbox import (application_filter_sql, enrich_jobs, mark_seen, release_due_snoozes,
+from .job_inbox import (application_filter_sql, enrich_jobs, mark_application_seen, mark_seen, release_due_snoozes,
                         set_decision, set_manual_applied, set_recruiting_outcome)
 from .home_dashboard import build_home_dashboard
 from .matching import MatchManager
@@ -296,6 +297,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await scan_manager.stop()
 
     app = FastAPI(title="Job Radar", version="0.1.0", lifespan=lifespan)
+
+    @app.middleware("http")
+    async def follow_combined_job(request, call_next):
+        match = re.match(r"^/api/jobs/([a-f0-9]{32})(/|$)", request.scope["path"])
+        if match:
+            redirect = db.one("SELECT vacancy_id FROM vacancy_redirects WHERE old_id=?", (match[1],))
+            if redirect:
+                path = request.scope["path"].replace(match[1], redirect["vacancy_id"], 1)
+                request.scope["path"] = path
+                request.scope["raw_path"] = path.encode()
+        return await call_next(request)
     app.include_router(create_writing_router(db))
     app.include_router(create_zalo_router(db, settings, scan_manager.browser_lock))
     app.state.db = db
@@ -1283,6 +1295,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   location: str = "", source: str = "", seniority: str = "", fit: str = "", sort: str = "best",
                   page: int = Query(1, ge=1), page_size: int = Query(10, ge=1, le=50)):
         release_due_snoozes(db)
+        if focus_id:
+            redirect = db.one("SELECT vacancy_id FROM vacancy_redirects WHERE old_id=?", (focus_id,))
+            if redirect:
+                focus_id = redirect["vacancy_id"]
         if state and not any((decision, application, outcome)):
             dimension, legacy_value = legacy_job_state_filter(state)
             if dimension == "decision":
@@ -1450,7 +1466,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         for observation in row["observations"]:
             observation["merge_reason_label"] = merge_reason_label(observation["merge_reason"])
         row["sighting_count"] = len(row["observations"])
+        row["possible_duplicates"] = db.all(
+            "SELECT v.id,v.title,v.company,v.location,r.reason,r.confidence FROM duplicate_reviews r "
+            "JOIN vacancies v ON v.id=CASE WHEN r.left_id=? THEN r.right_id ELSE r.left_id END "
+            "WHERE (r.left_id=? OR r.right_id=?) AND r.status='possible' ORDER BY r.confidence DESC LIMIT 10",
+            (job_id, job_id, job_id),
+        )
         return row
+
+    @app.post("/api/jobs/{job_id}/duplicates/{other_id}/merge")
+    def combine_jobs(job_id: str, other_id: str):
+        pair = sorted((job_id, other_id))
+        if not db.one("SELECT 1 FROM duplicate_reviews WHERE left_id=? AND right_id=? AND status='possible'", tuple(pair)):
+            raise HTTPException(404, "Possible duplicate not found")
+        try:
+            with db.connection() as conn:
+                identifier = merge_vacancies(conn, job_id, other_id, "user_confirmed", db.get_setting("profile", {}), db.get_setting("matching_model", ""))
+        except (KeyError, ValueError) as error:
+            raise HTTPException(409, str(error)) from error
+        match_manager.wake()
+        return {"id": identifier}
+
+    @app.post("/api/jobs/{job_id}/duplicates/{other_id}/distinct")
+    def keep_distinct_jobs(job_id: str, other_id: str):
+        pair = sorted((job_id, other_id))
+        if not db.one("SELECT 1 FROM duplicate_reviews WHERE left_id=? AND right_id=?", tuple(pair)):
+            raise HTTPException(404, "Possible duplicate not found")
+        db.execute("UPDATE duplicate_reviews SET status='distinct',reason='Marked distinct by you',updated_at=? WHERE left_id=? AND right_id=?", (now(), *pair))
+        return {"distinct": True}
 
     @app.post("/api/jobs/{job_id}/seen")
     def see_job(job_id: str):
@@ -1792,6 +1835,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if payload.provider and not provider_available(payload.provider):
             raise HTTPException(422, f"{payload.provider} is not available on this Mac")
         try:
+            mark_seen(db, job_id)
             result = auto_apply_manager.queue_manual(job_id, provider, payload.prepare_anyway)
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
@@ -1855,7 +1899,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         pages = max(1, (total + page_size - 1) // page_size)
         page = min(page, pages)
         rows = db.all(
-            f"SELECT d.id,d.vacancy_id,d.status,d.provider,d.provider_mode,d.created_at,d.updated_at,"
+            f"SELECT d.id,d.vacancy_id,d.status,d.provider,d.provider_mode,d.created_at,d.updated_at,d.seen_at,"
             f"v.title AS job_title,v.company,({review_expr}) AS review_status,a.telegram_status,"
             f"a.detail AS attempt_detail,d.project_refresh_error" + base + where +
             f" ORDER BY {sort_priority_expr} ASC, COALESCE(d.updated_at, d.created_at) DESC, d.created_at DESC, d.id DESC LIMIT ? OFFSET ?",
@@ -1934,6 +1978,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/applications/{draft_id}")
     def application(draft_id: str):
         try:
+            mark_application_seen(db, draft_id)
             draft = get_draft(db, draft_id)
             reasons = send_readiness(db, settings, draft)
             review = db.one("SELECT status,review_hash,telegram_status,telegram_error,requested_by,detail,prepare_anyway,updated_at,created_at FROM auto_application_attempts WHERE vacancy_id=?", (draft["vacancy_id"],))
@@ -1998,6 +2043,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
 
+    @app.post("/api/applications/{draft_id}/seen")
+    def application_seen(draft_id: str):
+        try:
+            return mark_application_seen(db, draft_id)
+        except KeyError as error:
+            raise HTTPException(404, str(error)) from error
+
     def require_editable_application(draft_id: str) -> None:
         review = db.one("SELECT status FROM auto_application_attempts WHERE draft_id=?", (draft_id,))
         if review and review["status"] in ("sending", "regenerating"):
@@ -2014,6 +2066,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def edit_application(draft_id: str, updates: dict[str, Any] = Body(...)):
         require_editable_application(draft_id)
         try:
+            mark_application_seen(db, draft_id)
             await asyncio.to_thread(update_draft, db, settings, draft_id, updates)
             await auto_apply_manager.notify_review(draft_id, deliver_telegram=False)
             return application(draft_id)
@@ -2180,6 +2233,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/applications/{draft_id}/send")
     async def send(draft_id: str, payload: SendInput):
         try:
+            mark_application_seen(db, draft_id)
             async with scan_manager.browser_lock:
                 result = await send_application(db, settings, draft_id, payload.package_hash)
             attempt = db.one("SELECT vacancy_id FROM auto_application_attempts WHERE draft_id=?", (draft_id,))
@@ -2203,6 +2257,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/applications/{draft_id}/approve")
     async def approve_application(draft_id: str, payload: SendInput):
         try:
+            mark_application_seen(db, draft_id)
             return await auto_apply_manager.approve(draft_id, payload.package_hash)
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
@@ -2212,6 +2267,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/applications/{draft_id}/regenerate")
     async def regenerate_application(draft_id: str, payload: RegenerateInput):
         try:
+            mark_application_seen(db, draft_id)
             return await auto_apply_manager.regenerate(draft_id, payload.prompt, payload.section,
                                                        deliver_telegram=False)
         except KeyError as error:
@@ -2223,6 +2279,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def enter_chatgpt_prompt(draft_id: str, payload: ChatGPTInput):
         require_editable_application(draft_id)
         try:
+            mark_application_seen(db, draft_id)
             prompt = application_prompt(db, draft_id, payload.section, payload.instruction)
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
@@ -2233,16 +2290,39 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             result = await chatgpt_input.enter(prompt, timeout=timeout)
         except TypeError:
             result = await chatgpt_input.enter(prompt)
-        if result["status"] == "failed":
+        if result.get("status") == "sign_in_required":
+            raise HTTPException(401, result.get("detail") or "Sign in to ChatGPT in Settings > Drafting provider, then try again.")
+        if result.get("status") == "failed":
             raise HTTPException(503, result["detail"])
         if result.get("reply"):
-            try:
-                apply_chatgpt_reply(db, settings, draft_id, payload.section, result["reply"], payload.instruction)
-                await auto_apply_manager.notify_review(draft_id, deliver_telegram=False)
-                result["detail"] = "Answer received from ChatGPT and applied to this application."
-            except Exception as error:
-                log.warning("Could not apply ChatGPT reply to %s: %s", draft_id, error)
-                result["detail"] = f"Answer received from ChatGPT. Review or copy into the application: {result['reply'][:120]}"
+            reply = result["reply"]
+            applied = False
+            last_apply_error: Exception | None = None
+            for attempt in range(2):
+                try:
+                    apply_chatgpt_reply(db, settings, draft_id, payload.section, reply, payload.instruction)
+                    await auto_apply_manager.notify_review(draft_id, deliver_telegram=False)
+                    result["detail"] = "Answer received from ChatGPT and applied to this application."
+                    applied = True
+                    break
+                except Exception as error:
+                    last_apply_error = error
+                    log.warning("Could not apply ChatGPT reply to %s (attempt %d): %s", draft_id, attempt + 1, error)
+                    if attempt == 0:
+                        corrective_prompt = (
+                            f"The previous response could not be applied: {str(error)[:300]}.\n"
+                            "Return ONLY valid JSON matching the required schema with all fields populated."
+                        )
+                        try:
+                            retry_result = await chatgpt_input.enter(corrective_prompt, timeout=timeout)
+                            if retry_result.get("reply"):
+                                reply = retry_result["reply"]
+                                continue
+                        except Exception as retry_err:
+                            log.warning("Corrective prompt to ChatGPT failed: %s", retry_err)
+                            break
+            if not applied:
+                raise HTTPException(422, f"Could not apply ChatGPT response: {last_apply_error}. Check the response format or try again.")
         return result
 
     @app.get("/api/chatgpt/status")

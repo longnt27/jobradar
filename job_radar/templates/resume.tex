@@ -1,7 +1,7 @@
 % Adapted from the user's LaTeX resume template. XeTeX supports Vietnamese text.
 \documentclass[10pt, a4paper]{article}
 \usepackage{fontspec}
-\setmainfont{Times New Roman}
+\IfFontExistsTF{Times New Roman}{\setmainfont{Times New Roman}}{\setmainfont{DejaVu Serif}}
 \usepackage[left=0.50in, right=0.50in, top=0.38in, bottom=0.38in]{geometry}
 \usepackage{enumitem}
 \usepackage{hyperref}

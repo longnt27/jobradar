@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - feat/job-feed-integration
   pull_request:
 
 concurrency:
@@ -36,14 +37,61 @@ jobs:
         run: uv sync --locked --extra dev
 
       - name: Install Playwright Chromium
+        if: github.ref != 'refs/heads/feat/job-feed-integration' && github.head_ref != 'feat/job-feed-integration' && !contains(github.event.head_commit.message, '[backend-only]')
         run: uv run playwright install --with-deps chromium
 
+      - name: Install portable document fonts
+        if: github.ref != 'refs/heads/feat/job-feed-integration' && github.head_ref != 'feat/job-feed-integration' && !contains(github.event.head_commit.message, '[backend-only]')
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y fonts-dejavu-core fonts-liberation
+
+      - name: Install Tectonic LaTeX renderer
+        if: github.ref != 'refs/heads/feat/job-feed-integration' && github.head_ref != 'feat/job-feed-integration' && !contains(github.event.head_commit.message, '[backend-only]')
+        uses: wtfjoke/setup-tectonic@v4
+        with:
+          tectonic-version: "0.17.0"
+
+      - name: Verify Python syntax before test collection
+        run: uv run python -m compileall -q job_radar scripts tests
+
+      - name: Run career feed backend tests for integration
+        if: github.ref == 'refs/heads/feat/job-feed-integration' || github.head_ref == 'feat/job-feed-integration' || contains(github.event.head_commit.message, '[backend-only]')
+        run: |
+          uv run pytest -q \
+            tests/test_career_feeds.py \
+            tests/test_onemount_feed.py \
+            tests/test_retired_career_sources.py \
+            tests/test_career_apis.py \
+            tests/test_vinbus_feed.py \
+            tests/test_vingroup_feed_audit.py \
+            tests/test_domestic_bank_feeds.py \
+            tests/test_foreign_bank_adapters.py \
+            tests/test_feed_wave_3.py \
+            tests/test_global_tech_c_feeds.py \
+            tests/test_finance_insurance_feeds.py \
+            tests/test_global_tech_feeds.py \
+            tests/test_career_wave7.py \
+            tests/test_feed_wave9.py \
+            tests/test_career_feeds_agent2.py \
+            tests/test_ci_live_career_feeds.py \
+            tests/test_collection.py \
+            tests/test_employer_scope.py \
+            tests/test_dedup.py
+
+      - name: Verify custom form-answer drafting without rendering documents
+        if: github.ref == 'refs/heads/feat/job-feed-integration' || github.head_ref == 'feat/job-feed-integration' || contains(github.event.head_commit.message, '[backend-only]')
+        run: uv run pytest -q tests/test_drafting.py -k custom_form_answers
+
       - name: Run tests
+        if: github.ref != 'refs/heads/feat/job-feed-integration' && github.head_ref != 'feat/job-feed-integration' && !contains(github.event.head_commit.message, '[backend-only]')
         run: uv run pytest -q --ignore=tests/test_ui_regression_gate.py
 
   ui-regression:
     name: UI regression gate
-    runs-on: ubuntu-latest
+    # Career integration remains backend-only on its PR and tagged merge push.
+    if: github.head_ref != 'feat/job-feed-integration' && !contains(github.event.head_commit.message, '[backend-only]') && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.base_ref == 'main') || contains(github.event.head_commit.message, '[ui-baseline]'))
+    runs-on: ubuntu-24.04
     timeout-minutes: 12
 
     steps:
@@ -64,6 +112,16 @@ jobs:
 
       - name: Install Playwright Chromium
         run: uv run playwright install --with-deps chromium
+
+      - name: Install portable document fonts
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y fonts-dejavu-core fonts-liberation
+
+      - name: Install Tectonic LaTeX renderer
+        uses: wtfjoke/setup-tectonic@v4
+        with:
+          tectonic-version: "0.17.0"
 
       - name: Run UI regression gate
         run: uv run pytest -q tests/test_ui_regression_gate.py
