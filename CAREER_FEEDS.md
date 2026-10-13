@@ -139,7 +139,7 @@ The adapters below are wired on `feat/feed-wave-6`, but **are not yet live-verif
 | --- | --- | --- | --- |
 | Mirae Asset Finance Vietnam | [Recruitment](https://recruitment.mafc.vn/job-search/all-jobs/en) | CareerLink HTML board | Pending path and pagination verification |
 | MB Ageas Life (now MB Life) | [Recruitment](https://tuyendung.mblife.vn/job-search/all-jobs/en) | CareerLink HTML board | Pending path and pagination verification |
-| Bao Viet | [Recruitment](https://www.baoviet.com.vn/vi/tuyen-dung) | Company announcements parsed into individual table-row jobs | Pending live HTML verification |
+| Bao Viet | [Recruitment](https://baoviet.com.vn/vi/tuyen-dung) | Company announcements parsed into individual table-row jobs | Pending live HTML verification |
 | FWD Vietnam | [Workday](https://fwd.wd3.myworkdayjobs.com/FWDcareersite) | Workday CXS | Pending CXS response verification |
 | Prudential Vietnam | [Workday](https://prudential.wd3.myworkdayjobs.com/prudential) | Workday CXS | Pending CXS response verification |
 | Manulife Vietnam | [Workday](https://manulife.wd3.myworkdayjobs.com/MFCJH_Jobs) | Workday CXS | Pending CXS response verification |

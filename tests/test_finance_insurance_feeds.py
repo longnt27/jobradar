@@ -85,3 +85,9 @@ def test_workday_finance_location_scope_and_pagination(monkeypatch):
     assert len(jobs) == 1 and jobs[0].company == "FWD Vietnam"
     assert jobs[0].external_id == "1"
     assert "Vietnam" in jobs[0].location
+
+
+def test_baoviet_official_bare_domain_avoids_www_cloudflare_block():
+    from urllib.parse import urlsplit
+    feed = next(x for x in CAREER_FEEDS if x.employer == "Bao Viet")
+    assert urlsplit(feed.url).hostname == "baoviet.com.vn"

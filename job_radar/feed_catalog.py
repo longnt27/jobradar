@@ -312,7 +312,7 @@ CAREER_FEEDS: tuple[CareerFeed, ...] = (
     html("MB Ageas Life", "https://tuyendung.mblife.vn/job-search/all-jobs/en",
          r"^/job/[^/?#]+\.[a-f0-9]+\.html$", max_pages=8, max_results=120,
          description_selector="[class*=job-description], [class*=job-detail], main"),
-    CareerFeed("Bao Viet", "https://www.baoviet.com.vn/vi/tuyen-dung", "baoviet_announcement"),
+    CareerFeed("Bao Viet", "https://baoviet.com.vn/vi/tuyen-dung", "baoviet_announcement"),
     CareerFeed("FWD Vietnam", "https://fwd.wd3.myworkdayjobs.com/FWDcareersite", "workday", {
         "search_url": "https://fwd.wd3.myworkdayjobs.com/wday/cxs/fwd/FWDcareersite/jobs",
         "detail_base": "https://fwd.wd3.myworkdayjobs.com/wday/cxs/fwd/FWDcareersite",
