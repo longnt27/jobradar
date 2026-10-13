@@ -637,7 +637,8 @@ def _expired_posting(text: str) -> bool:
     if not label:
         return False
     deadline_text = text[label.end():label.end() + 90]
-    numeric = re.search(r"\b(\d{1,2})[/.](\d{1,2})[/.](20\d{2})\b", deadline_text)
+    numeric_matches = list(re.finditer(r"\b(\d{1,2})[/.](\d{1,2})[/.](20\d{2})\b", deadline_text))
+    numeric = numeric_matches[-1] if numeric_matches else None
     if numeric:
         day, month, year = map(int, numeric.groups())
         try:
