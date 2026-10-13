@@ -268,7 +268,7 @@ CAREER_FEEDS: tuple[CareerFeed, ...] = (
          max_results=120, description_selector="main, article"),
     # Hyundai Thanh Cong is the Hyundai Motor joint venture in Vietnam, not Hyundai globally.
     html("Hyundai Motor Vietnam", "https://career.hyundai.thanhcong.vn/job-search/all-jobs/en",
-         r"^/job/[^/?#]+\\.html$", max_results=120,
+         r"^/job/[^/?#]+\.html$", max_results=120,
          description_selector="main, article, .job-detail"),
     html("BNP Paribas", "https://apac.bnpparibas/en/work-with-us/apply-now/our-opportunities/?city%5B%5D=ho-chi-minh&city%5B%5D=ho-chi-minh-city", r"^/en/jobs/[^/?#]+/?$",
          description_selector=".jobs__content", location_selector=".jobs__details .crd__specs li:nth-child(2) span"),
