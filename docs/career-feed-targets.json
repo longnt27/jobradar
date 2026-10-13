@@ -439,7 +439,7 @@
     {
       "employer": "MB Ageas Life",
       "category": "insurance",
-      "status": "provisional",
+      "status": "pending",
       "career_url": "https://tuyendung.mblife.vn/job-search/all-jobs/en",
       "adapter": "html_board",
       "evidence": "Former MB Ageas Life now uses MB Life name and official recruitment portal. CareerLink HTML adapter added; live listing/detail parsing still needs validation.",
@@ -535,7 +535,7 @@
     {
       "employer": "FWD Vietnam",
       "category": "insurance",
-      "status": "provisional",
+      "status": "pending",
       "career_url": "https://fwd.wd3.myworkdayjobs.com/FWDcareersite",
       "adapter": "workday",
       "evidence": "Official FWD Vietnam careers routes to FWD Workday site; CXS route configured from public Workday path convention. API response and location coverage not live-tested.",
@@ -544,7 +544,7 @@
     {
       "employer": "Prudential Vietnam",
       "category": "insurance",
-      "status": "provisional",
+      "status": "pending",
       "career_url": "https://prudential.wd3.myworkdayjobs.com/prudential",
       "adapter": "workday",
       "evidence": "Official Prudential careers site links Workday. CXS route and Vietnam title search configured, but live API response not verified.",
@@ -553,7 +553,7 @@
     {
       "employer": "Manulife Vietnam",
       "category": "insurance",
-      "status": "provisional",
+      "status": "pending",
       "career_url": "https://manulife.wd3.myworkdayjobs.com/MFCJH_Jobs",
       "adapter": "workday",
       "evidence": "Official Manulife Workday jobs board found; configured Vietnam search, pending CXS live API verification.",
@@ -562,7 +562,7 @@
     {
       "employer": "AIA Vietnam",
       "category": "insurance",
-      "status": "provisional",
+      "status": "pending",
       "career_url": "https://aia.wd3.myworkdayjobs.com/External",
       "adapter": "workday",
       "evidence": "AIA Group official corporate Workday board; configured Vietnam search. CXS endpoint and employer scope require live verification.",
@@ -580,7 +580,7 @@
     {
       "employer": "Mirae Asset Vietnam",
       "category": "finance",
-      "status": "provisional",
+      "status": "pending",
       "career_url": "https://recruitment.mafc.vn/job-search/all-jobs/en",
       "adapter": "html_board",
       "evidence": "Official Mirae Asset Finance Vietnam recruitment portal. CareerLink HTML adapter added; detail path and multi-page live smoke validation pending.",
@@ -589,7 +589,7 @@
     {
       "employer": "Bao Viet",
       "category": "finance",
-      "status": "provisional",
+      "status": "pending",
       "career_url": "https://www.baoviet.com.vn/vi/tuyen-dung",
       "adapter": "baoviet_announcement",
       "evidence": "Official Tập đoàn Bảo Việt career page links to group ICT recruitment announcements with multiple role rows. Dedicated row-splitting adapter; live HTML selector validation pending.",
