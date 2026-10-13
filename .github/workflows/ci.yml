@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - feat/job-feed-integration
   pull_request:
 
 concurrency:
@@ -38,6 +39,14 @@ jobs:
       - name: Install Playwright Chromium
         run: uv run playwright install --with-deps chromium
 
+      - name: Install Tectonic LaTeX renderer
+        uses: wtfjoke/setup-tectonic@v4
+        with:
+          tectonic-version: "0.17.0"
+
+      - name: Verify Python syntax before test collection
+        run: uv run python -m compileall -q job_radar scripts tests
+
       - name: Run tests
         run: uv run pytest -q --ignore=tests/test_ui_regression_gate.py
 
@@ -64,6 +73,11 @@ jobs:
 
       - name: Install Playwright Chromium
         run: uv run playwright install --with-deps chromium
+
+      - name: Install Tectonic LaTeX renderer
+        uses: wtfjoke/setup-tectonic@v4
+        with:
+          tectonic-version: "0.17.0"
 
       - name: Run UI regression gate
         run: uv run pytest -q tests/test_ui_regression_gate.py
