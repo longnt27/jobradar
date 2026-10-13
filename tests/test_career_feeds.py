@@ -16,7 +16,7 @@ from job_radar.seeds import seed
 
 def test_company_feeds_are_seeded_idempotently(tmp_path: Path) -> None:
     assert len(CAREER_FEEDS) == len({feed.employer for feed in CAREER_FEEDS}) >= 40
-    assert {"VinDynamics", "VinRobotics", "VinMotion", "Techcombank", "Vietcombank", "MB Bank", "VPBank", "GPBank", "BIDV", "VNPT AI", "CMC Telecom"} <= {
+    assert {"VinDynamics", "VinRobotics", "VinMotion", "Techcombank", "Vietcombank", "MB Bank", "VPBank", "GPBank", "BIDV", "VNPT AI", "CMC Telecom", "PVcomBank", "SHB", "NCB", "KienlongBank", "One Mount", "SmartOSC"} <= {
         feed.employer for feed in CAREER_FEEDS
     }
     assert not {feed.employer for feed in CAREER_FEEDS} & HCMC_BASED.keys()
@@ -97,3 +97,120 @@ def test_career_application_destination_prefers_apply_link_email_then_posting() 
     emailed = BeautifulSoup('<p>To apply, send your CV to careers@example.org</p>', "html.parser")
     assert _application_destination(emailed, posting) == "mailto:careers@example.org"
     assert _application_destination(BeautifulSoup("<p>Job details</p>", "html.parser"), posting) == posting
+
+
+def test_role_matches_vietnamese_banking_and_tech_titles() -> None:
+    assert _target_title("Chuyên viên cao cấp Phân tích dữ liệu rủi ro")
+    assert _target_title("Kỹ sư Dữ liệu")
+    assert _target_title("Chuyên viên Quản trị dữ liệu")
+    assert _target_title("Chuyên viên Mô hình Quản trị Rủi ro Tín dụng")
+    assert _target_title("Chuyên viên cao cấp quản lý Tài chính công nghệ (Cloud Finance Management) - K.CNTT")
+    assert not _target_title("Chuyên viên Quan hệ Khách hàng Doanh nghiệp")
+    assert not _target_title("Giao dịch viên")
+
+
+def test_html_board_prefers_target_title_over_generic_anchor(monkeypatch) -> None:
+    source = {
+        "url": "https://example.com/careers",
+        "name": "Test careers",
+        "config": {
+            "link_path": r"^/job/\d+$",
+            "max_results": 2,
+        },
+    }
+    html_page = (
+        '<main>'
+        '<a href="/job/101">Ứng tuyển</a>'
+        '<a href="/job/101">Chuyên viên Phân tích dữ liệu</a>'
+        '<a href="/job/102">Non-tech Role</a>'
+        '<a href="/job/103">AI Engineer</a>'
+        '</main>'
+    )
+    detail_101 = '<main><h1>Chuyên viên Phân tích dữ liệu</h1><p>' + 'Xử lý dữ liệu lớn với Python và SQL. ' * 10 + '</p></main>'
+    detail_103 = '<main><h1>AI Engineer</h1><p>' + 'Xây dựng mô hình máy học với PyTorch. ' * 10 + '</p></main>'
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def get(self, url):
+            if url.endswith("/careers"):
+                text = html_page
+            elif url.endswith("/job/101"):
+                text = detail_101
+            elif url.endswith("/job/103"):
+                text = detail_103
+            else:
+                text = "<main><h1>Unknown</h1></main>"
+            return httpx.Response(200, text=text, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr("job_radar.collectors._career_client", Client)
+    jobs = asyncio.run(collect_html_board(source))
+    titles = [job.title for job in jobs]
+    assert "Chuyên viên Phân tích dữ liệu" in titles
+    assert "AI Engineer" in titles
+    assert len(jobs) == 2
+
+
+def test_vpbank_collector_processes_rmk_api_and_details(monkeypatch) -> None:
+    from job_radar.collectors import collect_vpbank
+
+    source = {
+        "employer_name": "VPBank",
+        "name": "VPBank careers",
+        "url": "https://tuyendung.vpbank.com.vn/",
+        "config": {"queries": ["AI"], "max_pages": 1, "max_results": 5},
+    }
+    api_response = {
+        "jobSearchResult": [
+            {
+                "response": {
+                    "id": "12167",
+                    "unifiedStandardTitle": "CVCC Khoa học dữ liệu - AI Engineer - Hà Nội - TA105",
+                    "unifiedUrlTitle": "CVCC-Khoa-hoc-du-lieu-AI-Engineer",
+                    "jobLocationShort": ["Hà Nội, VNM"],
+                }
+            },
+            {
+                "response": {
+                    "id": "99999",
+                    "unifiedStandardTitle": "Nhân viên Telesales",
+                    "unifiedUrlTitle": "Telesales",
+                    "jobLocationShort": ["Hà Nội, VNM"],
+                }
+            },
+        ]
+    }
+    detail_html = (
+        '<html><body>'
+        '<div class="joblayouttoken">'
+        'Mô tả công việc<br>CVCC Khoa học dữ liệu - AI Engineer - Hà Nội<br>'
+        'Phát triển mô hình trí tuệ nhân tạo và học máy cho ngân hàng.<br>' + 'Nhiệm vụ chính bao gồm huấn luyện mô hình. ' * 10 +
+        '</div></body></html>'
+    )
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def post(self, url, **kwargs):
+            return httpx.Response(200, json=api_response, request=httpx.Request("POST", url))
+
+        async def get(self, url, **kwargs):
+            return httpx.Response(200, text=detail_html, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr("job_radar.collectors._career_client", Client)
+    jobs = asyncio.run(collect_vpbank(source))
+    assert len(jobs) == 1
+    assert jobs[0].title == "CVCC Khoa học dữ liệu - AI Engineer - Hà Nội - TA105"
+    assert jobs[0].company == "VPBank"
+    assert jobs[0].external_id == "12167"
+    assert "https://tuyendung.vpbank.com.vn/job/CVCC-Khoa-hoc-du-lieu-AI-Engineer/12167-vi_VN" in jobs[0].url
+    assert "Phát triển mô hình trí tuệ nhân tạo" in jobs[0].description
+

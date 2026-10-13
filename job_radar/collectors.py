@@ -353,7 +353,7 @@ async def _collect_linkedin_search_results(page: Page, source: dict) -> list[Obs
 
 
 RECRUITING = re.compile(r"\b(hiring|recruit|vacancy|apply|tuyển dụng|tuyển|cần tìm|cần tuyển|cần gấp|job opening|we are looking)\b|\bcần\s+(?:\d+\s*)?(?:mid|sen|junior|senior|fresher|intern|data|ai|ml|kỹ|lập)", re.I)
-ROLE = re.compile(r"\b(ai|ml|machine learning|engineer|engineering|developer|devops|research|data scientist|data analyst|data analytics|data architect|business analyst|llm|computer vision|software|architect|fullstack|backend|frontend|technical lead|tech lead|cloud|security|cyber|database|network|kỹ sư|lập trình|trí tuệ nhân tạo|công nghệ thông tin|khoa học dữ liệu|phần mềm|phầm mềm|an ninh|bảo mật|quản trị ứng dụng|cơ sở dữ liệu|phân tích nghiệp vụ|chuyển đổi số|kiểm thử)\b", re.I)
+ROLE = re.compile(r"\b(ai|ml|machine learning|engineer|engineering|developer|devops|research|data scientist|data analyst|data analytics|data architect|business analyst|llm|computer vision|software|architect|fullstack|backend|frontend|technical lead|tech lead|cloud|security|cyber|database|network|kỹ sư|lập trình|trí tuệ nhân tạo|công nghệ thông tin|cntt|khoa học dữ liệu|cơ sở dữ liệu|dữ liệu|mô hình|phần mềm|phầm mềm|an ninh|bảo mật|quản trị ứng dụng|phân tích nghiệp vụ|chuyển đổi số|kiểm thử)\b", re.I)
 
 
 async def collect_facebook(context: BrowserContext, source: dict) -> list[ObservedJob]:
@@ -715,12 +715,13 @@ async def collect_html_board(source: dict) -> list[ObservedJob]:
                 clean_url = url.split("#")[0]
                 if not config.get("keep_query"):
                     clean_url = clean_url.split("?")[0]
-                if clean_url not in links or (label and _target_title(label)):
+                if clean_url not in links or (label and _target_title(label) and not _target_title(links.get(clean_url, ""))):
                     links[clean_url] = label
             if len(links) == before and not title_include:
                 break
         jobs: list[ObservedJob] = []
-        for url, label in list(links.items())[:int(config.get("max_results", 80))]:
+        candidate_links = {u: l for u, l in links.items() if not l or _target_title(l)}
+        for url, label in list(candidate_links.items())[:int(config.get("max_results", 80))]:
             if label and not _target_title(label):
                 continue
             try:
@@ -783,7 +784,8 @@ async def collect_browser_board(source: dict) -> list[ObservedJob]:
                 except Exception:
                     break
             jobs = []
-            for url, label in list(links.items())[:int(config.get("max_results", 120))]:
+            candidate_links = {u: l for u, l in links.items() if not l or _target_title(l)}
+            for url, label in list(candidate_links.items())[:int(config.get("max_results", 120))]:
                 if label and not _target_title(label):
                     continue
                 try:
@@ -793,8 +795,13 @@ async def collect_browser_board(source: dict) -> list[ObservedJob]:
                             "minimum => (document.querySelector('main')?.innerText.length || 0) >= minimum",
                             arg=int(config["detail_ready_min_chars"]), timeout=12000,
                         )
+                    elif config.get("detail_ready_selector"):
+                        await detail.locator(config["detail_ready_selector"]).first.wait_for(state="attached", timeout=12000)
                     else:
-                        await detail.locator("h1").first.wait_for(state="attached", timeout=12000)
+                        try:
+                            await detail.locator("h1").first.wait_for(state="attached", timeout=12000)
+                        except Exception:
+                            await detail.locator("body").first.wait_for(state="attached", timeout=5000)
                     soup = BeautifulSoup(await detail.content(), "html.parser")
                     title = _detail_title(soup, label)
                     if not _target_title(title):
@@ -1093,6 +1100,128 @@ async def collect_mbbank(source: dict) -> list[ObservedJob]:
         return jobs
 
 
+async def collect_vpbank(source: dict) -> list[ObservedJob]:
+    """Collect postings from VPBank's official career portal via SuccessFactors RMK API."""
+    config = source.get("config", {})
+    queries = config.get("queries") or ["AI", "Data", "IT", "kỹ sư", "developer", "software", "chuyên viên"]
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; JobRadar/0.1; personal job discovery)",
+        "Content-Type": "application/json",
+        "Referer": "https://tuyendung.vpbank.com.vn/search/?locale=vi_VN",
+    }
+    jobs_map: dict[str, dict] = {}
+    async with _career_client() as client:
+        for kw in queries:
+            for page in range(min(int(config.get("max_pages", 3)), 5)):
+                payload = {
+                    "locale": "vi_VN",
+                    "pageNumber": page,
+                    "sortBy": "",
+                    "keywords": kw,
+                    "location": "",
+                    "facetFilters": {},
+                    "brand": "",
+                    "skills": [],
+                    "categoryId": 0,
+                    "alertId": "",
+                    "rcmCandidateId": "",
+                }
+                try:
+                    resp = await client.post("https://tuyendung.vpbank.com.vn/services/recruiting/v1/jobs", json=payload, headers=headers)
+                    resp.raise_for_status()
+                    data = resp.json()
+                    items = data.get("jobSearchResult", [])
+                    if not items:
+                        break
+                    for item in items:
+                        res = item.get("response", {})
+                        jid = str(res.get("id", ""))
+                        title = str(res.get("unifiedStandardTitle", "")).strip()
+                        if not jid or not title or not _target_title(title):
+                            continue
+                        if jid not in jobs_map:
+                            jobs_map[jid] = res
+                except Exception:
+                    break
+
+        jobs: list[ObservedJob] = []
+        for jid, res in list(jobs_map.items())[:int(config.get("max_results", 80))]:
+            url_title = res.get("unifiedUrlTitle") or "job"
+            detail_url = f"https://tuyendung.vpbank.com.vn/job/{url_title}/{jid}-vi_VN"
+            title = str(res.get("unifiedStandardTitle", "")).strip()
+            locations = res.get("jobLocationShort", [])
+            location = ", ".join(loc.strip().rstrip(",") for loc in locations if loc)
+            try:
+                detail_resp = await client.get(detail_url)
+                detail_resp.raise_for_status()
+                soup = BeautifulSoup(detail_resp.text, "html.parser")
+                desc_node = soup.select_one(".joblayouttoken, .jobDisplay")
+                description = _structured_text(desc_node) if desc_node else ""
+                if len(description) < 100 or _expired_posting(description):
+                    continue
+                jobs.append(ObservedJob(
+                    url=detail_url, external_id=jid, title=title[:180],
+                    company=source.get("employer_name") or "VPBank",
+                    description=description[:30000], location=location[:250],
+                    apply_url=detail_url, raw_text=description[:30000],
+                ))
+            except httpx.HTTPError:
+                continue
+    return jobs
+
+
+async def collect_onemount(source: dict) -> list[ObservedJob]:
+    """Read postings from One Mount careers via Playwright and OutSystems service interception."""
+    jobs: list[ObservedJob] = []
+    config = source.get("config", {})
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            detail_page = await browser.new_page()
+            jobs_data: list[dict] = []
+
+            async def on_response(response):
+                if "ScreenDataSetGetJobRequests" in response.url:
+                    try:
+                        payload = await response.json()
+                        items = payload.get("data", {}).get("List", {}).get("List", [])
+                        jobs_data.extend(items)
+                    except Exception:
+                        pass
+
+            page.on("response", on_response)
+            await page.goto(source["url"], wait_until="networkidle", timeout=35000)
+            candidate_items = [
+                item for item in jobs_data
+                if item.get("JobRequest", {}).get("Id") and _target_title(item.get("JobRequest", {}).get("JobName", ""))
+            ]
+            for item in candidate_items[:int(config.get("max_results", 40))]:
+                jr = item.get("JobRequest", {})
+                jid = str(jr["Id"])
+                title = jr.get("JobName", "").strip()
+                location = jr.get("Location", "").replace("#", "").strip()
+                url = f"https://careers.onemount.com/jobs/{jid}"
+                try:
+                    await detail_page.goto(url, wait_until="networkidle", timeout=25000)
+                    soup = BeautifulSoup(await detail_page.content(), "html.parser")
+                    tab = soup.select_one(".tabs-content, .tabs-content-tab")
+                    desc = _structured_text(tab) if tab else soup.get_text(" ", strip=True)
+                    if len(desc) < 100 or _expired_posting(desc):
+                        continue
+                    jobs.append(ObservedJob(
+                        url=url, external_id=jid, title=title[:180],
+                        company=source.get("employer_name") or "One Mount",
+                        description=desc[:30000], location=location[:250],
+                        apply_url=url, raw_text=desc[:30000],
+                    ))
+                except Exception:
+                    continue
+        finally:
+            await browser.close()
+    return jobs
+
+
 CAREER_ADAPTERS = {
     "legacy": collect_career,
     "html_board": collect_html_board,
@@ -1104,6 +1233,8 @@ CAREER_ADAPTERS = {
     "vinrobotics": collect_vinrobotics,
     "smartrecruiters": collect_smartrecruiters,
     "mbbank": collect_mbbank,
+    "vpbank": collect_vpbank,
+    "onemount": collect_onemount,
 }
 
 

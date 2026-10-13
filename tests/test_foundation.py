@@ -4,6 +4,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from job_radar.settings import Settings
+from job_radar.feed_catalog import CAREER_FEEDS
 from job_radar.ingest import ObservedJob, ingest
 from job_radar.ranking import score_job
 from job_radar.web import create_app
@@ -187,14 +188,14 @@ def test_source_can_be_paused(tmp_path: Path) -> None:
 def test_status_separates_company_feeds_from_social_searches(tmp_path: Path) -> None:
     client = TestClient(create_app(Settings(tmp_path)))
     counts = client.get("/api/status").json()["counts"]
-    assert counts["career_sources_enabled"] == 43
-    assert counts["active_sources"] == 52
+    assert counts["career_sources_enabled"] == len(CAREER_FEEDS)
+    assert counts["active_sources"] == len(CAREER_FEEDS) + 9
 
     career = client.get("/api/sources?kind=career").json()[0]
     assert client.patch(f"/api/sources/{career['id']}", json={"enabled": False}).status_code == 200
     counts = client.get("/api/status").json()["counts"]
-    assert counts["career_sources_enabled"] == 42
-    assert counts["active_sources"] == 51
+    assert counts["career_sources_enabled"] == len(CAREER_FEEDS) - 1
+    assert counts["active_sources"] == len(CAREER_FEEDS) + 8
 
 
 def test_profile_skill_edit_rescores_existing_jobs(tmp_path: Path) -> None:

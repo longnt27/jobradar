@@ -1,6 +1,6 @@
 # Direct company career feeds
 
-Job Radar checks these 43 verified company career listings every four hours. Each entry points to an employer career page or its dedicated recruiting portal. A listing is stored only when its own job posting has a relevant title and description. An empty scan means no matching open posting was found by that adapter at scan time; it does not imply the company has no vacancies.
+Job Radar checks these 48 verified company career listings every four hours. Each entry points to an employer career page or its dedicated recruiting portal. A listing is stored only when its own job posting has a relevant title and description. An empty scan means no matching open posting was found by that adapter at scan time; it does not imply the company has no vacancies.
 
 | Company | Career page | Adapter |
 | --- | --- | --- |
@@ -26,8 +26,13 @@ Job Radar checks these 43 verified company career listings every four hours. Eac
 | PGBank | [Open careers](https://tuyendung.pgbank.com.vn/) | HTML board |
 | VietABank | [Open careers](https://tuyendung.vietabank.com.vn/vi/jobs) | Browser board |
 | MBV | [Open careers](https://www.mbv.com.vn/tuyen-dung/co-hoi-nghe-nghiep) | Browser board |
-| VPBank | [Open careers](https://vpbank.talent.vn/jobs?dept=3326) | HTML board |
+| VPBank | [Open careers](https://tuyendung.vpbank.com.vn/) | SuccessFactors RMK |
 | GPBank | [Open careers](https://gpbank.talent.vn/jobs?dept=1538) | HTML board |
+| PVcomBank | [Open careers](https://tuyendung.pvcombank.com.vn/viec-lam/tat-ca-viec-lam/vi) | HTML board |
+| SHB | [Open careers](https://tuyendung.shb.com.vn/tim-viec-lam/tat-ca-viec-lam/vi) | HTML board |
+| NCB | [Open careers](https://tuyendung.ncb-bank.vn/vi/jobs) | Browser board |
+| KienlongBank | [Open careers](https://tuyendung.kienlongbank.com/?s=&post_type=tuyen-dung) | HTML board |
+| One Mount | [Open careers](https://careers.onemount.com/job-list) | OutSystems Portal |
 | CMC Global | [Open careers](https://cmcglobal.com.vn/career/) | HTML board |
 | CMC TS | [Open careers](https://careers.cmcts.com.vn/) | HTML board |
 | CMC Telecom | [Open careers](https://cmctelecom.vn/danh-sach-tuyen-dung/) | HTML board |
@@ -38,7 +43,7 @@ Job Radar checks these 43 verified company career listings every four hours. Eac
 | TeenCare | [Open careers](https://teencare.talent.vn/) | HTML board |
 | Golden Gate | [Open careers](https://ggg.talent.vn/) | HTML board |
 | Eastgate Software | [Open careers](https://eastgatesoftware.talent.vn/jobs) | HTML board |
-| SmartOSC | [Open careers](https://careers.smartrecruiters.com/SmartOSC) | Company recruiting portal |
+| SmartOSC | [Open careers](https://careers.smartosc.com/jobs) | HTML board |
 | KiotViet | [Open careers](https://about.kiotviet.vn/cong-viec/) | HTML board |
 | MISA | [Open careers](https://www.misa.vn/tuyen-dung/) | HTML board |
 | Sapo | [Open careers](https://tuyendung.sapo.vn/) | HTML board |
@@ -48,6 +53,6 @@ Job Radar checks these 43 verified company career listings every four hours. Eac
 | VNPT Net | [Open careers](https://tuyendung.vnpt.vn/viec-lam/don-vi-tong-cong-ty-ha-tang-mang-d8381.html) | HTML board |
 | VNPT Media | [Open careers](https://tuyendung.vnpt.vn/viec-lam/don-vi-tong-cong-ty-truyen-thong-d8606.html) | HTML board |
 
-The [employer directory](job_radar/seeds.py) contains 181 companies after the [HCMC-based exclusions](EMPLOYER_SCOPE.md). Its other 138 entries are leads without an active built-in feed. Their presence in the directory is not a claim that their jobs are collected. Add a verified direct career page from an employer card. General job aggregators are not part of this catalog.
+The [employer directory](job_radar/seeds.py) contains 181 companies after the [HCMC-based exclusions](EMPLOYER_SCOPE.md). Its other 133 entries are leads without an active built-in feed. Their presence in the directory is not a claim that their jobs are collected. Add a verified direct career page from an employer card. General job aggregators are not part of this catalog.
 
 Feed definitions and selectors: [job_radar/feed_catalog.py](job_radar/feed_catalog.py). Collector implementations: [job_radar/collectors.py](job_radar/collectors.py). Older postings with an explicit past deadline are skipped. The app creates no placeholder vacancies.
