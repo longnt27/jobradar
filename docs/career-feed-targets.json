@@ -131,42 +131,46 @@
     {
       "employer": "MovianAI",
       "category": "technology",
-      "status": "pending",
+      "status": "blocked",
       "career_url": null,
       "adapter": null,
-      "evidence": null
+      "evidence": "Could not establish a verifiable active first-party MovianAI jobs board or posting endpoint. Employer identity and present recruitment channel need confirmation; adding a generic site as an adapter would be fake coverage."
     },
     {
       "employer": "VNPT Group",
       "category": "vnpt",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://tuyendung.vnpt.vn/viec-lam/viec-lam-tap-doan-vnpt-d3240.html",
+      "adapter": "vnpt_parent",
+      "evidence": "The central VNPT recruitment portal has a dedicated parent-company filter currently explicitly stating 'Không tìm thấy việc làm phù hợp'. Collector distinguishes this verified empty result from a parser/network failure and will not misattribute subsidiary jobs to the parent. Mocked collector validation required before release.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "VNPT Technology",
       "category": "vnpt",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://www.vnpt-technology.vn/vi/recruit",
+      "adapter": "vnpt_technology",
+      "evidence": "VNPT Technology's corporate recruitment table links per-job /vi/recruit_detail/{id} posts; individual details show working location, application deadline and complete role description. Collector uses that official first-party listing. Mocked collector validation required before release.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "FPT Corporation",
       "category": "fpt",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://tuyendung.fpt.com.vn/",
       "adapter": null,
-      "evidence": null
+      "evidence": "FPT corporate careers page https://fpt.com/vi/co-hoi-nghe-nghiep links this official hiring portal, but its public listing returns HTTP 403 from the available verification client. No independently readable listing/detail or API could be established; do not fabricate a homepage feed.",
+      "checked_at": "2026-10-13"
     },
     {
       "employer": "FPT Software",
       "category": "fpt",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://career.fpt-software.com/jobs-search/",
+      "adapter": "html_board",
+      "evidence": "FPT Software-operated WordPress jobs board exposes paginated /jobs/{slug} postings (page_job pagination). Verified live AI Engineer and Data Engineer role pages with responsibilities/requirements and Apply Before deadline. Focused HTML pagination/detail/expiry tests added; end-to-end HTTP smoke requires an environment with direct network access.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "FPT Digital",
@@ -180,10 +184,11 @@
     {
       "employer": "FPT IS",
       "category": "fpt",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://careers.fptis.com/vi",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official FPT IS site https://fpt-is.com/co-hoi-nghe-nghiep/ points to careers.fptis.com, but direct access is HTTP 403. Branded Ainavi portal https://90221475.iviec.vn/vi/jobs lists paginated roles and individual URLs including Data Engineer, but its details require an API not successfully verified in this environment; it also lists [FSEMI] subsidiary roles, so generic scraping risks misattribution. Existing Ainavi adapter is a candidate pending live detail/API and employer-scoping checks.",
+      "checked_at": "2026-10-13"
     },
     {
       "employer": "FPT Semiconductor",
@@ -197,42 +202,46 @@
     {
       "employer": "FPT.AI",
       "category": "fpt",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://fptsmartcloud.com/co-hoi-nghe-nghiep/",
       "adapter": null,
-      "evidence": null
+      "evidence": "FPT.AI is an AI product/brand recruited through FPT Smart Cloud. The official FPT Smart Cloud posting pages describe FPT.AI roles, and the FPT Smart Cloud feed already exists; no separate employer-scoped FPT.AI first-party board was verified. Creating an alias feed would duplicate and misattribute FPT Smart Cloud vacancies.",
+      "checked_at": "2026-10-13"
     },
     {
       "employer": "CMC Corporation",
       "category": "cmc",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://tuyendung.cmc.com.vn/",
       "adapter": null,
-      "evidence": null
+      "evidence": "CMC Corporation publicly identifies tuyendung.cmc.com.vn as its official careers site in its anti-recruitment-scam notices (https://www.cmc.com.vn/insight-detail/warning-of-scammers-masquerading-as-cmc-staff-to-take-money-202204126585.html). Official site currently inaccessible to the verification client, and no navigable first-party listing + details were verified; its subsidiaries already have their own separate feeds.",
+      "checked_at": "2026-10-13"
     },
     {
       "employer": "CMC Cloud",
       "category": "cmc",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://cmctelecom.vn/danh-sach-tuyen-dung/",
       "adapter": null,
-      "evidence": null
+      "evidence": "CMC Cloud is a service/brand operated by CMC Telecom (see https://cmctelecom.vn/san-pham/dien-toan-dam-may/), whose own official careers board already has a verified feed. No independently scoped CMC Cloud recruitment board or employer identity was verified; a separate alias would duplicate CMC Telecom postings.",
+      "checked_at": "2026-10-13"
     },
     {
       "employer": "CMC University",
       "category": "cmc",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://cmcu.edu.vn/tin-tuyen-dung/",
+      "adapter": "html_board",
+      "evidence": "Official CMC University recruiting archive lists 16 notices over two pages, including 2026-09-17 Hanoi IT/Computer Science Lecturer and 2026-10-07 Digital Training and AI Specialist. Verified complete individual role pages, Hanoi work addresses, application contact and requirements; HTML collector follows WordPress archive pages and records stable posting slugs. Focused mocked pagination/detail tests added.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "Agribank",
       "category": "bank",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://www.agribank.com.vn/vn/tuyen-dung",
       "adapter": null,
-      "evidence": null
+      "evidence": "First-party recruitment announcements exist, but the discovered 2026 recruitment round closed on 2026-09-30. Announcements can combine roles in one article; no verified stable per-role source/URL as of 2026-10-13."
     },
     {
       "employer": "Eximbank",
@@ -246,50 +255,52 @@
     {
       "employer": "Bac A Bank",
       "category": "bank",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://tuyendung.baca-bank.vn/",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official recruitment portal discovered but requests failed during verification on 2026-10-13; could not validate listing/detail structure or distinguish zero vacancies from inaccessible board."
     },
     {
       "employer": "VCBNeo",
       "category": "bank",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://vcbneo.com.vn/",
       "adapter": null,
-      "evidence": null
+      "evidence": "First-party vacancy details appear discoverable, but the public listing endpoint rejected requests during verification; cannot substantiate complete navigation/pagination; do not claim a successful zero-job scan."
     },
     {
       "employer": "Vikki Bank",
       "category": "bank",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://vikkibank.vn/tuyen-dung/",
+      "adapter": "vikki_bank",
+      "evidence": "Official Vikki recruitment board exposes individual position pages and avia-element-paging listing controls; implemented bounded pagination, detail extraction, role targeting and explicit parse failure. Live production collector run not available from execution environment.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "Co-opBank",
       "category": "bank",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://co-opbank.vn/tuyen-dung/",
+      "adapter": "bank_notices",
+      "evidence": "Official Co-opBank recruitment announcements have linked detail pages; conservative parser emits only explicit individual technical roles and rejects multiple technical roles sharing a URL to prevent dedup collision. Live production collector run not available from execution environment.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "Vietnam Bank for Social Policies",
       "category": "bank",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://vbsp.org.vn/thong-tin-tuyen-dung",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official VBSP recruitment notifications found, but vacancy rounds are announcement-based and the verified dated 2025 round is expired. No confirmed active, separately addressable technical vacancies as of 2026-10-13."
     },
     {
       "employer": "Standard Chartered Vietnam",
       "category": "foreign_bank",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://jobs.standardchartered.com/search/?q=&locationsearch=Vietnam",
       "adapter": null,
-      "evidence": null
+      "evidence": "First-party SAP SuccessFactors portal exists. Live HTML exposes a React job-results widget, SAP unified API configuration and per-page X-CSRF-Token; existing static HTML SuccessFactors parser cannot enumerate its listings. API contract/authenticated widget flow needs verified live instrumentation before integration. https://jobs.standardchartered.com/search/?q=&locationsearch=Vietnam"
     },
     {
       "employer": "Woori Bank Vietnam",
@@ -312,10 +323,11 @@
     {
       "employer": "Public Bank Vietnam",
       "category": "foreign_bank",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://publicbank.com.vn/News/Career?cateId=22",
+      "adapter": "public_bank",
+      "evidence": "Official Public Bank Vietnam careers page lists several roles within one announcement with HR application email. Dedicated parser splits role headings, retains per-role requirements, distinct stable IDs and official navigable page. Limitation: bank supplies no individual posting deep-links; jobradar_role query parameters distinguish records. Parser tests mocked; live HTTP runtime unavailable (DNS blocked).",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "Hong Leong Bank Vietnam",
@@ -365,10 +377,10 @@
     {
       "employer": "Mizuho",
       "category": "foreign_bank",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://www.mizuhogroup.com/careers",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official Mizuho global careers presence verified; a Vietnam-specific first-party listing/detail feed and employer scoping are not verified. Do not substitute worldwide vacancies or the EMEA recruiting site. https://www.mizuhogroup.com/careers"
     },
     {
       "employer": "SMBC",
@@ -382,26 +394,26 @@
     {
       "employer": "ICBC",
       "category": "foreign_bank",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://www.icbc.com.cn/",
       "adapter": null,
-      "evidence": null
+      "evidence": "No independently verified, navigable public Vietnamese branch career listing plus detailed postings from ICBC official pages. The corporate homepage is only research evidence; not a feed. https://www.icbc.com.cn/"
     },
     {
       "employer": "Bank of China",
       "category": "foreign_bank",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://www.bankofchina.com/",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official Bank of China careers/branch information exists, but no verified public Vietnam-specific recruitment listing and detail feed. Global or PRC recruitment cannot be silently conflated with Vietnam jobs. https://www.bankofchina.com/"
     },
     {
       "employer": "KEB Hana",
       "category": "foreign_bank",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://www.hanabank.com/",
       "adapter": null,
-      "evidence": null
+      "evidence": "No verified first-party public KEB Hana Vietnam bank recruitment board or per-role postings. Hana Financial or BIDV-affiliated vacancy listings must not be misattributed to KEB Hana. https://www.hanabank.com/"
     },
     {
       "employer": "BNP Paribas",
@@ -424,18 +436,18 @@
     {
       "employer": "Maybank",
       "category": "foreign_bank",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://www.maybank.com/",
       "adapter": null,
-      "evidence": null
+      "evidence": "Maybank group's official presence exists; no verified dedicated Vietnam bank-branch vacancy board with detail, stable requisition IDs and Vietnam scope. Do not confuse Maybank Securities Vietnam with the bank employer. https://www.maybank.com/"
     },
     {
       "employer": "Bangkok Bank",
       "category": "foreign_bank",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://www.bangkokbank.com/",
       "adapter": null,
-      "evidence": null
+      "evidence": "Bangkok Bank operates Vietnam branches but no independently verified first-party public Vietnam branch job listings with per-role details. Global corporate careers does not establish a Vietnam feed. https://www.bangkokbank.com/"
     },
     {
       "employer": "MCredit",
@@ -450,25 +462,26 @@
       "employer": "MB Ageas Life",
       "category": "insurance",
       "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "career_url": "https://tuyendung.mblife.vn/job-search/all-jobs/en",
+      "adapter": "html_board",
+      "evidence": "Former MB Ageas Life now uses MB Life name and official recruitment portal. CareerLink HTML adapter added; live listing/detail parsing still needs validation.",
+      "verified_at": null
     },
     {
       "employer": "NAPAS",
       "category": "fintech",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://napas.com.vn/co-hoi-nghe-nghiep",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official NAPAS career archive exists, but recruitment is published in downloadable PDF notices, often multiple roles per notice. A posting-level PDF extraction/splitting adapter with date validation remains required; do not treat notice links as verified job records."
     },
     {
       "employer": "OnePay",
       "category": "fintech",
-      "status": "pending",
+      "status": "blocked",
       "career_url": null,
       "adapter": null,
-      "evidence": null
+      "evidence": "Could not verify a first-party public job listing with individual navigable descriptions and stable posting identifiers. Official domain career discovery needs manual confirmation; no homepage fallback."
     },
     {
       "employer": "SmartPay",
@@ -482,10 +495,10 @@
     {
       "employer": "Moca",
       "category": "fintech",
-      "status": "pending",
+      "status": "blocked",
       "career_url": null,
       "adapter": null,
-      "evidence": null
+      "evidence": "Moca e-wallet terminated operations in 2024; a current standalone official Moca recruitment board could not be verified. Company identity should not be conflated with Grab."
     },
     {
       "employer": "Trusting Social",
@@ -535,98 +548,106 @@
     {
       "employer": "HD SAISON",
       "category": "finance",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://tuyendung.hdsaison.com.vn/vn/co-hoi-nghe-nghiep.html",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official recruitment portal exists, but the live HTML listing/p-N pagination could not be fetched or parsed in this environment. Requires reproducible live listing and detail evidence; not implemented.",
+      "verified_at": null
     },
     {
       "employer": "FWD Vietnam",
       "category": "insurance",
       "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "career_url": "https://fwd.wd3.myworkdayjobs.com/FWDcareersite",
+      "adapter": "workday",
+      "evidence": "Official FWD Vietnam careers routes to FWD Workday site; CXS route configured from public Workday path convention. API response and location coverage not live-tested.",
+      "verified_at": null
     },
     {
       "employer": "Prudential Vietnam",
       "category": "insurance",
       "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "career_url": "https://prudential.wd3.myworkdayjobs.com/prudential",
+      "adapter": "workday",
+      "evidence": "Official Prudential careers site links Workday. CXS route and Vietnam title search configured, but live API response not verified.",
+      "verified_at": null
     },
     {
       "employer": "Manulife Vietnam",
       "category": "insurance",
       "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "career_url": "https://manulife.wd3.myworkdayjobs.com/MFCJH_Jobs",
+      "adapter": "workday",
+      "evidence": "Official Manulife Workday jobs board found; configured Vietnam search, pending CXS live API verification.",
+      "verified_at": null
     },
     {
       "employer": "AIA Vietnam",
       "category": "insurance",
       "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "career_url": "https://aia.wd3.myworkdayjobs.com/External",
+      "adapter": "workday",
+      "evidence": "AIA Group official corporate Workday board; configured Vietnam search. CXS endpoint and employer scope require live verification.",
+      "verified_at": null
     },
     {
       "employer": "Chubb Life Vietnam",
       "category": "insurance",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://www.chubb.com/vn-vn/careers/staff-recruitment.html",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official Chubb Life Vietnam staff recruitment page provides contact route, but no independently verifiable public navigable job listing/detail board was found; homepage is not an adapter.",
+      "verified_at": null
     },
     {
       "employer": "Mirae Asset Vietnam",
       "category": "finance",
       "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "career_url": "https://recruitment.mafc.vn/job-search/all-jobs/en",
+      "adapter": "html_board",
+      "evidence": "Official Mirae Asset Finance Vietnam recruitment portal. CareerLink HTML adapter added; detail path and multi-page live smoke validation pending.",
+      "verified_at": null
     },
     {
       "employer": "Bao Viet",
       "category": "finance",
       "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "career_url": "https://www.baoviet.com.vn/vi/tuyen-dung",
+      "adapter": "baoviet_announcement",
+      "evidence": "Official Tập đoàn Bảo Việt career page links to group ICT recruitment announcements with multiple role rows. Dedicated row-splitting adapter; live HTML selector validation pending.",
+      "verified_at": null
     },
     {
       "employer": "SeaMoney",
       "category": "commerce",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://careers.monee.com/",
       "adapter": null,
-      "evidence": null
+      "evidence": "SeaMoney has rebranded as Monee. Official Monee careers site is available, but Vietnam-specific enumerated posting/detail API and company/country scoping were not verified. Shopee jobs must not be labeled SeaMoney without evidence."
     },
     {
       "employer": "Traveloka",
       "category": "commerce",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://careers.traveloka.com/jobs",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official Traveloka job board and individual job pages are public. However, verified indexed role examples are outside Vietnam and the dynamic board's complete listing/pagination and Vietnam scoping have not been independently verified. Do not mark a country-filtered adapter complete."
     },
     {
       "employer": "Agoda",
       "category": "commerce",
       "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "career_url": "https://careersatagoda.com/vacancies/",
+      "adapter": "agoda",
+      "evidence": "Official Agoda listings and individual /job/<id>-<slug>/ pages confirmed publicly, displaying per-posting country and full descriptions. Agent 7 adapter and mocked regression tests added; runtime live smoke test and full pagination/load-more confirmation still REQUIRED before marking verified."
     },
     {
       "employer": "Booking.com",
       "category": "commerce",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://jobs.booking.com/",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official Booking.com recruiting portal exists but public request to job pages returned HTTP 403. No accessible first-party pagination/detail transport was verified; avoid treating empty/denied HTML as zero jobs."
     },
     {
       "employer": "NAVER Vietnam",
@@ -640,10 +661,10 @@
     {
       "employer": "Cinnamon AI",
       "category": "technology",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://herp.careers/v1/cinnamonai",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official Cinnamon AI recruitment channels were examined; HERP board does not expose verifiable active Vietnam postings. No verified Vietnam-specific first-party job detail/ATS API to implement; cannot count as a working feed."
     },
     {
       "employer": "Rikkeisoft",
@@ -657,18 +678,19 @@
     {
       "employer": "Rikkei AI",
       "category": "technology",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://tuyendung.rikkeisoft.com/recruitment",
       "adapter": null,
-      "evidence": null
+      "evidence": "Rikkei AI is associated with Rikkeisoft, whose generic recruiting API is already covered. Public listings do not reliably identify Rikkei AI as distinct employing entity, so cloning the Rikkeisoft feed would misattribute positions. Requires distinct employer filter or identifiable first-party board."
     },
     {
       "employer": "Gear Inc",
       "category": "technology",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://gear-inc-2.careers-page.com/",
+      "adapter": "manatal",
+      "evidence": "First-party Gear Inc careers link resolves to its Manatal board with 220 displayed open positions across 23 paginated pages. Adapter requires all advertised job IDs, follows Vietnam-specific detail postings and captures requirements, location and apply URLs. Mocked collector validation required before release.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "NashTech Vietnam",
@@ -736,10 +758,11 @@
     {
       "employer": "Anduin Transactions",
       "category": "technology",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://anduin.hire.trakstar.com/",
+      "adapter": "trakstar",
+      "evidence": "Official Anduin recruiting portal hosted on Trakstar exposes individual /jobs/fk... postings, including Vietnam software engineering roles with job qualifications; collector reads details from the portal, retaining Vietnam scope. Mocked collector validation required before release.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "Sky Mavis",
@@ -753,218 +776,234 @@
     {
       "employer": "Hanoi University of Science and Technology",
       "category": "research",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://hust.edu.vn/",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official HUST publishes recruitment notices, often PDFs; an exhaustive machine-readable role-level hiring board with full requirements, explicit expiry and pagination was not verified. Notice/PDF splitting and expiry filter needed."
     },
     {
       "employer": "VNU University of Engineering and Technology",
       "category": "research",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://uet.vnu.edu.vn/",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official UET recruitment announcements found, including 2026 lecturer recruitment, but no verified uniform individual-job listing/detail feed. Notices require role splitting and deadlines/expiry handling."
     },
     {
       "employer": "Posts and Telecommunications Institute of Technology",
       "category": "research",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://ptit.edu.vn/",
       "adapter": null,
-      "evidence": null
+      "evidence": "PTIT official recruitment announcements exist but no reliably accessible, complete individual-job feed could be verified. PDF or announcement-level extraction, deadlines and pagination remain unresolved."
     },
     {
       "employer": "Phenikaa University",
       "category": "research",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://phenikaa-uni.edu.vn/",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official university recruitment pages exist, but no verified role-level listing/detail schema and complete pagination. Cannot replace structured job records with a generic recruitment/category page."
     },
     {
       "employer": "Qualcomm",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "adapter_unverified",
+      "career_url": "https://careers.qualcomm.com/careers",
+      "adapter": "eightfold",
+      "evidence": "Qualcomm's own careers page links to the official Eightfold board; public Eightfold PCSX/classic schemas are documented in third-party open source implementation. Live Vietnam-scoped API responses could not be exercised in this environment; runtime smoke verification required.",
+      "verified_at": null
     },
     {
       "employer": "Samsung R&D Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://www.samsungcareers.com.vn/",
       "adapter": null,
-      "evidence": null
+      "evidence": "Samsung Vietnam's official careers portal provides experience/staff/technician groupings, but vacancy inventory and R&D-specific employer identity are JavaScript-backed. Neither public detail API nor independent R&D-specific, first-party listing schema verified. No placeholder collector.",
+      "verified_at": null
     },
     {
       "employer": "Samsung Electronics Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://www.samsungcareers.com.vn/",
       "adapter": null,
-      "evidence": null
+      "evidence": "Same official Samsung Vietnam careers portal as Samsung R&D; without an evidenced job-level employing entity or accessible role detail API, cannot reliably separate the two legal employers. No shared portal blanket rebranding.",
+      "verified_at": null
     },
     {
       "employer": "LG Electronics R&D Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://globalcareers.lge.com/jobs",
       "adapter": null,
-      "evidence": null
+      "evidence": "LG Electronics global official board is JavaScript-rendered (initial shell reports Loading/0 Results). Vietnam R&D subsidiary role listing/detail API not verified; zero from initial HTML is not an empty verified vacancy list.",
+      "verified_at": null
     },
     {
       "employer": "NXP Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "adapter_unverified",
+      "career_url": "https://nxp.wd3.myworkdayjobs.com/careers",
+      "adapter": "workday_vietnam",
+      "evidence": "Public NXP Workday jobs board uses the employer tenant nxp and careers board. Workday API and Vietnam-scoped search implementation added; live API and detail response not tested.",
+      "verified_at": null
     },
     {
       "employer": "Cadence Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "adapter_unverified",
+      "career_url": "https://cadence.wd1.myworkdayjobs.com/External_Careers",
+      "adapter": "workday_vietnam",
+      "evidence": "Public Cadence Workday External_Careers board identified; tenant API integration added but live search and detail API response not verified.",
+      "verified_at": null
     },
     {
       "employer": "MediaTek Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://careers.mediatek.com/en/jobs",
       "adapter": null,
-      "evidence": null
+      "evidence": "MediaTek official jobs board loaded 621 global jobs in observed search snapshot but its location filter options did not include Vietnam; no verified first-party Vietnam vacancies/source adapter. Global list must not be relabeled MediaTek Vietnam.",
+      "verified_at": null
     },
     {
       "employer": "ARM",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://careers.arm.com/search-jobs",
       "adapter": null,
-      "evidence": null
+      "evidence": "Arm's official global search board exists, but no Vietnam-specific first-party vacancy records or verified complete Vietnam feed URL were established during this pass. Requires live regional inventory verification, not a global homepage adapter.",
+      "verified_at": null
     },
     {
       "employer": "Ampere",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://careers.amperecomputing.com/search/jobs/in/sg-ho-chi-minh-sai-gon",
+      "adapter": "html_board",
+      "evidence": "Official Vietnam-scoped page currently lists 8 roles (including Data Engineer and MTE Software Engineer), with independently accessible first-party /jobs/<id>-<slug> details and complete descriptions; checked 2026-10-13. Adapter uses scoped job URLs and stable requisition IDs; focused fixture tests added.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "Microsoft Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://careers.microsoft.com/v2/global/en/home.html",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official Microsoft careers portal confirmed; no reproducible public Vietnam-scoped listing/detail API or complete pagination verified; requires browser/XHR capture.",
+      "blocked_at": "2026-10-13"
     },
     {
       "employer": "Google Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://www.google.com/about/careers/applications/jobs/results/?location=Vietnam",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official Google jobs results portal confirmed; dynamically served listing/detail and pagination were not verifiable here; cannot claim a working adapter.",
+      "blocked_at": "2026-10-13"
     },
     {
       "employer": "Amazon / AWS Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://www.amazon.jobs/en/search?normalized_country_code%5B%5D=VNM",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official Amazon Jobs search confirmed; a documented search.json adapter with mock tests was added, but live JSON schema/HTTP could not be checked from this environment, so this remains unverified pending live smoke.",
+      "blocked_at": "2026-10-13"
     },
     {
       "employer": "IBM Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://www.ibm.com/careers/search",
       "adapter": null,
-      "evidence": null
+      "evidence": "IBM official career search found; dynamic listing/detail semantics and Vietnam-only pagination not verified; blocked until official XHR schema is inspected.",
+      "blocked_at": "2026-10-13"
     },
     {
       "employer": "Oracle Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://careers.oracle.com/en/sites/jobsearch",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official Oracle recruiting portal found; siteNumber-specific requisition listing and Vietnam scoping not verified; do not reuse unrelated Oracle tenant IDs.",
+      "blocked_at": "2026-10-13"
     },
     {
       "employer": "SAP Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "verified",
+      "career_url": "https://jobs.sap.com/go/Vietnam/9513801/",
+      "adapter": "successfactors",
+      "evidence": "Official SAP Vietnam SuccessFactors board currently shows 6 vacancies on one page; country-scoped listing verified 2026-10-13. Existing successfactors collector fetches /job/ details and full description; focused integration relies on existing SuccessFactors tests.",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "Cisco Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://careers.cisco.com/global/en.html",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official Cisco careers portal found; dynamically rendered Vietnam result listing and full detail schema not verified; browser/XHR capture required.",
+      "blocked_at": "2026-10-13"
     },
     {
       "employer": "Ericsson Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://jobs.ericsson.com/careers",
       "adapter": null,
-      "evidence": null
+      "evidence": "Ericsson's official global careers site uses a JavaScript-rendered recruitment board; Vietnam-specific listings, stable public listing endpoint and detail extraction have not been validated. Do not register a homepage-only adapter."
     },
     {
       "employer": "Nokia Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://jobs.nokia.com/en/sites/CX_1",
       "adapter": null,
-      "evidence": null
+      "evidence": "Nokia uses an Oracle Candidate Experience board. Vietnam-only requisition listing and Oracle HCM request/response contract were not verified; guessing hcmRestApi endpoint or site number would create false empty results."
     },
     {
       "employer": "Huawei Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://career.huawei.com/en",
       "adapter": null,
-      "evidence": null
+      "evidence": "Huawei global official recruitment portal exists, but its Vietnam job listing endpoint and posting-detail schema could not be confirmed. A generic corporate jobs landing page is not a working feed."
     },
     {
       "employer": "Panasonic Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://www.panasonic.com/vn/corporate/careers.html",
       "adapter": null,
-      "evidence": null
+      "evidence": "Panasonic Vietnam official corporate career link directs candidates to VietnamWorks; sprint excludes generic aggregators. https://careers.vn.panasonic.com/search/ serves Panasonic Sales Vietnam (a particular subsidiary), not verified coverage of all Panasonic Vietnam entities; do not mislabel it."
     },
     {
       "employer": "Toyota Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
+      "status": "blocked",
+      "career_url": "https://www.toyota.com.vn/tuyen-dung/recruitment",
       "adapter": null,
-      "evidence": null
+      "evidence": "Official Toyota Vietnam recruiting site exposes a search/filter interface, but current job-link markup, pagination, role-detail shape and an independently verifiable live opening were not established. Collector would be speculative."
     },
     {
       "employer": "Honda Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "implemented_unverified",
+      "career_url": "https://www.honda.com.vn/tuyen-dung/co-hoi-nghe-nghiep",
+      "adapter": "html_board",
+      "evidence": "Official Honda Vietnam career listing and role detail accessible: https://www.honda.com.vn/tuyen-dung/chi-tiet-co-hoi-nghe-nghiep?id=1002 (software-maintenance position). Query job IDs must be preserved; listing/detail adapter uses the existing HTML board collector. Live HTTP collector execution not available in this session. Source and example detail URL verified via web search; mocked collector tests authored, but no live execution, HTML shape or pagination verification. Must remain unverified until live smoke."
     },
     {
       "employer": "Hyundai Motor Vietnam",
       "category": "global_tech",
-      "status": "pending",
-      "career_url": null,
-      "adapter": null,
-      "evidence": null
+      "status": "implemented_unverified",
+      "career_url": "https://career.hyundai.thanhcong.vn/job-search/all-jobs/en",
+      "adapter": "html_board",
+      "evidence": "Official Hyundai Thanh Cong Vietnam joint venture recruitment board lists four current roles, with individual detail pages, locations, and expiry dates: https://career.hyundai.thanhcong.vn/job-search/all-jobs/en. Company refers to the Vietnamese JV, not Hyundai globally. Live HTTP collector execution not available in this session. Source and example detail URL verified via web search; mocked collector tests authored, but no live execution, HTML shape or pagination verification. Must remain unverified until live smoke."
     }
   ],
   "handoff": {
@@ -990,6 +1029,35 @@
       "Agribank and Social Policies Bank samples are expired; retain closing-date checks. VCBNeo currently rejects direct requests.",
       "All adapters must preserve real employer identity, complete descriptions, posting links, pagination, and new-job ingestion dedup.",
       "The local running service was last restarted before the final adapter batches; restart or redeploy when adopting the pushed branch."
+    ]
+  },
+  "integration": {
+    "date": "2026-10-13",
+    "tracking_issue": 248,
+    "agent_prs": [
+      249,
+      250,
+      251,
+      252,
+      253,
+      254,
+      255,
+      256,
+      257,
+      258
+    ],
+    "assigned_employers": 80,
+    "counts": {
+      "verified": 47,
+      "blocked": 53,
+      "pending": 10,
+      "adapter_unverified": 3,
+      "implemented_unverified": 2
+    },
+    "live_runtime_verified_in_this_sprint": 0,
+    "notes": [
+      "Merged agent work into feat/job-feed-integration for CI verification. Existing source verification is not proof the collectors were executed live.",
+      "Blocked employers are unresolved; pending/adapter_unverified/implemented_unverified feeds must not be counted as live-validated."
     ]
   }
 }

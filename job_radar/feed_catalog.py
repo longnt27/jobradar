@@ -62,14 +62,23 @@ def ainavi(employer: str, domain: str) -> CareerFeed:
     })
 
 CAREER_FEEDS: tuple[CareerFeed, ...] = (
+    CareerFeed("Gear Inc", "https://gear-inc-2.careers-page.com/", "manatal", {"max_pages": 50}),
+    CareerFeed("Anduin Transactions", "https://anduin.hire.trakstar.com/", "trakstar"),
+    CareerFeed("VNPT Technology", "https://www.vnpt-technology.vn/vi/recruit", "vnpt_technology"),
+    CareerFeed("VNPT Group", "https://tuyendung.vnpt.vn/viec-lam/viec-lam-tap-doan-vnpt-d3240.html", "vnpt_parent", {"max_pages": 12}),
     CareerFeed("VinAI", "https://www.vinai.io/careers/", "legacy"),
-    html("VinBus", "https://vinbus.vn/tuyen-dung/viec-lam", r"^/[a-z0-9-]+$",\n         max_pages=10, max_results=100, description_selector="main"),\n    CareerFeed("VinDynamics", "https://vindynamics.net/career", "vindynamics"),
+    html("VinBus", "https://vinbus.vn/tuyen-dung/viec-lam", r"^/[a-z0-9-]+$",
+         max_pages=10, max_results=100, description_selector="main"),
+    CareerFeed("VinDynamics", "https://vindynamics.net/career", "vindynamics"),
     CareerFeed("VinRobotics", "https://vinrobotics.net/career", "vinrobotics"),
     html("VinMotion", "https://vinmotion.net/vi/career", r"^/vi/career/[^/?#]+$", max_results=100, description_selector="main"),
     html("VinUni", "https://vinuni.talent.vn/jobs", TALENT_JOB, max_results=100, description_selector=".content-article, article"),
     CareerFeed("Viettel Group", "https://jobs.viettel.vn/search/?q=AI", "successfactors", {"queries": ["AI", "kỹ sư", "Data Scientist", "Viettel High Tech", "Viettel Cyber Security"], "max_pages": 2}),
     html("FPT Education", "https://career.fpt.edu.vn/Job/Search", r"^/Job/Detail/\d+$", description_selector=".job_description_content"),
     browser("FPT Telecom", "https://fptjobs.com/tuyen-dung", r"^/[a-z0-9-]+-\d+$", listing_selector="a.link-overlay[href]", listing_ready_selector="a.link-overlay[href*='-'][title]", description_selector="main"),
+    html("FPT Software", "https://career.fpt-software.com/jobs-search/", r"^/jobs/[a-z0-9][a-z0-9-]+/?$",
+         pagination_param="page_job", max_pages=10, max_results=180, description_selector="main, article",
+         require_links=True, strict_detail=True, external_id_from_path=True),
     CareerFeed("Techcombank", "https://www.techcombankjobs.com/go/Data-%26-Analytics/549144/", "successfactors", {
         "boards": ["https://www.techcombankjobs.com/go/Data-%26-Analytics/549144/", "https://www.techcombankjobs.com/go/Technology/548944/"], "max_pages": 4,
     }),
@@ -103,6 +112,10 @@ CAREER_FEEDS: tuple[CareerFeed, ...] = (
          title_include=r"\b(?:AI|ML|LLM|NLP)\b|machine learning|computer vision|deep learning|data scien|generative"),
     html("CMC TS", "https://careers.cmcts.com.vn/", TALENT_JOB, max_results=100, description_selector=".content-article, article"),
     html("CMC Telecom", "https://cmctelecom.vn/danh-sach-tuyen-dung/", r"^/recruit/[^/?#]+/?$", description_selector=".recruitment-detail"),
+    html("CMC University", "https://cmcu.edu.vn/tin-tuyen-dung/", r"^/thong-bao-tuyen-dung-[^/?#]+/?$",
+         pagination="wordpress", max_pages=3, max_results=50, description_selector=".entry-content, article",
+         location_regex=r"Địa chỉ\s*:\s*(.{5,180}?)(?=\s+(?:Hình thức|Liên hệ)\s*:|$)",
+         require_links=True, strict_detail=True, external_id_from_path=True),
     html("NTQ Solution", "https://career.ntq.com.vn/careers", r"^/career/[^/?#]+/?$", description_selector=".section-career-detail__job-content__description"),
     html("VNPAY", "https://tuyendung.vnpay.vn/", r"^/tuyen-dung/[^/?#]+\.html$"),
     html("Base.vn", "https://baseinc.talent.vn/alljobs?dept=9", TALENT_JOB, description_selector=".content-article, article"),
@@ -128,11 +141,25 @@ CAREER_FEEDS: tuple[CareerFeed, ...] = (
     CareerFeed("Viettel AI", "https://jobs.viettel.vn/search/?q=Viettel+AI", "successfactors", {"queries": ["Viettel AI", "Không gian mạng"], "max_pages": 2}),
     CareerFeed("Viettel Software", "https://jobs.viettel.vn/search/?q=Viettel+Software", "successfactors", {"queries": ["Viettel Software", "Trung tâm Phần mềm"], "max_pages": 2}),
     CareerFeed("Viettel Research and Development", "https://jobs.viettel.vn/search/?q=Viettel+R%26D", "successfactors", {"queries": ["Viettel R&D", "Viện Hàng không Vũ trụ"], "max_pages": 2}),
+    CareerFeed("Qualcomm", "https://careers.qualcomm.com/careers", "eightfold", {
+        "domain": "qualcomm.com", "location_query": "Vietnam", "max_pages": 100,
+    }),
+    CareerFeed("NXP Vietnam", "https://nxp.wd3.myworkdayjobs.com/careers", "workday_vietnam", {
+        "search_url": "https://nxp.wd3.myworkdayjobs.com/wday/cxs/nxp/careers/jobs",
+        "detail_base": "https://nxp.wd3.myworkdayjobs.com/wday/cxs/nxp/careers",
+        "search_texts": ["Vietnam", "Ho Chi Minh", "Hanoi"], "max_pages": 100,
+    }),
+    CareerFeed("Cadence Vietnam", "https://cadence.wd1.myworkdayjobs.com/External_Careers", "workday_vietnam", {
+        "search_url": "https://cadence.wd1.myworkdayjobs.com/wday/cxs/cadence/External_Careers/jobs",
+        "detail_base": "https://cadence.wd1.myworkdayjobs.com/wday/cxs/cadence/External_Careers",
+        "search_texts": ["Vietnam", "Ho Chi Minh", "Hanoi"], "max_pages": 100,
+    }),
     CareerFeed("NVIDIA", "https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite", "workday", {
         "search_url": "https://nvidia.wd5.myworkdayjobs.com/wday/cxs/nvidia/NVIDIAExternalCareerSite/jobs",
         "detail_base": "https://nvidia.wd5.myworkdayjobs.com/wday/cxs/nvidia/NVIDIAExternalCareerSite",
         "search_text": "Vietnam",
     }),
+    CareerFeed("Agoda", "https://careersatagoda.com/vacancies/", "agoda"),
     CareerFeed("Shopee", "https://careers.shopee.vn/jobs", "workatsea"),
     CareerFeed("SPX Express", "https://careers.shopee.vn/jobs", "workatsea", {"company_filter": "SPX"}),
     html("Vinschool", "https://tuyendung.vinschool.edu.vn/jobs", TALENT_JOB, description_selector=".content-article, article"),
@@ -232,6 +259,10 @@ CAREER_FEEDS: tuple[CareerFeed, ...] = (
     }),
     html("Timo", "https://timo.vn/careers/", r"^/career/[^/?#]+/?$", description_selector=".tr-single-career__content",
          location_selector=".tr-single-career__meta-item:nth-child(3)", max_results=100),
+    CareerFeed("Vikki Bank", "https://vikkibank.vn/tuyen-dung/", "vikki_bank", {"max_pages": 24}),
+    CareerFeed("Co-opBank", "https://co-opbank.vn/tuyen-dung/", "bank_notices", {
+        "notice_kind": "coopbank", "link_path": r"^/tuyen-dung/[^/?#]+/?$", "max_pages": 8,
+    }),
     ainavi("Eximbank", "tuyendungeximbank.com"),
     ainavi("MCredit", "tuyendungmcredit.ainavi.com.vn"),
     CareerFeed("VPS", "https://www.vps.com.vn/gia-nhap-vps/co-hoi-nghe-nghiep", "json_board", {
@@ -249,6 +280,7 @@ CAREER_FEEDS: tuple[CareerFeed, ...] = (
     workday("MUFG", "mufgub.wd3.myworkdayjobs.com", "mufgub", "MUFG-Careers", "Country"),
     html("Woori Bank Vietnam", "https://woori.com.vn/thong-tin-tuyen-dung/", r"^/tuyen-dung/[^/?#]+/?$", pagination="wordpress", max_pages=6,
          description_selector="#content-main", location_selector=".content-main--item:first-child .content-main--item__right"),
+    CareerFeed("Public Bank Vietnam", "https://publicbank.com.vn/News/Career?cateId=22", "public_bank"),
     CareerFeed("ANZ Vietnam", "https://careers.anz.com/search/?q=&locationsearch=Vietnam", "successfactors", {"max_pages": 4, "search_page_size": 25}),
     CareerFeed("SMBC", "https://careerasia.smbc.co.jp/SMBC/search/?q=&locationsearch=Viet+Nam", "successfactors", {
         "max_pages": 4, "search_page_size": 25, "location_selector": "[data-careersite-propertyid=customfield1]",
@@ -262,6 +294,52 @@ CAREER_FEEDS: tuple[CareerFeed, ...] = (
         "detail_rows_path": "items.0", "description_sections": {"": "ExternalDescriptionStr"}, "location_fields": ["PrimaryLocation"],
         "published_field": "ExternalPostedStartDate", "deadline_field": "ExternalPostedEndDate",
     }),
+    # Honda detail pages have stable numeric IDs in their query strings.
+    html("Honda Vietnam", "https://www.honda.com.vn/tuyen-dung/co-hoi-nghe-nghiep",
+         r"^/tuyen-dung/chi-tiet-co-hoi-nghe-nghiep$", keep_query=True,
+         max_results=120, description_selector="main, article"),
+    # Hyundai Thanh Cong is the Hyundai Motor joint venture in Vietnam, not Hyundai globally.
+    html("Hyundai Motor Vietnam", "https://career.hyundai.thanhcong.vn/job-search/all-jobs/en",
+         r"^/job/[^/?#]+\.html$", max_results=120,
+         description_selector="main, article, .job-detail"),
     html("BNP Paribas", "https://apac.bnpparibas/en/work-with-us/apply-now/our-opportunities/?city%5B%5D=ho-chi-minh&city%5B%5D=ho-chi-minh-city", r"^/en/jobs/[^/?#]+/?$",
          description_selector=".jobs__content", location_selector=".jobs__details .crd__specs li:nth-child(2) span"),
+
+    # Agent 6: finance and insurance. The employer identity is kept even on a group ATS.
+    html("Mirae Asset Vietnam", "https://recruitment.mafc.vn/job-search/all-jobs/en",
+         r"^/(?:job|viec-lam)/[^/?#]+\.[a-f0-9]+\.html$", max_pages=8, max_results=120,
+         description_selector="[class*=job-description], [class*=job-detail], main"),
+    html("MB Ageas Life", "https://tuyendung.mblife.vn/job-search/all-jobs/en",
+         r"^/job/[^/?#]+\.[a-f0-9]+\.html$", max_pages=8, max_results=120,
+         description_selector="[class*=job-description], [class*=job-detail], main"),
+    CareerFeed("Bao Viet", "https://www.baoviet.com.vn/vi/tuyen-dung", "baoviet_announcement"),
+    CareerFeed("FWD Vietnam", "https://fwd.wd3.myworkdayjobs.com/FWDcareersite", "workday", {
+        "search_url": "https://fwd.wd3.myworkdayjobs.com/wday/cxs/fwd/FWDcareersite/jobs",
+        "detail_base": "https://fwd.wd3.myworkdayjobs.com/wday/cxs/fwd/FWDcareersite",
+        "search_text": "Vietnam", "location_include": r"Vietnam|Việt Nam",
+    }),
+    CareerFeed("Prudential Vietnam", "https://prudential.wd3.myworkdayjobs.com/prudential", "workday", {
+        "search_url": "https://prudential.wd3.myworkdayjobs.com/wday/cxs/prudential/prudential/jobs",
+        "detail_base": "https://prudential.wd3.myworkdayjobs.com/wday/cxs/prudential/prudential",
+        "search_text": "Vietnam", "location_include": r"Vietnam|Việt Nam",
+    }),
+    CareerFeed("Manulife Vietnam", "https://manulife.wd3.myworkdayjobs.com/MFCJH_Jobs", "workday", {
+        "search_url": "https://manulife.wd3.myworkdayjobs.com/wday/cxs/manulife/MFCJH_Jobs/jobs",
+        "detail_base": "https://manulife.wd3.myworkdayjobs.com/wday/cxs/manulife/MFCJH_Jobs",
+        "search_text": "Vietnam", "location_include": r"Vietnam|Việt Nam",
+    }),
+    CareerFeed("AIA Vietnam", "https://aia.wd3.myworkdayjobs.com/External", "workday", {
+        "search_url": "https://aia.wd3.myworkdayjobs.com/wday/cxs/aia/External/jobs",
+        "detail_base": "https://aia.wd3.myworkdayjobs.com/wday/cxs/aia/External",
+        "search_text": "Vietnam", "location_include": r"Vietnam|Việt Nam|VN-AIA",
+    }),
+
+    # Agent 9: employer-operated, country-scoped first-party portals.
+    html("Ampere", "https://careers.amperecomputing.com/search/jobs/in/sg-ho-chi-minh-sai-gon",
+         r"^/jobs/\d+-[^/?#]+$", max_results=60, description_selector="main",
+         external_id_pattern=r"/jobs/(\d+)-", location_text_pattern=r"(?m)^Location:\s*([^\n]+)"),
+    CareerFeed("SAP Vietnam", "https://jobs.sap.com/go/Vietnam/9513801/", "successfactors", {
+        "max_pages": 2,
+        "location_selector": ".job-location, #job-location, [data-careersite-propertyid=location]",
+    }),
 )
