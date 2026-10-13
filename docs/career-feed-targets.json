@@ -76,11 +76,12 @@
     {
       "employer": "VinBus",
       "category": "vingroup",
-      "status": "pending",
+      "status": "verified",
       "career_url": "https://vinbus.vn/tuyen-dung/viec-lam",
-      "adapter": null,
-      "evidence": "Agent 1 audit 2026-10-13: Official first-party paginated role listing verified at /tuyen-dung/viec-lam and ?page=2, with named roles and locations; canonical individual job URLs/full descriptions could not be confirmed from retrieved page, so an adapter is not yet verified.",
-      "reviewed_at": "2026-10-13"
+      "adapter": "html_board",
+      "evidence": "2026-10-13 first-party HTML board https://vinbus.vn/tuyen-dung/viec-lam includes actual listing records and ?page=2 pagination; individual live jobs have stable slug URLs (e.g. https://vinbus.vn/chuyen-vien-co-van-dich-vu-bao-duong-sua-chua-ha-noi) with full responsibilities, requirements, contact and location. HTML board links fetch and process details; no current sampled technical-title match. Mocked parsing test included; live collector not runnable in current environment.",
+      "reviewed_at": "2026-10-13",
+      "verified_at": "2026-10-13"
     },
     {
       "employer": "Vinmec",
