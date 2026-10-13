@@ -149,3 +149,54 @@ def test_workday_vietnam_filters_global_positions_and_deduplicates(monkeypatch, 
     assert jobs[0].company == employer and jobs[0].external_id == "101"
     assert "Hanoi, Vietnam" in jobs[0].location
     assert requested == ["Vietnam", "Ho Chi Minh", "Hanoi"]
+
+
+def test_eightfold_retries_rate_limit_once_with_retry_after(monkeypatch):
+    import job_radar.global_tech_feeds as module
+    called = []
+    async def no_sleep(_seconds):
+        pass
+    monkeypatch.setattr(module.asyncio, "sleep", no_sleep)
+    description = "<p>Develop reliable machine learning systems in production.</p>" * 5
+    class Client:
+        def __init__(self):
+            self.headers = {}
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *_):
+            return None
+        async def get(self, url, params):
+            called.append(url)
+            if url.endswith("/pcsx/search") and called.count(url) == 1:
+                return httpx.Response(429, headers={"Retry-After": "2"}, request=httpx.Request("GET", url))
+            if url.endswith("/pcsx/search"):
+                return httpx.Response(200, json={"data":{"positions":[
+                    {"id":"22","name":"AI Engineer","locations":["Hanoi, Vietnam"]}
+                ], "count": 1}}, request=httpx.Request("GET", url))
+            return httpx.Response(200, json={"data":{"position":{
+                "id":"22", "name":"AI Engineer","locations":["Hanoi, Vietnam"],
+                "jobDescription":description,
+            }}}, request=httpx.Request("GET", url))
+    client = Client()
+    monkeypatch.setattr("job_radar.collectors._career_client", lambda: client)
+    jobs = asyncio.run(collect_eightfold(source("Qualcomm")))
+    assert len(jobs) == 1
+    assert called.count("https://careers.qualcomm.com/api/pcsx/search") == 2
+    assert client.headers["User-Agent"].startswith("JobRadar/0.1")
+
+
+def test_eightfold_429_remains_hard_error_when_retries_exhausted(monkeypatch):
+    import job_radar.global_tech_feeds as module
+    async def no_sleep(_seconds):
+        pass
+    monkeypatch.setattr(module.asyncio, "sleep", no_sleep)
+    class Client:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *_):
+            return None
+        async def get(self, url, params):
+            return httpx.Response(429, text="Too many requests", request=httpx.Request("GET", url))
+    monkeypatch.setattr("job_radar.collectors._career_client", Client)
+    with pytest.raises(httpx.HTTPStatusError):
+        asyncio.run(collect_eightfold(source("Qualcomm")))

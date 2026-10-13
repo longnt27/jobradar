@@ -6,6 +6,7 @@ reads each relevant position's full detail API, rather than scraping a SPA shell
 """
 from __future__ import annotations
 
+import asyncio
 import re
 from datetime import datetime, timezone
 from urllib.parse import urljoin, urlsplit
@@ -90,14 +91,36 @@ async def collect_eightfold(source: dict) -> list[ObservedJob]:
         raise ValueError("Eightfold max_pages must be positive")
 
     async with _career_client() as client:
+        if hasattr(client, "headers"):
+            # Identifiable read-only crawler UA. Browser impersonation caused
+            # intermittent API throttling on GitHub-hosted runners.
+            client.headers["User-Agent"] = "JobRadar/0.1 (public recruitment feed health check)"
+
+        async def fetch(url: str, params: dict):
+            for attempt in range(3):
+                reply = await client.get(url, params=params)
+                if reply.status_code != 429:
+                    return reply
+                if attempt == 2:
+                    reply.raise_for_status()
+                raw_delay = reply.headers.get("Retry-After", "")
+                try:
+                    delay = max(2.0, min(15.0, float(raw_delay)))
+                except ValueError:
+                    delay = 3.0 * (attempt + 1)
+                await asyncio.sleep(delay)
+            raise AssertionError("unreachable")
+
         generation = None
         seen: set[str] = set()
         records: list[dict] = []
         offset = 0
         for page in range(max_pages):
+            if page and float(cfg.get("pace_seconds", 0)):
+                await asyncio.sleep(min(5.0, float(cfg["pace_seconds"])))
             params = {"domain": domain, "query": "", "location": country, "start": str(offset)}
             if generation != "classic":
-                pcsx = await client.get(root + "/api/pcsx/search", params=params)
+                pcsx = await fetch(root + "/api/pcsx/search", params=params)
                 if pcsx.status_code == 403 and generation is None:
                     generation = "classic"
                 else:
@@ -111,7 +134,7 @@ async def collect_eightfold(source: dict) -> list[ObservedJob]:
                     total = body["count"]
 
             if generation == "classic":
-                classic = await client.get(root + "/api/apply/v2/jobs", params={
+                classic = await fetch(root + "/api/apply/v2/jobs", params={
                     **params, "num": "10", "sort_by": "timestamp",
                 })
                 classic.raise_for_status()
@@ -157,10 +180,10 @@ async def collect_eightfold(source: dict) -> list[ObservedJob]:
                 continue
             identifier = str(row.get("id") or row.get("displayJobId") or row["display_job_id"])
             if generation == "pcsx":
-                resp = await client.get(root + "/api/pcsx/position_details",
+                resp = await fetch(root + "/api/pcsx/position_details",
                                         params={"position_id": identifier, "domain": domain, "hl": "en"})
             else:
-                resp = await client.get(root + f"/api/apply/v2/jobs/{identifier}", params={"domain": domain})
+                resp = await fetch(root + f"/api/apply/v2/jobs/{identifier}", params={"domain": domain})
             if resp.status_code in {404, 410}:
                 continue
             resp.raise_for_status()

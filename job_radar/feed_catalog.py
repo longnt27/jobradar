@@ -142,7 +142,7 @@ CAREER_FEEDS: tuple[CareerFeed, ...] = (
     CareerFeed("Viettel Software", "https://jobs.viettel.vn/search/?q=Viettel+Software", "successfactors", {"queries": ["Viettel Software", "Trung tâm Phần mềm"], "max_pages": 2}),
     CareerFeed("Viettel Research and Development", "https://jobs.viettel.vn/search/?q=Viettel+R%26D", "successfactors", {"queries": ["Viettel R&D", "Viện Hàng không Vũ trụ"], "max_pages": 2}),
     CareerFeed("Qualcomm", "https://careers.qualcomm.com/careers", "eightfold", {
-        "domain": "qualcomm.com", "location_query": "Vietnam", "max_pages": 100,
+        "domain": "qualcomm.com", "location_query": "Vietnam", "max_pages": 100, "pace_seconds": 1,
     }),
     CareerFeed("NXP Vietnam", "https://nxp.wd3.myworkdayjobs.com/careers", "workday_vietnam", {
         "search_url": "https://nxp.wd3.myworkdayjobs.com/wday/cxs/nxp/careers/jobs",
