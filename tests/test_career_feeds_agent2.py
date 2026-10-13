@@ -151,3 +151,33 @@ def test_anduin_empty_without_explicit_notice_is_not_success(monkeypatch):
     patch_client(monkeypatch, {source["url"]: "<html><h1>Javascript required</h1></html>"})
     with pytest.raises(RuntimeError, match="no recognizable posting links"):
         asyncio.run(collect_trakstar(source))
+
+
+def test_anduin_detail_heading_in_header_does_not_disappear(monkeypatch):
+    src = feed_source("Anduin Transactions")
+    url = "https://anduin.hire.trakstar.com/jobs/fk01m54"
+    patch_client(monkeypatch, {
+        src["url"]: '<main><a href="/jobs/fk01m54">Software Engineer Intern Ho Chi Minh City Vietnam</a></main>',
+        url: ('<html><title>Software Engineer Intern at Anduin Transactions</title>'
+              '<header><h1>Software Engineer Intern</h1><p>Ho Chi Minh City, Vietnam</p></header>'
+              '<main><article><p>Job Responsibilities: ' + "Build reliable backend systems. " * 8
+              + '</p><h3>Job Qualifications</h3><p>Experience with Python and APIs.</p>'
+              '</article></main></html>'),
+    })
+    jobs = asyncio.run(collect_trakstar(src))
+    assert len(jobs) == 1 and jobs[0].title == "Software Engineer Intern"
+    assert jobs[0].external_id == "fk01m54"
+
+
+def test_anduin_rejects_unrelated_detail_title(monkeypatch):
+    src = feed_source("Anduin Transactions")
+    url = "https://anduin.hire.trakstar.com/jobs/fk01m54"
+    patch_client(monkeypatch, {
+        src["url"]: '<main><a href="/jobs/fk01m54">Software Engineer Intern</a></main>',
+        url: ('<html><title>Financial Controller at Anduin Transactions</title><header>'
+              '<h1>Financial Controller</h1><p>Ho Chi Minh City, Vietnam</p></header>'
+              '<main><h2>Job Qualifications</h2><p>' + "Finance and taxation experience. " * 8
+              + '</p></main></html>')
+    })
+    with pytest.raises(RuntimeError, match="contradicts"):
+        asyncio.run(collect_trakstar(src))

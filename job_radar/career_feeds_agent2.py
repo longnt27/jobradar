@@ -5,6 +5,7 @@ raise, rather than masquerade as a successful scan with no vacancies.
 """
 from __future__ import annotations
 
+import asyncio
 import re
 from datetime import datetime, timezone
 from urllib.parse import urljoin, urlsplit
@@ -72,7 +73,22 @@ async def collect_manatal(source: dict) -> list[ObservedJob]:
         total = pages = None
         for page in range(1, int(source.get("config", {}).get("max_pages", 50)) + 1):
             url = base if page == 1 else f"{base}?page={page}"
+            if page > 1 and float(source.get("config", {}).get("pace_seconds", 0)):
+                # Avoid aggressive pagination of public employer sites.
+                await asyncio.sleep(min(5.0, float(source["config"]["pace_seconds"])))
             response = await client.get(url)
+            if response.status_code == 429:
+                # Honor the site's rate limit; bounded backoff, never a bypass.
+                for attempt in range(2):
+                    raw_delay = response.headers.get("Retry-After", "")
+                    try:
+                        retry_seconds = min(15.0, max(2.0, float(raw_delay)))
+                    except ValueError:
+                        retry_seconds = 3.0 * (attempt + 1)
+                    await asyncio.sleep(retry_seconds)
+                    response = await client.get(url)
+                    if response.status_code != 429:
+                        break
             response.raise_for_status()
             soup = _soup(response.text)
             visible = soup.get_text(" ", strip=True)
@@ -160,23 +176,32 @@ async def collect_trakstar(source: dict) -> list[ObservedJob]:
             if detail.status_code in {404, 410}:
                 continue
             detail.raise_for_status()
-            soup = _soup(detail.text)
+            # Trakstar sometimes puts the job heading inside <header>. Unlike
+            # listing pages, stripping the detail header deletes the role title.
+            soup = BeautifulSoup(detail.text, "html.parser")
+            for element in soup(["script", "style", "noscript", "footer", "nav"]):
+                element.decompose()
             metadata = soup.title.get_text(" ", strip=True) if soup.title else ""
-            title = re.split(r"\s+at\s+Anduin Transactions\b", metadata, maxsplit=1, flags=re.I)[0]
-            if not _target_title(title):
-                title_node = soup.select_one("h1, h2")
-                title = title_node.get_text(" ", strip=True) if title_node else ""
-            if not _target_title(title):
-                raise RuntimeError(f"Anduin posting has no recognizable job title: {url}")
+            metadata = re.split(r"\s+at\s+Anduin Transactions\b", metadata, maxsplit=1, flags=re.I)[0]
+            headings = [node.get_text(" ", strip=True) for node in soup.select("h1, h2")]
+            titles = [text for text in [*headings, metadata] if _target_title(text)]
+            listing_words = set(re.findall(r"\w+", label.casefold()))
+            title = next((
+                candidate for candidate in titles
+                if len(set(re.findall(r"\w+", candidate.casefold())) & listing_words)
+                   / max(1, len(set(re.findall(r"\w+", candidate.casefold())))) >= 0.75
+            ), "")
+            if not title:
+                raise RuntimeError(f"Anduin detail title contradicts its advertised role: {url}")
             content = _structured_text(soup.body or soup)
             match = re.search(re.escape(title), content, re.I)
-            if not match:
-                raise RuntimeError(f"Anduin detail does not match its advertised title: {url}")
-            lead = content[match.end():match.end() + 240]
+            # The metadata title need not also be duplicated verbatim in the
+            # body. Validate the real heading, country and qualifications.
+            lead = content[:600] if not match else content[match.end():match.end() + 350]
             location = re.search(r"(?:Ho Chi Minh City|Hanoi|Ha Noi|Hà Nội|Đà Nẵng|Da Nang)[^\n]{0,75}Vietnam", lead, re.I)
             if not location:
                 continue  # Do not present US/remote jobs as Vietnam postings.
-            description = content[match.end():]
+            description = content if not match else content[match.end():]
             description = re.split(r"Apply for this opening|Application Form", description, maxsplit=1, flags=re.I)[0].strip()
             if len(description) < 100 or "Job Qualifications" not in description:
                 raise RuntimeError(f"Anduin detail omitted job requirements: {url}")
