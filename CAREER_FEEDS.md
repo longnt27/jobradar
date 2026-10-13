@@ -107,6 +107,9 @@ Job Radar checks these 102 verified company career listings. Each entry points t
 | SMBC | [Open careers](https://careerasia.smbc.co.jp/SMBC/search/?q=&locationsearch=Viet+Nam) | SuccessFactors |
 | CIMB Vietnam | [Open careers](https://ejox.fa.ap1.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_11) | Public career JSON API |
 
+| Honda Vietnam | [Open careers](https://www.honda.com.vn/tuyen-dung/co-hoi-nghe-nghiep) | HTML board (query job IDs) |
+| Hyundai Motor Vietnam (Hyundai Thành Công JV) | [Open careers](https://career.hyundai.thanhcong.vn/job-search/all-jobs/en) | HTML board |
+
 The [employer directory](job_radar/seeds.py) contains 182 companies after the [HCMC-based exclusions](EMPLOYER_SCOPE.md). Its other 80 entries are leads without an active built-in feed. Their presence in the directory is not a claim that their jobs are collected. Add a verified direct career page from an employer card. General job aggregators are not part of this catalog.
 
 Feed definitions and selectors: [job_radar/feed_catalog.py](job_radar/feed_catalog.py). Collector implementations: [job_radar/collectors.py](job_radar/collectors.py). Older postings with an explicit past deadline are skipped. The app creates no placeholder vacancies.
