@@ -49,6 +49,8 @@ let submissionHistoryPages = 1;
 let activeApplicationId = null;
 let activePreparationJobId = null;
 let applicationReviewChanges = {};
+const applicationFormCollections = new Set();
+const applicationFormCollectionErrors = new Map();
 let applicationWorkspaceView = 'drafts';
 let currentSearchIntent = null;
 let editingPositionId = null;
@@ -3121,7 +3123,7 @@ async function showApplication(id, preferredScreen = null) {
   if (draft?.vacancy_id) {
     markJobUiSeen(draft.vacancy_id, draft.seen_at);
   }
-  let currentScreen = preferredScreen || 'first-glance';
+  let currentScreen = preferredScreen === 'current' ? activeApplicationScreen : preferredScreen || 'first-glance';
   activeApplicationScreen = currentScreen;
 
   const webGenerator = profile.drafting_provider === 'chatgpt_web' || draft.provider === 'chatgpt_web';
@@ -3145,13 +3147,15 @@ async function showApplication(id, preferredScreen = null) {
       ? linkedinEasyApply ? 'Complete this Easy Apply application on LinkedIn.' : 'No verified way to apply was found. Check the LinkedIn posting’s Apply button.'
       : blocker);
   const reviewTone = applicationReviewTone(draft);
-  const canSend = !sent && !uncertain && draft.send_ready && draft.review_status === 'awaiting_review';
+  const canSend = !sent && !uncertain && draft.send_ready && ['awaiting_review','needs_review'].includes(draft.review_status);
   const canInspect = !sent && !uncertain && (destination.kind === 'linkedin_easy_apply' ||
     (destination.kind === 'web' && !isLinkedInJobPostingUrl(destination.url)));
+  const collectLinkedInForm = canInspect && destination.kind === 'linkedin_easy_apply' && !formData.complete;
+  const collectionError = collectLinkedInForm && applicationFormCollectionErrors.get(id);
   const linkedinStep = Math.max(0, ...(formData.fields || []).map((field) => Number(field.step) || 0));
   const linkedinFormStatus = formData.complete
     ? `All ${formData.steps_total || linkedinStep} LinkedIn steps reviewed`
-    : `Step ${linkedinStep || 1} of ${formData.steps_total || '?'} reached${formData.inspection_blockers?.length ? ' · answers needed' : ' · answers saved; more steps to inspect'}`;
+    : collectionError ? 'Application questions could not be loaded.' : 'Loading all LinkedIn application questions…';
   const actionTarget = applicationActionTarget(destination);
   const detail = $('#application-detail');
 
@@ -3356,25 +3360,26 @@ async function showApplication(id, preferredScreen = null) {
         ${!sent && (linkedinManual || destination.kind === 'linkedin_easy_apply') ? `
         <div class="application-method-guidance surface-status">
           <strong>${destination.kind === 'linkedin_easy_apply' ? 'LinkedIn Easy Apply' : 'Check how to apply on LinkedIn'}</strong>
-          <p>${destination.kind === 'linkedin_easy_apply' ? 'Review every form answer below. Inspect form reads the current LinkedIn steps without submitting.' : linkedinPaused ? 'Scheduled LinkedIn checks are paused after an account activity warning.' : 'Check what the posting’s application button opens, then review the discovered form.'}</p>
+          <p>${destination.kind === 'linkedin_easy_apply' ? 'All application pages are collected automatically. Review your answers below, save changes, then approve and send.' : linkedinPaused ? 'Scheduled LinkedIn checks are paused after an account activity warning.' : 'Check what the posting’s application button opens, then review the discovered form.'}</p>
           <div class="actions" style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
             ${draft.job_posting_url && /^https?:\/\//i.test(draft.job_posting_url) ? `<a class="button-link" href="${escapeHtml(draft.job_posting_url)}" target="_blank" rel="noopener noreferrer">Open LinkedIn posting ↗</a>` : ''}
             ${linkedinManual ? '<button type="button" class="secondary" id="discover-linkedin-apply">Check application button</button>' : ''}
             <button id="btn-switch-linkedin-msg" type="button" class="secondary">Send direct message on LinkedIn</button>
           </div>
         </div>` : ''}
-        ${canInspect ? `
+        ${canInspect && destination.kind !== 'linkedin_easy_apply' ? `
         <div class="application-form-inspection-banner surface-status">
-          <p class="hint">${destination.kind === 'linkedin_easy_apply' && !formData.complete && !(formData.inspection_blockers?.length)
-            ? 'Answers for current steps are saved. Click <strong>Inspect remaining steps</strong> to navigate forward and reach the final review page.'
-            : 'Job Radar uses a browser to discover the questions on this form and prefill answers from your profile.'}</p>
+          <p class="hint">Job Radar uses a browser to discover the questions on this form and prefill answers from your profile.</p>
           <div class="actions" style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
-            <button id="inspect-form-inline" type="button" class="${destination.kind === 'linkedin_easy_apply' && !formData.complete && !(formData.inspection_blockers?.length) ? 'primary' : 'secondary'}">${destination.kind === 'linkedin_easy_apply' && !formData.complete ? 'Inspect remaining steps' : 'Inspect form fields'}</button>
+            <button id="inspect-form-inline" type="button" class="secondary">Inspect form fields</button>
             ${(draft.job_source_kind === 'linkedin' || (draft.job_posting_url && draft.job_posting_url.includes('linkedin.com'))) ? `<button id="btn-switch-linkedin-msg" type="button" class="text-button">Or switch to direct LinkedIn message</button>` : ''}
           </div>
         </div>` : ''}
-        ${formData.inspection_blockers?.length ? applicationAlert('warning', 'Inspection attention needed', formData.inspection_blockers) : ''}
-        <div class="application-form-fields">${renderApplicationFormFields(formData.fields || [], draft)}</div>
+        ${collectLinkedInForm ? `<div class="application-form-collection" role="status">${collectionError
+          ? `<p>${escapeHtml(collectionError)}</p><button id="retry-application-questions" type="button" class="secondary">Retry loading questions</button>`
+          : '<p>Loading all application questions. You can review and answer them together when this finishes.</p>'}</div>` : ''}
+        ${!collectLinkedInForm && formData.inspection_blockers?.length ? applicationAlert('warning', 'Answers needed', formData.inspection_blockers) : ''}
+        <div class="application-form-fields">${collectLinkedInForm ? '' : renderApplicationFormFields(formData.fields || [], draft)}</div>
       </section>
 
       <div class="application-destination surface-editable">
@@ -3631,7 +3636,7 @@ async function showApplication(id, preferredScreen = null) {
         dirtySections.clear();
         dirtyState.textContent = 'Saved';
         dirtyState.className = 'status-badge status-badge--neutral';
-        sendButton.disabled = !(saved.send_ready && saved.review_status === 'awaiting_review');
+        sendButton.disabled = !(saved.send_ready && ['awaiting_review','needs_review'].includes(saved.review_status));
         $('#application-outcome').textContent = '';
         detail.querySelectorAll('.application-review-header .status-badge').forEach((badge) => {
           badge.textContent = applicationReviewLabel(saved);
@@ -3642,11 +3647,7 @@ async function showApplication(id, preferredScreen = null) {
       } else {
         await loadApplications(id, 'package');
       }
-      notice(saved.form_data?.kind === 'linkedin_easy_apply' && !saved.form_data.complete
-        ? saved.form_data.inspection_blockers?.length
-          ? 'Answers saved. Complete the remaining required fields, then inspect again.'
-          : 'Answers saved. Click "Inspect remaining steps" below to continue.'
-        : 'Application saved');
+      notice('Application saved');
     } catch(error) {
       const errInfo = recordApplicationError(id, error, draft);
       if (errInfo) showActiveApplicationErrorBanner(errInfo);
@@ -3798,6 +3799,35 @@ async function showApplication(id, preferredScreen = null) {
     screen: currentScreen,
   };
   detail.focus({preventScroll:true});
+  if (collectLinkedInForm) {
+    detail.querySelectorAll('[data-draft-field],#regenerate-draft,#chatgpt-input,#save-draft,#send-draft').forEach((control) => { control.disabled = true; });
+    const collectQuestions = async () => {
+      if (applicationFormCollections.has(id)) return;
+      applicationFormCollections.add(id);
+      try {
+        const collected = await api(`/api/applications/${id}/inspect`, {method:'POST'});
+        if (!collected.form_data?.complete) {
+          throw new Error(collected.form_data?.inspection_blockers?.join('; ') || 'LinkedIn did not load all application questions.');
+        }
+        clearApplicationError(id);
+        applicationFormCollectionErrors.delete(id);
+      } catch (error) {
+        applicationFormCollectionErrors.set(id, error.message);
+        recordApplicationError(id, error, draft);
+      } finally {
+        applicationFormCollections.delete(id);
+        if (activeApplicationId === id && $('#applications').classList.contains('active')) {
+          await loadApplications(id, 'current').catch((error) => notice(error.message, true));
+        }
+      }
+    };
+    detail.querySelector('#retry-application-questions')?.addEventListener('click', () => {
+      clearApplicationError(id);
+      applicationFormCollectionErrors.delete(id);
+      showApplication(id, activeApplicationScreen).catch((error) => notice(error.message, true));
+    });
+    if (!collectionError) collectQuestions();
+  }
 }
 
 async function saveApplication(id, draft, dirtySections) {
