@@ -507,32 +507,87 @@ def test_application_page_sorting_by_status_and_recency(tmp_path: Path) -> None:
             )
         return draft_id
 
-    # 1. Generation failed (newest and older)
+    # Status priority descends from generation failed (4) to skipped (0).
     fail_old = add_item("fail_old", "failed", updated_at="2026-10-01T10:00:00Z")
-    fail_new = add_item("fail_new", "draft", attempt_status="needs_review", attempt_detail="drafting failed with error", updated_at="2026-10-02T10:00:00Z")
+    fail_new = add_item("fail_new", "draft", attempt_status="failed", updated_at="2026-10-02T10:00:00Z")
 
-    # 2. Need changes (newest and older)
+    # Needs changes (3), newest first.
     change_old = add_item("change_old", "draft", attempt_status="needs_review", attempt_detail="manual check needed", updated_at="2026-10-03T10:00:00Z")
     change_new = add_item("change_new", "draft", attempt_status="needs_confirmation", updated_at="2026-10-04T10:00:00Z")
 
-    # 3. Ready to review (newest and older)
+    # Ready for review (2), newest first.
     ready_old = add_item("ready_old", "draft", attempt_status="awaiting_review", updated_at="2026-10-05T10:00:00Z")
     ready_new = add_item("ready_new", "draft", attempt_status="awaiting_review", updated_at="2026-10-06T10:00:00Z")
 
-    # 4. Sent (newest and older)
+    # Sent (1), newest first.
     sent_old = add_item("sent_old", "sent", submission_status="sent_confirmed", updated_at="2026-10-07T10:00:00Z")
     sent_new = add_item("sent_new", "sent", submission_status="sent_confirmed", updated_at="2026-10-08T10:00:00Z")
+    skipped_old = add_item("skipped_old", "draft", attempt_status="skipped", updated_at="2026-10-09T10:00:00Z")
+    skipped_new = add_item("skipped_new", "draft", attempt_status="skipped", updated_at="2026-10-10T10:00:00Z")
 
     page = client.get("/api/applications/page", params={"page_size": 20}).json()
     item_ids = [item["id"] for item in page["items"]]
 
     expected = [
-        fail_new, fail_old,      # Group 1: Generation failed, newest first
-        change_new, change_old,  # Group 2: Need changes, newest first
-        ready_new, ready_old,    # Group 3: Ready to review, newest first
-        sent_new, sent_old,      # Group 4: Sent, newest first
+        fail_new, fail_old,
+        change_new, change_old,
+        ready_new, ready_old,
+        sent_new, sent_old,
+        skipped_new, skipped_old,
     ]
     assert item_ids == expected
+
+    paged_ids = []
+    for number in range(1, 5):
+        result = client.get("/api/applications/page", params={"page_size": 3, "page": number}).json()
+        paged_ids.extend(item["id"] for item in result["items"])
+    assert paged_ids == expected
+    failures = client.get("/api/applications/page", params={"review": "preparation_failed"}).json()
+    assert [item["id"] for item in failures["items"]] == [fail_new, fail_old]
+
+
+def test_saved_application_status_does_not_use_historical_failure_text(tmp_path: Path) -> None:
+    client = TestClient(create_app(Settings(tmp_path)))
+    draft = _prepared(client, "https://example.org/apply")
+    db = client.app.state.db
+    db.execute(
+        "UPDATE auto_application_attempts SET status='needs_review',detail=? WHERE draft_id=?",
+        ("Form inspection failed earlier; review the saved draft", draft["id"]),
+    )
+    item = client.get("/api/applications/page").json()["items"][0]
+    detail = client.get(f"/api/applications/{draft['id']}").json()
+    assert item["review_status"] == detail["review_status"] == "needs_review"
+    assert detail["resume_data"] and detail["message_data"]["body"]
+    assert "failed earlier" in detail["preparation_detail"]
+    assert client.get("/api/applications/page?review=preparation_failed").json()["total"] == 0
+
+    # A failed project refresh preserves the draft and belongs under needs changes.
+    db.execute("UPDATE application_drafts SET project_refresh_error='Refresh failed' WHERE id=?", (draft["id"],))
+    db.execute("UPDATE auto_application_attempts SET status='awaiting_review' WHERE draft_id=?", (draft["id"],))
+    item = client.get("/api/applications/page").json()["items"][0]
+    detail = client.get(f"/api/applications/{draft['id']}").json()
+    assert item["review_status"] == detail["review_status"] == "needs_review"
+    assert client.get("/api/applications/page?review=needs_review").json()["total"] == 1
+    assert client.get("/api/applications/page?review=preparation_failed").json()["total"] == 0
+
+    db.execute("UPDATE application_drafts SET status='failed',project_refresh_error=NULL WHERE id=?", (draft["id"],))
+    item = client.get("/api/applications/page").json()["items"][0]
+    detail = client.get(f"/api/applications/{draft['id']}").json()
+    assert item["review_status"] == detail["review_status"] == "failed"
+    assert client.get("/api/applications/page?review=preparation_failed").json()["total"] == 1
+
+    # Delivery and skipping take precedence over old review/refresh warnings.
+    db.execute("UPDATE application_drafts SET status='sent',project_refresh_error='Old refresh error' WHERE id=?", (draft["id"],))
+    db.execute("UPDATE auto_application_attempts SET status='needs_review' WHERE draft_id=?", (draft["id"],))
+    for endpoint in ("/api/applications/page", "/api/applications"):
+        result = client.get(endpoint).json()
+        item = result["items"][0] if isinstance(result, dict) else result[0]
+        assert item["review_status"] == "sent"
+    assert client.get(f"/api/applications/{draft['id']}").json()["review_status"] == "sent"
+    db.execute("UPDATE application_drafts SET status='draft' WHERE id=?", (draft["id"],))
+    db.execute("UPDATE auto_application_attempts SET status='skipped' WHERE draft_id=?", (draft["id"],))
+    item = client.get("/api/applications/page?review=skipped").json()["items"][0]
+    assert item["review_status"] == client.get(f"/api/applications/{draft['id']}").json()["review_status"] == "skipped"
 
 
 def test_viewing_application_marks_job_seen(tmp_path: Path) -> None:
@@ -567,6 +622,19 @@ def test_viewing_application_marks_job_seen(tmp_path: Path) -> None:
     matched = [item for item in all_page["items"] if item["id"] == job_id]
     assert len(matched) == 1
     assert matched[0]["read_state"] == "seen"
+
+
+def test_project_refresh_error_does_not_hide_active_processing(tmp_path: Path) -> None:
+    client = TestClient(create_app(Settings(tmp_path)))
+    draft = _prepared(client, "https://example.org/apply")
+    db = client.app.state.db
+    db.execute("UPDATE application_drafts SET project_refresh_error='Previous refresh failed' WHERE id=?", (draft["id"],))
+    for status in ("regenerating", "preparing", "queued", "sending"):
+        db.execute("UPDATE auto_application_attempts SET status=? WHERE draft_id=?", (status, draft["id"]))
+        page = client.get("/api/applications/page", params={"review": status}).json()
+        assert page["total"] == 1
+        assert page["items"][0]["review_status"] == status
+        assert client.get(f"/api/applications/{draft['id']}").json()["review_status"] == status
 
 
 def test_explicit_application_seen_and_patch_mark_job_seen(tmp_path: Path) -> None:

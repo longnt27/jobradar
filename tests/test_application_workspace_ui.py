@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from playwright.sync_api import sync_playwright
 
 from job_radar.drafting import prepare_draft
+from job_radar.db import new_id
 from job_radar.settings import Settings
 from job_radar.web import create_app
 
@@ -22,6 +23,83 @@ def _prepare(client: TestClient, company: str, title: str, apply_url: str | None
     draft = prepare_draft(client.app.state.db, client.app.state.settings, job["id"], "template")
     client.app.state.auto_apply_manager.register_review(draft)
     return draft
+
+
+def test_application_status_order_and_saved_draft_failure_history(tmp_path: Path) -> None:
+    app = create_app(Settings(tmp_path))
+    db = app.state.db
+    db.execute("UPDATE sources SET enabled=0")
+    client = TestClient(app)
+    profile = client.get("/api/profile").json()
+    profile.update({
+        "name": "Alex Example", "email": "alex@example.org",
+        "experience": [{"company": "Prior Co", "role": "Engineer", "dates": "2024-2026", "bullets": ["Built systems."]}],
+    })
+    client.put("/api/profile", json=profile)
+
+    drafts = {}
+    for index, status in enumerate(("skipped", "sent", "awaiting_review", "needs_review", "failed")):
+        draft = _prepare(client, f"Company {status}", f"Role {status}")
+        drafts[status] = draft
+        db.execute(
+            "UPDATE auto_application_attempts SET status=?,detail=?,telegram_status='web_only' WHERE draft_id=?",
+            (status, "AI drafting failed earlier; review the saved draft" if status == "needs_review" else "", draft["id"]),
+        )
+        db.execute("UPDATE application_drafts SET updated_at=? WHERE id=?", (f"2026-10-0{index + 1}T00:00:00Z", draft["id"]))
+    sent = drafts["sent"]
+    db.execute(
+        "INSERT INTO submissions(id,draft_id,vacancy_id,package_hash,package_data,destination,status,sent_at,updated_at) "
+        "VALUES(?,?,?,?,?,?,'sent_confirmed',?,?)",
+        (new_id(), sent["id"], sent["vacancy_id"], sent["package_hash"], "{}", "{}", "2026-10-02T00:00:00Z", "2026-10-02T00:00:00Z"),
+    )
+    preparation = client.post("/api/jobs/import", json={
+        "company": "No draft", "title": "Pending application", "description": "Build systems.",
+    }).json()
+    db.execute("UPDATE vacancies SET analysis_status='done',score=95 WHERE id=?", (preparation["id"],))
+    db.execute(
+        "INSERT INTO auto_application_attempts(vacancy_id,status,detail,telegram_status,created_at,updated_at) "
+        "VALUES(?,'needs_review','Preparation failed after 3 attempts','web_only',?,?)",
+        (preparation["id"], "2026-10-03T00:00:00Z", "2026-10-03T00:00:00Z"),
+    )
+
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
+    thread = Thread(target=server.run, daemon=True)
+    thread.start()
+    try:
+        for _ in range(100):
+            if server.started:
+                break
+            time.sleep(.05)
+        assert server.started
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            try:
+                page = browser.new_page(viewport={"width": 1280, "height": 900})
+                page.goto(f"http://127.0.0.1:{port}/#applications")
+                page.wait_for_function("document.querySelectorAll('#application-list .application-card').length === 6")
+                titles = page.locator("#application-list .item-title").all_text_contents()
+                assert titles == ["Role failed", "Pending application", "Role needs_review", "Role awaiting_review", "Role sent", "Role skipped"]
+                saved_card = page.locator(f'[data-application="{drafts["needs_review"]["id"]}"]')
+                assert saved_card.locator(".application-card-status").inner_text() == "Needs changes"
+                saved_card.click()
+                page.wait_for_function("document.querySelector('#application-detail')?.textContent.includes('Role needs_review')")
+                assert "Needs changes" in page.locator("#application-detail").inner_text()
+                assert "Generation failed" not in page.locator("#application-detail").inner_text()
+
+                page.locator("#application-review-filter").select_option("preparation_failed")
+                page.wait_for_function("document.querySelectorAll('#application-list .application-card').length === 2")
+                assert page.locator("#application-list .item-title").all_text_contents() == ["Role failed", "Pending application"]
+                page.locator("#application-review-filter").select_option("needs_review")
+                page.wait_for_function("document.querySelectorAll('#application-list .application-card').length === 1")
+                assert page.locator("#application-list .item-title").inner_text() == "Role needs_review"
+            finally:
+                browser.close()
+    finally:
+        server.should_exit = True
+        thread.join(timeout=5)
 
 
 def test_application_workspace_filters_reviews_and_confirms_send(tmp_path: Path, monkeypatch) -> None:

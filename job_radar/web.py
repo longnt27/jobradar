@@ -1854,6 +1854,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             })
         return {**result, "processing": processing}
 
+    application_review_expr = (
+        "CASE "
+        "WHEN EXISTS(SELECT 1 FROM submissions su WHERE su.draft_id=d.id AND su.status IN ('submitted_unconfirmed','sending')) THEN 'submission_uncertain' "
+        "WHEN EXISTS(SELECT 1 FROM submissions ss WHERE ss.draft_id=d.id AND ss.status IN ('sent_confirmed','submitted_confirmed')) THEN 'sent' "
+        "WHEN d.status IN ('sent','submission_uncertain') THEN d.status "
+        "WHEN a.status IN ('regenerating','preparing','queued','sending') THEN a.status "
+        "WHEN d.status='failed' OR a.status='failed' THEN 'failed' "
+        "WHEN d.status='skipped' OR a.status='skipped' THEN 'skipped' "
+        "WHEN d.project_refresh_error IS NOT NULL THEN 'needs_review' "
+        "ELSE COALESCE(a.status,'draft') END"
+    )
+
     def application_page_data(page: int, page_size: int, q: str = "", review: str = "",
                               company: str = "", delivery: str = "", full: bool = False) -> dict:
         clauses = []
@@ -1865,27 +1877,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if company:
             clauses.append("v.company=?")
             params.append(company)
-        review_expr = (
-            "CASE "
-            "WHEN EXISTS(SELECT 1 FROM submissions su WHERE su.draft_id=d.id AND su.status IN ('submitted_unconfirmed','sending')) THEN 'submission_uncertain' "
-            "WHEN EXISTS(SELECT 1 FROM submissions ss WHERE ss.draft_id=d.id AND ss.status IN ('sent_confirmed','submitted_confirmed')) THEN 'sent' "
-            "ELSE COALESCE(a.status,CASE WHEN d.status='sent' THEN 'sent' "
-            "WHEN d.status='submission_uncertain' THEN 'submission_uncertain' ELSE 'draft' END) END"
-        )
+        review_expr = application_review_expr
         sort_priority_expr = (
-            "CASE "
-            "WHEN d.project_refresh_error IS NOT NULL "
-            "     OR d.status = 'failed' "
-            "     OR a.status = 'failed' "
-            "     OR (a.status = 'needs_review' AND (a.detail LIKE '%failed%' OR a.detail LIKE '%stopped%')) THEN 1 "
-            "WHEN " + review_expr + " IN ('needs_review', 'needs_confirmation', 'regenerating') THEN 2 "
-            "WHEN " + review_expr + " IN ('awaiting_review', 'draft', 'preparing', 'queued') THEN 3 "
-            "WHEN " + review_expr + " IN ('sent', 'submission_uncertain', 'sending') THEN 4 "
-            "ELSE 3 END"
+            "CASE " + review_expr + " "
+            "WHEN 'failed' THEN 4 "
+            "WHEN 'needs_review' THEN 3 WHEN 'needs_confirmation' THEN 3 WHEN 'regenerating' THEN 3 "
+            "WHEN 'sent' THEN 1 WHEN 'submission_uncertain' THEN 1 WHEN 'sending' THEN 1 "
+            "WHEN 'skipped' THEN 0 ELSE 2 END"
         )
         if review:
             if review == "preparation_failed":
-                clauses.append(f"({sort_priority_expr}=1)")
+                clauses.append(f"{review_expr}='failed'")
             else:
                 clauses.append(f"{review_expr}=?")
                 params.append(review)
@@ -1905,7 +1907,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             f"SELECT d.id,d.vacancy_id,d.status,d.provider,d.provider_mode,d.created_at,d.updated_at,d.seen_at,"
             f"v.title AS job_title,v.company,({review_expr}) AS review_status,a.telegram_status,"
             f"a.detail AS attempt_detail,d.project_refresh_error" + base + where +
-            f" ORDER BY {sort_priority_expr} ASC, COALESCE(d.updated_at, d.created_at) DESC, d.created_at DESC, d.id DESC LIMIT ? OFFSET ?",
+            f" ORDER BY {sort_priority_expr} DESC, COALESCE(d.updated_at, d.created_at) DESC, d.created_at DESC, d.id DESC LIMIT ? OFFSET ?",
             (*params, page_size, (page - 1) * page_size),
         )
         items = []
@@ -1913,7 +1915,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             latest = db.one("SELECT * FROM submissions WHERE draft_id=? ORDER BY sent_at DESC,id DESC LIMIT 1",
                             (row["id"],))
             items.append({
-                **(get_draft(db, row["id"]) if full else row),
+                **(get_draft(db, row["id"]) if full else {}),
+                **row,
                 "latest_submission": submission_record(latest) if latest else None,
             })
         companies = [row["company"] for row in db.all(
@@ -1984,7 +1987,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             mark_application_seen(db, draft_id)
             draft = get_draft(db, draft_id)
             reasons = send_readiness(db, settings, draft)
-            review = db.one("SELECT status,review_hash,telegram_status,telegram_error,requested_by,detail,prepare_anyway,updated_at,created_at FROM auto_application_attempts WHERE vacancy_id=?", (draft["vacancy_id"],))
+            review = db.one(
+                f"SELECT ({application_review_expr}) AS review_status,a.status,a.review_hash,a.telegram_status,"
+                "a.telegram_error,a.requested_by,a.detail,a.prepare_anyway,a.updated_at,a.created_at "
+                "FROM application_drafts d LEFT JOIN auto_application_attempts a ON a.vacancy_id=d.vacancy_id WHERE d.id=?",
+                (draft_id,),
+            )
             latest = db.one("SELECT * FROM submissions WHERE draft_id=? ORDER BY sent_at DESC,id DESC LIMIT 1", (draft_id,))
             job_data = None
             try:
@@ -2033,7 +2041,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return {**draft, "resume_bullet_source": editable_bullet_lines(draft["resume_data"]),
                     "send_ready": not reasons, "send_blockers": reasons,
                     "linkedin_automation_paused": bool(db.get_setting("linkedin_automation_paused", False)) if draft["job_source_kind"] == "linkedin" else False,
-                    "review_status": review["status"] if review else None,
+                    "review_status": review["review_status"] if review else None,
                     "review_hash": review["review_hash"] if review else None,
                     "telegram_status": review["telegram_status"] if review else None,
                     "telegram_error": review["telegram_error"] if review else None,

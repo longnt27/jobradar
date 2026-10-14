@@ -2331,17 +2331,15 @@ function providerLabel(value) {
 }
 
 function applicationReviewKey(draft) {
+  if (draft.review_status) return draft.review_status;
   const outcome = draft.latest_submission?.outcome?.key;
   if (outcome === 'submission_uncertain' || outcome === 'sending') return 'submission_uncertain';
   if (['email_sent','application_submitted'].includes(outcome)) return 'sent';
-  if (draft.project_refresh_error || draft.status === 'failed' || draft.review_status === 'failed' ||
-      (draft.review_status === 'needs_review' && draft.attempt_detail &&
-       (draft.attempt_detail.toLowerCase().includes('failed') || draft.attempt_detail.toLowerCase().includes('stopped')))) {
-    return 'failed';
-  }
-  if (draft.review_status) return draft.review_status;
   if (draft.status === 'sent') return 'sent';
   if (draft.status === 'submission_uncertain') return 'submission_uncertain';
+  if (draft.status === 'failed') return 'failed';
+  if (draft.status === 'skipped') return 'skipped';
+  if (draft.project_refresh_error) return 'needs_review';
   return 'draft';
 }
 
@@ -2358,6 +2356,7 @@ function applicationReviewLabel(draft) {
     preparing:'Preparing',
     needs_confirmation:'Application method needs confirmation',
     failed:'Generation failed',
+    skipped:'Skipped',
     draft:'Draft',
   })[key] || String(key || 'Draft').replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
@@ -2372,18 +2371,19 @@ function applicationReviewTone(draft) {
 }
 
 function applicationGroup(item) {
-  // 1: Generation failed, 2: Need changes, 3: Ready to review, 4: Sent
+  // Descending priority: failed 4, needs changes 3, ready 2, sent 1, skipped 0.
   if (item.category !== undefined) {
-    if (['credits', 'failed', 'quota'].includes(item.category) || item.status === 'failed') return 1;
-    if (item.status === 'needs_confirmation' || item.category === 'method' || item.status === 'needs_review') return 2;
-    if (['queued', 'preparing'].includes(item.status)) return 3;
-    return 3;
+    if (['credits', 'failed', 'quota'].includes(item.category) || item.status === 'failed') return 4;
+    if (item.status === 'skipped') return 0;
+    if (item.status === 'needs_confirmation' || item.category === 'method' || item.status === 'needs_review') return 3;
+    return 2;
   }
   const key = applicationReviewKey(item);
-  if (key === 'failed') return 1;
-  if (['needs_review', 'needs_confirmation', 'regenerating'].includes(key)) return 2;
-  if (['sent', 'submission_uncertain', 'sending'].includes(key) || applicationIsSent(item) || applicationIsUncertain(item)) return 4;
-  return 3;
+  if (key === 'failed') return 4;
+  if (['needs_review', 'needs_confirmation', 'regenerating'].includes(key)) return 3;
+  if (['sent', 'submission_uncertain', 'sending'].includes(key)) return 1;
+  if (key === 'skipped') return 0;
+  return 2;
 }
 
 function applicationIsSent(draft) {
@@ -2522,11 +2522,11 @@ function visibleApplicationPreparations() {
   return applicationPreparations.filter((item) => {
     if (review) {
       if (review === 'preparation_failed') {
-        if (applicationGroup(item) !== 1) return false;
+        if (applicationGroup(item) !== 4) return false;
       } else if (review === 'needs_review' || review === 'needs_confirmation') {
-        if (applicationGroup(item) !== 2) return false;
-      } else if (['awaiting_review', 'draft', 'preparing', 'queued'].includes(review)) {
         if (applicationGroup(item) !== 3) return false;
+      } else if (['awaiting_review', 'draft', 'preparing', 'queued'].includes(review)) {
+        if (applicationGroup(item) !== 2) return false;
       } else {
         return false;
       }
@@ -2570,7 +2570,7 @@ function renderApplicationList(total = applicationsTotal) {
     })),
   ];
   combined.sort((a, b) => {
-    if (a.group !== b.group) return a.group - b.group;
+    if (a.group !== b.group) return b.group - a.group;
     return b.time - a.time;
   });
   list.innerHTML = combined.map((entry) => {
