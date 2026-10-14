@@ -3151,7 +3151,8 @@ async function showApplication(id, preferredScreen = null) {
   const canInspect = !sent && !uncertain && (destination.kind === 'linkedin_easy_apply' ||
     (destination.kind === 'web' && !isLinkedInJobPostingUrl(destination.url)));
   const collectLinkedInForm = canInspect && destination.kind === 'linkedin_easy_apply' && !formData.complete;
-  const collectionError = collectLinkedInForm && applicationFormCollectionErrors.get(id);
+  const collectionError = collectLinkedInForm && (applicationFormCollectionErrors.has(id)
+    ? applicationFormCollectionErrors.get(id) : formData.collection_error);
   const linkedinStep = Math.max(0, ...(formData.fields || []).map((field) => Number(field.step) || 0));
   const linkedinFormStatus = formData.complete
     ? `All ${formData.steps_total || linkedinStep} LinkedIn steps reviewed`
@@ -3823,7 +3824,7 @@ async function showApplication(id, preferredScreen = null) {
     };
     detail.querySelector('#retry-application-questions')?.addEventListener('click', () => {
       clearApplicationError(id);
-      applicationFormCollectionErrors.delete(id);
+      applicationFormCollectionErrors.set(id, null);
       showApplication(id, activeApplicationScreen).catch((error) => notice(error.message, true));
     });
     if (!collectionError) collectQuestions();

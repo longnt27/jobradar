@@ -2192,6 +2192,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
         except (ValueError, RuntimeError) as error:
+            failed = db.one("SELECT destination,form_data FROM application_drafts WHERE id=?", (draft_id,))
+            if failed and json.loads(failed["destination"]).get("kind") == "linkedin_easy_apply":
+                form = {**json.loads(failed["form_data"]), "collection_error": str(error)}
+                db.execute("UPDATE application_drafts SET form_data=?,updated_at=? WHERE id=?",
+                           (json.dumps(form, ensure_ascii=False), now(), draft_id))
             raise HTTPException(422, str(error)) from error
 
     @app.post("/api/applications/{draft_id}/discover-apply")

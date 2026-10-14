@@ -13,6 +13,43 @@ from job_radar.settings import Settings
 from job_radar.web import create_app
 
 
+def test_collection_failure_replaces_old_inspection_instruction(tmp_path: Path, monkeypatch) -> None:
+    app = create_app(Settings(tmp_path))
+    db = app.state.db
+    db.set_setting("profile", {
+        "name": "Alex Example", "email": "alex@example.org", "drafting_provider": "template",
+        "experience": [{"company": "Prior", "role": "Engineer", "dates": "2024-2026", "bullets": ["Built systems."]}],
+    })
+    client = TestClient(app)
+    job = client.post("/api/jobs/import", json={"title": "AI Engineer", "company": "FiinGroup", "description": "Build AI systems."}).json()
+    draft = prepare_draft(db, app.state.settings, job["id"], "template")
+    url = "https://www.linkedin.com/jobs/view/123/"
+    db.execute("UPDATE application_drafts SET destination=? WHERE id=?", (json.dumps({"kind": "linkedin_easy_apply", "url": url}), draft["id"]))
+    endpoint = f"/api/applications/{draft['id']}"
+    assert client.get(endpoint).json()["send_blockers"] == ["LinkedIn application questions have not finished loading."]
+
+    async def fail_collection(*_args):
+        raise ValueError("This LinkedIn posting is no longer accepting applications.")
+
+    monkeypatch.setattr("job_radar.web.inspect_form", fail_collection)
+    assert client.post(endpoint + "/inspect").status_code == 422
+    saved = client.get(endpoint).json()
+    assert saved["send_blockers"] == ["This LinkedIn posting is no longer accepting applications."]
+    assert not saved["send_ready"]
+
+    async def successful_collection(*_args):
+        form = {"kind": "linkedin_easy_apply", "complete": True, "signature": "all-pages", "destination_url": url,
+                "fields": [], "answers": {}, "attachments": {}, "inspection_blockers": []}
+        db.execute("UPDATE application_drafts SET form_data=? WHERE id=?", (json.dumps(form), draft["id"]))
+        return get_draft(db, draft["id"])
+
+    monkeypatch.setattr("job_radar.web.inspect_form", successful_collection)
+    assert client.post(endpoint + "/inspect").status_code == 200
+    saved = client.get(endpoint).json()
+    assert saved["send_ready"]
+    assert saved["send_blockers"] == []
+
+
 def test_linkedin_questions_load_automatically_and_save_without_reinspection(tmp_path: Path, monkeypatch) -> None:
     app = create_app(Settings(tmp_path))
     db = app.state.db
