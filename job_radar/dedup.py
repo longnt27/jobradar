@@ -103,7 +103,8 @@ _CITIES = {"hanoi": r"\b(ha noi|hanoi|dong da|cau giay|nam tu liem)\b",
 
 
 def _markers(value: str, markers: dict[str, str]) -> set[str]:
-    return {key for key, pattern in markers.items() if re.search(pattern, normalized(value))}
+    text = normalized(value)
+    return {key for key, pattern in markers.items() if re.search(pattern, text)}
 
 
 def _title_tokens(value: str) -> set[str]:
@@ -191,7 +192,6 @@ def _fingerprint(record: dict) -> dict:
             "codes": set(re.findall(r"\b(?:\d{4}[a-z]{2,}\d+|[a-z]{2,}\d{3,})\b", title.casefold())),
             "urls": {posting_key(u) for u in record.get("urls", [])} - {""},
             "apply": posting_key(record.get("apply_url")),
-            "content": _content(record.get("description") or ""),
         }
     return record["_fingerprint"]
 
@@ -243,6 +243,11 @@ def assess(left: dict, right: dict, keys: dict[str, str]) -> Match | None:
         return None
     urls_a, urls_b = fp_a["urls"], fp_b["urls"]
     apply_a, apply_b = fp_a["apply"], fp_b["apply"]
+    # Most candidates are already ruled out by employer, role, or location.
+    # Parse long descriptions only after those inexpensive checks pass.
+    for record, fingerprint in ((left, fp_a), (right, fp_b)):
+        if "content" not in fingerprint:
+            fingerprint["content"] = _content(record.get("description") or "")
     texts_a, texts_b = fp_a["content"], fp_b["content"]
     word, phrase = _similarity(texts_a, texts_b)
     if same_employer and urls_a & urls_b:

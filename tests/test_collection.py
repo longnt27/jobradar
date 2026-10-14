@@ -1,4 +1,5 @@
 import asyncio
+import time
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -54,6 +55,40 @@ def test_scan_records_observations(monkeypatch, tmp_path: Path) -> None:
     assert result["status"] == "success"
     assert result["new"] == 1
     assert db.one("SELECT status FROM scan_runs WHERE id=?", (result["run_id"],))["status"] == "success"
+
+
+def test_ingesting_scan_results_keeps_the_server_event_loop_responsive(monkeypatch, tmp_path):
+    settings = Settings(tmp_path)
+    db = Database(settings.database_path)
+    seed(db)
+    source_id = db.one("SELECT id FROM sources WHERE kind='career' LIMIT 1")["id"]
+    heartbeat = asyncio.Event()
+    observed_heartbeat = []
+
+    async def collect(_settings, _source):
+        return [ObservedJob("https://example.org/job/responsive", "ML Engineer", "Example",
+                            "Build machine learning systems with Python.")]
+
+    def slow_ingest(database, source, job):
+        time.sleep(.15)
+        observed_heartbeat.append(heartbeat.is_set())
+        return ingest(database, source, job)
+
+    monkeypatch.setattr("job_radar.scanner.collect_source", collect)
+    monkeypatch.setattr("job_radar.scanner.ingest", slow_ingest)
+
+    async def run():
+        async def pulse():
+            await asyncio.sleep(.01)
+            heartbeat.set()
+
+        task = asyncio.create_task(pulse())
+        result = await ScanManager(db, settings).run_source(source_id)
+        await task
+        assert result["status"] == "success" and result["new"] == 1
+        assert observed_heartbeat == [True]
+
+    asyncio.run(run())
 
 
 def test_scan_due_endpoint_starts_background_task(monkeypatch, tmp_path: Path) -> None:

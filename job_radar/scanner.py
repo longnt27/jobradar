@@ -210,7 +210,11 @@ class ScanManager:
             for job in jobs:
                 if job.company.casefold() in HCMC_NAMES:
                     continue
-                _, is_new = ingest(self.db, source_id, job)
+                ingestion = asyncio.create_task(asyncio.to_thread(ingest, self.db, source_id, job))
+                result, interrupted = await self._finish_worker(ingestion)
+                if interrupted:
+                    raise asyncio.CancelledError
+                _, is_new = result
                 new_count += int(is_new)
             finished = now()
             status = "success" if jobs else "empty"
@@ -219,10 +223,8 @@ class ScanManager:
             self.db.execute("UPDATE sources SET last_success_at=?,last_status=? WHERE id=?", (finished, status, source_id))
             return {"run_id": run_id, "status": status, "observed": len(jobs), "new": new_count}
         except asyncio.CancelledError:
-            self.db.execute("UPDATE scan_runs SET finished_at=?,status='interrupted',detail=? WHERE id=?",
-                            (now(), "Paused for an approved application", run_id))
-            self.db.execute("UPDATE sources SET last_attempt_at=NULL,last_status='interrupted' WHERE id=?",
-                            (source_id,))
+            bookkeeping = asyncio.create_task(asyncio.to_thread(self._record_interrupted, run_id, source_id))
+            await self._finish_worker(bookkeeping)
             if not any(queued_id == source_id for queued_id, _ in self.pending):
                 self.pending.insert(0, (source_id, False))
             raise
@@ -244,3 +246,22 @@ class ScanManager:
             return {"run_id": run_id, "status": status, "error": str(error)}
         finally:
             self.active.discard(source_id)
+
+    def _record_interrupted(self, run_id: str, source_id: str) -> None:
+        with self.db.connection() as conn:
+            conn.execute("UPDATE scan_runs SET finished_at=?,status='interrupted',detail=? WHERE id=?",
+                         (now(), "Paused for an approved application", run_id))
+            conn.execute("UPDATE sources SET last_attempt_at=NULL,last_status='interrupted' WHERE id=?",
+                         (source_id,))
+
+    @staticmethod
+    async def _finish_worker(worker: asyncio.Task) -> tuple[object, bool]:
+        """A thread cannot be cancelled; drain it before releasing scan ownership."""
+        interrupted = False
+        while True:
+            try:
+                return await asyncio.shield(worker), interrupted
+            except asyncio.CancelledError:
+                if worker.cancelled():
+                    raise
+                interrupted = True
