@@ -3150,7 +3150,7 @@ async function showApplication(id, preferredScreen = null) {
   const canSend = !sent && !uncertain && draft.send_ready && ['awaiting_review','needs_review'].includes(draft.review_status);
   const canInspect = !sent && !uncertain && (destination.kind === 'linkedin_easy_apply' ||
     (destination.kind === 'web' && !isLinkedInJobPostingUrl(destination.url)));
-  const collectLinkedInForm = canInspect && destination.kind === 'linkedin_easy_apply' && !formData.complete;
+  const collectLinkedInForm = canInspect && draft.review_status !== 'skipped' && destination.kind === 'linkedin_easy_apply' && !formData.complete;
   const collectionError = collectLinkedInForm && (applicationFormCollectionErrors.has(id)
     ? applicationFormCollectionErrors.get(id) : formData.collection_error);
   const linkedinStep = Math.max(0, ...(formData.fields || []).map((field) => Number(field.step) || 0));
