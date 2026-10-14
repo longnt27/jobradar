@@ -24,7 +24,7 @@ from .db import Database
 from .desktop_handoff import activate_app, frontmost_app_bundle, hide_chrome, launch_background_browser, return_to_job_radar
 from .drafting import _compose_application_message, _job_for_drafting, _job_language, _leadership_summary_rule, get_draft, update_draft
 from .settings import Settings
-from .social_browser import chrome_executable
+from .social_browser import chrome_executable, chrome_profile_process, close_orphaned_chrome
 
 
 SECTIONS = {"all", "summary", "experience", "projects", "education", "achievements", "skills", "message"}
@@ -967,13 +967,14 @@ class ChatGPTInputManager:
             self._release_browser_lock()
 
     async def stop(self) -> None:
-        if self.login_task and not self.login_task.done():
-            self.login_task.cancel()
+        login_task = self.login_task
+        self.login_task = None
+        if login_task and login_task is not asyncio.current_task() and not login_task.done():
+            login_task.cancel()
             try:
-                await self.login_task
+                await login_task
             except asyncio.CancelledError:
                 pass
-            self.login_task = None
         async with self.lock:
             if self.browser:
                 try:
@@ -982,9 +983,22 @@ class ChatGPTInputManager:
                     pass
                 self.browser = None
             if self.playwright:
-                await self.playwright.stop()
-                self.playwright = None
-            process = self.process
+                try:
+                    await self.playwright.stop()
+                except Exception:
+                    pass
+                finally:
+                    self.playwright = None
+            await self._close_browser_process()
+        if self.watch_task:
+            await self.watch_task
+            self.watch_task = None
+
+    async def _close_browser_process(self) -> None:
+        process = self.process
+        # The watcher must not hand this profile to another operation mid-cleanup.
+        self.process = None
+        try:
             if process and process.poll() is None:
                 process.terminate()
                 try:
@@ -992,12 +1006,12 @@ class ChatGPTInputManager:
                 except subprocess.TimeoutExpired:
                     process.kill()
                     await asyncio.to_thread(process.wait, timeout=5)
+            if self.owns_browser_lock:
+                await close_orphaned_chrome(self.settings.browser_profile)
+        finally:
             self.process = None
             self.port = None
             self._release_browser_lock()
-        if self.watch_task:
-            await self.watch_task
-            self.watch_task = None
 
     async def _start_browser(self, background: bool = False, temporary: bool = True) -> None:
         if self.process and self.process.poll() is None:
@@ -1009,6 +1023,7 @@ class ChatGPTInputManager:
         self.owns_browser_lock = True
         try:
             self.settings.ensure_dirs()
+            await close_orphaned_chrome(self.settings.browser_profile)
             with socket.socket() as listener:
                 listener.bind(("127.0.0.1", 0))
                 self.port = listener.getsockname()[1]
@@ -1053,8 +1068,11 @@ class ChatGPTInputManager:
                         stderr=subprocess.DEVNULL,
                     )
                     self.process = process
-                    self.watch_task = asyncio.create_task(self._watch_process(process))
                     await asyncio.sleep(.3)
+                    owner = await asyncio.to_thread(chrome_profile_process, self.settings.browser_profile)
+                    if owner and owner.pid != process.pid:
+                        process = owner
+                        self.process = process
                     if process.poll() is None:
                         if background and sys.platform == "darwin":
                             hide_chrome()
@@ -1067,16 +1085,14 @@ class ChatGPTInputManager:
                         raise RuntimeError("Chrome closed before ChatGPT opened. Close other Job Radar Chrome windows and try again.")
             else:
                 self.process = process
-                self.watch_task = asyncio.create_task(self._watch_process(process))
+                owner = await asyncio.to_thread(chrome_profile_process, self.settings.browser_profile)
+                if owner and owner.pid != process.pid:
+                    self.process = owner
                 if sys.platform == "darwin":
                     activate_app(self.frontmost_app)
-        except Exception:
-            process = self.process
-            if process and process.poll() is None:
-                process.terminate()
-            self.process = None
-            self.port = None
-            self._release_browser_lock()
+            self.watch_task = asyncio.create_task(self._watch_process(self.process))
+        except (Exception, asyncio.CancelledError):
+            await self._close_browser_process()
             raise
 
     async def _new_page(self, background: bool = False, temporary: bool = True) -> Page:

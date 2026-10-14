@@ -70,7 +70,7 @@ from .seeds import seed
 from .settings import Settings
 from .scanner import ScanManager
 from .service import service_path
-from .social_browser import chrome_executable, social_login_at
+from .social_browser import chrome_executable, close_orphaned_chrome, social_login_at
 from .work_queue import work_queue
 
 
@@ -278,6 +278,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(_app: FastAPI):
         nonlocal ai_retry_task
         recover_inquiry_sends(db)
+        async with scan_manager.browser_lock:
+            await close_orphaned_chrome(settings.browser_profile)
+            login_manager.status()
         await scan_manager.start()
         await match_manager.start()
         await auto_apply_manager.start()

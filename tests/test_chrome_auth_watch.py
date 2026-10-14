@@ -39,4 +39,9 @@ def test_facebook_requires_settings_page_on_real_domain(tmp_path):
     assert not chrome_login_complete(tmp_path, "facebook", started)
     with sqlite3.connect(history) as conn:
         conn.execute("INSERT INTO visits VALUES(2, ?)", (at + 1,))
+    with sqlite3.connect(history.parent / "Cookies") as conn:
+        conn.execute("CREATE TABLE cookies(host_key TEXT, name TEXT, expires_utc INTEGER, "
+                     "has_expires INTEGER, value TEXT, encrypted_value BLOB)")
+        conn.executemany("INSERT INTO cookies VALUES('.facebook.com', ?, 0, 0, '', ?)",
+                         [(name, b"encrypted-session") for name in ("c_user", "xs")])
     assert chrome_login_complete(tmp_path, "facebook", started)

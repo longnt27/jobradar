@@ -195,6 +195,15 @@ def _check_auth(url: str, body: str) -> None:
         raise AuthRequired("Login or verification is required in the browser profile")
 
 
+async def _check_facebook_auth(page: Page) -> None:
+    _check_auth(page.url, await page.locator("body").inner_text(timeout=7000))
+    # Logged-out public groups retain their URL and a preview post. Their login
+    # form can appear below the preview, outside the generic text check.
+    if (await page.locator('input[name="email"]:visible').count()
+            and await page.locator('input[name="pass"][type="password"]:visible').count()):
+        raise AuthRequired("Sign in to Facebook again in Job Radar's saved browser profile")
+
+
 async def collect_linkedin(context: BrowserContext, source: dict) -> list[ObservedJob]:
     page = await context.new_page()
     detail = await context.new_page()
@@ -366,8 +375,7 @@ async def collect_facebook(context: BrowserContext, source: dict) -> list[Observ
         feed_url = urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), ""))
         await page.goto(feed_url, wait_until="domcontentloaded", timeout=45000)
         await page.wait_for_timeout(1600)
-        body = await page.locator("body").inner_text(timeout=7000)
-        _check_auth(page.url, body)
+        await _check_facebook_auth(page)
         titles = await page.evaluate("""() => [
             document.querySelector('meta[property="og:title"]')?.content || '',
             document.title || '',
@@ -381,6 +389,7 @@ async def collect_facebook(context: BrowserContext, source: dict) -> list[Observ
         try:
             await messages.first.wait_for(timeout=12000)
         except Exception as error:
+            await _check_facebook_auth(page)
             raise RuntimeError("No group posts were visible; check group access or sign-in") from error
         posts_by_url: dict[str, dict] = {}
         seen: set[str] = set()
@@ -452,21 +461,30 @@ async def collect_facebook(context: BrowserContext, source: dict) -> list[Observ
                             post_url = _facebook_post_url(source["url"], [detail.url])
                             doc_urls = await _poster_comment_documents(detail, text)
                         finally:
-                            await detail.close()
+                            try:
+                                await _check_facebook_auth(detail)
+                            finally:
+                                await detail.close()
                     elif post_url:
                         detail = await context.new_page()
                         try:
                             await detail.goto(post_url, wait_until="domcontentloaded", timeout=30000)
+                            await _check_facebook_auth(detail)
                             if not await _facebook_detail_matches(detail, text):
                                 continue
                             doc_urls = await _poster_comment_documents(detail, text)
                         finally:
-                            await detail.close()
+                            try:
+                                await _check_facebook_auth(detail)
+                            finally:
+                                await detail.close()
                     if post_url:
                         if post_url not in posts_by_url or len(text) > len(posts_by_url[post_url]["text"]):
                             posts_by_url[post_url] = {"text": text, "url": post_url, "links": row["external"],
                                                       "doc_urls": doc_urls,
                                                       "published_at": published_at}
+                except AuthRequired:
+                    raise
                 except Exception:
                     continue
             if len(seen) >= max_posts:
@@ -476,6 +494,7 @@ async def collect_facebook(context: BrowserContext, source: dict) -> list[Observ
                 break
             await page.mouse.wheel(0, 1100)
             await page.wait_for_timeout(500)
+        await _check_facebook_auth(page)
         if matching_posts and not posts_by_url:
             raise RuntimeError(f"Facebook showed {matching_posts} matching posts, but their post links could not be opened")
         jobs: list[ObservedJob] = []

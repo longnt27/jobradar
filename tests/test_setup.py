@@ -7,7 +7,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from job_radar.db import Database, now
+from job_radar.db import Database, new_id, now
 from job_radar.collectors import AuthRequired
 from job_radar.feed_catalog import CAREER_FEEDS
 from job_radar.scanner import ScanManager
@@ -364,6 +364,50 @@ def test_auto_detect_closes_chrome_and_returns_to_app(tmp_path: Path, monkeypatc
         assert not any("/signin/finish/" in arg for arg in launches[0])
         assert client.get("/api/setup").json()["browser"]["connected_sites"] == ["linkedin"]
         assert activated == [("com.openai.codex", 8787)]
+
+
+def test_reconnecting_expired_facebook_immediately_retries_recent_failed_sources(tmp_path, monkeypatch):
+    app = create_app(Settings(tmp_path))
+    db = app.state.db
+    db.execute("UPDATE sources SET enabled=0")
+    source_id = new_id()
+    db.execute("INSERT INTO sources(id,kind,name,url,created_at,last_attempt_at,last_status) "
+               "VALUES(?,'facebook','AI group','https://www.facebook.com/groups/123/',?,?,'failed')",
+               (source_id, now(), now()))
+    db.set_setting("social_login_completed_at_facebook", now())
+    db.set_setting("social_reauth_required_facebook", {"detected_at": now()})
+
+    class FakeProcess:
+        def poll(self):
+            return None
+
+        def terminate(self):
+            pass
+
+        def wait(self, timeout=None):
+            return 0
+
+    async def collect(_settings, _source):
+        return []
+
+    monkeypatch.setattr("job_radar.browser_login.chrome_executable", lambda: "chrome")
+    monkeypatch.setattr("job_radar.browser_login.subprocess.Popen", lambda *args, **kwargs: FakeProcess())
+    monkeypatch.setattr("job_radar.browser_login.chrome_login_complete", lambda *args: True)
+    monkeypatch.setattr("job_radar.browser_login.frontmost_app_bundle", lambda: None)
+    monkeypatch.setattr("job_radar.browser_login.return_to_job_radar", lambda *args: None)
+    monkeypatch.setattr("job_radar.scanner.collect_source", collect)
+
+    async def run():
+        manager = app.state.login_manager
+        manager.start("facebook")
+        await manager.task
+        if app.state.scan_manager._due_task:
+            await app.state.scan_manager._due_task
+        assert db.get_setting("social_reauth_required_facebook") is None
+        assert db.one("SELECT last_status FROM sources WHERE id=?", (source_id,))["last_status"] == "empty"
+        assert db.one("SELECT status FROM scan_runs WHERE source_id=?", (source_id,))["status"] == "empty"
+
+    asyncio.run(run())
 
 
 def test_zalo_sign_in_is_accepted_as_a_sending_connection(tmp_path: Path, monkeypatch) -> None:

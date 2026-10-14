@@ -6,11 +6,11 @@ import socket
 import time
 from collections.abc import Callable
 
-from .chrome_auth_watch import chrome_login_complete
+from .chrome_auth_watch import chrome_login_complete, facebook_session_present
 from .db import Database, now
 from .desktop_handoff import frontmost_app_bundle, return_to_job_radar
 from .settings import Settings
-from .social_browser import SITES, chrome_executable, social_login_at
+from .social_browser import SITES, chrome_executable, chrome_profile_process, close_orphaned_chrome, social_login_at
 
 
 LOGIN_URLS = {"linkedin": "https://www.linkedin.com/feed/", "facebook": "https://www.facebook.com/settings", "zalo": "https://chat.zalo.me/"}
@@ -32,8 +32,25 @@ class BrowserLoginManager:
         self.zalo_cdp_port: int | None = None
 
     def status(self) -> dict:
+        if (social_login_at(self.db, "facebook")
+                and not (self.site == "facebook" and self.state in ("opening", "open"))):
+            reauth = self.db.get_setting("social_reauth_required_facebook")
+            session = facebook_session_present(self.settings.browser_profile)
+            missing_cookies = "Facebook authentication cookies are missing or expired"
+            if not reauth and session is False:
+                self.db.set_setting("social_reauth_required_facebook", {
+                    "detected_at": now(), "reason": missing_cookies,
+                })
+            elif (session is True and isinstance(reauth, dict)
+                  and reauth.get("reason") == missing_cookies):
+                # A launch may have handed sign-in to an existing Chrome process.
+                # Recover only an expiry caused by missing cookies, not a server warning.
+                self._save_login("facebook")
+                if self.site == "facebook" and self.state == "failed":
+                    self.state = "saved"
+                    self.error = None
         expired = [site for site in SITES if self.db.get_setting(f"social_reauth_required_{site}")]
-        connected = [site for site in SITES if social_login_at(self.db, site)]
+        connected = [site for site in SITES if site not in expired and social_login_at(self.db, site)]
         dates = [social_login_at(self.db, site) for site in SITES]
         state = self.state if self.state in ("opening", "open", "failed") else (
             "reauth_required" if expired else "saved" if connected else "idle")
@@ -79,6 +96,7 @@ class BrowserLoginManager:
         try:
             async with self.browser_lock:
                 self.settings.ensure_dirs()
+                await close_orphaned_chrome(self.settings.browser_profile)
                 started_at = time.time()
                 arguments = [chrome_executable(), f"--user-data-dir={self.settings.browser_profile}",
                      "--profile-directory=Default", "--no-first-run", "--no-default-browser-check",
@@ -92,6 +110,9 @@ class BrowserLoginManager:
                     arguments,
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 )
+                owner = await asyncio.to_thread(chrome_profile_process, self.settings.browser_profile)
+                if owner and owner.pid != self.process.pid:
+                    self.process = owner
                 self.state = "open"
                 while self.process.poll() is None:
                     try:
@@ -105,14 +126,15 @@ class BrowserLoginManager:
                         self.error = "Job Radar could not check Chrome's sign-in status. Try again shortly."
                     await asyncio.sleep(1)
                 else:
-                    self.state = "failed"
-                    self.error = "Chrome closed before sign-in completed. Open it again to continue."
-                    return
+                    ready = (await self._zalo_login_ready() if self.site == "zalo" else
+                             await asyncio.to_thread(chrome_login_complete, self.settings.browser_profile,
+                                                     self.site, started_at))
+                    if not ready:
+                        self.state = "failed"
+                        self.error = "Chrome closed before sign-in completed. Open it again to continue."
+                        return
                 await self._close_process()
-                self.db.set_setting(f"social_login_completed_at_{self.site}", now())
-                self.db.set_setting(f"social_reauth_required_{self.site}", None)
-                if self.site == "linkedin":
-                    self.db.set_setting("linkedin_automation_paused", False)
+                self._save_login(self.site)
                 if self.on_complete:
                     try:
                         self.on_complete()
@@ -131,6 +153,14 @@ class BrowserLoginManager:
             await self._close_process()
             self.state = "failed"
             self.error = str(error)[:300]
+
+    def _save_login(self, site: str) -> None:
+        if self.db.get_setting(f"social_reauth_required_{site}"):
+            self.db.execute("UPDATE sources SET last_attempt_at=NULL WHERE kind=? AND enabled=1", (site,))
+        self.db.set_setting(f"social_login_completed_at_{site}", now())
+        self.db.set_setting(f"social_reauth_required_{site}", None)
+        if site == "linkedin":
+            self.db.set_setting("linkedin_automation_paused", False)
 
     async def _zalo_login_ready(self) -> bool:
         from playwright.async_api import async_playwright
