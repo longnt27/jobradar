@@ -41,7 +41,7 @@ EASY_APPLY_PAGE = """
 
 
 def test_inspection_collects_shadow_dialog_fields_and_never_submits(tmp_path: Path) -> None:
-    from job_radar.linkedin_application import inspect_easy_apply_dialog
+    from job_radar.linkedin_application import inspect_easy_apply_dialog, submit_easy_apply_dialog
 
     resume = tmp_path / "resume.pdf"
     resume.write_bytes(b"%PDF-1.4\nexample")
@@ -59,7 +59,17 @@ def test_inspection_collects_shadow_dialog_fields_and_never_submits(tmp_path: Pa
                 assert first["answers"]["0"] == "alex@example.org"
                 assert first["answers"]["1"] == "123456789"
                 assert first["attachments"]["2"] == {"kind": "resume"}
-                assert not first["complete"]
+                assert first["complete"]
+                assert first["answers"]["3"] == ""
+                assert first["inspection_blockers"] == ["Answer required: Years of machine learning experience?"]
+                assert not await page.evaluate("window.submitted")
+
+                # A traversal placeholder must never substitute for a blank reviewed answer.
+                await page.goto("about:blank")
+                await page.set_content(EASY_APPLY_PAGE)
+                status, detail = await submit_easy_apply_dialog(page, first, resume)
+                assert status == "needs_user_attention"
+                assert "Answer required" in detail
                 assert not await page.evaluate("window.submitted")
 
                 await page.goto("about:blank")
@@ -68,6 +78,17 @@ def test_inspection_collects_shadow_dialog_fields_and_never_submits(tmp_path: Pa
                 assert second["complete"]
                 assert second["answers"]["3"] == "2"
                 assert second["signature"] == first["signature"]
+                assert not await page.evaluate("window.submitted")
+
+                await page.goto("about:blank")
+                await page.set_content(EASY_APPLY_PAGE.replace(
+                    "root.querySelector('#years').value.trim()",
+                    r"/^\d+$/.test(root.querySelector('#years').value.trim())",
+                ))
+                third = await inspect_easy_apply_dialog(page, "https://www.linkedin.com/jobs/view/123/", {"3": "Fresh graduate"}, resume)
+                assert third["complete"]
+                assert third["answers"]["3"] == "Fresh graduate"
+                assert third["inspection_blockers"] == ["Enter a number: Years of machine learning experience?"]
                 assert not await page.evaluate("window.submitted")
             finally:
                 await browser.close()
@@ -90,7 +111,9 @@ def test_review_page_questions_are_collected_before_submission(tmp_path: Path) -
                 await page.evaluate("window.reviewConsent = true")
                 first = await inspect_easy_apply_dialog(page, "https://www.linkedin.com/jobs/view/123/", {"3": "2"}, resume)
                 assert first["fields"][-1]["label"] == "I agree to contact"
-                assert not first["complete"]
+                assert first["complete"]
+                assert first["answers"]["4"] == ""
+                assert first["inspection_blockers"] == ["Answer required: I agree to contact"]
                 assert not await page.evaluate("window.submitted")
                 await page.goto("about:blank")
                 await page.set_content(EASY_APPLY_PAGE)
@@ -214,6 +237,11 @@ def test_related_job_apply_is_not_used_for_selected_posting() -> None:
                   <h2>About the job</h2></article><aside><button>Easy Apply</button></aside></main>''')
                 action = await find_linkedin_apply_control(page)
                 assert action["kind"] == "already_applied"
+                await page.set_content('''<main><article><h1>Current job</h1><button>Easy Apply</button>
+                  <h2>About the job</h2></article><aside><h2>Recommended job</h2>
+                  <p>No longer accepting applications</p></aside></main>''')
+                action = await find_linkedin_apply_control(page)
+                assert action["kind"] == "linkedin_easy_apply"
             finally:
                 await browser.close()
 

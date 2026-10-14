@@ -288,7 +288,9 @@ async def _step_fields(root, step: int, start_index: int) -> list[dict]:
           required: isRequired,
           options: type === 'select' ? [...el.options].map(opt => ({value: opt.value, text: opt.text.trim()})) : [],
           value: type === 'checkbox' ? (el.checked ? 'yes' : '') : el.value || '',
-          max_length: el.maxLength > 0 ? el.maxLength : null
+          max_length: el.maxLength > 0 ? el.maxLength : null,
+          min: el.min || '', max: el.max || '', step_size: el.step || '',
+          pattern: el.pattern || '', input_mode: el.inputMode || ''
         });
       });
 
@@ -312,6 +314,11 @@ async def _step_fields(root, step: int, start_index: int) -> list[dict]:
     result = []
     for offset, field in enumerate(data):
         item = {**field, "step": step, "index": start_index + offset}
+        if item["type"] in {"text", "number"}:
+            item["numeric"] = item["type"] == "number" or bool(re.search(
+                r"salary|compensation|years?.*(?:experience)|thu nhập|lương|số năm|kinh nghiệm",
+                item.get("label", ""), re.I,
+            ))
         if item.get("type") == "radio" and item.get("options") and not item.get("value"):
             inferred = _infer_default_radio_answer(item.get("label", ""), item.get("options", []))
             if inferred:
@@ -336,8 +343,19 @@ def refresh_saved_answer_blockers(form: dict) -> dict:
                for field in form.get("fields", [])
                if field.get("required") and field.get("type") != "file"
                and not str(answers.get(str(field.get("index"))) or "").strip()]
+    for field in form.get("fields", []):
+        answer = str(answers.get(str(field.get("index"))) or "").strip()
+        if answer and field.get("numeric"):
+            try:
+                value = float(answer)
+                valid = value == value and abs(value) != float("inf")
+            except ValueError:
+                valid = False
+            if not valid:
+                missing.append(f"Enter a number: {field.get('label') or field['index']}")
     other = [str(blocker) for blocker in form.get("inspection_blockers", [])
              if not str(blocker).startswith("Answer required:")
+             and not str(blocker).startswith("Enter a number:")
              and not str(blocker).startswith("LinkedIn rejected step")
              and not str(blocker).startswith("LinkedIn did not advance")]
     return {**form, "inspection_blockers": [*missing, *other]}
@@ -367,20 +385,10 @@ async def _fill_step(page: Page, root, fields: list[dict], answers: dict[str, st
                 missing.append(f"Could not attach the reviewed resume for {label}")
             continue
 
-        answer = str(answers.get(str(field["index"]), "") or field.get("value") or "")
+        answer = str(answers.get(str(field["index"]), field.get("value") or "") or "")
         if field["required"] and not answer.strip():
-            if field["type"] == "radio" and field.get("options"):
-                inferred = _infer_default_radio_answer(label, field["options"])
-                if inferred:
-                    answer = inferred
-                else:
-                    missing.append(f"Answer required: {label}")
-                    continue
-            elif field["type"] == "radio" and re.search(r"\byes\b", label, re.I):
-                answer = "yes"
-            else:
-                missing.append(f"Answer required: {label}")
-                continue
+            missing.append(f"Answer required: {label}")
+            continue
 
         if not answer:
             continue
@@ -517,9 +525,28 @@ async def _advance(page: Page, button, step: int) -> bool:
     return False
 
 
+def _navigation_answer(field: dict) -> str:
+    """Temporary values used only to expose later questions, never saved answers."""
+    if field["type"] in {"select", "radio"}:
+        return next((str(option["value"]) for option in field.get("options", [])
+                     if option.get("value") and not re.match(r"select|choose|chọn", str(option.get("text", "")), re.I)), "")
+    if field["type"] == "checkbox":
+        return "yes"
+    if field["type"] == "email":
+        return "preview@example.invalid"
+    if field["type"] == "url":
+        return "https://example.invalid"
+    if field["type"] == "date":
+        return field.get("min") or "2000-01-01"
+    if field["type"] == "tel":
+        return "0900000000"
+    # Numeric text inputs are common for salary and experience questions.
+    return str(field.get("min") or "1")[:field.get("max_length") or 1000]
+
+
 async def inspect_easy_apply_dialog(page: Page, posting_url: str, existing_answers: dict[str, str],
                                     resume_path: Path) -> dict:
-    """Inspect and prefill every reachable step, stopping before submission."""
+    """Collect all steps using disposable navigation answers, never submitting."""
     await _open_easy_apply_dialog(page)
     fields: list[dict] = []
     answers: dict[str, str] = {}
@@ -537,23 +564,36 @@ async def inspect_easy_apply_dialog(page: Page, posting_url: str, existing_answe
                 attachments[key] = {"kind": "resume"}
             else:
                 answers[key] = str(existing_answers.get(key, field.get("value") or ""))
-        blockers = await _fill_step(page, root, current, answers, resume_path)
-        if blockers:
-            break
         if action == "submit":
             complete = True
             break
+        navigation = dict(answers)
+        for field in current:
+            key = str(field["index"])
+            if field["type"] != "file" and field["required"] and not navigation[key].strip():
+                navigation[key] = _navigation_answer(field)
+        blockers = await _fill_step(page, root, current, navigation, resume_path)
+        if blockers:
+            break
         if not await _advance(page, button, step):
+            # LinkedIn may require digits even when the control is type=text.
+            # Retry traversal with disposable values; retain the user's answers.
+            for field in current:
+                if field["required"] and field["type"] != "file":
+                    navigation[str(field["index"])] = _navigation_answer(field)
+            blockers = await _fill_step(page, root, current, navigation, resume_path)
+            if not blockers and await _advance(page, button, step):
+                continue
             inline_errors = await _extract_step_errors(root)
             if inline_errors:
                 blockers = [f"LinkedIn rejected step {step}: {'; '.join(inline_errors)}"]
             else:
                 blockers = ["LinkedIn did not advance to the next application page. Review this step manually."]
             break
-    return {"kind": "linkedin_easy_apply", "fields": fields, "answers": answers,
+    return refresh_saved_answer_blockers({"kind": "linkedin_easy_apply", "fields": fields, "answers": answers,
             "attachments": attachments, "complete": complete, "inspection_blockers": blockers,
             "signature": _easy_signature(fields, posting_url, total_steps),
-            "destination_url": posting_url, "final_url": posting_url, "steps_total": total_steps}
+            "destination_url": posting_url, "final_url": posting_url, "steps_total": total_steps})
 
 
 async def submit_easy_apply_dialog(page: Page, reviewed: dict, resume_path: Path) -> tuple[str, str]:
@@ -603,6 +643,7 @@ async def inspect_linkedin_application(settings: Settings, draft: dict) -> dict:
         raise ValueError("This draft has no LinkedIn Easy Apply posting")
     clean_stale_chrome_lock(settings.browser_profile)
     async with async_playwright() as playwright:
+        page = None
         try:
             context = await playwright.chromium.launch_persistent_context(
                 str(settings.browser_profile), headless=True, **chrome_context_options(required=True),
@@ -627,7 +668,24 @@ async def inspect_linkedin_application(settings: Settings, draft: dict) -> dict:
                 page, posting_url, draft["form_data"].get("answers", {}), Path(draft["resume_path"]),
             )
         finally:
-            await context.close()
+            try:
+                if page is not None:
+                    await _discard_inspection(page)
+            finally:
+                await context.close()
+
+
+async def _discard_inspection(page: Page) -> None:
+    """Discard LinkedIn's unfinished draft so navigation placeholders are removed."""
+    try:
+        dismiss = page.get_by_role("button", name=re.compile(r"^(dismiss|close|đóng)$", re.I)).last
+        if await dismiss.is_visible():
+            await dismiss.click(timeout=3000)
+            discard = page.get_by_role("button", name=re.compile(r"^(discard|discard application|hủy|bỏ)$", re.I)).last
+            await discard.wait_for(state="visible", timeout=3000)
+            await discard.click(timeout=3000)
+    except (PlaywrightTimeoutError, ValueError):
+        pass
 
 
 def unwrap_linkedin_redirect(value: str | None) -> str | None:
@@ -665,7 +723,7 @@ async def find_linkedin_apply_control(page: Page) -> dict:
       if (!about) return {kind:'unknown', detail:'The selected job details have not loaded yet.'};
       const selectedText = root.innerText.split('About the job')[0];
       const closedRegex = /(?:no longer|not currently)\s+accepting\s+applications|không còn nhận đơn|hiện không nhận đơn/i;
-      if (closedRegex.test(selectedText) || closedRegex.test(root.innerText))
+      if (closedRegex.test(selectedText))
         return {kind:'closed', detail:'This LinkedIn posting is no longer accepting applications.'};
       if (/applied on company site|you applied|application submitted/i.test(selectedText))
         return {kind:'already_applied', detail:'LinkedIn shows this posting as already applied. Verify its status before another send.'};
