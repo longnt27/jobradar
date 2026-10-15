@@ -547,16 +547,101 @@ function endPending(button, {restoreDisabled = true} = {}) {
   delete button.dataset.pendingDisabled;
 }
 
-function setTabLoading(target, loading) {
-  if (!target) return;
+function skeletonLines(widths = ['62%', '86%', '44%']) {
+  return widths.map((width) => `<span class="skeleton-line" style="width:${width}"></span>`).join('');
+}
+
+function skeletonCard(widths, className = '') {
+  return `<div class="skeleton-card ${className}">${skeletonLines(widths)}</div>`;
+}
+
+function skeletonMarkup(kind) {
+  const rows = (count, widths) => Array.from({length:count}, () => skeletonCard(widths)).join('');
+  if (kind === 'list') return rows(6, ['72%', '46%', '30%']);
+  if (kind === 'grid') return `<div class="skeleton-columns">${rows(6, ['58%', '78%', '42%'])}</div>`;
+  if (kind === 'workspace' || kind === 'detail') return `
+    <div class="skeleton-workspace">
+      <div class="skeleton-list">
+        <div class="skeleton-search skeleton-line"></div>
+        ${rows(6, ['76%', '48%', '32%'])}
+      </div>
+      <div class="skeleton-detail">
+        ${skeletonCard(['48%', '68%', '40%'], 'skeleton-heading')}
+        <div class="skeleton-card-grid">${rows(3, ['56%', '82%', '66%'])}</div>
+        ${skeletonCard(['28%', '91%', '75%', '83%'], 'skeleton-tall')}
+        <div class="skeleton-card-grid">${rows(2, ['45%', '78%', '62%'])}</div>
+      </div>
+    </div>`;
+  if (kind === 'home') return `
+    ${skeletonCard(['22%', '51%', '72%'], 'skeleton-hero')}
+    <div class="skeleton-columns">${rows(2, ['35%', '82%', '66%', '74%', '55%'])}</div>
+    ${skeletonCard(['32%', '86%', '72%'])}`;
+  if (kind === 'directory') return `
+    <div class="skeleton-section-head">${skeletonLines(['52%', '24%'])}</div>
+    <div class="skeleton-card-grid skeleton-card-grid--three">${rows(3, ['40%', '70%'])}</div>
+    <div class="skeleton-search skeleton-line"></div>
+    <div class="skeleton-columns">${rows(6, ['56%', '78%', '45%'])}</div>`;
+  if (kind === 'queue') return `
+    <div class="skeleton-section-head">${skeletonLines(['56%', '28%'])}</div>
+    <div class="skeleton-card-grid skeleton-card-grid--three">${rows(3, ['46%', '72%', '60%', '85%'])}</div>`;
+  if (kind === 'form') return `
+    ${skeletonCard(['38%', '72%'], 'skeleton-heading')}
+    <div class="skeleton-columns">${rows(2, ['54%', '88%', '40%', '82%', '64%'])}</div>
+    ${skeletonCard(['43%', '72%', '91%'])}`;
+  return `${skeletonCard(['58%', '86%', '72%'])}${skeletonCard(['42%', '76%', '59%'])}`;
+}
+
+function setRegionLoading(target, loading, kind = 'detail', requestId = null) {
+  if (!target) return null;
+  if (!loading && requestId !== null && target.dataset.regionLoadId !== String(requestId)) return null;
+  if (loading) target.dataset.regionLoadId = String(Number(target.dataset.regionLoadId || 0) + 1);
+  target.querySelector(':scope > .region-skeleton')?.remove();
+  target.classList.toggle('has-region-skeleton', loading);
+  if (loading) {
+    target.setAttribute('aria-busy', 'true');
+    target.scrollTop = 0;
+    const skeleton = document.createElement('div');
+    skeleton.className = 'region-skeleton';
+    skeleton.setAttribute('aria-hidden', 'true');
+    skeleton.innerHTML = kind === 'detail'
+      ? `${skeletonCard(['45%', '72%', '56%'], 'skeleton-heading')}<div class="skeleton-card-grid">${Array.from({length:3}, () => skeletonCard(['60%', '85%', '70%'])).join('')}</div>${skeletonCard(['34%', '89%', '72%', '81%'], 'skeleton-tall')}`
+      : skeletonMarkup(kind);
+    target.prepend(skeleton);
+  } else target.removeAttribute('aria-busy');
+  return loading ? Number(target.dataset.regionLoadId) : null;
+}
+
+async function withSkeleton(targets, work, kind = 'list') {
+  const entries = (Array.isArray(targets) ? targets : [targets])
+    .filter(Boolean).map((target) => [target, setRegionLoading(target, true, kind)]);
+  try { return await work(); }
+  finally { entries.forEach(([target, requestId]) => setRegionLoading(target, false, kind, requestId)); }
+}
+
+function setTabLoading(target, loading, requestId = null) {
+  if (!target) return null;
+  if (!loading && requestId !== null && target.dataset.tabLoadId !== String(requestId)) return null;
+  if (loading) target.dataset.tabLoadId = String(Number(target.dataset.tabLoadId || 0) + 1);
+  target.querySelector(':scope > .tab-skeleton')?.remove();
   target.classList.toggle('is-loading', loading);
-  if (loading) target.setAttribute('aria-busy', 'true');
-  else target.removeAttribute('aria-busy');
+  if (loading) {
+    target.setAttribute('aria-busy', 'true');
+    const skeleton = document.createElement('div');
+    skeleton.className = 'tab-skeleton';
+    skeleton.setAttribute('aria-hidden', 'true');
+    const kind = ['jobs', 'applications', 'projects'].includes(target.id) ? 'workspace'
+      : ['sources', 'employers', 'application-history'].includes(target.id) ? 'directory'
+      : ['personal', 'experience', 'profile', 'settings'].includes(target.id) ? 'form'
+      : target.id === 'home' ? 'home' : target.id === 'queue' ? 'queue' : 'form';
+    skeleton.innerHTML = skeletonMarkup(kind);
+    target.prepend(skeleton);
+  } else target.removeAttribute('aria-busy');
   const indicator = $('#tab-loading');
   if (target.classList.contains('active')) {
     indicator.hidden = !loading;
     if (loading) indicator.textContent = `Loading ${($('#page-title').textContent || 'page').toLowerCase()}…`;
   }
+  return loading ? Number(target.dataset.tabLoadId) : null;
 }
 
 function socialSiteNames(browser) {
@@ -1180,12 +1265,15 @@ async function setJobDecisionWithUndo(job, decision, {reason = null, snoozedUnti
 function bindJobCards(jobs) {
   const byId = new Map(jobs.map((job) => [job.id, job]));
   document.querySelectorAll('[data-job]').forEach((node) => node.addEventListener('click', async () => {
+    const detail = $('#job-detail');
+    const requestId = setRegionLoading(detail, true);
     try {
       activeJob = node.dataset.job; activeJobPinned = true; syncJobsHash('push');
       await showJob(node.dataset.job, true);
-      if (window.matchMedia('(max-width: 900px)').matches) scrollNodeIntoView($('#job-detail'), {block:'start'});
-      $('#job-detail').focus({preventScroll:true});
+      if (window.matchMedia('(max-width: 900px)').matches) scrollNodeIntoView(detail, {block:'start'});
+      detail.focus({preventScroll:true});
     } catch(error) { notice(error.message, true); }
+    finally { setRegionLoading(detail, false, 'detail', requestId); }
   }));
   document.querySelectorAll('[data-job-decision]').forEach((button) => button.addEventListener('click', async () => {
     const job = byId.get(button.dataset.jobId);
@@ -1276,6 +1364,7 @@ async function loadJobs() {
   }
   $('#page-title').textContent = 'Jobs';
   $('#jobs-new-count').textContent = `${result.inbox?.since_last_visit || 0} new`;
+  $('#jobs-new-count').hidden = false;
   $('#jobs-page-summary').textContent = result.total ? `Page ${result.page} of ${result.pages} · ${result.total} jobs` : 'No jobs';
   $('#jobs-prev').disabled = jobsPage <= 1;
   $('#jobs-next').disabled = jobsPage >= result.pages;
@@ -1340,6 +1429,7 @@ async function showJob(id, pin = false, loadedJob = null) {
     node.setAttribute('aria-pressed', selected ? 'true' : 'false');
   });
   const job = loadedJob || await api(`/api/jobs/${id}`);
+  if (activeJob !== id) return;
   currentJobDetail = job;
   if (job.read_state === 'unseen') {
     const seen = await api(`/api/jobs/${id}/seen`, {method:'POST', body:'{}'});
@@ -1348,6 +1438,7 @@ async function showJob(id, pin = false, loadedJob = null) {
     markJobUiSeen(id, seen.seen_at);
   }
   const setup = await api('/api/setup');
+  if (activeJob !== id) return;
   const preparation = setup.capabilities?.application_preparation || {ready:false,missing:[]};
   const sourcePriority = {career:0, linkedin:1, facebook:2};
   const sightings = [...job.observations].sort((a,b) => (sourcePriority[a.kind] ?? 9) - (sourcePriority[b.kind] ?? 9) || a.first_seen_at.localeCompare(b.first_seen_at));
@@ -2248,7 +2339,7 @@ async function showTab(name, historyMode = 'push') {
   const title = ({home:'Home',guide:'How it works',queue:'Queue',jobs:'Jobs',applications:'Applications','application-history':'Application history',profile:'My profile',settings:'Settings',
     personal:'Personal details',experience:'Work history',projects:'GitHub projects',sources:'Job sources',employers:'Employers'})[name];
   $('#page-title').textContent = title;
-  $('#jobs-new-count').hidden = name !== 'jobs';
+  $('#jobs-new-count').hidden = true;
   $('#job-import-control').hidden = name !== 'jobs';
   setJobImportPopoverOpen(false);
   document.title = `${title} · Job Radar`;
@@ -2260,13 +2351,13 @@ async function showTab(name, historyMode = 'push') {
   const loader = ({home:loadHome,queue:loadQueue,jobs:loadJobs,applications:loadApplications,'application-history':loadApplicationHistory,personal:loadPersonalDetails,
     experience:loadPositions,projects:loadEvidence,sources:loadSources,employers:loadEmployers,profile:loadProfile,settings:loadSettings})[name];
   if (!loader) return;
-  setTabLoading(target, true);
+  const requestId = setTabLoading(target, true);
   try {
     return await loader(selectedDraft);
   } catch (error) {
     notice(error.message, true);
   } finally {
-    setTabLoading(target, false);
+    setTabLoading(target, false, requestId);
   }
 }
 
@@ -2428,7 +2519,10 @@ function bindApplicationWorkspace() {
     setApplicationFilterPopoverOpen(false);
     $('#application-filter-toggle').focus();
   });
-  const reloadApplications = () => { applicationsPage = 1; loadApplications().catch((error) => notice(error.message, true)); };
+  const reloadApplications = () => {
+    applicationsPage = 1;
+    withSkeleton([$('#application-list'), $('#application-detail')], () => loadApplications()).catch((error) => notice(error.message, true));
+  };
   $('#application-query').addEventListener('input', reloadApplications);
   for (const selector of ['#application-review-filter','#application-company-filter','#application-sent-filter']) {
     $(selector).addEventListener('change', reloadApplications);
@@ -2439,23 +2533,23 @@ function bindApplicationWorkspace() {
   });
   $('#applications-prev').addEventListener('click', () => {
     applicationsPage = Math.max(1, applicationsPage - 1);
-    loadApplications().catch((error) => notice(error.message, true));
+    withSkeleton([$('#application-list'), $('#application-detail')], () => loadApplications()).catch((error) => notice(error.message, true));
   });
   $('#applications-next').addEventListener('click', () => {
     applicationsPage = Math.min(applicationsPages, applicationsPage + 1);
-    loadApplications().catch((error) => notice(error.message, true));
+    withSkeleton([$('#application-list'), $('#application-detail')], () => loadApplications()).catch((error) => notice(error.message, true));
   });
   $('#submission-history-query').addEventListener('input', () => {
     submissionHistoryPage = 1;
-    loadSubmissionHistory().catch((error) => notice(error.message, true));
+    withSkeleton($('#submission-history-list'), () => loadSubmissionHistory()).catch((error) => notice(error.message, true));
   });
   $('#submission-history-prev').addEventListener('click', () => {
     submissionHistoryPage = Math.max(1, submissionHistoryPage - 1);
-    loadSubmissionHistory().catch((error) => notice(error.message, true));
+    withSkeleton($('#submission-history-list'), () => loadSubmissionHistory()).catch((error) => notice(error.message, true));
   });
   $('#submission-history-next').addEventListener('click', () => {
     submissionHistoryPage = Math.min(submissionHistoryPages, submissionHistoryPage + 1);
-    loadSubmissionHistory().catch((error) => notice(error.message, true));
+    withSkeleton($('#submission-history-list'), () => loadSubmissionHistory()).catch((error) => notice(error.message, true));
   });
 }
 
@@ -2566,9 +2660,14 @@ function renderApplicationList(total = applicationsTotal) {
     const draft = applicationDrafts.find((d) => d.id === node.dataset.application);
     const screen = (draft && (applicationIsSent(draft) || applicationIsUncertain(draft))) ? 'package' : 'first-glance';
     activeApplicationScreen = screen;
-    await showApplication(node.dataset.application, screen);
-    if (window.matchMedia('(max-width: 900px)').matches) scrollNodeIntoView($('#application-detail'), {block:'start'});
-    $('#application-detail').focus({preventScroll:true});
+    const detail = $('#application-detail');
+    const requestId = setRegionLoading(detail, true);
+    try {
+      await showApplication(node.dataset.application, screen);
+      if (window.matchMedia('(max-width: 900px)').matches) scrollNodeIntoView(detail, {block:'start'});
+      detail.focus({preventScroll:true});
+    } catch(error) { notice(error.message, true); }
+    finally { setRegionLoading(detail, false, 'detail', requestId); }
   }));
   list.querySelectorAll('[data-preparation]').forEach((node) => node.addEventListener('click', () => {
     const item = applicationPreparations.find((entry) => entry.vacancy_id === node.dataset.preparation);
@@ -3383,7 +3482,7 @@ async function showApplication(id, preferredScreen = null) {
         </div>` : ''}
         ${collectApplicationForm ? `<div class="application-form-collection" role="status">${collectionError
           ? `<p>${escapeHtml(collectionError)}</p><button id="retry-application-questions" type="button" class="secondary">Retry loading questions</button>`
-          : '<p>Loading all application questions. You can review and answer them together when this finishes.</p>'}</div>` : ''}
+          : `<span class="sr-only">Loading application questions</span><div class="application-questions-skeleton" aria-hidden="true">${Array.from({length:4}, () => skeletonCard(['38%', '95%', '62%'])).join('')}</div>`}</div>` : ''}
         ${!collectApplicationForm && formData.inspection_blockers?.length ? applicationAlert('warning', 'Answers needed', formData.inspection_blockers) : ''}
         <div class="application-form-fields">${collectApplicationForm ? '' : renderApplicationFormFields(formData.fields || [], draft)}</div>
       </section>
@@ -3523,7 +3622,9 @@ async function showApplication(id, preferredScreen = null) {
     const button = detail.querySelector('#load-resume-preview');
     if (!preview || !button) return;
     button.disabled = true;
-    button.textContent = 'Loading preview…';
+    button.hidden = true;
+    preview.innerHTML = `<div class="resume-preview-skeleton" aria-hidden="true">${skeletonCard(['92%', '86%', '74%', '88%', '61%'], 'skeleton-tall')}</div>`;
+    preview.hidden = false;
     try {
       const result = await api(`/api/applications/${id}/resume/preview/pages`);
       preview.innerHTML = Array.from({length:result.pages}, (_, index) =>
@@ -3532,7 +3633,10 @@ async function showApplication(id, preferredScreen = null) {
       button.remove();
     } catch (error) {
       button.disabled = false;
+      button.hidden = false;
       button.textContent = 'Try PDF preview again';
+      preview.hidden = true;
+      preview.replaceChildren();
       notice(error.message, true, null, draftContext);
     }
   };
@@ -4042,9 +4146,14 @@ async function loadEvidence(focusId = null) {
     <small>${escapeHtml(card.repository_url || 'Manual project')}</small></button>`).join('') : '<div class="empty">No projects yet. Enter your GitHub username or a repository URL above.</div>';
   document.querySelectorAll('[data-open-project]').forEach((button) => button.addEventListener('click', async () => {
     selectedProjectId = button.dataset.openProject;
-    await loadEvidence(selectedProjectId);
-    scrollNodeIntoView($('#project-editor'), {block:'start'});
-    $('#project-editor').focus({preventScroll:true});
+    const editor = $('#project-editor');
+    const requestId = setRegionLoading(editor, true);
+    try {
+      await loadEvidence(selectedProjectId);
+      scrollNodeIntoView(editor, {block:'start'});
+      editor.focus({preventScroll:true});
+    } catch(error) { notice(error.message, true); }
+    finally { setRegionLoading(editor, false, 'detail', requestId); }
   }));
   const card = projectCards.find((item) => item.id === selectedProjectId);
   if (!card) {
@@ -4186,7 +4295,7 @@ $('#social-auth-action').addEventListener('click', openSocialSignIn);
 setInterval(() => refreshSocialAuth().catch(() => {}), 60000);
 function applyJobControls() {
   jobsPage = 1; activeJob = null; activeJobPinned = false; syncJobsHash('push');
-  loadJobs().catch((error) => notice(error.message, true));
+  withSkeleton($('#job-list'), () => loadJobs()).catch((error) => notice(error.message, true));
 }
 function setJobFilterPopoverOpen(open) {
   $('#job-filter-popover').hidden = !open;
@@ -4246,8 +4355,8 @@ $('#jobs-clear-filters').addEventListener('click', () => {
   applyJobControls();
   notice('Job filters reset to defaults.');
 });
-$('#jobs-prev').addEventListener('click', () => { jobsPage = Math.max(1, jobsPage - 1); activeJob = null; activeJobPinned = false; syncJobsHash('push'); loadJobs().catch((error) => notice(error.message, true)); });
-$('#jobs-next').addEventListener('click', () => { jobsPage += 1; activeJob = null; activeJobPinned = false; syncJobsHash('push'); loadJobs().catch((error) => notice(error.message, true)); });
+$('#jobs-prev').addEventListener('click', () => { jobsPage = Math.max(1, jobsPage - 1); activeJob = null; activeJobPinned = false; syncJobsHash('push'); withSkeleton($('#job-list'), () => loadJobs()).catch((error) => notice(error.message, true)); });
+$('#jobs-next').addEventListener('click', () => { jobsPage += 1; activeJob = null; activeJobPinned = false; syncJobsHash('push'); withSkeleton($('#job-list'), () => loadJobs()).catch((error) => notice(error.message, true)); });
 
 $('#job-view-select').addEventListener('change', (event) => {
   const view = savedJobViews.find((item) => item.id === event.target.value);
@@ -4306,7 +4415,7 @@ document.querySelectorAll('[data-ignore-reason]').forEach((button) => button.add
 }));
 $('#job-ignore-reason-dialog').addEventListener('close', () => { pendingIgnoreJobId = null; });
 for (const selector of ['#source-kind', '#source-status', '#source-enabled', '#source-success', '#source-sort']) {
-  $(selector).addEventListener('change', () => { sourcePage = 1; loadSources().catch((error) => notice(error.message, true)); });
+  $(selector).addEventListener('change', () => { sourcePage = 1; withSkeleton($('#source-list'), () => loadSources(), 'grid').catch((error) => notice(error.message, true)); });
 }
 function setSourceFilterPopoverOpen(open) {
   $('#source-filter-popover').hidden = !open;
@@ -4318,7 +4427,7 @@ $('#source-clear-filters').addEventListener('click', () => {
   $('#source-sort').value = 'attention';
   sourcePage = 1;
   setSourceFilterPopoverOpen(false);
-  loadSources().catch((error) => notice(error.message, true));
+  withSkeleton($('#source-list'), () => loadSources(), 'grid').catch((error) => notice(error.message, true));
 });
 document.addEventListener('click', (event) => {
   if (!event.target.closest('.source-search-shell')) setSourceFilterPopoverOpen(false);
@@ -4331,14 +4440,14 @@ document.addEventListener('keydown', (event) => {
 $('#source-query').addEventListener('input', () => {
   sourcePage = 1;
   clearTimeout(window.sourceFilterTimer);
-  window.sourceFilterTimer = setTimeout(() => loadSources().catch((error) => notice(error.message, true)), 150);
+  window.sourceFilterTimer = setTimeout(() => withSkeleton($('#source-list'), () => loadSources(), 'grid').catch((error) => notice(error.message, true)), 150);
 });
-$('#sources-prev').addEventListener('click', () => { sourcePage = Math.max(1, sourcePage - 1); loadSources().catch((error) => notice(error.message, true)); });
-$('#sources-next').addEventListener('click', () => { sourcePage += 1; loadSources().catch((error) => notice(error.message, true)); });
+$('#sources-prev').addEventListener('click', () => { sourcePage = Math.max(1, sourcePage - 1); withSkeleton($('#source-list'), () => loadSources(), 'grid').catch((error) => notice(error.message, true)); });
+$('#sources-next').addEventListener('click', () => { sourcePage += 1; withSkeleton($('#source-list'), () => loadSources(), 'grid').catch((error) => notice(error.message, true)); });
 $('#queue-refresh').addEventListener('click', async (event) => {
   const button = beginPending(event.currentTarget, 'Refreshing…');
   try {
-    await loadQueue({reason:'manual'});
+    await withSkeleton(document.querySelector('.queue-grid'), () => loadQueue({reason:'manual'}), 'queue');
     notice('Queue refreshed. All background activity updated.');
   }
   catch(error) { notice(error.message, true); }
@@ -4348,14 +4457,14 @@ $('#employer-search-form').addEventListener('submit', (event) => {
   event.preventDefault();
   if ($('#employer-query').value.trim()) document.querySelector('input[name="employer-scope"][value="all"]').checked = true;
   employerPage = 1;
-  loadEmployers().catch((error) => notice(error.message, true));
+  withSkeleton($('#employer-list'), () => loadEmployers(), 'grid').catch((error) => notice(error.message, true));
 });
 document.querySelectorAll('input[name="employer-scope"]').forEach((input) => input.addEventListener('change', () => {
   employerPage = 1;
-  loadEmployers().catch((error) => notice(error.message, true));
+  withSkeleton($('#employer-list'), () => loadEmployers(), 'grid').catch((error) => notice(error.message, true));
 }));
-$('#employers-prev').addEventListener('click', () => { employerPage = Math.max(1, employerPage - 1); loadEmployers().catch((error) => notice(error.message, true)); });
-$('#employers-next').addEventListener('click', () => { employerPage += 1; loadEmployers().catch((error) => notice(error.message, true)); });
+$('#employers-prev').addEventListener('click', () => { employerPage = Math.max(1, employerPage - 1); withSkeleton($('#employer-list'), () => loadEmployers(), 'grid').catch((error) => notice(error.message, true)); });
+$('#employers-next').addEventListener('click', () => { employerPage += 1; withSkeleton($('#employer-list'), () => loadEmployers(), 'grid').catch((error) => notice(error.message, true)); });
 
 for (const site of ['linkedin', 'facebook']) {
   $(`#setup-${site}-start`).addEventListener('click', async (event) => {

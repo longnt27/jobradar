@@ -10,6 +10,7 @@ from playwright.sync_api import sync_playwright
 
 from job_radar.settings import Settings
 from job_radar.web import create_app
+from job_radar.ingest import ObservedJob, ingest
 
 
 @pytest.fixture
@@ -152,6 +153,54 @@ def test_profile_and_settings_load_only_what_is_visible(clarity_app) -> None:
             page.locator("#provider-panel > summary").click()
             page.wait_for_function("document.querySelector('#matching-model-form').dataset.saved !== undefined")
             assert sum(url.endswith("/api/matching/models") for url in requests) == 1
+        finally:
+            browser.close()
+
+
+def test_navigation_and_job_detail_show_skeletons_during_slow_loads(clarity_app) -> None:
+    app, base = clarity_app
+    source_id = app.state.db.one("SELECT id FROM sources WHERE kind='linkedin' LIMIT 1")["id"]
+    job_id, _ = ingest(app.state.db, source_id, ObservedJob(
+        "https://www.linkedin.com/jobs/view/900001/", "AI Engineer", "Example Robotics",
+        "Build reliable Python systems.", location="Hanoi",
+    ))
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        try:
+            page = browser.new_page(viewport={"width": 1440, "height": 900})
+            page.add_init_script("""
+              const originalFetch = window.fetch.bind(window);
+              window.fetch = async (...args) => {
+                if (String(args[0]).includes('/api/')) {
+                  await new Promise(resolve => setTimeout(resolve, 500));
+                }
+                return originalFetch(...args);
+              };
+            """)
+            page.goto(base + "/#jobs", wait_until="domcontentloaded")
+            skeleton = page.locator("#jobs > .tab-skeleton")
+            skeleton.wait_for(state="visible")
+            assert skeleton.locator(".skeleton-card").count() >= 6
+            assert page.locator("#jobs").get_attribute("aria-busy") == "true"
+            assert page.locator("#tab-loading").evaluate("node => node.getBoundingClientRect().width") <= 1
+            skeleton.wait_for(state="hidden")
+            page.locator(f'[data-job="{job_id}"]').click()
+            detail_skeleton = page.locator("#job-detail > .region-skeleton")
+            detail_skeleton.wait_for(state="visible")
+            detail_skeleton.wait_for(state="hidden")
+            assert page.locator("#job-detail h2").first.is_visible()
+
+            page.locator("#job-query").fill("Example Robotics")
+            list_skeleton = page.locator("#job-list > .region-skeleton")
+            list_skeleton.wait_for(state="visible")
+            list_skeleton.wait_for(state="hidden")
+            assert page.locator(f'[data-job="{job_id}"]').is_visible()
+
+            page.locator('.app-header [data-tab="sources"]').click()
+            sources_skeleton = page.locator("#sources > .tab-skeleton")
+            sources_skeleton.wait_for(state="visible")
+            sources_skeleton.wait_for(state="hidden")
+            assert page.locator("#sources").get_attribute("aria-busy") is None
         finally:
             browser.close()
 

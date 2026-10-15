@@ -41,7 +41,7 @@
         <div class="page-title-group"><h1 id="page-title">Home</h1><span id="jobs-new-count" class="jobs-new-count" hidden></span></div><div id="job-import-control" class="job-import-control" hidden><button id="job-import-toggle" class="job-add-button" type="button" aria-label="Add a job from a description" aria-expanded="false" aria-controls="job-import-popover"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button><span class="job-add-help" role="tooltip">Add a job from a description</span><div id="job-import-popover" class="job-import-popover" hidden><h2>Add a job from a description</h2><form id="job-import" class="form-grid"><label>Company<input name="company" required></label><label>Title<input name="title" required></label><label>Location<input name="location"></label><label>Application URL<input name="apply_url" type="url"></label><label class="full">Description<textarea name="description" required rows="6"></textarea></label><button class="primary" type="submit">Add job</button></form></div></div>
       </header>
       <div id="notice" role="status" aria-live="polite"></div>
-      <div id="tab-loading" role="status" aria-live="polite" hidden>Loading…</div>
+      <div id="tab-loading" class="sr-only" role="status" aria-live="polite" hidden>Loading…</div>
       <div id="social-auth-banner" role="alert" hidden><span id="social-auth-message"></span><button id="social-auth-action" class="secondary" type="button">Sign in again</button></div>
 
       <section id="home" class="tab active">
@@ -395,7 +395,7 @@
         <div class="panel">
           <h3>Personal details</h3>
           <p class="hint">Review your contact details, education, skills, links, and application preferences.</p>
-          <p id="personal-loading" class="hint" role="status">Loading personal details…</p>
+          <p id="personal-loading" class="sr-only" role="status">Loading personal details…</p>
           <form id="profile-form" class="form-grid" hidden>
             <label>Name on resume<input name="name"></label><label>Email<input name="email" type="email"></label>
             <label>Name in application emails <span class="hint">Optional</span><input name="application_name" placeholder="Use resume name if blank"></label><label>School in application emails <span class="hint">Optional</span><input name="application_school" placeholder="Use resume school if blank"></label>
