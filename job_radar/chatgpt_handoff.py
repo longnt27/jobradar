@@ -22,7 +22,7 @@ from playwright.async_api import Browser, Page, Playwright, TimeoutError as Play
 from .writing_preferences import get_preferences, preference, profile_with_preferences, render_prompt
 from .db import Database
 from .desktop_handoff import activate_app, frontmost_app_bundle, hide_chrome, launch_background_browser, return_to_job_radar
-from .drafting import _compose_application_message, _job_for_drafting, _job_language, _leadership_summary_rule, get_draft, update_draft
+from .drafting import _compose_application_message, _job_for_drafting, _job_language, _leadership_summary_rule, get_draft, update_draft, validate_message_leadership, validate_project_evidence
 from .settings import Settings
 from .social_browser import chrome_executable, chrome_profile_process, close_orphaned_chrome
 
@@ -41,7 +41,8 @@ STOP_BUTTON = (
     "button[aria-label*='Stop streaming'], "
     "button[aria-label*='Stop'], "
     "button[aria-label*='stop'], "
-    "button[data-testid*='stop']"
+    "button[data-testid*='stop'], "
+    "button:has-text('Skip')"
 )
 COPY_BUTTON = (
     "button[aria-label='Copy'], "
@@ -126,7 +127,7 @@ def application_prompt(db: Database, draft_id: str, section: str, instruction: s
         context["approved_projects"] = [
             {"id": card["id"], "title": card["title"], "claim": card["claim"],
              "repository_url": card["repository_url"],
-             "details": {key: details.get(key) for key in ("what", "why", "how", "tech_stack")},
+             "details": {key: details.get(key) for key in ("what", "why", "how", "tech_stack", "required_result_ids", "resume_bullets", "resume_result_ids")},
              "results": details.get("results", [])[:8]}
             for card in cards
             for details in [json.loads(card["details"] or "{}")]
@@ -306,6 +307,8 @@ def _normalize_project_bullets(raw_bullets: list[str], card: dict | None = None,
         claim = str(card.get("claim") or "").strip()
 
     what_fallback = details.get("what") or claim or "Developed and evaluated application components."
+    if not cleaned_bullets and details.get("resume_bullets"):
+        return details["resume_bullets"][:count]
 
     results_list = details.get("results") or []
     results_text: list[str] = []
@@ -420,6 +423,7 @@ def _populate_resume_bold_phrases(resume: dict, explicit_phrases: list[str] | No
 def _card_to_project_dict(card: dict, custom_bullets: list[str] | None = None, tech_stack: list[str] | None = None, bullet_count: int = 2) -> dict:
     details = json.loads(card.get("details") or "{}") if isinstance(card.get("details"), str) else (card.get("details") or {})
     bullets = _normalize_project_bullets(custom_bullets or [], card, bullet_count)
+    validate_project_evidence({**card, "details": details}, bullets)
     stack = tech_stack or details.get("tech_stack", [])
     if isinstance(stack, str):
         stack = [s.strip() for s in stack.split(",") if s.strip()]
@@ -428,7 +432,7 @@ def _card_to_project_dict(card: dict, custom_bullets: list[str] | None = None, t
         "title": card["title"],
         "repository_url": card.get("repository_url") or "",
         "tech_stack": list(stack)[:5],
-        "result_ids": [r.get("id") for r in details.get("results", []) if isinstance(r, dict) and "id" in r][:2],
+        "result_ids": details.get("resume_result_ids") or [r.get("id") for r in details.get("results", []) if isinstance(r, dict) and "id" in r][:2],
         "bullets": bullets,
     }
 
@@ -446,6 +450,7 @@ def _apply_summary_reply(draft: dict, reply: str, db: Database, settings: Settin
 def _apply_message_reply(draft: dict, reply: str, db: Database, settings: Settings) -> dict:
     job = _job_for_drafting(db, draft["vacancy_id"])
     profile = profile_with_preferences(db)
+    validate_message_leadership(profile, reply)
     data = _extract_json_or_none(reply)
     text = clean_reply_text(reply)
     if isinstance(data, dict):
@@ -702,7 +707,7 @@ def _apply_projects_reply(draft: dict, reply: str, db: Database, settings: Setti
 def _apply_all_reply(draft: dict, reply: str, db: Database, settings: Settings, instruction: str = "") -> dict:
     data = _extract_json_or_none(reply)
     if isinstance(data, dict):
-        for root_key in ("resume", "application", "draft", "candidate", "revised", "data"):
+        for root_key in ("resume", "resume_data", "application", "draft", "candidate", "revised", "data"):
             if root_key in data and isinstance(data[root_key], dict):
                 data = {**data, **data[root_key]}
         resume = {**draft["resume_data"]}
@@ -717,9 +722,10 @@ def _apply_all_reply(draft: dict, reply: str, db: Database, settings: Settings, 
         for key in ("summary", "experience", "education", "achievements", "skills", "skill_groups"):
             if key in data:
                 resume[key] = data[key]
-        if "projects" in data and isinstance(data["projects"], list):
+        project_items = data.get("projects") if isinstance(data.get("projects"), list) else data.get("selected_projects")
+        if isinstance(project_items, list):
             projects = []
-            for item in data["projects"]:
+            for item in project_items:
                 if isinstance(item, dict):
                     card = _find_card(cards, item.get("id"), item.get("title") or item.get("name"), item.get("repository_url"))
                     bullets = item.get("bullets", [])
@@ -737,11 +743,29 @@ def _apply_all_reply(draft: dict, reply: str, db: Database, settings: Settings, 
             resume["projects"] = _backfill_projects(resume.get("projects") or [], cards, excluded_text=instruction, count=count, bullet_count=bullet_count)
         explicit_bold = data.get("bold_phrases") if isinstance(data.get("bold_phrases"), list) else None
         resume["bold_phrases"] = _populate_resume_bold_phrases(resume, explicit_phrases=explicit_bold)
-        db.execute("UPDATE application_drafts SET warnings='[]' WHERE id=?", (draft["id"],))
         updates = {"resume_data": resume}
-        if "message_data" in data and isinstance(data["message_data"], dict):
-            updates["message_data"] = data["message_data"]
-        return update_draft(db, settings, draft["id"], updates)
+        if isinstance(data.get("fit_text"), str) and data["fit_text"].strip():
+            job = _job_for_drafting(db, draft["vacancy_id"])
+            if not job:
+                raise ValueError("The original job is unavailable")
+            updates["message_data"] = _compose_application_message(
+                job, profile_with_preferences(db), data["fit_text"])
+        elif "message_data" in data and isinstance(data["message_data"], dict):
+            message = data["message_data"]
+            if not str(message.get("subject") or "").strip() or not str(message.get("body") or "").strip():
+                raise ValueError("Include a complete application message")
+            validate_message_leadership(profile_with_preferences(db), " ".join(
+                str(message.get(key) or "") for key in ("subject", "body")))
+            updates["message_data"] = message
+        else:
+            raise ValueError("Include fit_text for the application message in the full draft")
+        updated = update_draft(db, settings, draft["id"], updates)
+        remaining = [warning for warning in updated["warnings"] if not warning.startswith("This is a starter draft.")]
+        if remaining != updated["warnings"]:
+            db.execute("UPDATE application_drafts SET warnings=? WHERE id=?",
+                       (json.dumps(remaining, ensure_ascii=False), draft["id"]))
+            updated = get_draft(db, draft["id"])
+        return updated
 
     # Fallback: attempt markdown section parsing if raw reply is structured markdown
     heading_map = {
@@ -780,6 +804,8 @@ def _apply_all_reply(draft: dict, reply: str, db: Database, settings: Settings, 
         parsed_sections[current_section] = "\n".join(current_lines).strip()
 
     if parsed_sections:
+        if "message" not in parsed_sections:
+            raise ValueError("Include the application message in the full draft")
         current_draft = draft
         for sec, content in parsed_sections.items():
             if sec == "summary":
@@ -1205,25 +1231,21 @@ class ChatGPTInputManager:
                     self.error = str(error)[:180]
                     return {"status": "failed", "detail": f"Could not open ChatGPT: {str(error)[:180]}"}
 
-    async def _select_extra_high_thinking(self, page: Page) -> None:
+    async def _select_high_thinking(self, page: Page) -> None:
         try:
             model_btn = page.locator("button:has-text('5.6'), button:has-text('Medium'), button:has-text('High'), button:has-text('Low'), button:has-text('Extra High'), [data-testid*='model-switcher']").first
             if await model_btn.count() == 0:
                 return
             btn_text = (await model_btn.inner_text()).strip()
-            if "Extra High" in btn_text:
+            if "High" in btn_text and "Extra High" not in btn_text:
                 return
             await model_btn.click()
             await asyncio.sleep(0.3)
             slider = page.locator("[data-reasoning-slider='true'], [data-model-picker-power-slider]").first
             if await slider.count() > 0:
-                last_tick = page.locator("[data-model-picker-power-slider] .TickRail-KLjYfZ > span").last
-                if await last_tick.count() > 0:
-                    await last_tick.click()
-                else:
-                    await slider.focus()
-                    for _ in range(3):
-                        await page.keyboard.press("ArrowRight")
+                ticks = page.locator("[data-model-picker-power-slider] .TickRail-KLjYfZ > span")
+                if await ticks.count() >= 2:
+                    await ticks.nth(await ticks.count() - 2).click()
                 await asyncio.sleep(0.3)
             await page.keyboard.press("Escape")
             await asyncio.sleep(0.2)
@@ -1346,7 +1368,8 @@ class ChatGPTInputManager:
 
             await asyncio.sleep(check_interval)
 
-        if last_text and last_text != prompt.strip():
+        expects_json = "Return one JSON object" in prompt or "Return only JSON" in prompt
+        if last_text and last_text != prompt.strip() and (not expects_json or _extract_json_or_none(last_text) is not None):
             return clean_reply_text(last_text)
         return None
 
@@ -1372,7 +1395,7 @@ class ChatGPTInputManager:
                             "detail": "Sign in to ChatGPT in Settings > Drafting provider, then try again.",
                         }
 
-                    await self._select_extra_high_thinking(page)
+                    await self._select_high_thinking(page)
 
                     initial_copy_count = 0
                     try:

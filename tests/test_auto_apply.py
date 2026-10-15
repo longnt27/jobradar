@@ -71,7 +71,7 @@ def test_retry_all_ai_preparations_excludes_forms_needing_review(tmp_path: Path)
     quota_job = _scored_job(app, "Quota Engineer", 88)
     form_job = _scored_job(app, "Form Engineer", 87)
     for job_id, detail in ((quota_job, "AI drafting failed: codex quota reached"),
-                           (form_job, "Inspect every LinkedIn application step before sending")):
+                           (form_job, "LinkedIn application questions have not finished loading.")):
         app.state.db.execute(
             "INSERT INTO auto_application_attempts(vacancy_id,status,requested_by,detail,created_at,updated_at) "
             "VALUES(?,'needs_review','automation',?,'2026-10-07','2026-10-07')",
@@ -531,7 +531,7 @@ def test_compose_application_message_trims_long_titles() -> None:
         "education": [{"school": "Đại học Bách khoa Hà Nội", "degree": "Kỹ sư Công nghệ thông tin", "dates": "2020 - 2024"}],
     }
     fit = (
-        "Tôi từng làm việc ở vị trí Applied AI Trainee / Team Lead tại Vingroup - AI Thuc Chien Program. "
+        "Tôi từng làm việc ở vị trí AI Engineering Intern tại VinSmart Future. "
         "Tôi cũng có các dự án cá nhân trong những lĩnh vực liên quan đến thị giác máy tính và học sâu."
     )
     result = _compose_application_message(job, profile, fit)

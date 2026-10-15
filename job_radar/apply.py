@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 
 from playwright.async_api import BrowserContext, Page, async_playwright
 
-from .application_action import is_linkedin_job_posting_url
+from .application_action import is_linkedin_job_posting_url, posting_application_emails
 from .db import Database, new_id, now
 from .drafting import draft_custom_answers, get_draft, package_hash
 from .writing_preferences import profile_with_preferences
@@ -179,7 +179,8 @@ async def _form_structure(page: Page) -> dict:
               return null;
             }
 
-            const isRequired = node.required || !!(qContainer && qContainer.querySelector('.required, [aria-required="true"]'));
+            const isRequired = node.required || node.getAttribute('aria-required') === 'true' ||
+              !!(qContainer && qContainer.querySelector('.required, [aria-required="true"]'));
 
             return {
               index,
@@ -197,6 +198,10 @@ async def _form_structure(page: Page) -> dict:
           }).filter(Boolean);
         }""")
         if fields and not any(field["type"] == "password" for field in fields):
+            if not any(field["type"] == "file" for field in fields) and all(field["type"] == "search" or re.search(
+                r"search|keyword|(?:^|\s)(?:q|query)(?:\s|$)", f"{field['name']} {field['id']}", re.I)
+                   for field in fields):
+                continue
             description = " ".join([metadata["submit"], *(f"{field['label']} {field.get('group_label', '')}" for field in fields)]).casefold()
             if not any(field["type"] == "file" for field in fields) and not re.search(r"apply|application|resume|curriculum vitae|cover letter|ứng tuyển|nộp hồ sơ", description):
                 continue
@@ -259,6 +264,7 @@ async def _career_form_actions(page: Page) -> list[dict]:
         if (/continue|next step|proceed|register interest|i.m interested|im interested|interested in this/i.test(label)) score+=5;
         if (/\b(form|recruit|career|candidate)\b/i.test(href)) score+=2;
         if (/skip to|sign.?in|log.?in|share|save|back|close|cancel|search|filter|subscribe|learn more|read more|powered by|privacy|terms/i.test(label)) score-=10;
+        if (/nhập thông tin để xem|xem lương|phúc lợi|view salary|salary details|view benefits/i.test(label)) score-=12;
         if (score > 0) {
           node.setAttribute('data-job-radar-career-action', String(index));
           return {index,tag:node.tagName,label,href,score};
@@ -361,8 +367,6 @@ async def _find_application_email(page: Page) -> str | None:
                 context = body[max(0, idx - 150):min(len(body), idx + len(email) + 150)]
                 if re.search(r"apply|application|cv|resume|hồ sơ|ứng tuyển|tuyển dụng|gửi về|send to", context, re.I):
                     return email
-        if mailtos:
-            return mailtos[0]
     except Exception:
         pass
     return None
@@ -395,65 +399,58 @@ def _default_answer(field: dict, profile: dict, message: dict) -> str:
     if field["type"] == "file":
         return ""
     if field["type"] == "radio":
-        lbl_f = lbl.casefold().strip()
         grp_f = grp.casefold()
-        if lbl_f in ("yes", "có", "đồng ý"):
-            if re.search(r"eligible|eligibility|committed|full.?time|authorized|legal|willing|background|drug", grp_f):
-                return "yes"
-        elif lbl_f in ("no", "không"):
-            if re.search(r"require.*(visa|sponsor)|need.*sponsor", grp_f):
-                return "yes"
-        elif re.search(r"hear about|source", grp_f) and "linkedin" in lbl_f:
+        lbl_f = lbl.casefold().strip()
+        if re.search(r"hear about|source", grp_f) and "linkedin" in lbl_f:
             return "yes"
         return ""
     if field["type"] == "checkbox":
         return ""
     if re.search(r"cover.?letter|motivation|why (this|you|us)|message to|additional information", text):
         return message.get("body", "")
+    if re.search(r"e.?mail", text):
+        return str(profile.get("email") or "")
     if re.search(r"last drawn|current salary", text):
-        return "Fresh graduate / Intern"
+        return str(profile.get("current_salary") or "")
     for pattern, key in ((r"salary|compensation", "salary_expectation"), (r"visa|work.?authori", "work_authorization"),
                          (r"notice.?period|start.?date|join date|onboarding", "notice_period"), (r"relocat", "relocation")):
         if re.search(pattern, text):
             val = str(profile.get(key, ""))
             if val:
                 return val
-            if key == "salary_expectation":
-                return "Negotiable"
-            if key == "notice_period":
-                return "Immediately"
+            return ""
     if re.search(r"reason.*(leav|left|exit)", text):
-        return "Seeking career growth as an AI Engineer in a dynamic engineering team."
+        return str(profile.get("reason_for_leaving") or "")
     if re.search(r"referr", text):
         return ""
     if re.search(r"experience in years|years of experience", text):
-        return "1"
+        return str(profile.get("years_of_experience") or "")
     if re.search(r"current.*(title|role)|job title", text):
-        return "AI Engineer"
+        return str(profile.get("current_title") or "")
     if re.search(r"skill", text):
         return ", ".join(profile.get("skills", [])[:6])
     if re.search(r"consent|data protection|policy", text):
-        return "yes"
+        return ""
     if re.search(r"birth|dob|dd/mm/yyyy", text):
-        return str(profile.get("dob") or "27/05/2004")
+        return str(profile.get("dob") or "")
     if re.search(r"current_address|address", text):
-        return str(profile.get("location") or "Hanoi, Vietnam")
+        return str(profile.get("location") or "")
     if re.search(r"less than 40 hours|how many hours", text):
-        return "N/A (committed to full-time 40 hours/week)"
+        return str(profile.get("hours_per_week") or "")
     if re.search(r"how many months|duration.*available|available.*duration", text):
-        return "6 months (available immediately full-time)"
+        return str(profile.get("available_duration") or "")
     if field["type"] == "select" and field.get("options"):
         if re.search(r"which location|applying for|preferred location", text):
             for opt in field["options"]:
                 if opt.get("text", "").strip().casefold() in ("asia", "vietnam", "remote"):
                     return str(opt.get("value", ""))
     if re.search(r"nationality", text):
-        ans = str(profile.get("nationality") or profile.get("country") or "Vietnam")
+        ans = str(profile.get("nationality") or "")
         if field["type"] == "select" and field.get("options"):
             return _match_select_option(field["options"], ans)
         return ans
     if re.search(r"country|where do you (currently )?live", text):
-        ans = str(profile.get("country") or "Vietnam")
+        ans = str(profile.get("country") or "")
         if field["type"] == "select" and field.get("options"):
             return _match_select_option(field["options"], ans)
         return ans
@@ -471,7 +468,7 @@ def _default_answer(field: dict, profile: dict, message: dict) -> str:
             elif key == "last_name":
                 ans = str(profile.get("family_name", ""))
             elif key == "location":
-                ans = str(profile.get("location") or "Hanoi, Vietnam")
+                ans = str(profile.get("location") or "")
             elif key in ("linkedin", "github"):
                 ans = next((link for link in profile.get("links", []) if key in link.casefold()), "")
             else:
@@ -484,6 +481,18 @@ def _default_answer(field: dict, profile: dict, message: dict) -> str:
 
 
 async def inspect_form(db: Database, settings: Settings, draft_id: str) -> dict:
+    try:
+        return await _inspect_form(db, settings, draft_id)
+    except Exception as error:
+        failed = db.one("SELECT destination,form_data FROM application_drafts WHERE id=?", (draft_id,))
+        if failed and json.loads(failed["destination"]).get("kind") in ("web", "linkedin_easy_apply"):
+            form = {**json.loads(failed["form_data"]), "collection_error": str(error)}
+            db.execute("UPDATE application_drafts SET form_data=?,updated_at=? WHERE id=?",
+                       (json.dumps(form, ensure_ascii=False), now(), draft_id))
+        raise
+
+
+async def _inspect_form(db: Database, settings: Settings, draft_id: str) -> dict:
     from .drafting import set_discovered_email_destination
 
     draft = get_draft(db, draft_id)
@@ -551,7 +560,11 @@ async def inspect_form(db: Database, settings: Settings, draft_id: str) -> dict:
 
     answers = {str(field["index"]): _field_answer(field)
                for field in structure["fields"] if field["type"] != "file"}
-    if draft["provider"] != "template":
+    # ChatGPT Web owns an asyncio browser session. Calling its synchronous JSON bridge
+    # from this inspection thread binds that session's lock to another event loop.
+    # Basic form values are filled from reviewed profile/message data; other answers
+    # stay empty for review instead of inventing personal facts or risking a deadlock.
+    if draft["provider"] not in ("template", "chatgpt_web"):
         cards = [card for card in draft["resume_data"].get("evidence", []) if card.get("id") in draft["evidence_ids"]]
         job = db.one("SELECT title,company,description FROM vacancies WHERE id=?", (draft["vacancy_id"],))
         try:
@@ -563,11 +576,24 @@ async def inspect_form(db: Database, settings: Settings, draft_id: str) -> dict:
             current_warnings = [w for w in draft.get("warnings", []) if not w.startswith("Form answer drafting failed:")]
             warnings = [*current_warnings, f"Form answer drafting failed: {str(error)[:200]}"]
             db.execute("UPDATE application_drafts SET warnings=? WHERE id=?", (json.dumps(warnings), draft_id))
+    elif draft["provider"] == "chatgpt_web":
+        warnings = [w for w in draft.get("warnings", []) if not w.startswith("Form answer drafting failed:")]
+        if warnings != draft.get("warnings", []):
+            db.execute("UPDATE application_drafts SET warnings=? WHERE id=?",
+                       (json.dumps(warnings, ensure_ascii=False), draft_id))
     structure["answers"] = answers
     attachments = draft["form_data"].get("attachments", {}) if draft["form_data"].get("signature") == structure["signature"] else {}
+    resume_fields = [field for field in structure["fields"] if field["type"] == "file" and re.search(
+        r"\b(resume|cv|curriculum vitae)\b", f"{field.get('name', '')} {field.get('label', '')}", re.I)]
     for field in structure["fields"]:
-        if field["type"] == "file" and str(field["index"]) not in attachments:
-            attachments[str(field["index"])] = {"kind": "resume"}
+        if field["type"] != "file":
+            continue
+        index = str(field["index"])
+        is_resume = len(resume_fields) == 1 and field is resume_fields[0]
+        if is_resume and index not in attachments:
+            attachments[index] = {"kind": "resume"}
+        elif not is_resume and not field["required"] and attachments.get(index, {}).get("kind") in (None, "resume"):
+            attachments[index] = {"kind": "none"}
     structure["attachments"] = attachments
     structure["destination_url"] = destination["url"]
     db.execute("UPDATE application_drafts SET form_data=?,updated_at=? WHERE id=?",
@@ -592,9 +618,7 @@ def _validate_destination(destination: dict) -> None:
         if not is_linkedin_job_posting_url(destination.get("url")):
             raise ValueError("Choose a valid LinkedIn Easy Apply posting")
     elif kind == "linkedin_message":
-        url = destination.get("url", "")
-        if not url or "linkedin.com" not in url:
-            raise ValueError("Provide a valid LinkedIn job posting or company URL for direct messaging")
+        raise ValueError("LinkedIn direct messages cannot be sent automatically. Open LinkedIn and send this message yourself.")
     else:
         raise ValueError("Choose an email, web form, or LinkedIn direct message destination")
 
@@ -614,6 +638,7 @@ def submission_outcome(status: str, destination: dict | None = None) -> dict:
         "Email" if destination.get("kind") == "email"
         else "Web form" if destination.get("kind") == "web"
         else "LinkedIn message" if destination.get("kind") == "linkedin_message"
+        else str(destination.get("channel") or "Application") if destination.get("kind") == "manual"
         else "Application"
     )
     outcomes = {
@@ -622,8 +647,8 @@ def submission_outcome(status: str, destination: dict | None = None) -> dict:
             "retry_blocked": True, "guidance": "Direct message recorded in Job Radar." if channel == "LinkedIn message" else "Job Radar received confirmation from the mail server.",
         },
         "submitted_confirmed": {
-            "key": "application_submitted", "label": "Direct message sent" if channel == "LinkedIn message" else "Application submitted", "tone": "success", "confirmed": True,
-            "retry_blocked": True, "guidance": "Direct message recorded in Job Radar." if channel == "LinkedIn message" else "The employer site showed a submission confirmation.",
+            "key": "application_submitted", "label": "Sent manually" if destination.get("kind") == "manual" else "Direct message sent" if channel == "LinkedIn message" else "Application submitted", "tone": "success", "confirmed": True,
+            "retry_blocked": True, "guidance": "Recorded by you; Job Radar did not deliver it." if destination.get("kind") == "manual" else "Direct message recorded in Job Radar." if channel == "LinkedIn message" else "The employer site showed a submission confirmation.",
         },
         "submitted_unconfirmed": {
             "key": "submission_uncertain", "label": "Submission status uncertain", "tone": "warning", "confirmed": False,
@@ -776,6 +801,8 @@ def send_readiness(db: Database, settings: Settings, draft: dict) -> list[str]:
     reasons = []
     if draft["status"] == "sent":
         reasons.append("This application has already been sent")
+    if any(warning.startswith("This is a starter draft.") for warning in draft.get("warnings", [])):
+        reasons.append("Finish AI drafting before sending this starter application")
     try:
         _validate_destination(draft["destination"])
     except ValueError as error:
@@ -792,24 +819,26 @@ def send_readiness(db: Database, settings: Settings, draft: dict) -> list[str]:
             reasons.append(str(error))
     elif draft["destination"].get("kind") == "web":
         form = draft["form_data"]
-        if not form.get("signature") or form.get("destination_url") != draft["destination"].get("url"):
-            reasons.append("Inspect this application form before sending")
-            required_radios = {}
-            for field in form.get("fields", []):
-                if field["type"] == "file":
-                    try:
-                        _reviewed_attachment(settings, draft, field)
-                    except ValueError as error:
-                        reasons.append(str(error))
-                elif field["type"] == "radio" and field["required"]:
-                    required_radios.setdefault(field["name"] or field.get("group_label") or str(field["index"]), []).append(field)
-                elif field["required"]:
-                    answer = str(form.get("answers", {}).get(str(field["index"]), "")).strip()
-                    if not answer or (field["type"] == "checkbox" and answer.casefold() not in ("yes", "true", "checked")):
-                        reasons.append(f"Answer required: {field.get('label') or field.get('group_label') or field['name']}")
-            for group in required_radios.values():
-                if not any(str(form.get("answers", {}).get(str(field["index"]), "")).casefold() in ("yes", "true", "checked") for field in group):
-                    reasons.append(f"Choose an option: {group[0].get('group_label') or group[0].get('label') or group[0]['name']}")
+        if form.get("collection_error"):
+            reasons.append(str(form["collection_error"]))
+        elif not form.get("signature") or form.get("destination_url") != draft["destination"].get("url"):
+            reasons.append("Application questions have not finished loading.")
+        required_radios = {}
+        for field in form.get("fields", []):
+            if field["type"] == "file":
+                try:
+                    _reviewed_attachment(settings, draft, field)
+                except ValueError as error:
+                    reasons.append(str(error))
+            elif field["type"] == "radio" and field["required"]:
+                required_radios.setdefault(field["name"] or field.get("group_label") or str(field["index"]), []).append(field)
+            elif field["required"]:
+                answer = str(form.get("answers", {}).get(str(field["index"]), "")).strip()
+                if not answer or (field["type"] == "checkbox" and answer.casefold() not in ("yes", "true", "checked")):
+                    reasons.append(f"Answer required: {field.get('label') or field.get('group_label') or field['name']}")
+        for group in required_radios.values():
+            if not any(str(form.get("answers", {}).get(str(field["index"]), "")).casefold() in ("yes", "true", "checked") for field in group):
+                reasons.append(f"Choose an option: {group[0].get('group_label') or group[0].get('label') or group[0]['name']}")
     elif draft["destination"].get("kind") == "linkedin_easy_apply":
         form = draft["form_data"]
         if form.get("collection_error"):
@@ -859,6 +888,123 @@ def _send_email(draft: dict, settings: Settings) -> str:
     return str(message["Message-ID"] or "SMTP accepted message")
 
 
+def record_manual_send(db: Database, draft_id: str, channel: str, target: str, note: str) -> dict:
+    draft = get_draft(db, draft_id)
+    channel = channel.strip()
+    target = target.strip()
+    note = note.strip()
+    if not channel or not target:
+        raise ValueError("Choose a channel and enter where you sent the application")
+    if channel.casefold() == "email":
+        if target.casefold().startswith("mailto:"):
+            target = target[7:].split("?", 1)[0].strip()
+        if not re.fullmatch(r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+", target):
+            raise ValueError("Enter the email address where you sent the application")
+        target = target.casefold()
+    destination = {"kind": "manual", "channel": channel, "target": target, "provenance": "user_reported"}
+    identifier = new_id()
+    timestamp = now()
+    with db.connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        prior = conn.execute(
+            "SELECT status,destination FROM submissions WHERE vacancy_id=? AND status IN "
+            "('sent_confirmed','submitted_confirmed','submitted_unconfirmed','sending')",
+            (draft["vacancy_id"],),
+        ).fetchall()
+        for item in prior:
+            if item["status"] in ("submitted_unconfirmed", "sending"):
+                raise ValueError("A previous send is uncertain or still in progress. Verify it before recording another send.")
+            previous = json.loads(item["destination"] or "{}")
+            previous_channel = str(previous.get("channel") or "").casefold()
+            previous_target = str(previous.get("target") or "").casefold()
+            if channel.casefold() == "email" and previous.get("kind") == "email":
+                previous_channel = "email"
+                previous_target = str(previous.get("email") or "").casefold()
+            if previous_channel == channel.casefold() and previous_target == target.casefold():
+                raise ValueError("This send is already recorded")
+        conn.execute(
+            "INSERT INTO submissions(id,draft_id,vacancy_id,package_hash,package_data,destination,status,receipt,sent_at,updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (identifier, draft_id, draft["vacancy_id"], "manual-external",
+             json.dumps({"delivered_by_user": True, "note": note}, ensure_ascii=False),
+             json.dumps(destination, ensure_ascii=False), "submitted_confirmed",
+             note or "User reported sending this application outside Job Radar.", timestamp, timestamp),
+        )
+        conn.execute("UPDATE application_drafts SET status='sent',updated_at=? WHERE id=?", (timestamp, draft_id))
+    return {"id": identifier, "status": "submitted_confirmed", "receipt": note,
+            "outcome": submission_outcome("submitted_confirmed", destination)}
+
+
+async def send_additional_email(db: Database, settings: Settings, draft_id: str,
+                                expected_hash: str, email: str, subject: str, body: str) -> dict:
+    draft = get_draft(db, draft_id)
+    email = email.strip()
+    subject = subject.strip()
+    body = body.strip()
+    if not expected_hash or expected_hash != package_hash(draft):
+        raise ValueError("Application changed since review. Reload and review it before sending")
+    job = db.one("SELECT description FROM vacancies WHERE id=?", (draft["vacancy_id"],))
+    allowed = posting_application_emails(job["description"] if job else "")
+    if email.casefold() not in {address.casefold() for address in allowed}:
+        raise ValueError("Choose an application email explicitly listed in the job posting")
+    if not subject or not body or "\n" in subject or "\r" in subject:
+        raise ValueError("Review the email subject and message before sending")
+    if len(subject) > 180 or len(body) > 20000:
+        raise ValueError("The email subject or message is too long")
+    _validated_smtp_config(settings)
+    resume_path = Path(draft["resume_path"])
+    if not resume_path.is_file() or hashlib.sha256(resume_path.read_bytes()).hexdigest() != draft["resume_hash"]:
+        raise ValueError("The reviewed resume PDF has changed or is missing")
+    email_draft = {**draft, "destination": {"kind": "email", "email": email, "provenance": "posting_instruction"},
+                   "message_data": {**draft["message_data"], "subject": subject, "body": body}}
+    identifier = new_id()
+    timestamp = now()
+    with db.connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        prior = conn.execute(
+            "SELECT status,destination FROM submissions WHERE vacancy_id=? AND status IN "
+            "('sent_confirmed','submitted_confirmed','submitted_unconfirmed','sending')",
+            (draft["vacancy_id"],),
+        ).fetchall()
+        if not any(item["status"] in CONFIRMED_SUBMISSION_STATUSES for item in prior):
+            raise ValueError("Send or record the first application before adding an email")
+        for item in prior:
+            destination = json.loads(item["destination"] or "{}")
+            if item["status"] in ("submitted_unconfirmed", "sending"):
+                raise ValueError("A previous send is uncertain or in progress. Verify it before emailing again.")
+            prior_email = (destination.get("email") if destination.get("kind") == "email" else
+                           destination.get("target") if destination.get("kind") == "manual" and
+                           str(destination.get("channel") or "").casefold() == "email" else None)
+            if str(prior_email or "").casefold() == email.casefold():
+                raise ValueError("An application email to this address is already recorded")
+        snapshot = _snapshot_submission_package(settings, identifier, email_draft)
+        conn.execute(
+            "INSERT INTO submissions(id,draft_id,vacancy_id,package_hash,package_data,destination,status,sent_at,updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
+            (identifier, draft_id, draft["vacancy_id"], package_hash(email_draft),
+             json.dumps(snapshot, ensure_ascii=False), json.dumps(email_draft["destination"]),
+             "sending", timestamp, timestamp),
+        )
+    try:
+        receipt = await asyncio.to_thread(_send_email, email_draft, settings)
+        status = "sent_confirmed"
+        db.execute("UPDATE submissions SET status=?,receipt=?,updated_at=? WHERE id=?", (status, receipt, now(), identifier))
+        return {"id": identifier, "status": status, "receipt": receipt,
+                "outcome": submission_outcome(status, email_draft["destination"])}
+    except (smtplib.SMTPConnectError, smtplib.SMTPAuthenticationError, smtplib.SMTPRecipientsRefused,
+            smtplib.SMTPSenderRefused, smtplib.SMTPDataError, smtplib.SMTPHeloError,
+            smtplib.SMTPNotSupportedError) as error:
+        db.execute("UPDATE submissions SET status='failed',error=?,updated_at=? WHERE id=?",
+                   (str(error)[:1000], now(), identifier))
+        return {"id": identifier, "status": "failed", "error": str(error),
+                "outcome": submission_outcome("failed", email_draft["destination"])}
+    except Exception as error:
+        db.execute("UPDATE submissions SET status='submitted_unconfirmed',error=?,updated_at=? WHERE id=?",
+                   (str(error)[:1000], now(), identifier))
+        return {"id": identifier, "status": "submitted_unconfirmed", "error": str(error),
+                "outcome": submission_outcome("submitted_unconfirmed", email_draft["destination"])}
+
+
 async def _solve_image_captcha_if_present(page: Page, form) -> None:
     captcha_img = form.locator("img[src*='captcha' i], #js-recover-captcha, #captchaImage, .captcha-image, [class*='captcha' i] img").first
     if not await captcha_img.count() or not await captcha_img.is_visible():
@@ -903,7 +1049,7 @@ if let image = NSImage(contentsOf: url), let cgImage = image.cgImage(forProposed
 async def _send_web(settings: Settings, draft: dict) -> tuple[str, str]:
     form_data = draft["form_data"]
     if not form_data.get("signature") or form_data.get("destination_url") != draft["destination"].get("url"):
-        return "needs_user_attention", "Inspect this exact application form before sending"
+        return "needs_user_attention", "Application questions have not finished loading."
     clean_stale_chrome_lock(settings.browser_profile)
     is_test = bool(os.environ.get("PYTEST_CURRENT_TEST"))
     headless = is_test or os.environ.get("JOB_RADAR_HEADLESS", "").lower() in ("1", "true")
@@ -1055,6 +1201,28 @@ async def _send_web(settings: Settings, draft: dict) -> tuple[str, str]:
                                 await locator.fill(sanitized)
                 elif field["required"]:
                     return "needs_user_attention", f"Answer required: {field['label']}"
+            # Later React controls can rerender and clear earlier inputs. Refill
+            # only reviewed answers, then require a stable, complete form.
+            for refill_pass in range(3):
+                refilled = False
+                for field in current["fields"]:
+                    if not field["required"] or field["type"] in ("file", "checkbox", "radio", "select"):
+                        continue
+                    locator = form.locator("#" + field["id"]).first if field.get("id") else fields.nth(field["index"])
+                    if not await locator.count() or not await locator.is_visible():
+                        continue
+                    if await locator.get_attribute("role") == "combobox":
+                        continue
+                    if not (await locator.input_value()).strip():
+                        answer = str(answers.get(str(field["index"]), "")).strip()
+                        if not answer:
+                            return "needs_user_attention", f"Application form did not retain the answer for {field['label']}"
+                        await locator.fill(answer)
+                        refilled = True
+                if not refilled:
+                    break
+            else:
+                return "needs_user_attention", "Application form did not retain required answers after refilling. Review the form manually."
             await _solve_image_captcha_if_present(page, form)
             submit = None
             for selector in (
@@ -1166,6 +1334,11 @@ async def _send_web(settings: Settings, draft: dict) -> tuple[str, str]:
                     await agree_btn.click()
             except Exception:
                 pass
+            rejected_fields = await page.locator(
+                "form input[aria-invalid='true'],form textarea[aria-invalid='true'],form select[aria-invalid='true']"
+            ).evaluate_all("nodes => nodes.filter(node => node.checkVisibility()).map(node => node.getAttribute('aria-label') || node.labels?.[0]?.innerText || node.name || node.id).filter(Boolean)")
+            if rejected_fields and not submitted_requests:
+                return "needs_user_attention", "Application form rejected: " + ", ".join(dict.fromkeys(rejected_fields))[:300]
             max_seconds = 180 if not headless else 15
             captcha_prompted = False
             for _ in range(max_seconds):
@@ -1230,6 +1403,10 @@ async def _send_web(settings: Settings, draft: dict) -> tuple[str, str]:
                         msg = "A verification code was sent to your email to confirm submission. Complete the prompt on the employer site." if email_code_active else "Security verification (CAPTCHA) is required on the employer site before submission can complete."
                         return "needs_user_attention", msg
 
+            if not submitted_requests:
+                return "needs_user_attention", "The form rejected the submission or did not send a request. Review required answers and try again."
+            if submitted_responses and all(code >= 400 for code, _ in submitted_responses):
+                return "needs_user_attention", "The employer form rejected the submission request. Review the answers before trying again."
             if page.url != before and not await page.locator("form").count():
                 return "submitted_unconfirmed", f"Form navigated to {page.url}; confirmation not detected"
             if captcha_prompted:

@@ -123,14 +123,14 @@ def test_lever_custom_question_cards_extraction_and_defaults(tmp_path: Path) -> 
         no_f = next(f for f in fields if f["name"] == "cards[abc-123][field1]" and f["label"] == "No")
         assert "committed to working full-time" in yes_f["group_label"].lower()
         assert yes_f["group_label"] == no_f["group_label"]
-        # Pre-filled Yes for eligibility
-        assert form_data["answers"][str(yes_f["index"])] == "yes"
+        # Eligibility and availability are personal declarations, not inferred defaults.
+        assert form_data["answers"][str(yes_f["index"])] == ""
         assert form_data["answers"][str(no_f["index"])] == ""
 
         # Check textarea for hours
         hours_f = next(f for f in fields if f["name"] == "cards[abc-123][field2]")
         assert "less than 40 hours" in hours_f["label"].lower()
-        assert form_data["answers"][str(hours_f["index"])] == "N/A (committed to full-time 40 hours/week)"
+        assert form_data["answers"][str(hours_f["index"])] == ""
 
         # Check source radio group
         li_f = next(f for f in fields if f["name"] == "cards[abc-123][field3]" and "LinkedIn" in f["label"])

@@ -8,9 +8,19 @@ from .db import Database
 
 
 _EMAIL = re.compile(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}")
-_APPLICATION_INSTRUCTION = re.compile(
-    r"\b(?:apply|application|submit|send\s+(?:your\s+)?(?:cv|resume)|email\s+(?:your\s+)?(?:cv|resume)|"
-    r"ứng\s+tuyển|nộp\s+(?:cv|hồ\s+sơ)|gửi\s+(?:cv|hồ\s+sơ)|gửi\s+về)\b",
+_EMAIL_APPLICATION_INSTRUCTION = re.compile(
+    r"(?:\b(?:send|submit|email|e-mail|gửi|nộp)\b.{0,100}"
+    r"\b(?:cv|resume|résumé|application|portfolio|hồ\s+sơ)\b|"
+    r"\b(?:cv|resume|résumé|application|portfolio|hồ\s+sơ)\b.{0,100}"
+    r"\b(?:send|sent|submit|email|e-mail|gửi|nộp)\b)"
+    r".{0,80}(?:(?:to|at|via|về|tại|qua|email|e-mail)\b\s*[:：]?\s*|[:：]\s*)$"
+    r"|\b(?:apply|ứng\s+tuyển)\b.{0,30}\b(?:by|via|through|qua)\s+e-?mail\s*[:：]?\s*$",
+    re.I | re.S,
+)
+_NON_APPLICATION_EMAIL = re.compile(
+    r"accommodat|disabilit|accessible|accessibility|reasonable|toll.?free|"
+    r"customer\s+support|technical\s+support|privacy|data\s+protection|"
+    r"\b(?:questions?|inquiries|queries|feedback)\b|\bcontact\s+(?:us|our|the)\s+team\b",
     re.I,
 )
 _EASY_APPLY = re.compile(r"\b(?:easy\s+apply|ứng\s+tuyển\s+dễ\s+dàng)\b", re.I)
@@ -62,12 +72,30 @@ def _formish(value: str | None) -> bool:
 def _instruction_emails(text: str) -> list[str]:
     found: list[str] = []
     for match in _EMAIL.finditer(text or ""):
-        context = text[max(0, match.start() - 140):min(len(text), match.end() + 140)]
-        if _APPLICATION_INSTRUCTION.search(context):
-            address = match.group(0)
-            if address.casefold() not in {item.casefold() for item in found}:
-                found.append(address)
+        before = text[max(0, match.start() - 140):match.start()]
+        clause = re.split(r"[.!?\n]", before)[-1].strip()
+        if _NON_APPLICATION_EMAIL.search(clause) or not _EMAIL_APPLICATION_INSTRUCTION.search(clause):
+            continue
+        address = match.group(0)
+        if address.casefold() not in {item.casefold() for item in found}:
+            found.append(address)
     return found
+
+
+def posting_application_emails(text: str) -> list[str]:
+    """Email addresses explicitly paired with application instructions in a posting."""
+    return _instruction_emails(text)
+
+
+def suggested_email_subject(text: str, candidate_name: str, fallback: str) -> str:
+    match = re.search(r"(?im)^\s*subject\s*:\s*([^\r\n]+)", text or "")
+    if not match:
+        return fallback
+    subject = match.group(1).strip()
+    if len(subject) > 180 or "@" in subject:
+        return fallback
+    subject = re.sub(r"(?:your|candidate)\s+name\b", candidate_name, subject, flags=re.I)
+    return subject or fallback
 
 
 def _candidate(*, kind: str, action_type: str, destination: str, source_kind: str | None,

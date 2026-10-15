@@ -212,18 +212,21 @@ def enrich_jobs(db: Database, rows: list[dict[str, Any]]) -> list[dict[str, Any]
         tuple(identifiers),
     )
     submissions: dict[str, dict[str, Any]] = {}
+    confirmed_vacancies: set[str] = set()
     for item in submission_rows:
         submissions.setdefault(item["vacancy_id"], item)
+        if item["status"] in CONFIRMED_SUBMISSIONS:
+            confirmed_vacancies.add(item["vacancy_id"])
 
     for row in rows:
         submission = submissions.get(row["id"])
         draft = drafts.get(row["id"])
         attempt = attempts.get(row["id"])
         status = submission["status"] if submission else None
-        if status in CONFIRMED_SUBMISSIONS:
-            progress = "applied"
-        elif status in UNCERTAIN_SUBMISSIONS:
+        if status in UNCERTAIN_SUBMISSIONS:
             progress = "attention"
+        elif row["id"] in confirmed_vacancies:
+            progress = "applied"
         elif row.get("manual_applied_at"):
             progress = "applied_external"
         elif attempt and attempt["status"] in ("queued", "preparing", "regenerating"):
@@ -236,6 +239,7 @@ def enrich_jobs(db: Database, rows: list[dict[str, Any]]) -> list[dict[str, Any]
             progress = "not_started"
         row["application_progress"] = progress
         row["latest_submission_status"] = status
+        row["has_confirmed_submission"] = row["id"] in confirmed_vacancies
         row["latest_submission_at"] = submission["sent_at"] if submission else None
         row["latest_draft_status"] = draft["status"] if draft else None
         row["latest_draft_id"] = draft["id"] if draft else None

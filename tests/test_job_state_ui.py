@@ -279,7 +279,7 @@ def test_browser_job_inbox_triage_marks_seen_without_deciding(tmp_path: Path) ->
                 detail = page.locator("#job-detail")
                 assert detail.get_by_text("No decision yet", exact=False).is_visible()
                 assert detail.get_by_text("$2,000-$3,000", exact=True).is_visible()
-                assert detail.get_by_role("heading", name="Application preparation").is_visible()
+                assert detail.locator(".job-lifecycle-card [data-prepare]").count() == 1
                 assert detail.locator("details").filter(has_text="Detailed match breakdown").count() == 1
 
                 second_card = page.locator(f'[data-job-card="{second}"]')

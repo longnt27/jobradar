@@ -301,6 +301,34 @@ def _leadership_summary_rule(profile: dict | list | None, job: dict | None = Non
     )
 
 
+def validate_message_leadership(profile: dict, text: str) -> None:
+    if not _has_substantial_leadership(profile) and re.search(
+        r"\b(?:team[ -]lead|leadership|(?:led|managed|supervised|coordinated|mentored)\s+"
+        r"(?:(?:a|an|the|our)\s+)?[\w -]{0,40}(?:team|people|trainees|engineers)|managing people|"
+        r"(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)[ -]person team|team of\s+"
+        r"(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten))\b|trưởng nhóm|lãnh đạo|dẫn dắt|quản lý nhóm", text, re.I
+    ):
+        raise ValueError("Application messages cannot emphasize short-term trainee leadership; describe supported engineering work instead")
+
+
+def validate_project_evidence(card: dict, bullets: list[str], result_ids: list[str] | None = None) -> None:
+    details = card.get("details") or {}
+    results = {item["id"]: item for item in details.get("results", []) if item.get("id")}
+    required = details.get("required_result_ids", [])
+    result_text = " ".join(bullets[1:]).casefold()
+    all_text = " ".join(bullets).casefold()
+    for identifier in required:
+        result = results.get(identifier, {})
+        if result_ids is not None and identifier not in result_ids:
+            raise ValueError(f"Include primary result {identifier} for {card['title']}")
+        for metric in result.get("required_metrics", []):
+            if str(metric).casefold() not in result_text:
+                raise ValueError(f"Include primary measured result {metric} for {card['title']}")
+        dataset = result.get("dataset")
+        if dataset and dataset.casefold() not in all_text:
+            raise ValueError(f"Include dataset {dataset} for {card['title']}")
+
+
 
 def _brief_message(body: str) -> bool:
     return len(body.split()) <= 130 and len(body) <= 1000
@@ -347,8 +375,8 @@ def _compose_application_message(job: dict, profile: dict, fit: str) -> dict:
     language = _job_language(job)
     company, title = _message_identity(job)
     name = str(profile.get("application_name") or profile.get("name") or "").strip()
-    source = str((job.get("posting_source") or {}).get("kind") or "").casefold()
     fit = re.sub(r"\s+", " ", fit).strip()
+    validate_message_leadership(profile, fit)
     if not fit or len(fit.split()) > 55 or any(re.search(pattern, fit, re.I) for pattern in
         (r"\bkính gửi\b", r"\btrân trọng\b", r"\bdear hiring\b", r"\bbest regards\b",
          r"\bfacebook\b", r"\blinkedin\b", r"\bcv đính kèm\b", r"\battached resume\b",
@@ -357,22 +385,14 @@ def _compose_application_message(job: dict, profile: dict, fit: str) -> dict:
     education = _education_sentence(profile, language)
     if language == "Vietnamese":
         greeting = f"Kính gửi bộ phận tuyển dụng {company}," if company else "Kính gửi bộ phận tuyển dụng,"
-        role = f"{title} của {company}" if company else title
-        place = {"facebook": "trên Facebook", "linkedin": "trên LinkedIn", "career": "trên trang tuyển dụng của công ty"}.get(source, "")
-        opening = (f"Tôi thấy bài đăng tuyển {role} {place}" if place else f"Tôi thấy tin tuyển dụng vị trí {role}")
-        opening += " và cảm thấy vị trí này phù hợp với kinh nghiệm và kỹ năng của mình."
-        action = ("Anh/chị vui lòng xem CV đính kèm để biết thêm chi tiết. "
-                  "Rất mong có cơ hội trao đổi sâu hơn về vị trí này với quý công ty.")
+        opening = f"Tôi ứng tuyển vị trí {title}" + (f" tại {company}." if company else ".")
+        action = "Tôi gửi kèm CV và mong có cơ hội trao đổi thêm về công việc."
         subject = f"Ứng tuyển {title} – {name}"
         closing = f"Trân trọng,\n{name}"
     else:
         greeting = f"Dear {company} hiring team," if company else "Dear hiring team,"
-        role = f"{company}'s {title}" if company else title
-        place = {"facebook": "on Facebook", "linkedin": "on LinkedIn", "career": "on your careers page"}.get(source, "")
-        opening = (f"I saw the posting for {role} {place}" if place else f"I saw the posting for {role}")
-        opening += " and feel the role fits my experience and skills."
-        action = ("Please see my attached resume for details. "
-                  "I would welcome the opportunity to discuss this position with you further.")
+        opening = f"I’m applying for the {title} position" + (f" at {company}." if company else ".")
+        action = "I've attached my resume and would welcome a conversation about the role."
         subject = f"Application for {title} – {name}"
         closing = f"Best regards,\n{name}"
     preferences = profile.get("writing_preferences")
@@ -524,7 +544,7 @@ def _relevant_results(job: dict, results: list[dict], requested_ids: list[str] |
     by_id = {str(item.get("id")): item for item in results if isinstance(item, dict) and item.get("id")}
     requested = [by_id[identifier] for identifier in (requested_ids or []) if identifier in by_id]
     if requested:
-        return requested[:3]
+        return requested
     llm_job, vision_job = _job_domains(terms)
     if llm_job != vision_job:
         focus = _LLM_RESULT_AREAS if llm_job else _VISION_RESULT_AREAS
@@ -593,11 +613,19 @@ def _template(job: dict, profile: dict, cards: list[dict]) -> ModelDraft:
     preferences = profile.get("writing_preferences")
     selected = _select(job, cards, preference(preferences, "project_count"))
     positions = profile.get("experience", [])
-    position = positions[0] if positions else None
+    position = next((item for item in positions if not _LEAD_ROLE_PATTERN.search(str(item.get("role", "")))), None)
+    if position is None and positions:
+        position = {**positions[0], "role": re.sub(r"\s*[/|–-]?\s*Team Lead\b", "", positions[0].get("role", ""), flags=re.I).strip()}
     vietnamese = _job_language(job) == "Vietnamese"
     if position:
         english_background = render_prompt(preferences, "local_fit_en", role=position["role"], company=position["company"])
         vietnamese_background = render_prompt(preferences, "local_fit_vi", role=position["role"], company=position["company"])
+        contribution = next((str(b).strip() for b in position.get("bullets", []) if
+                             not re.search(r"\bled\b|team lead|leadership|\d", str(b), re.I)), "")
+        if contribution and not vietnamese:
+            english_background = f"As {position['role']} at {position['company']}, I {contribution[0].lower() + contribution[1:]}"
+            if len(english_background.split()) > 40:
+                english_background = render_prompt(preferences, "local_fit_en", role=position["role"], company=position["company"])
         if selected:
             english_background += render_prompt(preferences, "local_projects_extra_en")
             vietnamese_background += render_prompt(preferences, "local_projects_extra_vi")
@@ -614,7 +642,10 @@ def _template(job: dict, profile: dict, cards: list[dict]) -> ModelDraft:
         details = card.get("details") or {}
         card_results = details.get("results") or []
         relevant = _relevant_results(job, card_results) if card_results else []
-        outcome = (relevant[0].get("outcome") or "") if relevant else ""
+        required = [item for item in card_results if item.get("id") in details.get("required_result_ids", [])]
+        if required:
+            relevant = required
+        outcome = " ".join(str(item.get("outcome") or "").strip() for item in relevant).strip()
         curated_bullets = details.get("bullets") or []
         if bullet_count == 2:
             if curated_bullets and not re.search(r"\b(?:F1|PCC|mAP|PA-MPJPE|\d+(?:\.\d+)?%|\d+[×x]\s*faster)\b", curated_bullets[0]):
@@ -623,9 +654,20 @@ def _template(job: dict, profile: dict, cards: list[dict]) -> ModelDraft:
                 intro = details.get("what") or card["claim"]
             result_bullet = outcome or (curated_bullets[1] if len(curated_bullets) > 1 else card["claim"])
             bullets = [intro, result_bullet]
+            if details.get("resume_bullets"):
+                bullets = details["resume_bullets"][:2]
+                relevant = [item for item in card_results if item.get("id") in details.get("resume_result_ids", [])] or relevant
         else:
-            bullets = [r.get("outcome", "") for r in relevant if r.get("outcome")] if relevant else curated_bullets or [card["claim"]]
-            bullets = bullets[:bullet_count]
+            outcomes = [r.get("outcome", "") for r in relevant if r.get("outcome")]
+            # Fold overflow into the last result bullet instead of dropping primary evidence.
+            if outcomes and bullet_count > 1:
+                intro = details.get("what") or card["claim"]
+                result_slots = bullet_count - 1
+                bullets = [intro, *outcomes[:result_slots - 1], " ".join(outcomes[result_slots - 1:])]
+            elif outcomes:
+                bullets = [" ".join(outcomes)]
+            else:
+                bullets = (curated_bullets or [card["claim"]])[:bullet_count]
         project_bullets.append(ProjectBullets(
             evidence_id=card["id"],
             bullets=bullets,
@@ -670,7 +712,13 @@ def _run_provider(provider: str, job: dict, profile: dict, cards: list[dict], cu
     for attempt in range(3):
         try:
             model = _provider_json(provider, prompt, ModelDraft)
-        except RuntimeError as error:
+            validate_message_leadership(profile, model.fit_text)
+            for project in model.project_bullets:
+                card = next((c for c in cards if c["id"] == project.evidence_id), None)
+                if card:
+                    focus = next((p.result_ids for p in model.project_focus if p.evidence_id == project.evidence_id), [])
+                    validate_project_evidence(card, project.bullets, focus)
+        except (RuntimeError, ValueError) as error:
             last_error = error
             error_str = str(error).lower()
             if "quota" in error_str or "not installed" in error_str or "not signed in" in error_str:
@@ -839,6 +887,8 @@ def _selected_resume_projects(job: dict, cards: list[dict], model: ModelDraft,
         bullets = tailored.get(card["id"])
         if provider != "template" and require_structure and (not bullets or len(bullets) != bullet_count or not all(str(item).strip() for item in bullets)):
             raise ValueError(f"The drafting model must write {bullet_count} bullets for every selected project")
+        validate_project_evidence(card, bullets or card["details"].get("bullets") or [card["claim"]],
+                                  [str(item['id']) for item in chosen if item.get('id')])
         projects.append({
             "id": card["id"], "title": card["title"], "repository_url": card.get("repository_url"),
             "tech_stack": (selected_skills.get(card["id"]) or card["details"].get("tech_stack", []))[:5],
@@ -1077,7 +1127,7 @@ def _section_model(provider: str, section: str, prompt: str, job: dict, profile:
         payload["approved_projects"] = [{"id": card["id"], "title": card["title"],
                                          "claim": card["claim"], "repository_url": card.get("repository_url"),
                                          "details": {key: card["details"].get(key) for key in
-                                                     ("what", "why", "how", "results", "tech_stack")}}
+                                                     ("what", "why", "how", "results", "tech_stack", "required_result_ids", "resume_bullets", "resume_result_ids")}}
                                         for card in cards]
     elif section == "education":
         payload["current_education"] = resume.get("education", [])
@@ -1323,6 +1373,18 @@ def update_draft(db: Database, settings: Settings, identifier: str, updates: dic
     if "destination" in updates:
         updates = {**updates, "destination": reviewed_application_action(updates["destination"], draft["destination"])}
     merged = {key: updates.get(key, draft[key]) for key in allowed}
+    if "message_data" in updates and "form_data" not in updates:
+        old_body = str(draft["message_data"].get("body") or "")
+        new_body = str(merged["message_data"].get("body") or "")
+        if old_body and new_body and old_body != new_body:
+            answers = dict(merged["form_data"].get("answers") or {})
+            refreshed = False
+            for index, answer in answers.items():
+                if answer == old_body:
+                    answers[index] = new_body
+                    refreshed = True
+            if refreshed:
+                merged["form_data"] = {**merged["form_data"], "answers": answers}
     if "form_data" in updates:
         from .linkedin_application import refresh_saved_answer_blockers
         merged["form_data"] = refresh_saved_answer_blockers(merged["form_data"])

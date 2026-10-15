@@ -59,7 +59,8 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 page.locator('#home-optional [data-setup-panel="telegram-panel"]').click()
                 page.locator("#telegram-panel[open]").wait_for()
                 assert page.get_by_role("button", name="Find my chat ID").is_visible()
-                page.get_by_role("button", name="My profile", exact=True).first.click()
+                page.get_by_role("button", name="Profile menu").click()
+                page.locator("#profile-menu [data-tab='profile']").click()
                 page.locator("#profile.active").wait_for()
                 page.locator("#edit-profile-button").click()
                 page.locator("#personal.active #profile-form").wait_for()
@@ -79,8 +80,9 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 page.goto(f"http://127.0.0.1:{port}/#projects")
                 page.locator("#projects.active #project-add-form").wait_for()
                 assert page.url.endswith("#projects")
-                page.get_by_role("button", name="Applications", exact=True).first.click()
-                page.get_by_role("tab", name="Automation").click()
+                page.get_by_role("button", name="Profile menu").click()
+                page.locator('#profile-menu [data-tab="settings"]').click()
+                page.locator('#auto-apply-panel > summary').click()
                 assert page.locator("#auto-apply-form input[name='enabled']").is_visible()
                 page.wait_for_function("document.querySelector('#auto-apply-status')?.textContent === 'Off'")
                 assert page.locator("#queue-existing-drafts").is_disabled()
@@ -96,7 +98,7 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 assert "Python" in page.locator("#job-detail .fact-grid").inner_text()
                 assert "Not stated" in page.locator("#job-detail .decision-basics-grid").inner_text()
                 breakdown = page.locator("#job-detail summary").filter(has_text="Detailed match breakdown")
-                assert "82/100" in breakdown.inner_text()
+                assert "82" in page.locator("#job-detail .job-score-badge").inner_text()
                 breakdown.click()
                 assert "not included in the match score" in page.locator("#job-detail").inner_text().lower()
                 assert page.locator("#job-detail .score").count() == 0
@@ -105,7 +107,8 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 high_color = page.get_by_role("button", name="Open AI Engineer at Example").locator(".score-high").evaluate("node => getComputedStyle(node).backgroundColor")
                 pending_color = pending_card.locator(".score-pending").evaluate("node => getComputedStyle(node).backgroundColor")
                 assert high_color != pending_color
-                page.get_by_role("button", name="My profile", exact=True).first.click()
+                page.get_by_role("button", name="Profile menu").click()
+                page.locator("#profile-menu [data-tab='profile']").click()
                 page.locator("#edit-profile-button").click()
                 page.locator("#personal.active #profile-form").wait_for()
                 page.locator("#profile-form input[name='name']").fill("Alex Example")
@@ -116,7 +119,8 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 assert app.state.db.get_setting("profile", {})["name"] == "Alex Example"
                 page.locator("#personal [data-tab='profile']").click()
                 page.locator("#resume-status.status-badge--success").wait_for()
-                page.get_by_role("button", name="Settings", exact=True).click()
+                page.get_by_role("button", name="Profile menu").click()
+                page.locator("#profile-menu [data-tab='settings']").click()
                 page.locator("#settings.active").wait_for()
                 page.wait_for_function("!document.querySelector('#settings.active')?.hasAttribute('aria-busy')")
                 page.locator("#smtp-panel summary").click()
@@ -150,7 +154,7 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
         thread.join(timeout=5)
 
 
-def test_failed_matching_jobs_are_visible_and_retryable_from_jobs(tmp_path: Path, monkeypatch) -> None:
+def test_failed_matching_jobs_are_visible_and_retryable_from_settings(tmp_path: Path, monkeypatch) -> None:
     from fastapi.testclient import TestClient
     app = create_app(Settings(tmp_path))
     db = app.state.db
@@ -183,7 +187,7 @@ def test_failed_matching_jobs_are_visible_and_retryable_from_jobs(tmp_path: Path
             browser = playwright.chromium.launch(headless=True)
             try:
                 page = browser.new_page()
-                page.goto(f"http://127.0.0.1:{port}/#jobs")
+                page.goto(f"http://127.0.0.1:{port}/#settings")
                 page.locator("#matching-failures").wait_for(state="visible")
                 assert "2 jobs need attention" in page.locator("#matching-failures-title").inner_text()
                 assert "Engineer 1" in page.locator("#matching-failure-list").inner_text()
@@ -193,10 +197,12 @@ def test_failed_matching_jobs_are_visible_and_retryable_from_jobs(tmp_path: Path
                 page.locator("#job-query").fill("no matching title")
                 page.evaluate("loadJobs()")
                 assert page.get_by_role("heading", name="Engineer 1").is_visible()
+                page.get_by_role("button", name="Profile menu").click()
+                page.locator("#profile-menu [data-tab='settings']").click()
+                page.locator("#settings.active").wait_for()
                 page.locator("#matching-failure-list .matching-failure-row").filter(has_text="Engineer 1").get_by_role("button", name="Dismiss").click()
                 page.wait_for_function("document.querySelectorAll('#matching-failure-list .matching-failure-row').length === 1")
                 assert db.one("SELECT analysis_status FROM vacancies WHERE title='Engineer 1'")["analysis_status"] == "dismissed"
-                page.locator("#job-detail").get_by_role("button", name="Run match review").wait_for()
                 page.locator("#matching-retry-all").click()
                 page.locator("#matching-failures").wait_for(state="hidden")
                 assert db.one("SELECT COUNT(*) AS n FROM vacancies WHERE analysis_status='failed'")["n"] == 0

@@ -613,7 +613,8 @@ class AutoApplyManager:
             self._set_status(job_id, "preparing", "Drafting application in ChatGPT Web...", draft["id"])
             chatgpt_success = False
             last_chatgpt_error = ""
-            current_prompt = application_prompt(self.db, draft["id"], "all", "")
+            base_prompt = application_prompt(self.db, draft["id"], "all", "")
+            current_prompt = base_prompt
             for prompt_attempt in range(2):
                 try:
                     result = await self.chatgpt_input.enter(current_prompt, timeout=360.0)
@@ -632,10 +633,8 @@ class AutoApplyManager:
                     last_chatgpt_error = str(error)
                     log.warning("ChatGPT Web drafting prompt attempt %d failed for %s: %s", prompt_attempt + 1, job_id, error)
                     if prompt_attempt == 0 and not ("not signed in" in str(error).lower() or "sign_in_required" in str(error).lower()):
-                        current_prompt = (
-                            f"The previous response could not be applied: {str(error)[:300]}.\n"
-                            "Return ONLY valid JSON matching the required schema with all fields populated."
-                        )
+                        current_prompt = (base_prompt + "\n\nThe previous response could not be applied: "
+                                          f"{str(error)[:300]}. Return complete valid JSON, including fit_text.")
                         continue
                     break
             if not chatgpt_success:
@@ -697,19 +696,29 @@ class AutoApplyManager:
             (new_id(), vacancy_id, channel, status, error, timestamp),
         )
 
-    async def notify_review(self, draft_id: str, *, deliver_telegram: bool = True) -> None:
+    async def notify_review(self, draft_id: str, *, deliver_telegram: bool = True,
+                            clear_form_failure: bool = False,
+                            resolved_form_error: str | None = None) -> None:
         attempt = self.db.one(
             "SELECT vacancy_id,status,review_hash,telegram_status,telegram_message_id,requested_by "
             "FROM auto_application_attempts WHERE draft_id=?",
             (draft_id,),
         )
-        if not attempt or attempt["status"] in ("sent", "sending", "skipped", "preparing", "regenerating"):
+        if not attempt or attempt["status"] in ("sent", "sending", "skipped", "preparing", "regenerating", "queued", "submission_uncertain"):
             return
         draft = get_draft(self.db, draft_id)
+        if draft["status"] in ("sent", "skipped", "submission_uncertain"):
+            return
         blockers = send_readiness(self.db, self.settings, draft)
         existing_attempt = self.db.one("SELECT detail,status FROM auto_application_attempts WHERE draft_id=?", (draft_id,))
+        if existing_attempt and resolved_form_error:
+            existing_attempt["detail"] = "; ".join(
+                part for part in (existing_attempt.get("detail") or "").split("; ")
+                if part not in resolved_form_error.split("; "))
         detail_text = (existing_attempt.get("detail") or "").lower() if existing_attempt else ""
         is_failure_detail = any(kw in detail_text for kw in ("not signed in", "sign in", "failed", "needs attention", "attention:", "paused"))
+        if clear_form_failure and "form inspection needs attention:" in detail_text and "drafting failed" not in detail_text:
+            is_failure_detail = False
         preserved_detail = (
             existing_attempt["detail"]
             if existing_attempt and existing_attempt.get("status") == "needs_review" and is_failure_detail
@@ -730,7 +739,8 @@ class AutoApplyManager:
             (
                 draft["package_hash"],
                 status,
-                preserved_detail or ("; ".join(blockers) if blockers else "Review the complete application before approving."),
+                "; ".join(dict.fromkeys([*(preserved_detail.split("; ") if preserved_detail else []), *blockers]))
+                or "Review the complete application before approving.",
                 "pending" if deliver_telegram else "web_only",
                 previous_message_id if deliver_telegram else None,
                 now(),
@@ -866,7 +876,8 @@ class AutoApplyManager:
         try:
             previous_draft = get_draft(self.db, draft_id)
             if previous_draft.get("provider") == "chatgpt_web" and self.chatgpt_input and self.chatgpt_input.status().get("logged_in"):
-                prompt_text = application_prompt(self.db, draft_id, section, prompt)
+                base_prompt = application_prompt(self.db, draft_id, section, prompt)
+                prompt_text = base_prompt
                 applied = False
                 last_regen_error = ""
                 timeout = 360.0 if section == "all" else 240.0
@@ -887,10 +898,8 @@ class AutoApplyManager:
                         last_regen_error = str(err)
                         log.warning("Regenerate ChatGPT Web apply attempt %d failed: %s", attempt_idx + 1, err)
                         if attempt_idx == 0:
-                            prompt_text = (
-                                f"The previous response could not be applied: {str(err)[:300]}.\n"
-                                "Return ONLY valid JSON matching the required schema with all fields populated."
-                            )
+                            prompt_text = (base_prompt + "\n\nThe previous response could not be applied: "
+                                           f"{str(err)[:300]}. Return complete valid JSON for this section.")
                 if not applied:
                     raise RuntimeError(f"ChatGPT Web regeneration failed: {last_regen_error}")
                 regeneration_changes = []
@@ -1300,10 +1309,12 @@ class AutoApplyManager:
             try:
                 await self._process(job_id)
             except asyncio.CancelledError:
+                saved = self.db.one("SELECT id FROM application_drafts WHERE vacancy_id=?", (job_id,))
                 self._set_status(
                     job_id,
                     "needs_review",
-                    "Job Radar stopped during preparation; review before sending",
+                    "Job Radar stopped during preparation; review the saved draft before sending" if saved
+                    else "Preparation was interrupted before a draft was created. Retry preparation.",
                 )
                 raise
             except Exception as error:

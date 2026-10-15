@@ -28,13 +28,16 @@ from .dedup import merge_vacancies
 from .apply import (
     CONFIRMED_SUBMISSION_STATUSES,
     inspect_form,
+    record_manual_send,
     send_application,
+    send_additional_email,
     send_readiness,
     submission_attachment,
     submission_record,
     submission_resume_path,
 )
 from .auto_apply import AutoApplyManager
+from .application_action import posting_application_emails, suggested_email_subject
 from .browser_login import BrowserLoginManager
 from .zalo_api import create_zalo_router
 from .zalo_inquiry import recover_inquiry_sends
@@ -134,6 +137,19 @@ class RecruitingOutcomeInput(BaseModel):
 
 class ManualAppliedInput(BaseModel):
     applied: bool = True
+
+
+class ManualSendInput(BaseModel):
+    channel: Literal["Facebook Messenger", "LinkedIn message", "Email", "Web form", "Other"]
+    target: str = Field(min_length=1, max_length=300)
+    note: str = Field(default="", max_length=1000)
+
+
+class AdditionalEmailInput(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    subject: str = Field(min_length=1, max_length=180)
+    body: str = Field(min_length=1, max_length=20000)
+    package_hash: str
 
 
 class SavedJobViewInput(BaseModel):
@@ -384,7 +400,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def index():
         static = Path(__file__).parent / "static"
         html = (static / "index.html").read_text()
-        for asset, attribute in (("theme.js", "src"), ("app.js", "src"), ("zalo.js", "src"), ("writing.js", "src"), ("app.css", "href")):
+        for asset, attribute in (("theme.js", "src"), ("app.js", "src"), ("writing.js", "src"), ("app.css", "href")):
             version = hashlib.sha256((static / asset).read_bytes()).hexdigest()[:12]
             html = html.replace(f'{attribute}="/{asset}"', f'{attribute}="/{asset}?v={version}"')
         return HTMLResponse(html, headers={"Cache-Control": "no-store"})
@@ -407,11 +423,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/writing.js")
     def writing_script():
         return FileResponse(Path(__file__).parent / "static" / "writing.js", media_type="application/javascript",
-                            headers={"Cache-Control": "no-store"})
-
-    @app.get("/zalo.js")
-    def zalo_javascript():
-        return FileResponse(Path(__file__).parent / "static" / "zalo.js", media_type="application/javascript",
                             headers={"Cache-Control": "no-store"})
 
     @app.get("/logo.svg")
@@ -1084,9 +1095,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "SELECT id,kind FROM sources WHERE enabled=1 "
             "AND COALESCE(json_extract(config,'$.retired'),0)=0 "
             "AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=sources.employer_id AND e.coverage_status='excluded_hcm')"
+            " ORDER BY CASE WHEN last_success_at IS NULL THEN 0 "
+            "WHEN last_status IN ('failed','auth_required','interrupted') THEN 1 ELSE 2 END, "
+            "COALESCE(last_attempt_at,'') ASC,id"
         )
         source_ids = [row["id"] for row in rows]
         queued = scan_manager.queue_sources(source_ids, manual=True)
+        queue_rank = {source_id: index for index, source_id in enumerate(source_ids)}
+        scan_manager.pending.sort(key=lambda item: queue_rank.get(item[0], len(queue_rank)))
         blocked = [
             row["kind"] for row in rows if row["kind"] in ("linkedin", "facebook") and (
                 not social_login_at(db, row["kind"]) or db.get_setting(f"social_reauth_required_{row['kind']}")
@@ -1733,19 +1749,55 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         details = updates.get("details", json.loads(row["details"]))
         if not isinstance(details, dict) or not isinstance(details.get("bullets", [validated.claim]), list) or not isinstance(details.get("tech_stack", []), list):
             raise HTTPException(422, "Project details must contain bullet and technology lists")
-        structured = row["repository_id"] and details.get("schema_version") == 2
+        structured = row["repository_id"] and details.get("schema_version") in {2, 3}
         if structured:
             results = details.get("results")
             if not isinstance(results, list) or len(results) > 8 or any(not isinstance(item, dict) for item in results):
                 raise HTTPException(422, "Add up to eight project results")
-            normalized = [{key: str(item.get(key) or "").strip() for key in ("id", "area", "outcome", "source")}
-                          for item in results]
+            previous_details = json.loads(row["details"])
+            previous_results = {item["id"]: item for item in previous_details.get("results", []) if item.get("id")}
+            normalized = []
+            for item in results:
+                previous_result = previous_results.get(item.get("id"), {})
+                merged = {**previous_result, **item}
+                if item.get("outcome") != previous_result.get("outcome"):
+                    if "required_metrics" not in item and merged.get("required_metrics"):
+                        merged["required_metrics"] = list(dict.fromkeys(re.findall(
+                            r"(?<![\w.])[+-]?\d[\d,]*(?:\.\d+)?(?:[%×])?(?![\w.])", str(item.get("outcome") or ""))))[:5]
+                    if "dataset" not in item and merged.get("dataset") and str(merged["dataset"]).casefold() not in str(item.get("outcome") or "").casefold():
+                        merged["dataset"] = ""
+                        if "scope" not in item:
+                            merged["scope"] = ""
+                result = {key: str(merged.get(key) or "").strip() for key in ("id", "area", "outcome", "source")}
+                for key in ("dataset", "scope"):
+                    if key in merged:
+                        result[key] = str(merged[key] or "").strip()
+                if "primary" in merged:
+                    if not isinstance(merged["primary"], bool):
+                        raise HTTPException(422, "A primary result flag must be true or false")
+                    result["primary"] = merged["primary"]
+                if "required_metrics" in merged:
+                    metrics = merged["required_metrics"]
+                    if not isinstance(metrics, list) or any(not isinstance(metric, str) for metric in metrics):
+                        raise HTTPException(422, "Required project metrics must be a list of text values")
+                    result["required_metrics"] = [metric.strip() for metric in metrics if metric.strip()]
+                normalized.append(result)
             identifiers = [item["id"] for item in normalized]
             if any(not identifier for identifier in identifiers) or len(set(identifiers)) != len(identifiers):
                 raise HTTPException(422, "Each project result needs a unique identifier")
             details = {**details, "results": normalized,
                        "summary": str(details.get("what") or "").strip(),
                        "bullets": [item["outcome"] for item in normalized if item["outcome"]]}
+            if "required_result_ids" in details or any(item.get("primary") for item in normalized):
+                details["required_result_ids"] = list(dict.fromkeys([
+                    *[identifier for identifier in details.get("required_result_ids", []) if identifier in identifiers],
+                    *[item["id"] for item in normalized if item.get("primary")],
+                ]))
+            if normalized != previous_details.get("results") or any(
+                details.get(key) != previous_details.get(key) for key in ("what", "how")
+            ):
+                details.pop("resume_bullets", None)
+                details.pop("resume_result_ids", None)
             if details["bullets"]:
                 validated = validated.model_copy(update={"claim": details["bullets"][0]})
         if validated.approved and row["repository_id"]:
@@ -1867,7 +1919,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
 
     def application_page_data(page: int, page_size: int, q: str = "", review: str = "",
-                              company: str = "", delivery: str = "", full: bool = False) -> dict:
+                              company: str = "", delivery: str = "", full: bool = False,
+                              focus_id: str = "") -> dict:
         clauses = []
         params: list[Any] = []
         query = q.strip().casefold()
@@ -1902,6 +1955,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "LEFT JOIN auto_application_attempts a ON a.vacancy_id=d.vacancy_id")
         total = db.one("SELECT COUNT(*) AS count" + base + where, tuple(params))["count"]
         pages = max(1, (total + page_size - 1) // page_size)
+        focus_found = False
+        if focus_id:
+            ordered_ids = db.all(
+                "SELECT d.id" + base + where +
+                f" ORDER BY {sort_priority_expr} DESC, COALESCE(d.updated_at, d.created_at) DESC, d.created_at DESC, d.id DESC",
+                tuple(params),
+            )
+            focus_index = next((index for index, row in enumerate(ordered_ids) if row["id"] == focus_id), None)
+            if focus_index is not None:
+                page = focus_index // page_size + 1
+                focus_found = True
         page = min(page, pages)
         rows = db.all(
             f"SELECT d.id,d.vacancy_id,d.status,d.provider,d.provider_mode,d.created_at,d.updated_at,d.seen_at,"
@@ -1923,15 +1987,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "SELECT DISTINCT v.company FROM application_drafts d JOIN vacancies v ON v.id=d.vacancy_id "
             "ORDER BY LOWER(v.company),v.company")]
         return {"items": items, "page": page, "page_size": page_size, "total": total,
-                "pages": pages, "companies": companies}
+                "pages": pages, "companies": companies, "focus_found": focus_found}
 
     @app.get("/api/applications/page")
     def applications_page(
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=25, ge=1, le=100),
-        q: str = "", review: str = "", company: str = "", delivery: str = "",
+        q: str = "", review: str = "", company: str = "", delivery: str = "", focus_id: str = "",
     ):
-        return application_page_data(page, page_size, q, review, company, delivery)
+        return application_page_data(page, page_size, q, review, company, delivery, focus_id=focus_id)
 
     @app.get("/api/application-preparations")
     def application_preparations():
@@ -1960,6 +2024,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 category, label, reason = "preparing", "Preparing", (row["detail"] or "The application draft is being created.")
             elif row["status"] == "needs_confirmation":
                 category, label, reason = "method", "Application method needed", "Confirm how to apply before creating a draft."
+            elif re.search(r"job radar stopped during preparation|restarted|interrupted", detail):
+                category, label, reason = "failed", "Preparation stopped", "Job Radar stopped before it finished creating this draft."
             elif re.search(r"out of credits|insufficient credits|credit balance", detail):
                 category, label, reason = "credits", "Out of credits", "The AI provider ran out of credits before creating a draft. Retry when credits are available."
             elif re.search(r"quota|rate limit|usage limit", detail):
@@ -1994,6 +2060,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 (draft_id,),
             )
             latest = db.one("SELECT * FROM submissions WHERE draft_id=? ORDER BY sent_at DESC,id DESC LIMIT 1", (draft_id,))
+            submission_rows = db.all(
+                "SELECT * FROM submissions WHERE draft_id=? ORDER BY sent_at DESC,id DESC", (draft_id,),
+            )
             job_data = None
             try:
                 job_data = job(draft["vacancy_id"])
@@ -2001,14 +2070,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 log.warning("Could not attach job data for draft %s: %s", draft_id, error)
 
             activities = []
-            if latest:
-                activities.append({
+            if submission_rows:
+                activities.extend({
                     "kind": "submission",
-                    "label": "Application sent",
-                    "detail": f"{latest['status']} · {latest.get('receipt') or 'Submitted'}",
-                    "created_at": latest["sent_at"],
-                    "tone": "success" if latest["status"] in CONFIRMED_SUBMISSION_STATUSES else "warning",
-                })
+                    "label": submission_record(item)["outcome"]["label"],
+                    "detail": item.get("receipt") or item["status"],
+                    "created_at": item["sent_at"],
+                    "tone": "success" if item["status"] in CONFIRMED_SUBMISSION_STATUSES else "warning",
+                } for item in submission_rows)
+            sent_emails = {
+                str(destination.get("email") or destination.get("target") or "").casefold()
+                for item in submission_rows if item["status"] in
+                (*CONFIRMED_SUBMISSION_STATUSES, "submitted_unconfirmed", "sending")
+                for destination in [json.loads(item["destination"] or "{}")]
+                if destination.get("kind") == "email" or (
+                    destination.get("kind") == "manual" and
+                    str(destination.get("channel") or "").casefold() == "email")
+            }
+            posting_emails = posting_application_emails(draft.get("job_description") or "")
+            additional_email_options = [
+                {"email": address, "suggested_subject": suggested_email_subject(
+                    draft.get("job_description") or "", draft["resume_data"].get("name") or "",
+                    draft["message_data"].get("subject") or f"Application for {draft['job_title']}",
+                )}
+                for address in posting_emails if address.casefold() not in sent_emails
+            ] if any(item["status"] in CONFIRMED_SUBMISSION_STATUSES for item in submission_rows) else []
             if review and review.get("detail"):
                 activities.append({
                     "kind": "status",
@@ -2049,6 +2135,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "preparation_detail": review["detail"] if review else None,
                     "preparation_approved_without_destination": bool(review["prepare_anyway"]) if review else False,
                     "latest_submission": submission_record(latest, include_package=True) if latest else None,
+                    "submissions": [submission_record(item, include_package=True) for item in submission_rows],
+                    "additional_email_options": additional_email_options,
                     "job": job_data,
                     "activities": activities}
         except KeyError as error:
@@ -2183,20 +2271,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def inspect_application(draft_id: str):
         require_editable_application(draft_id)
         try:
+            resolved_form_error = get_draft(db, draft_id)["form_data"].get("collection_error")
             async with scan_manager.browser_lock:
                 draft = await inspect_form(db, settings, draft_id)
             if draft["destination"].get("kind") == "linkedin_easy_apply":
                 db.set_setting("linkedin_automation_paused", False)
-            await auto_apply_manager.notify_review(draft_id, deliver_telegram=False)
+            await auto_apply_manager.notify_review(draft_id, deliver_telegram=False, clear_form_failure=True,
+                                                 resolved_form_error=resolved_form_error)
             return draft
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
-        except (ValueError, RuntimeError) as error:
+        except (ValueError, RuntimeError, PlaywrightError) as error:
             failed = db.one("SELECT destination,form_data FROM application_drafts WHERE id=?", (draft_id,))
-            if failed and json.loads(failed["destination"]).get("kind") == "linkedin_easy_apply":
+            if failed and json.loads(failed["destination"]).get("kind") in ("web", "linkedin_easy_apply"):
                 form = {**json.loads(failed["form_data"]), "collection_error": str(error)}
                 db.execute("UPDATE application_drafts SET form_data=?,updated_at=? WHERE id=?",
                            (json.dumps(form, ensure_ascii=False), now(), draft_id))
+                await auto_apply_manager.notify_review(draft_id, deliver_telegram=False, clear_form_failure=True,
+                                                     resolved_form_error=resolved_form_error)
             raise HTTPException(422, str(error)) from error
 
     @app.post("/api/applications/{draft_id}/discover-apply")
@@ -2280,6 +2372,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
 
+    @app.post("/api/applications/{draft_id}/record-manual-send")
+    async def record_application_manual_send(draft_id: str, payload: ManualSendInput):
+        try:
+            mark_application_seen(db, draft_id)
+            async with scan_manager.browser_lock:
+                result = record_manual_send(db, draft_id, payload.channel, payload.target, payload.note)
+            attempt = db.one("SELECT vacancy_id FROM auto_application_attempts WHERE draft_id=?", (draft_id,))
+            if attempt:
+                auto_apply_manager._set_status(attempt["vacancy_id"], "sent", "Application sent manually outside Job Radar", draft_id)
+            auto_apply_manager.wake()
+            return result
+        except KeyError as error:
+            raise HTTPException(404, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+
+    @app.post("/api/applications/{draft_id}/send-additional-email")
+    async def send_application_additional_email(draft_id: str, payload: AdditionalEmailInput):
+        try:
+            mark_application_seen(db, draft_id)
+            async with scan_manager.browser_lock:
+                return await send_additional_email(db, settings, draft_id, payload.package_hash,
+                                                   payload.email, payload.subject, payload.body)
+        except KeyError as error:
+            raise HTTPException(404, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+
     @app.post("/api/applications/{draft_id}/regenerate")
     async def regenerate_application(draft_id: str, payload: RegenerateInput):
         try:
@@ -2312,6 +2432,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(503, result["detail"])
         if result.get("reply"):
             reply = result["reply"]
+            base_prompt = prompt
             applied = False
             last_apply_error: Exception | None = None
             for attempt in range(2):
@@ -2325,10 +2446,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     last_apply_error = error
                     log.warning("Could not apply ChatGPT reply to %s (attempt %d): %s", draft_id, attempt + 1, error)
                     if attempt == 0:
-                        corrective_prompt = (
-                            f"The previous response could not be applied: {str(error)[:300]}.\n"
-                            "Return ONLY valid JSON matching the required schema with all fields populated."
-                        )
+                        corrective_prompt = (base_prompt + "\n\nThe previous response could not be applied: "
+                                             f"{str(error)[:300]}. Return complete valid JSON for this section.")
                         try:
                             retry_result = await chatgpt_input.enter(corrective_prompt, timeout=timeout)
                             if retry_result.get("reply"):

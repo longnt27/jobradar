@@ -34,7 +34,7 @@ def clarity_app(tmp_path: Path):
         thread.join(timeout=5)
 
 
-def test_jobs_explains_matching_progress_and_hides_advanced_filters(clarity_app, monkeypatch) -> None:
+def test_jobs_keeps_search_in_left_pane_and_settings_owns_review_and_theme(clarity_app, monkeypatch) -> None:
     app, base = clarity_app
     monkeypatch.setattr(app.state.match_manager, "status", lambda: {
         "model": "qwen3.5:4b-q4_K_M", "pending": 120, "completed": 30, "failed": 0,
@@ -45,13 +45,38 @@ def test_jobs_explains_matching_progress_and_hides_advanced_filters(clarity_app,
         try:
             page = browser.new_page()
             page.goto(base + "/#jobs")
-            page.wait_for_function("document.querySelector('#job-analysis-model').textContent.includes('qwen3.5')")
-            assert "120" in page.locator("#matching-overview").inner_text()
+            page.locator("#jobs.active").wait_for()
+            assert page.locator("#jobs .job-analysis-panel").count() == 0
+            assert page.locator(".topbar .eyebrow").count() == 0
+            assert page.locator(".topbar #theme-preference").count() == 0
+            assert page.locator(".job-list-pane .jobs-inbox-strip").count() == 0
+            assert page.locator(".job-list-pane .jobs-controls #job-query").is_visible()
+            page.locator("#job-query").fill("engineer")
+            page.wait_for_function("location.hash.includes('q=engineer')")
+            page.locator("#job-query").fill("")
+            page.wait_for_function("!location.hash.includes('q=engineer')")
+            assert not page.locator("#job-filter-popover").is_visible()
+            filter_button = page.get_by_role("button", name="Filter jobs")
+            assert filter_button.get_attribute("aria-expanded") == "false"
+            filter_button.click()
+            assert filter_button.get_attribute("aria-expanded") == "true"
+            assert page.locator("#job-inbox").is_visible()
+            assert page.locator("#job-fit").is_visible()
             assert page.locator("#job-more-filters").is_visible()
             assert not page.locator("#job-more-filters").evaluate("node => node.open")
             assert page.locator("#job-decision").is_hidden()
             page.locator("#job-more-filters summary").click()
             assert page.locator("#job-decision").is_visible()
+            page.keyboard.press("Escape")
+            assert not page.locator("#job-filter-popover").is_visible()
+            page.get_by_role("button", name="Profile menu").click()
+            page.locator("#profile-menu [data-tab='settings']").click()
+            page.wait_for_function("document.querySelector('#job-analysis-model').textContent.includes('qwen3.5')")
+            assert "120" in page.locator("#matching-overview").inner_text()
+            assert page.locator("#settings .job-analysis-panel").is_visible()
+            assert page.locator("#settings #theme-preference").is_visible()
+            page.locator("#theme-preference").select_option("dark")
+            assert page.evaluate("document.documentElement.dataset.theme") == "dark"
         finally:
             browser.close()
 
@@ -66,9 +91,8 @@ def test_sources_start_with_a_short_list_and_optional_filters(clarity_app) -> No
             page.locator("#source-list .source-card").first.wait_for()
             assert page.locator("#source-list .source-card").count() <= 12
             assert "Page 1" in page.locator("#source-page-summary").inner_text()
-            assert page.locator("#source-more-filters").is_visible()
-            assert not page.locator("#source-more-filters").evaluate("node => node.open")
-            page.locator("#source-more-filters summary").click()
+            assert page.locator("#source-filter-popover").is_hidden()
+            page.locator("#source-filter-toggle").click()
             assert page.locator("#source-enabled").is_visible()
         finally:
             browser.close()
@@ -96,7 +120,8 @@ def test_settings_employers_and_tutorial_have_clear_starting_views(clarity_app) 
             page.locator("#employer-query").fill("QA Unwatched Company")
             page.locator("#employer-query").press("Enter")
             page.get_by_text("QA Unwatched Company", exact=True).wait_for()
-            page.get_by_role("button", name="How it works", exact=True).first.click()
+            page.get_by_role("button", name="Profile menu").click()
+            page.locator("#profile-menu [data-tab='guide']").click()
             assert page.get_by_role("heading", name="Your job search, step by step").is_visible()
             assert page.get_by_text("Nothing is sent until you approve it", exact=False).is_visible()
         finally:
@@ -117,7 +142,8 @@ def test_profile_and_settings_load_only_what_is_visible(clarity_app) -> None:
             page.get_by_text("QA User · qa@example.org", exact=False).wait_for()
             assert sum(url.endswith("/api/setup") for url in requests) == 1
 
-            page.get_by_role("button", name="Settings", exact=True).first.click()
+            page.get_by_role("button", name="Profile menu").click()
+            page.locator("#profile-menu [data-tab='settings']").click()
             page.wait_for_function("document.querySelector('#search-intent-glance').textContent.includes('Strong')")
             page.locator("#tab-loading").wait_for(state="hidden")
             assert not any(url.endswith("/api/matching/models") for url in requests)
@@ -130,7 +156,7 @@ def test_profile_and_settings_load_only_what_is_visible(clarity_app) -> None:
             browser.close()
 
 
-def test_settings_switches_threshold_location_and_sidebar_layout(clarity_app) -> None:
+def test_settings_switches_threshold_location_and_top_navigation_layout(clarity_app) -> None:
     app, base = clarity_app
     client = TestClient(app)
     profile = client.get("/api/profile").json()
@@ -142,16 +168,18 @@ def test_settings_switches_threshold_location_and_sidebar_layout(clarity_app) ->
             page = browser.new_page(viewport={"width": 1440, "height": 900})
             page.goto(base + "/#settings")
             page.locator("#search-intent-status").get_by_text("Automatic").wait_for()
-            guide = page.locator(".sidebar [data-tab='guide']").bounding_box()
-            queue = page.locator(".sidebar [data-tab='queue']").bounding_box()
-            footer = page.locator(".sidebar-foot").bounding_box()
-            settings_button = page.locator('.sidebar nav [data-tab="settings"]').bounding_box()
-            assert guide and queue and footer and settings_button
-            assert settings_button["y"] < queue["y"] < guide["y"] < footer["y"]
-            assert footer["y"] - (guide["y"] + guide["height"]) < 24
-            assert page.locator(".sidebar nav [data-tab]").evaluate_all(
+            page.get_by_role("button", name="Profile menu").click()
+            guide = page.locator(".app-header [data-tab='guide']").bounding_box()
+            queue = page.locator(".app-header [data-tab='queue']").bounding_box()
+            settings_button = page.locator('.app-header nav [data-tab="settings"]').bounding_box()
+            assert guide and queue and settings_button
+            assert settings_button["x"] == guide["x"]
+            assert queue["x"] >= page.locator(".nav-primary").bounding_box()["x"] + page.locator(".nav-primary").bounding_box()["width"]
+            assert queue["x"] < page.locator("#profile-menu-toggle").bounding_box()["x"]
+            assert settings_button["y"] < guide["y"]
+            assert page.locator(".app-header nav [data-tab]").evaluate_all(
                 "nodes => nodes.map(node => node.dataset.tab)"
-            ) == ["home", "jobs", "applications", "sources", "employers", "profile", "settings"]
+            ) == ["home", "jobs", "applications", "sources", "employers", "queue", "profile", "settings", "application-history", "guide"]
             page.locator("#search-intent-panel > summary").click()
             panel = page.locator("#search-intent-panel").bounding_box()
             summary = page.locator("#search-intent-summary").bounding_box()
@@ -169,8 +197,9 @@ def test_settings_switches_threshold_location_and_sidebar_layout(clarity_app) ->
             assert saved["preferred_locations"] == ["Hanoi", "Remote"]
             assert saved["hard_constraints"]["location"] is False
             assert page.locator("#search-intent-panel").locator("#pref-strong-threshold").count() == 0
-            page.locator('.sidebar nav [data-tab="applications"]').click()
-            page.get_by_role("tab", name="Automation").click()
+            page.get_by_role("button", name="Profile menu").click()
+            page.locator('#profile-menu [data-tab="settings"]').click()
+            page.locator('#auto-apply-panel > summary').click()
             page.wait_for_function("document.querySelector('#auto-apply-form').dataset.initialized === 'true'")
             threshold = page.locator('#auto-apply-form [name="threshold"]')
             assert threshold.is_editable()

@@ -696,6 +696,7 @@ def test_auto_apply_chatgpt_web_drafts_when_logged_in(tmp_path: Path, monkeypatc
             "status": "entered",
             "reply": json.dumps({
                 "summary": "Experienced AI engineer specializing in Python pipelines.",
+                    "fit_text": "I built Python search systems at Prior Co and tested related personal projects.",
                 "experience": [{"company": "Prior Co", "role": "Engineer", "dates": "2024–2026", "bullets": ["Built Python search systems."]}]
             })
         }
@@ -748,6 +749,7 @@ def test_application_prompt_contains_thinking_bold_and_bullet_rules(tmp_path: Pa
     assert "exactly two bullets" in prompt
     assert "what/how" in prompt
     assert "measured results" in prompt
+    assert "Name the dataset, evaluated population, device, or baseline" in prompt
     assert "professional summary" in prompt
     assert "technologies belong strictly in Skills" in prompt
     assert "Do NOT include academic caveats" in prompt
@@ -789,6 +791,7 @@ def test_apply_chatgpt_reply_enforces_three_projects_and_two_bullets(tmp_path: P
     # Project 3 is omitted entirely (needs backfilling).
     reply_payload = {
         "summary": "AI researcher with experience deploying models.",
+        "fit_text": "I built Python model evaluation systems at AI Inc and tested related personal projects.",
         "experience": [
             {"company": "AI Inc", "role": "ML Engineer", "dates": "2024-2026",
              "bullets": ["Improved inference latency by **35%** on T4 GPUs."]}
@@ -839,6 +842,25 @@ def test_apply_chatgpt_reply_enforces_three_projects_and_two_bullets(tmp_path: P
     assert len(resume["bold_phrases"]) >= 2
     assert any("91.5%" in phrase or "35%" in phrase for phrase in resume["bold_phrases"])
 
+    # The prompt includes the current projects under selected_projects, and the
+    # model can return that same key. A full reply must apply those edits too.
+    second_reply = {
+        "summary": "AI engineer with measured model deployment experience.",
+        "fit_text": "I evaluated models at AI Inc and built measured personal projects.",
+        "selected_projects": [
+            {"id": "proj_2", "title": "Project 2 Title", "bullets": [
+                "Built the Project 2 evaluation pipeline.",
+                "Model 2 reached 92.5% accuracy on benchmark test suite.",
+            ]},
+            {"id": "proj_1", "title": "Project 1 Title", "bullets": [
+                "Built the Project 1 evaluation pipeline.",
+                "Model 1 reached 91.5% accuracy on benchmark test suite.",
+            ]},
+        ],
+    }
+    updated = apply_chatgpt_reply(db, settings, draft["id"], "all", json.dumps(second_reply))
+    assert [project["id"] for project in updated["resume_data"]["projects"][:2]] == ["proj_2", "proj_1"]
+
 
 def test_chatgpt_input_retries_invalid_json_with_corrective_prompt(tmp_path: Path, monkeypatch) -> None:
     client = TestClient(create_app(Settings(tmp_path)))
@@ -855,7 +877,10 @@ def test_chatgpt_input_retries_invalid_json_with_corrective_prompt(tmp_path: Pat
         calls.append(prompt)
         if len(calls) == 1:
             return {"status": "entered", "reply": "This is plain text with no JSON and no headers."}
-        return {"status": "entered", "reply": json.dumps({"summary": "Revised ML Engineer summary with PyTorch."})}
+        return {"status": "entered", "reply": json.dumps({
+            "summary": "Revised ML Engineer summary with PyTorch.",
+            "fit_text": "I built ML systems at Co and tested related personal projects.",
+        })}
 
     monkeypatch.setattr(client.app.state.chatgpt_input, "enter", fake_enter)
     response = client.post(f"/api/applications/{draft['id']}/chatgpt-input", json={"section": "all", "instruction": "Update draft"})

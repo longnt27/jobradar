@@ -14,7 +14,7 @@ Everything runs on your Mac. Your profile, credentials, sessions, and data stay 
 
 ---
 
-**Platform:** macOS · **Local address:** [http://127.0.0.1:8787](http://127.0.0.1:8787) · **Core rule:** Applications are submitted only when you choose **Approve & send** in Job Radar or approve a draft via Telegram.
+**Platform:** macOS · **Local address:** [http://127.0.0.1:8787](http://127.0.0.1:8787) · **Core rule:** Job Radar sends only after you review and authorize a submission. An external send can be recorded without sending anything again.
 
 ---
 
@@ -34,6 +34,8 @@ Everything runs on your Mac. Your profile, credentials, sessions, and data stay 
   - Direct employer email applications via SMTP (with tailored PDF attachments).
   - External ATS web forms with multi-step field inspection and auto-population.
   - LinkedIn Easy Apply discovery and form step validation.
+  - A separate reviewed email when a posting explicitly asks for a CV by email after an Easy Apply submission.
+  - Manual sent-state recording for applications delivered outside Job Radar.
 - **Telegram Mobile Review:** Receive review packets with the tailored PDF directly on your phone, with instant **Approve & send**, **Edit**, and **Regenerate** inline buttons.
 - **Recruiting Pipeline Tracking:** Track decision stages (Shortlisted, Later, Ignored) and interview outcomes (Interview, Offer, Rejected) across all applications.
 
@@ -110,7 +112,7 @@ Uncertain matches are saved for review and returned as `possible_duplicates` in 
 
 Open **Settings → Prompts and templates** to edit application drafting instructions, individual section prompts, ChatGPT prompts, project briefs, resume import, job analysis, application form answers, and English/Vietnamese email templates. You can also adjust the number of selected projects, AI project bullets, maximum resume pages, and the LaTeX layout. The editor shows available placeholders and the original default; **Restore default** removes only the selected override.
 
-Every option starts with the current shipped values. Overrides are saved in your local Job Radar database and survive restarts and updates; they never modify the shared source templates. Existing drafts and PDFs retain their content until you explicitly regenerate or edit them. Zalo inquiries keep their own saved template under **Settings → Prompts and templates → Zalo inquiry message**, including any previously saved customization.
+Every option starts with the current shipped values. Overrides are saved in your local Job Radar database and survive restarts and updates; they never modify the shared source templates. Existing drafts and PDFs retain their content until you explicitly regenerate or edit them.
 
 Each local data directory has its own profile and writing settings. Different people on the same Mac can run separate instances with their own `JOB_RADAR_DATA_DIR` and `JOB_RADAR_PORT` values. There is one profile per data directory.
 
@@ -144,23 +146,15 @@ Open any draft under **Applications**:
 - **Resume Preview:** Inspect the rendered PDF page-by-page. Click **Edit resume details** to tweak LaTeX lines directly with instant PDF re-rendering.
 - **Regenerate Sections:** Use the **Regenerate** tab to rewrite only what needs improvement (`summary`, `experience`, `projects`, `skills`, `message`, or `all`).
   - When using **ChatGPT Web**, clicking **Enter prompt in ChatGPT** opens ChatGPT, sends your context and instructions, streams the response, and **automatically receives and applies the answer** back to the draft and PDF!
-- **Inspect Form:** For web applications or LinkedIn Easy Apply, click **Inspect form** to discover all required inputs, attachments, and questions before submitting.
+- **Application questions:** Web form and LinkedIn Easy Apply questions load automatically. Review the answers and attachments before submitting. If questions cannot be loaded, resolve the displayed reason and choose **Retry loading questions**.
 
 ### 4. Authorizing Submission
 - Review destination, package fingerprint, and blockers.
 - Click **Approve & send** (or tap Approve on Telegram).
 - Job Radar sends the email via SMTP or automates form submission in the background, logging verified receipts and confirmation screenshots.
+- If a job posting also requests a CV by email, a confirmed application shows **Send application email** with the posting address, suggested subject, editable message, and attached reviewed resume. The second send has its own receipt and cannot be repeated to the same address.
+- If you sent an application yourself, open its draft under **Applications → First glance → I sent it manually**, choose the channel, and enter where you sent it. This records your report as sent without sending again. For a job without a prepared draft, use **I applied elsewhere** in its **Jobs** detail.
 - Track outcomes as **Interview**, **Offer**, or **Rejected** in the submission history.
-
-### Contacting a Facebook recruiter through Zalo
-
-Connect your personal Zalo account under **Settings → Connect LinkedIn, Facebook, and Zalo**. Scan the QR code in Job Radar's Chrome window; it saves a separate session for future inquiries.
-
-In a Facebook job's detail view, **Contact via Zalo** shows phone numbers explicitly labeled as Zalo contacts. Select a contact, or choose the original post and enter its number manually. Correct **Position in your message**, then choose **Regenerate from template** or edit **Message to send** directly. The default is a fixed three-sentence Vietnamese inquiry using “em,” asking for the JD and ending with “Em có thể gửi CV qua Zalo cho anh/chị được không ạ?” It uses no AI and attaches no CV. Customize the default under **Settings → Prompts and templates → Zalo inquiry message**; saved inquiries keep their own text.
-
-Save your edits and choose **Look up Zalo recipient**. Check the displayed profile, number, original Facebook post, and final text, then click **Approve and send Zalo inquiry** once. Job Radar rechecks the contact and records **Contacted, awaiting reply** after observing the new outgoing message change from sending to a sent status. If that transition is missed, the outcome is uncertain and requires checking the chat. This inquiry leaves the job available for a later CV application. Replies are read in Zalo.
-
-If Zalo needs sign-in, cannot identify one recipient, restricts messaging, or already has an unsent draft, resolve the displayed blocker first. For an uncertain send, open Zalo and check the conversation before selecting **I checked: message was sent** or **I checked: message was not sent**. A not-sent resolution requires a fresh recipient lookup and approval; Job Radar never retries an uncertain inquiry automatically. Browser interface changes may require updating the adapter; clicking Send alone is not recorded as confirmation.
 
 ---
 
@@ -199,7 +193,7 @@ JOB_RADAR_PORT=9000 JOB_RADAR_DATA_DIR=~/Documents/JobRadar ./install.sh
 | **ChatGPT Web sign-in required** | In **My profile → Set up AI models**, select ChatGPT Web and click **Log in to ChatGPT** to sign in to your OpenAI account in Chrome. |
 | **LinkedIn / Facebook session expired** | Open **My profile → Connect LinkedIn and Facebook** and sign in again in the opened Chrome window. |
 | **Gmail rejects SMTP login** | Enable 2-Step Verification on your Google account and generate an **App Password**. Normal account passwords will be rejected by Google. |
-| **Form submission blocked** | Click **Inspect form** on the application review screen and fill any missing required fields or custom questions. |
+| **Form submission blocked** | Resolve the displayed form-loading error or choose **Retry loading questions**, then fill missing required answers and select attachments. |
 
 ---
 

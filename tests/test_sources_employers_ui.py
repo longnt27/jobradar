@@ -43,17 +43,24 @@ def test_sources_and_employers_management_ui(tmp_path: Path) -> None:
                 source_link = first_source.locator("a[aria-label^='Open source ']")
                 assert source_link.is_visible()
                 assert source_link.get_attribute("aria-label") != "Open source"
+                assert first_source.locator(".source-title-row a").count() == 1
+                assert first_source.locator(".source-card-actions").locator("label + button").count() == 1
+                assert page.locator("#source-list").evaluate("node => getComputedStyle(node).gridTemplateColumns.split(' ').length") == 2
 
+                assert page.locator("#source-filter-popover").is_hidden()
+                page.locator("#source-filter-toggle").click()
                 assert page.locator("#source-status").is_visible()
-                page.locator("#source-more-filters summary").click()
                 assert page.locator("#source-enabled").is_visible()
                 assert page.locator("#source-success").is_visible()
                 assert page.locator("#source-sort").is_visible()
                 assert page.get_by_role("button", name="Check for jobs now").is_visible()
                 assert page.get_by_text("Discovery coverage", exact=True).is_visible()
-                page.get_by_text("Scan diagnostics and advanced controls", exact=True).click()
-                assert page.get_by_role("button", name="Prioritize never-checked sources").is_visible()
-                assert page.get_by_role("button", name="Check sources due by schedule").is_visible()
+                page.locator("#source-filter-toggle").click()
+                assert page.locator("#source-filter-popover").is_hidden()
+                page.locator("#source-add-toggle").click()
+                assert page.locator("#source-add-dialog").is_visible()
+                page.locator("#source-add-cancel").click()
+                assert page.locator("#source-add-dialog").is_hidden()
 
                 page.locator("#source-query").fill("__definitely_no_source__")
                 page.get_by_text("No sources match these filters.").wait_for()
@@ -64,7 +71,7 @@ def test_sources_and_employers_management_ui(tmp_path: Path) -> None:
                 first_toggle.click()
                 page.locator("#source-list .source-auto-status", has_text="Saved").first.wait_for()
 
-                page.locator(".sidebar nav [data-tab='employers']").click()
+                page.locator(".app-header nav [data-tab='employers']").click()
                 page.locator("#employers.active").wait_for()
                 page.locator("#employer-query").fill("GSM")
                 page.locator("#employer-query").press("Enter")

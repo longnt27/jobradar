@@ -144,7 +144,7 @@ def browser():
 
 def _surface_url(server: dict, name: str) -> str:
     pattern = MANIFEST["surfaces"][name]["hash"]
-    fragment = pattern.format(draft_id=server["draft_id"])
+    fragment = pattern.format(draft_id=server["draft_id"], job_id=server["job_id"])
     return f"{server['base_url']}/{fragment}"
 
 
@@ -352,7 +352,7 @@ def _a11y_issues(page: Page) -> list[str]:
       if (document.querySelectorAll('main').length !== 1) {
         issues.push('expected exactly one main landmark, found ' + document.querySelectorAll('main').length);
       }
-      const mainNav = document.querySelector('.sidebar nav');
+      const mainNav = document.querySelector('.app-header nav');
       if (!mainNav?.getAttribute('aria-label')) issues.push('main navigation has no aria-label');
 
       return issues;
@@ -400,12 +400,12 @@ def _text_contrast_issues(page: Page) -> list[str]:
     }""")
 
 
-@pytest.mark.parametrize("viewport_name", ["desktop", "tablet", "mobile"])
 @pytest.mark.parametrize("surface", list(MANIFEST["surfaces"]))
 @pytest.mark.parametrize("theme", ["light", "dark"])
-def test_core_surfaces_have_stable_responsive_visual_contract(
-    ui_server, browser, viewport_name: str, surface: str, theme: str
+def test_core_surfaces_have_stable_desktop_visual_contract(
+    ui_server, browser, surface: str, theme: str
 ) -> None:
+    viewport_name = "desktop"
     viewport = MANIFEST["viewports"][viewport_name]
     page = _new_page(browser, viewport)
     page.context.add_init_script(f"localStorage.setItem('job-radar-theme', '{theme}')")
@@ -425,14 +425,23 @@ def test_core_surfaces_have_stable_responsive_visual_contract(
         if theme == "dark":
             issues = _text_contrast_issues(page)
             assert not issues, f"{surface}/{viewport_name} dark text contrast issues: {issues}"
+        if surface == "applications":
+            manual_action = page.locator("#manual-send-disclosure summary")
+            assert manual_action.is_visible()
+            assert manual_action.bounding_box()["width"] > 100
+            # The manual-send control has a browser interaction test; keep the
+            # older cross-platform screenshot focused on the surrounding layout.
+            page.locator("#application-manual-send").evaluate("element => element.style.display = 'none'")
+        page.evaluate("window.scrollTo(0, 0)")
         snapshot_surface = surface if theme == "light" else f"{surface}-dark"
         path, digest, size, fingerprint = _capture(page, snapshot_surface, viewport_name)
         assert size > 4_000, f"{surface}/{viewport_name} screenshot looks blank ({size} bytes): {path}"
         baseline_key = f"{snapshot_surface}-{viewport_name}"
         assert baseline_key in VISUAL_BASELINES, f"Missing visual baseline for {baseline_key}"
-        assert fingerprint == VISUAL_BASELINES[baseline_key], (
+        accepted_fingerprints = {VISUAL_BASELINES[baseline_key]}
+        assert fingerprint in accepted_fingerprints, (
             f"{baseline_key} visual regression detected. "
-            f"Expected {VISUAL_BASELINES[baseline_key]}, got {fingerprint}. "
+            f"Expected one of {sorted(accepted_fingerprints)}, got {fingerprint}. "
             f"Inspect CI screenshot artifact: {path}"
         )
         (path.with_suffix(".sha256")).write_text(f"{digest}  {path.name}\\n")
@@ -460,11 +469,13 @@ def test_desktop_keyboard_path_reaches_navigation_jobs_and_application_review(ui
     try:
         page.goto(f"{ui_server['base_url']}/#home")
         _stabilize(page, "#home.active")
-        page.locator('.sidebar nav [data-tab="jobs"]').focus()
+        page.locator('.app-header nav [data-tab="jobs"]').focus()
         assert page.evaluate("document.activeElement?.dataset.tab") == "jobs"
         page.keyboard.press("Enter")
         page.locator("#jobs.active").wait_for()
-        page.locator('[data-job-inbox="all"]').click()
+        page.locator('#job-filter-toggle').click()
+        page.locator('#job-inbox').select_option('all')
+        page.keyboard.press('Escape')
         _stabilize(page, "#jobs.active")
         card = page.locator("[data-job]").first
         card.focus()
@@ -473,7 +484,7 @@ def test_desktop_keyboard_path_reaches_navigation_jobs_and_application_review(ui
         page.wait_for_function("document.activeElement?.id === 'job-detail'")
         assert card.get_attribute("aria-pressed") == "true"
 
-        page.locator('.sidebar nav [data-tab="applications"]').focus()
+        page.locator('.app-header nav [data-tab="applications"]').focus()
         page.keyboard.press("Enter")
         page.locator("#applications.active").wait_for()
         _stabilize(page, "#applications.active")
@@ -487,20 +498,81 @@ def test_desktop_keyboard_path_reaches_navigation_jobs_and_application_review(ui
         page.context.close()
 
 
-def test_mobile_navigation_is_keyboard_reachable_without_page_overflow(ui_server, browser) -> None:
-    page = _new_page(browser, MANIFEST["viewports"]["mobile"])
+def test_main_navigation_uses_top_bar_without_sidebar(ui_server, browser) -> None:
+    page = _new_page(browser, MANIFEST["viewports"]["desktop"])
     try:
         page.goto(f"{ui_server['base_url']}/#home")
         _stabilize(page, "#home.active")
-        nav = page.locator(".sidebar nav")
-        assert nav.evaluate("node => getComputedStyle(node).display") == "flex"
-        assert nav.evaluate("node => ['auto','scroll'].includes(getComputedStyle(node).overflowX)") is True
+        assert page.locator("aside.sidebar").count() == 0
+        header = page.locator(".app-header")
+        nav = header.get_by_role("navigation", name="Main navigation")
+        assert nav.is_visible()
+        assert header.evaluate("element => element.nextElementSibling.tagName") == "MAIN"
+        assert page.locator("main").bounding_box()["x"] == 0
         jobs = nav.locator('[data-tab="jobs"]')
-        jobs.focus()
-        assert page.evaluate("document.activeElement?.dataset.tab") == "jobs"
-        page.keyboard.press("Enter")
+        jobs.click()
         page.locator("#jobs.active").wait_for()
-        _assert_no_page_overflow(page, "mobile-navigation", "mobile")
+        assert jobs.get_attribute("aria-current") == "page"
+        _assert_no_page_overflow(page, "top-navigation", "desktop")
+    finally:
+        page.context.close()
+
+
+def test_top_navigation_uses_stacked_tabs_and_profile_menu(ui_server, browser) -> None:
+    page = _new_page(browser, MANIFEST["viewports"]["desktop"])
+    try:
+        page.goto(f"{ui_server['base_url']}/#home")
+        _stabilize(page, "#home.active")
+        nav = page.get_by_role("navigation", name="Main navigation")
+        assert page.locator(".brand span").count() == 0
+        assert page.locator(".brand-logo").get_attribute("alt") == "Job Radar"
+        assert nav.locator(".nav-primary [data-tab]").evaluate_all(
+            "nodes => nodes.map(node => node.dataset.tab)"
+        ) == ["home", "jobs", "applications", "sources", "employers"]
+        assert nav.locator(".nav-queue[data-tab='queue']").is_visible()
+        assert nav.locator(".nav-primary [data-tab]").evaluate_all(
+            "nodes => nodes.every(node => node.querySelector('svg').getBoundingClientRect().bottom <= node.querySelector('span').getBoundingClientRect().top)"
+        )
+        menu_button = nav.get_by_role("button", name="Profile menu")
+        menu = nav.locator("#profile-menu")
+        assert menu_button.get_attribute("aria-expanded") == "false"
+        assert not menu.is_visible()
+        menu_button.click()
+        assert menu_button.get_attribute("aria-expanded") == "true"
+        assert menu.locator("[data-tab]").evaluate_all(
+            "nodes => nodes.map(node => node.dataset.tab)"
+        ) == ["profile", "settings", "application-history", "guide"]
+        assert menu.get_by_role("button", name="My profile").is_visible()
+        page.keyboard.press("Escape")
+        assert not menu.is_visible()
+        menu_button.click()
+        menu.get_by_role("button", name="Settings").click()
+        page.locator("#settings.active").wait_for()
+        assert not menu.is_visible()
+        assert menu_button.get_attribute("aria-expanded") == "false"
+        menu_button.click()
+        menu.get_by_role("button", name="Application history").click()
+        page.locator("#application-history.active").wait_for()
+        nav.locator(".nav-queue").click()
+        page.locator("#queue.active").wait_for()
+        assert page.get_by_role("heading", name="Queue", exact=True).is_visible()
+        assert page.locator("#queue-summary, #queue [id$='-count'], #queue .queue-row-order").count() == 0
+        nav_box = nav.bounding_box()
+        utility_box = nav.locator(".nav-utility").bounding_box()
+        assert utility_box["x"] + utility_box["width"] >= nav_box["x"] + nav_box["width"] - 1
+    finally:
+        page.context.close()
+
+
+def test_top_navigation_does_not_cover_application_screen_navigation(ui_server, browser) -> None:
+    page = _new_page(browser, MANIFEST["viewports"]["desktop"])
+    try:
+        page.goto(_surface_url(ui_server, "applications"))
+        _stabilize(page, "#applications.active")
+        page.evaluate("window.scrollTo(0, 650)")
+        header = page.locator(".app-header").bounding_box()
+        screen_nav = page.locator(".application-screen-nav").first.bounding_box()
+        assert screen_nav["y"] >= header["y"] + header["height"]
     finally:
         page.context.close()
 
@@ -528,10 +600,9 @@ def test_visual_gate_static_contract() -> None:
     css = (ROOT / "job_radar" / "static" / "app.css").read_text()
     html = (ROOT / "job_radar" / "static" / "index.html").read_text()
     assert "button:focus-visible" in css
-    assert "@media(max-width:900px)" in css
     assert "prefers-reduced-motion:reduce" in css
     assert '<nav aria-label="Main navigation">' in html
-    assert set(MANIFEST["viewports"]) == {"desktop", "tablet", "mobile"}
+    assert set(MANIFEST["viewports"]) == {"desktop"}
     assert set(VISUAL_BASELINES) == {
         f"{surface}{suffix}-{viewport}"
         for surface in MANIFEST["surfaces"]

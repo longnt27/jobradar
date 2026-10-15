@@ -5,7 +5,9 @@ from pathlib import Path
 from threading import Thread
 
 import uvicorn
+import pytest
 from fastapi.testclient import TestClient
+from playwright.async_api import Error as PlaywrightError
 from playwright.sync_api import sync_playwright
 
 from job_radar.drafting import get_draft, prepare_draft
@@ -13,7 +15,9 @@ from job_radar.settings import Settings
 from job_radar.web import create_app
 
 
-def test_collection_failure_replaces_old_inspection_instruction(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize("kind", ["web", "linkedin_easy_apply"])
+@pytest.mark.parametrize("error_type", [ValueError, PlaywrightError])
+def test_collection_failure_replaces_old_inspection_instruction(tmp_path: Path, monkeypatch, kind, error_type) -> None:
     app = create_app(Settings(tmp_path))
     db = app.state.db
     db.set_setting("profile", {
@@ -23,22 +27,27 @@ def test_collection_failure_replaces_old_inspection_instruction(tmp_path: Path, 
     client = TestClient(app)
     job = client.post("/api/jobs/import", json={"title": "AI Engineer", "company": "FiinGroup", "description": "Build AI systems."}).json()
     draft = prepare_draft(db, app.state.settings, job["id"], "template")
-    url = "https://www.linkedin.com/jobs/view/123/"
-    db.execute("UPDATE application_drafts SET destination=? WHERE id=?", (json.dumps({"kind": "linkedin_easy_apply", "url": url}), draft["id"]))
+    app.state.auto_apply_manager.register_review(draft)
+    db.execute("UPDATE auto_application_attempts SET status='awaiting_review' WHERE draft_id=?", (draft["id"],))
+    url = "https://www.linkedin.com/jobs/view/123/" if kind == "linkedin_easy_apply" else "https://example.org/apply"
+    db.execute("UPDATE application_drafts SET destination=? WHERE id=?", (json.dumps({"kind": kind, "url": url}), draft["id"]))
     endpoint = f"/api/applications/{draft['id']}"
-    assert client.get(endpoint).json()["send_blockers"] == ["LinkedIn application questions have not finished loading."]
+    loading = "LinkedIn application questions have not finished loading." if kind == "linkedin_easy_apply" else "Application questions have not finished loading."
+    assert client.get(endpoint).json()["send_blockers"] == [loading]
 
     async def fail_collection(*_args):
-        raise ValueError("This LinkedIn posting is no longer accepting applications.")
+        raise error_type("Application page loading failed.")
 
     monkeypatch.setattr("job_radar.web.inspect_form", fail_collection)
     assert client.post(endpoint + "/inspect").status_code == 422
     saved = client.get(endpoint).json()
-    assert saved["send_blockers"] == ["This LinkedIn posting is no longer accepting applications."]
+    assert saved["send_blockers"] == ["Application page loading failed."]
     assert not saved["send_ready"]
+    assert saved["review_status"] == "needs_review"
+    assert saved["preparation_detail"] == "Application page loading failed."
 
     async def successful_collection(*_args):
-        form = {"kind": "linkedin_easy_apply", "complete": True, "signature": "all-pages", "destination_url": url,
+        form = {"kind": kind, "complete": True, "signature": "all-pages", "destination_url": url,
                 "fields": [], "answers": {}, "attachments": {}, "inspection_blockers": []}
         db.execute("UPDATE application_drafts SET form_data=? WHERE id=?", (json.dumps(form), draft["id"]))
         return get_draft(db, draft["id"])
@@ -48,9 +57,12 @@ def test_collection_failure_replaces_old_inspection_instruction(tmp_path: Path, 
     saved = client.get(endpoint).json()
     assert saved["send_ready"]
     assert saved["send_blockers"] == []
+    assert saved["review_status"] == "awaiting_review"
+    assert saved["preparation_detail"] == "Review the complete application before approving."
 
 
-def test_linkedin_questions_load_automatically_and_save_without_reinspection(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize("kind", ["web", "linkedin_easy_apply"])
+def test_questions_load_automatically_and_save_without_reinspection(tmp_path: Path, monkeypatch, kind) -> None:
     app = create_app(Settings(tmp_path))
     db = app.state.db
     db.execute("UPDATE sources SET enabled=0")
@@ -65,20 +77,24 @@ def test_linkedin_questions_load_automatically_and_save_without_reinspection(tmp
     draft = prepare_draft(db, app.state.settings, job["id"], "template")
     app.state.auto_apply_manager.register_review(draft)
     db.execute("UPDATE auto_application_attempts SET detail='ChatGPT drafting failed earlier' WHERE draft_id=?", (draft["id"],))
+    url = "https://www.linkedin.com/jobs/view/123/" if kind == "linkedin_easy_apply" else "https://example.org/apply"
     db.execute("UPDATE application_drafts SET destination=? WHERE id=?", (json.dumps({
-        "kind": "linkedin_easy_apply", "url": "https://www.linkedin.com/jobs/view/123/",
+        "kind": kind, "url": url,
     }), draft["id"]))
     calls = []
 
     async def collect(_db, _settings, draft_id):
         calls.append(draft_id)
         form = {
-            "kind": "linkedin_easy_apply", "complete": True, "steps_total": 4,
-            "signature": "all-pages", "destination_url": "https://www.linkedin.com/jobs/view/123/",
+            "kind": kind, "steps_total": 4,
+            "signature": "all-pages", "destination_url": url,
             "fields": [{"index": 0, "position": 0, "step": 3, "type": "text", "label": "Years of experience",
                         "name": "years", "required": True, "options": []}],
-            "answers": {"0": ""}, "attachments": {}, "inspection_blockers": ["Answer required: Years of experience"],
+            "answers": {"0": ""}, "attachments": {},
+            "inspection_blockers": ["Answer required: Years of experience"] if kind == "linkedin_easy_apply" else [],
         }
+        if kind == "linkedin_easy_apply":
+            form["complete"] = True
         db.execute("UPDATE application_drafts SET form_data=? WHERE id=?", (json.dumps(form), draft_id))
         return get_draft(db, draft_id)
 
@@ -104,15 +120,18 @@ def test_linkedin_questions_load_automatically_and_save_without_reinspection(tmp
                 answer = page.locator('[data-answer="0"]')
                 answer.wait_for()
                 assert answer.input_value() == ""
-                assert page.locator("#inspect-form-inline").count() == 0
+                if kind == "linkedin_easy_apply":
+                    assert page.locator("#inspect-form-inline").count() == 0
                 assert page.get_by_role("button", name="Approve & send").is_disabled()
                 answer.fill("2")
                 with page.expect_response(lambda response: response.request.method == "PATCH"):
                     page.get_by_role("button", name="Save changes").click()
                 page.wait_for_function("!document.querySelector('#send-draft').disabled")
                 saved = client.get(f"/api/applications/{draft['id']}").json()
-                assert saved["form_data"]["complete"] and saved["send_ready"]
+                assert saved["send_ready"]
                 assert saved["form_data"]["answers"]["0"] == "2"
+                assert saved["review_status"] == "needs_review"
+                assert "ChatGPT drafting failed earlier" in saved["preparation_detail"]
                 assert calls == [draft["id"]]
             finally:
                 browser.close()

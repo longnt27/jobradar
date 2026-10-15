@@ -39,7 +39,7 @@ def test_social_sign_in_is_a_setup_step_and_expiry_is_visible_from_jobs(tmp_path
                 page.locator("#social-sign-in-panel[open]").wait_for()
                 assert page.get_by_role("button", name="Sign in to LinkedIn").is_visible()
                 assert page.get_by_role("button", name="Sign in to Facebook").is_visible()
-                assert page.get_by_role("button", name="Sign in to Zalo").is_visible()
+                assert page.get_by_role("button", name="Sign in to Zalo").count() == 0
                 assert page.locator("#setup-browser-finish").count() == 0
 
                 app.state.db.set_setting("social_login_completed_at_linkedin", "2026-10-01T12:00:00+00:00")
@@ -56,7 +56,7 @@ def test_social_sign_in_is_a_setup_step_and_expiry_is_visible_from_jobs(tmp_path
                 assert page.locator("#setup-facebook-form").count() == 0
                 page.get_by_role("button", name="Job sources", exact=True).click()
                 page.locator("#sources.active").wait_for()
-                assert page.locator(".sidebar nav [data-tab='sources']").get_attribute("class") == "active"
+                assert page.locator(".app-header nav [data-tab='sources']").get_attribute("class") == "active"
                 assert page.locator("#jobs [data-tab='sources']").count() == 0
                 assert page.locator("#home [data-tab='sources']").count() == 0
                 page.locator("#sources details summary").filter(has_text="Add a source").click()
@@ -70,11 +70,11 @@ def test_social_sign_in_is_a_setup_step_and_expiry_is_visible_from_jobs(tmp_path
                 page.locator("#source-form [name='kind']").select_option("linkedin")
                 assert page.locator("#source-name-label").is_hidden()
                 assert "LinkedIn Jobs search link" in page.locator("#source-url-hint").inner_text()
-                page.locator(".sidebar nav [data-tab='employers']").click()
+                page.locator(".app-header nav [data-tab='employers']").click()
                 page.locator("#employers.active").wait_for()
-                assert page.locator(".sidebar nav [data-tab='employers']").get_attribute("class") == "active"
-                assert page.locator(".sidebar nav [data-tab='sources']").get_attribute("class") != "active"
-                page.locator(".sidebar nav [data-tab='sources']").click()
+                assert page.locator(".app-header nav [data-tab='employers']").get_attribute("class") == "active"
+                assert page.locator(".app-header nav [data-tab='sources']").get_attribute("class") != "active"
+                page.locator(".app-header nav [data-tab='sources']").click()
                 page.locator("#sources.active").wait_for()
             finally:
                 browser.close()

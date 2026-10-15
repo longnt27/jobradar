@@ -121,8 +121,7 @@ def test_home_previews_only_six_current_queue_items(tmp_path: Path) -> None:
                 assert page.get_by_role("heading", name="Activity").is_visible()
                 assert page.locator("#home-queue .home-queue-row").count() == 6
                 assert "Queued engineer" in page.locator("#home-queue").inner_text()
-                assert "9 in queue" in page.locator("#home-queue-count").inner_text()
-                assert "1 need attention" in page.locator("#home-queue-count").inner_text()
+                assert page.locator("#home-queue-count").count() == 0
                 assert "Failed engineer" in page.locator("#home-queue").inner_text()
             finally:
                 browser.close()

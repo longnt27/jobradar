@@ -51,12 +51,17 @@ def ingest(db: Database, source_id: str, job: ObservedJob) -> tuple[str, bool]:
     profile = db.get_setting("profile", {})
     matching_model = db.get_setting("matching_model", "")
     with db.connection() as conn:
-        existing = conn.execute("SELECT id FROM observations WHERE source_id=? AND url=?", (source_id, url)).fetchone()
+        existing = conn.execute("SELECT o.id,o.payload,s.kind FROM observations o JOIN sources s ON s.id=o.source_id WHERE o.source_id=? AND o.url=?", (source_id, url)).fetchone()
         if existing:
             observation_id = existing["id"]
+            payload = dict(job.__dict__)
+            identity = json.loads(existing["payload"]).get("extracted_identity")
+            if (isinstance(identity, dict) and identity.get("content_hash") == digest and
+                (existing["kind"] == "facebook" or identity.get("source_title") == job.title and identity.get("source_company") == job.company)):
+                payload.update(title=identity["title"], company=identity["company"], extracted_identity=identity)
             conn.execute(
                 "UPDATE observations SET last_seen_at=?,raw_text=?,content_hash=?,payload=?,published_at=COALESCE(?,published_at) WHERE id=?",
-                (timestamp, raw, digest, json.dumps(job.__dict__, ensure_ascii=False), job.published_at, observation_id),
+                (timestamp, raw, digest, json.dumps(payload, ensure_ascii=False), job.published_at, observation_id),
             )
             linked = conn.execute("SELECT vacancy_id FROM vacancy_observations WHERE observation_id=?", (observation_id,)).fetchone()
             if linked:

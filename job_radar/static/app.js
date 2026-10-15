@@ -51,7 +51,6 @@ let activePreparationJobId = null;
 let applicationReviewChanges = {};
 const applicationFormCollections = new Set();
 const applicationFormCollectionErrors = new Map();
-let applicationWorkspaceView = 'drafts';
 let currentSearchIntent = null;
 let editingPositionId = null;
 
@@ -70,10 +69,9 @@ function formatDescription(value) {
   }).join('');
 }
 
-function renderJobAnalysis(job, score) {
+function renderJobAnalysis(job, score, {showStatus = true} = {}) {
   const status = job.analysis_status;
-  const stateMessage = status === 'done' ? `Match reviewed · ${relativeWhen(job.analyzed_at)}`
-    : status === 'failed' ? `What happened: Local match review failed after 3 attempts (${escapeHtml(job.analysis_error || 'Model error')}). Next step: Verify Ollama is running in Settings, then click "Try review again" below.`
+  const stateMessage = status === 'failed' ? `What happened: Local match review failed after 3 attempts (${escapeHtml(job.analysis_error || 'Model error')}). Next step: Verify Ollama is running in Settings, then click "Try review again" below.`
     : status === 'dismissed' ? 'Failed review dismissed. You can still decide from the posting itself.'
     : ['pending', 'running'].includes(status) ? (job.analysis_error ? `What happened: Previous attempt encountered an issue (${escapeHtml(job.analysis_error)}). Next step: Job Radar is retrying automatically in the background.` : 'Job Radar is reading the posting and checking the match.')
     : 'No detailed match review yet. You can still inspect and triage this job.';
@@ -92,10 +90,13 @@ function renderJobAnalysis(job, score) {
   })[key] || key.replaceAll('_', ' ').replace(/^./, (letter) => letter.toUpperCase());
   const whyItems = !completed ? '<li>Match review is in progress. Read the posting to judge fit for now.</li>' : best.length
     ? best.map(([key,item]) => `<li><strong>${escapeHtml(labelFor(key))}:</strong> ${escapeHtml(item.reason || 'Good fit')}</li>`).join('')
+    : job.strongest_signal?.reason ? `<li>${escapeHtml(job.strongest_signal.reason)}</li>`
     : score?.explanation ? `<li>${escapeHtml(score.explanation)}</li>` : '<li>No strong fit signal has been identified yet.</li>';
   const riskItems = completed ? [
     ...(score?.hard_exclusions || []).map((reason) => `<li>${escapeHtml(reason)}</li>`),
     ...gaps.map(([key,item]) => `<li><strong>${escapeHtml(labelFor(key))}:</strong> ${escapeHtml(item.reason || 'Needs a closer look')}</li>`),
+    ...(!gaps.length && job.main_gap?.reason ? [`<li>${escapeHtml(job.main_gap.reason)}</li>`] : []),
+    ...(job.missing_evidence?.length ? [`<li>Missing evidence: ${escapeHtml(job.missing_evidence.join(', '))}</li>`] : []),
   ] : [];
   const watchOut = !completed ? '<li>Check the posting requirements while the new review runs.</li>' : riskItems.length ? riskItems.join('') : '<li>No major gap identified by the current match review. Check the posting for anything the model missed.</li>';
   const salary = facts.salary_range || 'Not stated';
@@ -116,16 +117,16 @@ function renderJobAnalysis(job, score) {
     const weight = Number(score?.weights?.[key] || 0);
     return `<div class="criterion-row"><div class="criterion-copy"><strong>${escapeHtml(labelFor(key))}</strong><small>${escapeHtml(item.reason || '')}</small></div><div class="criterion-score"><span>${escapeHtml(item.score)}/10</span><small>${weight}% weight</small></div><div class="criterion-weight"><span style="width:${Math.max(4, Math.min(100, weight))}%"></span></div></div>`;
   }).join('');
-  const breakdown = weighted ? `<details class="detail-disclosure"><summary>Detailed match breakdown <span>${job.score}/100</span></summary>
+  const breakdown = weighted ? `<details class="detail-disclosure"><summary>Detailed match breakdown</summary>
     <p>${escapeHtml(score?.explanation || '')}</p><div class="criteria-list">${weighted}</div>
   </details>` : '';
 
-  return `<div class="review-section job-review-status"><p class="hint">${stateMessage}</p>${retry}</div>
-    <div class="job-decision-summary">
+  return `<div class="job-decision-summary">
+      <section class="decision-card decision-card--basics"><h3>Basics</h3>${basics}</section>
       <section class="decision-card decision-card--fit"><h3>Why it fits</h3><ul>${whyItems}</ul></section>
       <section class="decision-card decision-card--risk"><h3>Watch out</h3><ul>${watchOut}</ul></section>
-      <section class="decision-card decision-card--basics"><h3>Basics</h3>${basics}</section>
     </div>
+    ${showStatus && status !== 'done' ? `<div class="job-review-status"><p class="hint">${stateMessage}</p>${retry}</div>` : ''}
     ${extracted}${breakdown}`;
 }
 
@@ -298,8 +299,8 @@ function formatErrorDetails(error, fallbackNextStep = 'Review the details and tr
     next = 'Click "Save inquiry" before choosing another contact.';
   } else if (/quota/i.test(raw)) {
     what = 'AI provider quota limit reached';
-    next = 'Wait for quota to refresh or retry failed items in Applications Activity.';
-    action = { label: 'View Activity', onClick: () => { showTab('applications'); setApplicationWorkspaceView('activity'); } };
+    next = 'Wait for quota to refresh or retry failed items in Application history.';
+    action = { label: 'View application history', onClick: () => showTab('application-history') };
   }
 
   return { what, next, action };
@@ -559,7 +560,7 @@ function setTabLoading(target, loading) {
 }
 
 function socialSiteNames(browser) {
-  return (browser.sites || []).map((site) => ({linkedin:'LinkedIn', facebook:'Facebook', zalo:'Zalo'})[site]).join(' and ');
+  return (browser.sites || []).filter((site) => ['linkedin', 'facebook'].includes(site)).map((site) => ({linkedin:'LinkedIn', facebook:'Facebook'})[site]).join(' and ');
 }
 
 function setStepStatus(selector, label, tone = '') {
@@ -569,20 +570,21 @@ function setStepStatus(selector, label, tone = '') {
 }
 
 function renderSocialAuth(browser, linkedinPaused = false) {
-  const expired = (browser.sites || []).length > 0;
+  const expiredSites = (browser.sites || []).filter((site) => ['linkedin', 'facebook'].includes(site));
+  const expired = expiredSites.length > 0;
   const connected = browser.connected_sites || [];
   $('#social-auth-banner').hidden = !expired && !linkedinPaused;
   $('#social-auth-message').textContent = linkedinPaused
     ? 'What happened: LinkedIn automated checks are paused after an account activity warning. Next step: Review jobs manually; other sources continue checking.'
     : expired ? `What happened: ${socialSiteNames(browser)} session expired. Next step: Reconnect to resume checks or approved messages.` : '';
-  $('#social-auth-action').hidden = linkedinPaused && !(browser.sites || []).some((site) => site !== 'linkedin');
-  const connectedCount = ['linkedin', 'facebook', 'zalo'].filter(site => connected.includes(site)).length;
-  const socialReady = !expired && !linkedinPaused && connectedCount === 3 && !['opening', 'open'].includes(browser.state);
+  $('#social-auth-action').hidden = linkedinPaused && !expiredSites.some((site) => site !== 'linkedin');
+  const connectedCount = ['linkedin', 'facebook'].filter(site => connected.includes(site)).length;
+  const socialReady = !expired && !linkedinPaused && connectedCount === 2 && !['opening', 'open'].includes(browser.state);
   setStepStatus('#social-sign-in-status', linkedinPaused ? 'LinkedIn paused' : expired ? 'Sign in again'
     : ['opening', 'open'].includes(browser.state) ? 'Waiting for sign-in'
-    : socialReady ? 'All connected' : `${connectedCount} of 3 connected`, socialReady ? '' : 'warning');
-  for (const site of ['linkedin', 'facebook', 'zalo']) {
-    const label = ({linkedin:'LinkedIn', facebook:'Facebook', zalo:'Zalo'})[site];
+    : socialReady ? 'All connected' : `${connectedCount} of 2 connected`, socialReady ? '' : 'warning');
+  for (const site of ['linkedin', 'facebook']) {
+    const label = ({linkedin:'LinkedIn', facebook:'Facebook'})[site];
     const needsSignIn = !connected.includes(site) || (browser.sites || []).includes(site);
     $(`#${site}-sign-in-status`).textContent = site === 'linkedin' && linkedinPaused ? 'Automated checks paused'
       : (browser.sites || []).includes(site) ? 'Session expired'
@@ -633,7 +635,7 @@ async function loadSetup() {
   } else if (data.browser.state === 'opening') {
     browserDetail = 'Opening Chrome…';
   } else if (data.browser.state === 'open') {
-    browserDetail = `Waiting for ${({linkedin:'LinkedIn', facebook:'Facebook', zalo:'Zalo'})[data.browser.active_site]} sign-in in Chrome. The window closes automatically when the account page loads.`;
+    browserDetail = `Waiting for ${({linkedin:'LinkedIn', facebook:'Facebook'})[data.browser.active_site] || 'site'} sign-in in Chrome. The window closes automatically when the account page loads.`;
   } else if (data.browser.state === 'reauth_required') {
     browserDetail = `What happened: ${socialSiteNames(data.browser)} session expired. Next step: Click Reconnect below to sign in again. Other sources keep scanning.`;
   } else if (data.browser.last_saved_at) {
@@ -684,11 +686,11 @@ async function openHomeRoute(route) {
   if (route.tab === 'applications') {
     const view = params.get('view') || 'drafts';
     const draft = params.get('draft');
-    await showTab(draft ? `applications/${draft}` : 'applications');
-    setApplicationWorkspaceView(view);
-    if (draft) await loadApplications(draft);
-    else if (view === 'history') await loadSubmissionHistory();
-    else if (['automation','activity'].includes(view)) await loadAutoApply();
+    if (view === 'automation') {
+      await showTab('settings');
+      $('#auto-apply-panel').open = true;
+    } else if (['activity', 'history'].includes(view)) await showTab('application-history');
+    else await showTab(draft ? `applications/${draft}` : 'applications');
     return;
   }
   await showTab(route.tab);
@@ -852,8 +854,6 @@ async function loadHomeQueue() {
     ...(queue.drafts.attention || []).map((item) => ({kind:'draft', label:'Draft', item, status:'Confirm application method'})),
   ];
   const preview = [...running, ...attention, ...waiting].slice(0, 6);
-  const total = running.length + waiting.length;
-  $('#home-queue-count').textContent = `${total} in queue${attention.length ? ` · ${attention.length} need attention` : ''}`;
   $('#home-queue').innerHTML = preview.length ? preview.map(({kind, label, item, status}) =>
     `<button type="button" class="home-queue-row" data-home-queue-kind="${kind}" data-home-queue-id="${item.id}" ${item.draft_id ? `data-home-queue-draft="${item.draft_id}"` : ''}><span class="home-queue-kind">${label}</span><span class="home-queue-title">${escapeHtml(kind === 'scan' ? item.name : item.title)}</span><small>${status}</small></button>`
   ).join('') : '<p class="queue-empty">Nothing running or waiting.</p>';
@@ -875,11 +875,10 @@ async function loadHomeQueue() {
 
 let queueSignature = null;
 
-function queueRow(item, kind, label, position = null, active = false) {
+function queueRow(item, kind, label, active = false) {
   const name = kind === 'scan' ? item.name : item.title;
   const detail = kind === 'scan' ? item.kind : `${item.company}${item.score == null ? '' : ` · ${item.score}/100`}`;
   return `<button type="button" class="queue-row ${active ? 'is-active' : ''}" data-queue-kind="${kind}" data-queue-id="${item.id}" ${item.draft_id ? `data-queue-draft="${item.draft_id}"` : ''}>
-    <span class="queue-row-order">${active ? '●' : position}</span>
     <span class="queue-row-copy"><strong>${escapeHtml(name)}</strong><small>${escapeHtml(detail)}</small></span>
     <span class="queue-row-state">${escapeHtml(label)}</span>
   </button>`;
@@ -887,7 +886,7 @@ function queueRow(item, kind, label, position = null, active = false) {
 
 function queueWaiting(target, items, kind, labelFor) {
   const scrollTop = target.querySelector('.queue-scroll')?.scrollTop || 0;
-  target.innerHTML = items.length ? `<div class="queue-waiting-head">Waiting <span>${items.length}</span></div><div class="queue-scroll">${items.map((item, index) => queueRow(item, kind, labelFor(item), item.position || index + 1)).join('')}</div>`
+  target.innerHTML = items.length ? `<div class="queue-waiting-head">Waiting</div><div class="queue-scroll">${items.map((item) => queueRow(item, kind, labelFor(item))).join('')}</div>`
     : '<p class="queue-empty">Nothing waiting.</p>';
   if (target.querySelector('.queue-scroll')) target.querySelector('.queue-scroll').scrollTop = scrollTop;
 }
@@ -934,11 +933,8 @@ function queueUpdateTime() {
 function announceQueueUpdate(data, reason, changed) {
   const userTriggered = reason === 'manual' || reason === 'action';
   if (!userTriggered && !(reason === 'poll' && changed)) return;
-  const total = [data.scans, data.analysis, data.drafts]
-    .reduce((sum, lane) => sum + lane.active.length + lane.waiting.length, 0);
-  const failed = data.analysis.failed.length;
   const prefix = reason === 'manual' ? 'Queue refreshed' : reason === 'poll' ? 'Queue changed' : 'Queue updated';
-  $('#queue-live').textContent = `${prefix} at ${queueUpdateTime()}. ${total} work item${total === 1 ? '' : 's'} in progress or waiting${failed ? `; ${failed} need${failed === 1 ? 's' : ''} attention` : ''}.`;
+  $('#queue-live').textContent = `${prefix} at ${queueUpdateTime()}. Review the updated work items.`;
 }
 
 async function loadQueue(options = {}) {
@@ -950,21 +946,15 @@ async function loadQueue(options = {}) {
   const changed = queueSignature !== null && queueSignature !== signature;
   queueSignature = signature;
   const scans = data.scans, analysis = data.analysis, drafts = data.drafts;
-  const total = [scans, analysis, drafts].reduce((sum, lane) => sum + lane.active.length + lane.waiting.length, 0);
-  $('#queue-summary').innerHTML = `<div><strong>${total}</strong><span>work items in progress or waiting</span></div><div><strong>${scans.active.length + scans.waiting.length}</strong><span>scans</span></div><div><strong>${analysis.active.length + analysis.waiting.length}</strong><span>match reviews</span></div><div><strong>${drafts.active.length + drafts.waiting.length}</strong><span>drafts</span></div>`;
-  for (const [id, lane] of [['scan', scans], ['analysis', analysis], ['draft', drafts]]) {
-    const blocked = id === 'analysis' ? analysis.failed.length : id === 'draft' ? (drafts.attention || []).length : 0;
-    $(`#queue-${id}-count`).textContent = `${lane.active.length} running · ${lane.waiting.length} waiting${blocked ? ` · ${blocked} needs attention` : ''}`;
-  }
   $('#queue-scan-active').innerHTML = scans.active.length
-    ? `<div class="queue-now-head">Scanning now</div>${scans.active.map((item) => queueRow(item, 'scan', item.started_at ? `Started ${when(item.started_at)}` : 'Running', null, true)).join('')}`
+    ? `<div class="queue-now-head">Scanning now</div>${scans.active.map((item) => queueRow(item, 'scan', item.started_at ? `Started ${when(item.started_at)}` : 'Running', true)).join('')}`
     : '<p class="queue-empty">No scan running.</p>';
   queueWaiting($('#queue-scan-waiting'), scans.waiting, 'scan', (item) => item.requested_by === 'you' ? 'Requested by you' : 'Scheduled');
   $('#queue-analysis-active').innerHTML = analysis.active.length
-    ? `<div class="queue-now-head">Working now</div>${analysis.active.map((item) => queueRow(item, 'analysis', item.stage === 'scoring' ? 'Checking match' : 'Reading job details', null, true)).join('')}`
+    ? `<div class="queue-now-head">Working now</div>${analysis.active.map((item) => queueRow(item, 'analysis', item.stage === 'scoring' ? 'Checking match' : 'Reading job details', true)).join('')}`
     : '<p class="queue-empty">No job being analyzed.</p>';
   queueWaiting($('#queue-analysis-waiting'), analysis.waiting, 'analysis', () => 'Read job, then check match');
-  $('#queue-analysis-failed').innerHTML = analysis.failed.length ? `<div class="queue-waiting-head queue-failed-head">Needs attention <span>${analysis.failed.length}</span></div><div class="queue-scroll">${analysis.failed.map((item) => `<div class="queue-failed-row">${queueRow(item, 'analysis', 'Match review failed', '!')}<button type="button" class="text-button" data-queue-dismiss="${item.id}" aria-label="Dismiss failed analysis for ${escapeHtml(item.title)}">Dismiss</button></div>`).join('')}</div>` : '';
+  $('#queue-analysis-failed').innerHTML = analysis.failed.length ? `<div class="queue-waiting-head queue-failed-head">Needs attention</div><div class="queue-scroll">${analysis.failed.map((item) => `<div class="queue-failed-row">${queueRow(item, 'analysis', 'Match review failed')}<button type="button" class="text-button" data-queue-dismiss="${item.id}" aria-label="Dismiss failed analysis for ${escapeHtml(item.title)}">Dismiss</button></div>`).join('')}</div>` : '';
   $('#queue-analysis-failed').querySelectorAll('[data-queue-dismiss]').forEach((button) => button.addEventListener('click', async () => {
     beginPending(button, 'Dismissing…');
     try {
@@ -982,14 +972,14 @@ async function loadQueue(options = {}) {
     $('#queue-analysis-waiting').insertAdjacentHTML('beforeend', '<div class="queue-attention"><strong>What happened:</strong> No matching model selected.<br><strong>Next step:</strong> Open Settings and choose a model to review job fit.</div>');
   }
   $('#queue-draft-active').innerHTML = drafts.active.length
-    ? `<div class="queue-now-head">Preparing now</div>${drafts.active.map((item) => queueRow(item, 'draft', item.stage === 'regenerating' ? 'Regenerating' : 'Preparing draft', null, true)).join('')}`
+    ? `<div class="queue-now-head">Preparing now</div>${drafts.active.map((item) => queueRow(item, 'draft', item.stage === 'regenerating' ? 'Regenerating' : 'Preparing draft', true)).join('')}`
     : '<p class="queue-empty">No draft being prepared.</p>';
   queueWaiting($('#queue-draft-waiting'), drafts.waiting, 'draft', (item) =>
     item.requested_by === 'manual' ? 'Requested by you' : drafts.enabled ? 'Automatic draft' : 'Automation off');
   $('#queue-draft-attention').innerHTML = (drafts.attention || []).length
-    ? `<div class="queue-waiting-head queue-failed-head">Needs confirmation <span>${drafts.attention.length}</span></div><div class="queue-scroll">${drafts.attention.map((item) => queueRow(item, 'draft', 'Confirm application method', '!')).join('')}</div>`
+    ? `<div class="queue-waiting-head queue-failed-head">Needs confirmation</div><div class="queue-scroll">${drafts.attention.map((item) => queueRow(item, 'draft', 'Confirm application method')).join('')}</div>`
     : '';
-  $('#queue-draft-review').innerHTML = drafts.review_ready ? `<button type="button" class="text-button" id="queue-open-reviews">${drafts.review_ready} draft${drafts.review_ready === 1 ? '' : 's'} ready for review →</button>` : '';
+  $('#queue-draft-review').innerHTML = drafts.review_ready ? '<button type="button" class="text-button" id="queue-open-reviews">Drafts ready for review →</button>' : '';
   $('#queue-open-reviews')?.addEventListener('click', () => showTab('applications'));
   document.querySelectorAll('#queue [data-queue-kind]').forEach((button) => button.addEventListener('click', async () => {
     const kind = button.dataset.queueKind, id = button.dataset.queueId;
@@ -1019,11 +1009,7 @@ const JOB_FILTERS = {
 
 function setJobsInboxMode(mode) {
   jobsInboxMode = ['since_last_visit','unseen','all'].includes(mode) ? mode : 'since_last_visit';
-  document.querySelectorAll('[data-job-inbox]').forEach((button) => {
-    const selected = button.dataset.jobInbox === jobsInboxMode;
-    button.classList.toggle('active', selected);
-    button.setAttribute('aria-selected', selected ? 'true' : 'false');
-  });
+  $('#job-inbox').value = jobsInboxMode;
 }
 
 function currentJobFilters() {
@@ -1089,7 +1075,6 @@ async function ensureJobsWorkspace() {
   } else {
     jobsVisitBoundary = savedBoundary === '__first_visit__' ? '' : savedBoundary;
   }
-  $('#jobs-since-label').textContent = jobsVisitBoundary ? 'Since last visit' : 'To review';
   savedJobViews = await api('/api/jobs/views');
   renderSavedJobViews();
 
@@ -1100,10 +1085,6 @@ async function ensureJobsWorkspace() {
       applyJobFilterSnapshot(defaultView.filters || {});
       syncJobsHash('replace');
     } else setJobsInboxMode('since_last_visit');
-  }
-  if (visit) {
-    $('#jobs-since-count').textContent = String(visit.since_last_visit || 0);
-    $('#jobs-unseen-count').textContent = String(visit.unseen || 0);
   }
   jobsWorkspaceReady = true;
 }
@@ -1225,8 +1206,12 @@ function bindJobCards(jobs) {
 }
 
 function renderJobCard(job) {
-  const sourceLabel = !job.source ? 'Manual' : job.source.kind === 'career' ? 'Career page' : job.source.kind === 'linkedin' ? 'LinkedIn' : 'Facebook';
-  const tags = [fitClassLabel(job.fit_class), job.work_mode, sourceLabel].filter(Boolean);
+  const sourceLabel = job.source?.kind === 'linkedin' ? 'LinkedIn' : job.source?.kind === 'facebook' ? 'Facebook' : job.source?.kind === 'career' ? `${job.company} career page` : 'Source';
+  const sourceIcon = job.source?.kind === 'linkedin'
+    ? '<path d="M4 9v11M4 4v.1M9 20V9M9 14a5 5 0 0 1 10 0v6"/>'
+    : job.source?.kind === 'facebook'
+      ? '<path d="M15 4h-2a3 3 0 0 0-3 3v13M7 11h9"/>'
+      : '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/>';
   const dateValue = job.published_at || job.first_seen_at;
   const decisionBadge = job.decision_state !== 'undecided'
     ? lifecycleBadge(jobDecisionLabel(job.decision_state), job.decision_state === 'ignored' ? 'danger' : job.decision_state === 'later' ? 'warning' : 'info')
@@ -1243,11 +1228,11 @@ function renderJobCard(job) {
       ${scoreBadge(job)}<div class="item-title">${escapeHtml(job.title)}</div>
       <div class="job-card-company">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div>
       ${job.salary_range ? `<div class="job-card-salary">${escapeHtml(job.salary_range)} <small>salary from posting</small></div>` : ''}
-      <div class="job-card-tags"><span class="status-badge status-badge--${fitClassTone(job.fit_class)}">${escapeHtml(tags.shift() || '')}</span>${tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join('')}</div>
+      ${job.work_mode ? `<div class="job-card-tags"><span>${escapeHtml(job.work_mode)}</span></div>` : ''}
       <div class="job-card-lifecycle">${decisionBadge}${applicationBadge}${outcomeBadge}</div>
       <div class="job-card-footer"><span${exactTimeTitle(dateValue)}>${job.published_at ? 'Posted' : 'Found'} ${relativeWhen(dateValue)}</span></div>
     </button>
-    <div class="job-card-actions">${jobCardDecisionActions(job)}${job.source ? `<a href="${escapeHtml(job.source.url)}" target="_blank" rel="noopener noreferrer" aria-label="Open original posting for ${escapeHtml(job.title)} at ${escapeHtml(job.company)}">Original ↗</a>` : ''}</div>
+    <div class="job-card-actions">${jobCardDecisionActions(job)}${job.source?.url ? `<a class="job-source-link" href="${escapeHtml(job.source.url)}" target="_blank" rel="noopener noreferrer" aria-label="Open ${sourceLabel} posting for ${escapeHtml(job.title)} at ${escapeHtml(job.company)}"><svg viewBox="0 0 24 24" aria-hidden="true">${sourceIcon}</svg><span>${sourceLabel} ↗</span></a>` : ''}</div>
   </div>`;
 }
 
@@ -1274,19 +1259,12 @@ async function loadJobs() {
     sort: $('#job-sort').value,
   });
   [...query.entries()].forEach(([key,value]) => { if (value === '') query.delete(key); });
-  const [result, failures, intent, matching] = await Promise.all([
-    api(`/api/jobs/page?${query}`), loadJobAnalysis(), api('/api/search-intent'), api('/api/matching/status'),
+  const [result, intent, matching] = await Promise.all([
+    api(`/api/jobs/page?${query}`), api('/api/search-intent'), api('/api/matching/status'),
   ]);
   if (['#job-decision','#job-application','#job-outcome','#job-score','#job-freshness','#job-work-mode','#job-location','#job-source','#job-seniority'].some((selector) => $(selector).value)) {
     $('#job-more-filters').open = true;
   }
-  $('#job-analysis-model').textContent = matching.model ? `Using ${matching.model} on this Mac` : 'No local matching model selected';
-  const progress = matching.pending
-    ? `${matching.completed} reviewed · ${matching.pending} waiting or in progress. Reviews continue in the background.`
-    : matching.model ? `${matching.completed} reviewed · all saved jobs are up to date.` : 'Choose a local model in Settings to review job fit.';
-  $('#matching-overview').textContent = matching.service_error
-    ? `Review paused: ${matching.service_error}`
-    : `${progress}${matching.failed ? ` ${matching.failed} need attention.` : ''}`;
   syncStrongThresholdUi(intent);
   if (jobsPage > result.pages) { jobsPage = result.pages; syncJobsHash(); return loadJobs(); }
   const jobs = result.items;
@@ -1296,16 +1274,8 @@ async function loadJobs() {
     syncJobsHash();
     return loadJobs();
   }
-  $('#jobs-since-count').textContent = String(result.inbox?.since_last_visit || 0);
-  $('#jobs-unseen-count').textContent = String(result.inbox?.unseen || 0);
-  const inboxCopy = jobsInboxMode === 'since_last_visit'
-    ? jobsVisitBoundary
-      ? `${result.inbox?.since_last_visit || 0} undecided job${result.inbox?.since_last_visit === 1 ? '' : 's'} discovered since your previous Jobs visit.`
-      : `${result.inbox?.since_last_visit || 0} undecided job${result.inbox?.since_last_visit === 1 ? '' : 's'} to review.`
-    : jobsInboxMode === 'unseen'
-      ? `${result.inbox?.unseen || 0} unseen undecided job${result.inbox?.unseen === 1 ? '' : 's'}.`
-      : 'Showing your full job history. Decisions, applications, and recruiting outcomes stay separate.';
-  $('#jobs-inbox-summary').textContent = inboxCopy;
+  $('#page-title').textContent = 'Jobs';
+  $('#jobs-new-count').textContent = `${result.inbox?.since_last_visit || 0} new`;
   $('#jobs-page-summary').textContent = result.total ? `Page ${result.page} of ${result.pages} · ${result.total} jobs` : 'No jobs';
   $('#jobs-prev').disabled = jobsPage <= 1;
   $('#jobs-next').disabled = jobsPage >= result.pages;
@@ -1356,18 +1326,12 @@ function markJobUiSeen(id, seenAt = new Date().toISOString()) {
     if (cached && cached.read_state === 'unseen') {
       cached.read_state = 'seen';
       cached.seen_at = seenAt;
-      const countEl = $('#jobs-unseen-count');
-      if (countEl) {
-        const count = Number(countEl.textContent);
-        if (Number.isFinite(count) && count > 0) {
-          countEl.textContent = String(count - 1);
-        }
-      }
     }
   }
 }
 
 async function showJob(id, pin = false, loadedJob = null) {
+  const previousJobId = currentJobDetail?.id;
   activeJob = id;
   activeJobPinned = pin;
   document.querySelectorAll('[data-job]').forEach((node) => {
@@ -1383,23 +1347,19 @@ async function showJob(id, pin = false, loadedJob = null) {
     job.read_state = 'seen';
     markJobUiSeen(id, seen.seen_at);
   }
-  const [profile, setup] = await Promise.all([api('/api/profile'), api('/api/setup')]);
-  const provider = profile.drafting_provider || '';
+  const setup = await api('/api/setup');
   const preparation = setup.capabilities?.application_preparation || {ready:false,missing:[]};
   const sourcePriority = {career:0, linkedin:1, facebook:2};
   const sightings = [...job.observations].sort((a,b) => (sourcePriority[a.kind] ?? 9) - (sourcePriority[b.kind] ?? 9) || a.first_seen_at.localeCompare(b.first_seen_at));
   const preferredSighting = sightings[0];
   const matchCompleted = job.analysis_status === 'done';
-  const originalPostingUrl = preferredSighting?.url && /^https?:\/\//i.test(preferredSighting.url) ? preferredSighting.url : null;
+  const originalPostingUrl = preferredSighting?.url && /^https?:\/\//i.test(preferredSighting.url) ? preferredSighting.url
+    : job.apply_url && /^https?:\/\//i.test(job.apply_url) ? job.apply_url : null;
+  const originalLinkLabel = preferredSighting ? 'Open original posting' : 'Open application page';
   const links = sightings.length ? sightings.map((source) =>
     `<div class="job-sighting" data-sighting-id="${source.id}"><div><a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(source.name)}</a> <span class="pill muted">${escapeHtml(source.kind)}</span> ${preferredSighting?.id === source.id ? '<span class="status-badge status-badge--success">Preferred source</span>' : ''}<small>${escapeHtml(source.merge_reason_label)} · first seen ${relativeWhen(source.first_seen_at)}</small></div>${sightings.length > 1 ? `<button type="button" class="text-button" data-split-sighting="${source.id}">Mark as a different job</button>` : ''}</div>`
   ).join('') : '';
   const score = job.score_detail ? JSON.parse(job.score_detail) : null;
-  const facts = score?.facts || {};
-  const salary = facts.salary_range || '';
-  const applicationMethod = job.apply_url
-    ? job.apply_url.startsWith('mailto:') ? 'Email the employer' : 'Use the application page'
-    : 'Check the original source for application instructions';
   const decisionNote = job.decision_state === 'shortlisted'
     ? 'Shortlisted means you want to keep pursuing this job. It does not send or prepare anything by itself; Automation settings remain separate.'
     : job.decision_state === 'later'
@@ -1412,7 +1372,9 @@ async function showJob(id, pin = false, loadedJob = null) {
     : job.application_progress === 'applied_external'
       ? `Applied elsewhere · ${job.manual_applied_source === 'legacy_state' ? 'migrated from your previous status' : 'marked by you'}.`
       : job.application_progress === 'attention'
-        ? 'A submission may have happened, but confirmation is uncertain. Review submission history before retrying.'
+        ? job.has_confirmed_submission
+          ? 'An application was confirmed, but a later send is uncertain. Review both records before retrying.'
+          : 'A submission may have happened, but confirmation is uncertain. Review submission history before retrying.'
         : job.application_progress === 'draft_ready'
           ? 'A prepared application exists and is waiting for review.'
           : job.application_progress === 'preparing'
@@ -1438,52 +1400,25 @@ async function showJob(id, pin = false, loadedJob = null) {
 
   const detail = $('#job-detail');
   const openDisclosures = captureOpenDisclosures(detail);
-  const detailScroll = detail?.scrollTop || 0;
+  const detailScroll = previousJobId === id ? detail?.scrollTop || 0 : 0;
   const pageScroll = window.scrollY;
 
   detail.setAttribute('tabindex', '-1');
-  detail.innerHTML = `<div class="job-detail-head"><div><h2>${escapeHtml(job.title)}</h2><div class="item-meta">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}</div>
-    <div class="item-meta">${escapeHtml(job.work_mode || '')}${job.published_at ? ` · Posted <span${exactTimeTitle(job.published_at)}>${relativeWhen(job.published_at)}</span>` : ''} · Found <span${exactTimeTitle(job.first_seen_at)}>${relativeWhen(job.first_seen_at)}</span></div></div>
-    ${job.read_state === 'seen' ? '<span class="status-badge status-badge--neutral">Seen</span>' : ''}</div>
-
-    <div class="job-original-actions">${originalPostingUrl ? `<a class="button-link" href="${escapeHtml(originalPostingUrl)}" target="_blank" rel="noopener noreferrer">Open original posting ↗</a>` : '<span class="hint">No original posting link was saved. The collected description is available below.</span>'}</div>
+  detail.innerHTML = `<div class="job-detail-head"><div><div class="job-title-row"><h2>${escapeHtml(job.title)}</h2>${originalPostingUrl ? `<a class="job-original-icon" href="${escapeHtml(originalPostingUrl)}" target="_blank" rel="noopener noreferrer" aria-label="${originalLinkLabel}" title="${originalLinkLabel}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg></a>` : ''}</div><div class="item-meta job-detail-meta">${escapeHtml(job.company)} · ${escapeHtml(job.location || 'Location unknown')}${job.work_mode ? ` · ${escapeHtml(job.work_mode)}` : ''}<span class="job-timestamps">${job.published_at ? ` · Posted <span${exactTimeTitle(job.published_at)}>${relativeWhen(job.published_at)}</span>` : ''} · Found <span${exactTimeTitle(job.first_seen_at)}>${relativeWhen(job.first_seen_at)}</span></span></div></div>
+    <span class="job-score-badge" aria-label="${matchCompleted && job.score != null ? `Match score ${job.score} out of 100; evidence confidence ${Math.max(0, 100 - Number(job.uncertainty || 0))} percent` : 'Match review pending'}">${matchCompleted && job.score != null ? `${job.score} · ${Math.max(0, 100 - Number(job.uncertainty || 0))}% confidence` : 'Score pending'}</span></div>
 
     <div class="job-lifecycle-grid">
       <section class="job-lifecycle-card"><div class="section-head"><div><h3>Your decision</h3><p>${escapeHtml(jobDecisionLabel(job.decision_state))}</p></div></div><p class="hint">${decisionNote}</p><div class="actions">${detailDecisionActions}</div></section>
-      <section class="job-lifecycle-card"><div class="section-head"><div><h3>Application</h3><p>${escapeHtml(applicationProgressLabel(job.application_progress))}</p></div></div><p class="hint">${escapeHtml(applicationNote)}</p>${manualAppliedAction}</section>
+      <section class="job-lifecycle-card"><div class="section-head"><div><h3>Application</h3><p>${escapeHtml(applicationProgressLabel(job.application_progress))}</p></div></div><p class="hint">${escapeHtml(applicationNote)}</p><div class="actions">${prepareAction}${manualAppliedAction}</div>${!preparation.ready && job.application_progress === 'not_started' ? '<p class="hint">Set up drafting in <button type="button" class="text-button" data-tab="settings">Settings</button> to prepare applications.</p>' : ''}</section>
       <section class="job-lifecycle-card"><label>Recruiting outcome<select id="job-outcome-control"><option value="none" ${job.recruiting_outcome === 'none' ? 'selected' : ''}>No outcome yet</option><option value="interview" ${job.recruiting_outcome === 'interview' ? 'selected' : ''}>Interview</option><option value="offer" ${job.recruiting_outcome === 'offer' ? 'selected' : ''}>Offer</option><option value="rejected" ${job.recruiting_outcome === 'rejected' ? 'selected' : ''}>Rejected</option></select></label><p class="hint">This is separate from whether you shortlisted or applied.</p></section>
     </div>
 
-    <div class="match-summary-card surface-status">
-      <div><span class="status-badge status-badge--${matchCompleted ? fitClassTone(job.fit_class) : 'neutral'}">${escapeHtml(matchCompleted ? fitClassLabel(job.fit_class) : 'Review in progress')}</span><strong>${matchCompleted && job.score != null ? `${job.score}/100` : 'Score pending'}</strong></div>
-      ${matchCompleted && job.strongest_signal ? `<p><strong>Strongest signal:</strong> ${escapeHtml(job.strongest_signal.reason)}</p>` : ''}
-      ${matchCompleted && job.main_gap ? `<p><strong>Main gap:</strong> ${escapeHtml(job.main_gap.reason)}</p>` : ''}
-      ${matchCompleted ? `<p><strong>Evidence confidence:</strong> ${Math.max(0, 100 - Number(job.uncertainty || 0))}%</p>` : '<p class="hint">The previous score is hidden until the new review finishes.</p>'}
-      ${matchCompleted && job.missing_evidence?.length ? `<p><strong>Missing evidence:</strong> ${escapeHtml(job.missing_evidence.join(', '))}</p>` : matchCompleted ? '<p class="hint">No major evidence gaps detected.</p>' : ''}
-    </div>
-    ${links ? `<div class="job-sightings"><div class="job-sightings-head"><strong>Seen on ${job.sighting_count} source${job.sighting_count === 1 ? '' : 's'}</strong><span class="hint">${job.sighting_count > 1 ? `Job Radar combined ${job.sighting_count} sightings so you only review this role once.` : 'One source has reported this role so far.'}</span></div>${links}</div>` : ''}
     ${renderJobAnalysis(job, score)}
-
-    <section class="job-application-method review-section">
-      <div class="section-head"><div><h3>How to apply</h3><p class="hint">Check the destination before preparing anything.</p></div></div>
-      <p><strong>${escapeHtml(applicationMethod)}</strong></p>
-      ${salary ? `<p class="job-detail-salary"><strong>Salary:</strong> ${escapeHtml(salary)} <span>· not included in the match score</span></p>` : ''}
-      ${job.apply_url ? `<p><a href="${escapeHtml(job.apply_url)}" target="_blank" rel="noopener noreferrer">${job.apply_url.startsWith('mailto:') ? 'Application email ↗' : 'Application page ↗'}</a></p>` : ''}
-      ${!job.apply_url ? '<p class="hint">No application form has been verified for this posting. Check the original source before sending.</p>' : ''}
-    </section>
-
-    <div id="job-zalo-contact"></div>
-    <section class="job-prepare-section review-section">
-      <div class="section-head"><div><h3>Application preparation</h3><p class="hint">${job.application_progress === 'not_started' ? 'Prepare only after the fit and risks above make sense to you.' : escapeHtml(applicationNote)}</p></div></div>
-      <p class="hint">Drafting provider: ${escapeHtml(provider || 'Not configured')} · <button class="text-button" data-tab="settings">Change provider</button></p>
-      <p class="processing-disclosure">${escapeHtml(provider ? processingCopy(setup, provider, 'The job posting, your profile details, and approved project evidence') : `Application preparation is optional. To enable it, add ${(preparation.missing || []).join(', ') || 'the application prerequisites'}.`)}</p>
-      <div class="actions">${prepareAction}</div>
-    </section>
-
-    <details class="detail-disclosure"><summary>Original description</summary><div class="description">${formatDescription(job.description)}</div></details>`;
+    <details class="detail-disclosure"><summary>Original description</summary><div class="description">${formatDescription(job.description)}</div></details>
+    ${links ? `<details class="detail-disclosure job-sightings"><summary>Sources (${job.sighting_count})</summary><p class="hint">${job.sighting_count > 1 ? `Job Radar combined ${job.sighting_count} sightings so you only review this role once.` : 'One source has reported this role so far.'}</p>${links}</details>` : ''}`;
 
   restoreOpenDisclosures(detail, openDisclosures);
-  if (detailScroll) detail.scrollTop = detailScroll;
+  detail.scrollTop = detailScroll;
   window.scrollTo(0, pageScroll);
 
   renderedJobState = {
@@ -1495,8 +1430,7 @@ async function showJob(id, pin = false, loadedJob = null) {
     pin: pin,
   };
 
-  if (job.observations.some(source => source.kind === 'facebook')) window.JobRadarZalo?.mountJob($('#job-zalo-contact'), id, {api, notice});
-  $('#job-detail').querySelector('[data-tab="settings"]').addEventListener('click', () => showTab('settings'));
+  $('#job-detail').querySelector('[data-tab="settings"]')?.addEventListener('click', () => showTab('settings'));
   $('#job-detail').querySelectorAll('[data-split-sighting]').forEach((button) => button.addEventListener('click', async () => {
     if (!window.confirm('Mark this sighting as a different job? The original source evidence will be preserved.')) return;
     try {
@@ -1662,20 +1596,15 @@ async function loadSources() {
   const pages = Math.max(1, Math.ceil(visible.length / pageSize));
   sourcePage = Math.min(sourcePage, pages);
   const pageItems = visible.slice((sourcePage - 1) * pageSize, sourcePage * pageSize);
-  const running = sources.filter((source) => source.scan_state === 'scanning').length;
-  const waiting = sources.filter((source) => source.scan_state === 'queued').length;
-  const unscanned = sources.filter((source) => source.enabled && !source.last_success_at && !['queued', 'scanning', 'paused'].includes(source.scan_state)).length;
-  const linkedinPaused = sources.some((source) => source.kind === 'linkedin' && source.scan_state === 'paused');
-  $('#source-queue-summary').textContent = `${running} scanning · ${waiting} queued · ${unscanned} never successfully checked. ${linkedinPaused ? 'LinkedIn checks are paused after an account warning; other sources continue.' : 'LinkedIn and Facebook share one browser and run serially.'}`;
-  $('#source-coverage-summary').textContent = coverage.label;
-  $('#source-coverage-status').textContent = coverage.level === 'good' ? 'Looks normal' : coverage.level === 'degraded' ? 'Needs attention' : 'Some uncertainty';
+  const attentionCount = coverage.degraded_source_ids?.length || 0;
+  $('#source-coverage-status').textContent = attentionCount ? `${attentionCount} need attention` : coverage.level === 'good' ? 'Looks normal' : 'Review coverage';
   $('#source-coverage-status').className = `status-badge ${coverage.level === 'good' ? 'status-badge--success' : coverage.level === 'degraded' ? 'status-badge--danger' : 'status-badge--warning'}`;
   $('#source-coverage-grid').innerHTML = [
     ['LinkedIn searches', coverage.counts.linkedin],
     ['Facebook groups', coverage.counts.facebook],
     ['Company sites', coverage.counts.career],
   ].map(([label,value]) => `<div><strong>${value}</strong><span>${label}</span></div>`).join('');
-  $('#source-coverage-gaps').innerHTML = coverage.gaps.length ? `<strong>What happened:</strong> Coverage gaps detected (${escapeHtml(coverage.gaps.join(' · '))}).<br><strong>Next step:</strong> Add missing sources using the form below or resume inactive sources.` : 'LinkedIn, Facebook, and company sites are configured.';
+  $('#source-coverage-gaps').textContent = coverage.gaps.length ? `Missing coverage: ${coverage.gaps.join(' · ')}` : '';
   $('#source-result-summary').textContent = `${visible.length} of ${sources.length} sources match these filters`;
   $('#source-page-summary').textContent = visible.length ? `Page ${sourcePage} of ${pages} · showing ${(sourcePage - 1) * pageSize + 1}–${Math.min(sourcePage * pageSize, visible.length)}` : 'No pages';
   $('#sources-prev').disabled = sourcePage <= 1;
@@ -1691,9 +1620,9 @@ async function loadSources() {
     const attention = ['degraded','limited','unknown'].includes(source.coverage?.level);
     const sourceType = source.kind === 'career' ? 'Company site' : source.kind === 'linkedin' ? 'LinkedIn search · Past 24 hours · Every 12 hours' : 'Facebook group';
     return `<div class="item source-card" data-source-id="${source.id}">
-      <div class="source-card-head"><div><div class="item-title">${escapeHtml(source.name)}</div><div class="item-meta">${escapeHtml(sourceType)} · Last checked ${when(source.last_success_at)}</div></div><span class="status-badge ${sourceStatusTone(source)}">${escapeHtml(status)}</span></div>
+      <div class="source-card-head"><div><div class="source-title-row"><div class="item-title">${escapeHtml(source.name)}</div><a class="source-open-link" href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer" aria-label="Open source ${escapeHtml(source.name)}" title="Open source"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></svg></a></div><div class="item-meta">${escapeHtml(sourceType)} · Last checked ${when(source.last_success_at)}</div></div><span class="status-badge ${sourceStatusTone(source)}">${escapeHtml(status)}</span></div>
       ${attention ? `<p class="source-coverage-detail">${escapeHtml(source.coverage?.detail || '')}</p>` : ''}
-      <div class="source-card-bottom"><span class="source-health"><strong>${recent}</strong> new · ${total} saved</span><div class="actions"><button data-scan="${source.id}" ${['scanning','queued','paused'].includes(state) ? 'disabled' : ''}>${state === 'scanning' ? 'Checking…' : state === 'queued' ? 'Queued' : state === 'paused' ? 'Paused' : 'Check now'}</button><a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer" aria-label="Open source ${escapeHtml(source.name)}">Open source ↗</a><label class="source-auto"><input type="checkbox" data-toggle="${source.id}" ${source.enabled ? 'checked' : ''}><span>${state === 'paused' ? 'Scheduled · paused' : 'Automatic'}</span><span class="source-auto-status" aria-live="polite"></span></label></div></div>
+      <div class="source-card-bottom"><span class="source-health"><strong>${recent}</strong> new · ${total} saved</span><div class="source-card-actions"><label class="source-auto"><input type="checkbox" data-toggle="${source.id}" ${source.enabled ? 'checked' : ''}><span>${state === 'paused' ? 'Scheduled · paused' : 'Automatic'}</span><span class="source-auto-status" aria-live="polite"></span></label><button data-scan="${source.id}" ${['scanning','queued','paused'].includes(state) ? 'disabled' : ''}>${state === 'scanning' ? 'Checking…' : state === 'queued' ? 'Queued' : state === 'paused' ? 'Paused' : 'Check now'}</button></div></div>
       <details class="source-diagnostics"><summary>Details</summary><p class="hint">${escapeHtml(source.coverage?.detail || '')}</p><div class="item-meta">Collector state: ${escapeHtml(sourceScanStatusLabel(source))} · ${escapeHtml(latestText)} · Every ${source.interval_minutes / 60} hours</div><div class="item-meta mono">${escapeHtml(source.url)}</div></details>
     </div>`;
   }).join('') : '<div class="empty">No sources match these filters.</div>';
@@ -1979,13 +1908,14 @@ function renderPreferenceSuggestions(result) {
 }
 
 async function loadSettings() {
-  window.JobRadarZalo?.mountSettings($('#zalo-template-editor'), {api, notice});
   const [profile, setup, intent, suggestions] = await Promise.all([
     api('/api/profile'),
     loadSetup(),
     api('/api/search-intent'),
     api('/api/preferences/suggestions'),
     window.JobRadarWriting?.mount($('#writing-preferences-editor'), {api, notice}),
+    loadMatchingReviewStatus(),
+    loadAutoApply(),
   ]);
   renderSearchIntentForm(intent);
   renderPreferenceSuggestions(suggestions);
@@ -2154,7 +2084,7 @@ async function loadJobAnalysis() {
     beginPending(button, 'Queueing…');
     try {
       await api(`/api/jobs/${button.dataset.matchingRetry}/analyze`, {method:'POST'});
-      await loadJobs();
+      await loadMatchingReviewStatus();
       notice('Job analysis queued. Retrying up to 3 times in background.');
     }
     catch (error) { notice(error.message, true); }
@@ -2164,10 +2094,26 @@ async function loadJobAnalysis() {
   return failures;
 }
 
+async function loadMatchingReviewStatus() {
+  clearTimeout(window.matchingStatusPoll);
+  const [failures, matching] = await Promise.all([loadJobAnalysis(), api('/api/matching/status')]);
+  $('#job-analysis-model').textContent = matching.model ? `Using ${matching.model}` : 'No local matching model selected';
+  const progress = matching.pending
+    ? `${matching.completed} reviewed · ${matching.pending} waiting or in progress. Reviews continue in the background.`
+    : matching.model ? `${matching.completed} reviewed · all saved jobs are up to date.` : 'Choose a local model in Settings to review job fit.';
+  $('#matching-overview').textContent = matching.service_error
+    ? `Review paused: ${matching.service_error}`
+    : `${progress}${matching.failed ? ` ${matching.failed} need attention.` : ''}`;
+  if (matching.pending && $('#settings').classList.contains('active')) {
+    window.matchingStatusPoll = setTimeout(() => loadMatchingReviewStatus().catch((error) => notice(error.message, true)), 5000);
+  }
+  return failures;
+}
+
 async function dismissFailedAnalysis(id) {
   try {
     await api(`/api/jobs/${id}/dismiss-analysis`, {method:'POST'});
-    await loadJobs();
+    await loadMatchingReviewStatus();
     notice('Failed analysis dismissed. The job is still available in Jobs.');
   } catch(error) { notice(error.message, true); }
 }
@@ -2188,7 +2134,7 @@ $('#matching-retry-all').addEventListener('click', async (event) => {
   const button = beginPending(event.currentTarget, 'Queueing all…');
   try {
     const result = await api('/api/matching/retry-failed', {method:'POST'});
-    await loadJobs();
+    await loadMatchingReviewStatus();
     notice(`${result.queued} job${result.queued === 1 ? '' : 's'} queued for match review.`);
   } catch (error) { notice(error.message, true); }
   finally { endPending(button); }
@@ -2275,35 +2221,43 @@ async function showTab(name, historyMode = 'push') {
     clearTimeout(window.jobPoll);
     renderedJobState = null;
   }
+  if (!['settings','application-history'].includes(name)) clearTimeout(window.autoApplyPoll);
   if (name !== 'applications') {
-    clearTimeout(window.autoApplyPoll);
     clearTimeout(window.applicationPreparationPoll);
     renderedDraftState = null;
   }
   if (name !== 'queue') clearTimeout(window.queuePoll);
   if (name !== 'home') clearTimeout(window.homeQueuePoll);
   if (name !== 'sources') clearTimeout(window.sourcePoll);
+  if (name !== 'settings') clearTimeout(window.matchingStatusPoll);
   document.querySelectorAll('.tab').forEach((tab) => tab.classList.toggle('active', tab.id === name));
   const target = document.getElementById(name);
   $('#tab-loading').hidden = true;
+  setProfileMenuOpen(false);
+  setJobFilterPopoverOpen(false);
+  setApplicationFilterPopoverOpen(false);
   const nav = ['personal','experience','projects'].includes(name) ? 'profile' : name;
-  document.querySelectorAll('.sidebar [data-tab]').forEach((control) => {
+  $('#profile-menu-toggle').classList.toggle('active', ['profile','settings','application-history','guide'].includes(nav));
+  document.querySelectorAll('.app-header [data-tab]').forEach((control) => {
     const active = control.dataset.tab === nav;
     control.classList.toggle('active', active);
     if (active) control.setAttribute('aria-current', 'page');
     else control.removeAttribute('aria-current');
   });
   if (name === 'jobs' && routeInput.includes('?')) readJobsHashState();
-  const title = ({home:'Home',guide:'How it works',queue:'Activity',jobs:'Jobs',applications:'Applications',profile:'My profile',settings:'Settings',
+  const title = ({home:'Home',guide:'How it works',queue:'Queue',jobs:'Jobs',applications:'Applications','application-history':'Application history',profile:'My profile',settings:'Settings',
     personal:'Personal details',experience:'Work history',projects:'GitHub projects',sources:'Job sources',employers:'Employers'})[name];
   $('#page-title').textContent = title;
+  $('#jobs-new-count').hidden = name !== 'jobs';
+  $('#job-import-control').hidden = name !== 'jobs';
+  setJobImportPopoverOpen(false);
   document.title = `${title} · Job Radar`;
   const desiredHash = selectedDraft ? `#applications/${selectedDraft}` : name === 'jobs' ? jobsHash() : `#${name}`;
   if (historyMode === 'replace') history.replaceState({tab:name}, '', desiredHash);
   else if (historyMode === 'push' && location.hash !== desiredHash) history.pushState({tab:name}, '', desiredHash);
   window.scrollTo(0, 0);
   if (!['home', 'settings', 'profile'].includes(name)) refreshSocialAuth().catch((error) => notice(error.message, true));
-  const loader = ({home:loadHome,queue:loadQueue,jobs:loadJobs,applications:loadApplications,personal:loadPersonalDetails,
+  const loader = ({home:loadHome,queue:loadQueue,jobs:loadJobs,applications:loadApplications,'application-history':loadApplicationHistory,personal:loadPersonalDetails,
     experience:loadPositions,projects:loadEvidence,sources:loadSources,employers:loadEmployers,profile:loadProfile,settings:loadSettings})[name];
   if (!loader) return;
   setTabLoading(target, true);
@@ -2389,6 +2343,7 @@ function applicationGroup(item) {
 }
 
 function applicationIsSent(draft) {
+  if (applicationIsUncertain(draft)) return false;
   return draft.status === 'sent' || draft.review_status === 'sent' ||
     ['email_sent','application_submitted'].includes(draft.latest_submission?.outcome?.key);
 }
@@ -2400,7 +2355,7 @@ function applicationIsUncertain(draft) {
 
 function submissionTarget(submission) {
   const destination = submission?.destination || {};
-  return destination.email || destination.url || 'No destination recorded';
+  return destination.email || destination.url || destination.target || 'No destination recorded';
 }
 
 function submissionEvidenceText(submission) {
@@ -2429,7 +2384,7 @@ function renderSubmissionProof(submission, includePackage = false) {
     const name = assignment.kind === 'resume' ? 'Reviewed resume' : assignment.name || 'Uploaded attachment';
     return `<li><strong>${escapeHtml(label)}</strong><span><a href="/api/submissions/${submission.id}/attachments/${encodeURIComponent(fieldIndex)}" target="_blank" rel="noopener noreferrer">${escapeHtml(name)} ↗</a></span></li>`;
   }).filter(Boolean).join('');
-  const proof = includePackage ? `<details class="submission-package"><summary>Exact reviewed package</summary>
+  const proof = includePackage && submission.destination?.kind !== 'manual' ? `<details class="submission-package"><summary>Exact reviewed package</summary>
       <div class="submission-package-grid">
         <div><strong>Resume</strong><p>${submission.resume_available ? `<a href="/api/submissions/${submission.id}/resume" target="_blank" rel="noopener noreferrer">Open exact submitted resume ↗</a>` : 'Exact resume file is unavailable for this older record.'}</p></div>
         <div><strong>Package fingerprint</strong><p class="mono">${escapeHtml((submission.package_hash || '').slice(0, 20))}</p></div>
@@ -2444,46 +2399,44 @@ function renderSubmissionProof(submission, includePackage = false) {
         <div><strong>When</strong><span>${escapeHtml(when(submission.sent_at))}</span></div>
         <div><strong>Channel</strong><span>${escapeHtml(outcome.channel || 'Application')}</span></div>
         <div><strong>Destination</strong><span>${escapeHtml(submissionTarget(submission))}</span></div>
-        <div><strong>Proof</strong><span>${escapeHtml(submissionEvidenceText(submission))}</span></div>
+        <div><strong>${submission.destination?.kind === 'manual' ? 'User report' : 'Proof'}</strong><span>${escapeHtml(submissionEvidenceText(submission))}</span></div>
       </div>
       ${submission.error ? `<details class="submission-technical"><summary>Technical detail</summary><p class="mono">${escapeHtml(submission.error)}</p></details>` : ''}
       ${proof}
     </section>`;
 }
 
-function setApplicationWorkspaceView(view) {
-  applicationWorkspaceView = ['drafts','automation','activity','history'].includes(view) ? view : 'drafts';
-  document.querySelectorAll('[data-app-view]').forEach((button) => {
-    const active = button.dataset.appView === applicationWorkspaceView;
-    button.classList.toggle('active', active);
-    button.setAttribute('aria-selected', active ? 'true' : 'false');
-  });
-  document.querySelectorAll('[data-app-panel]').forEach((panel) => {
-    panel.hidden = panel.dataset.appPanel !== applicationWorkspaceView;
-  });
+function setApplicationFilterPopoverOpen(open) {
+  const popover = $('#application-filter-popover');
+  if (!popover) return;
+  popover.hidden = !open;
+  $('#application-filter-toggle').setAttribute('aria-expanded', String(open));
 }
 
 function bindApplicationWorkspace() {
   const root = $('#applications');
   if (!root || root.dataset.workspaceBound === 'true') return;
   root.dataset.workspaceBound = 'true';
-  root.querySelectorAll('[data-app-view]').forEach((button) => button.addEventListener('click', () => {
-    setApplicationWorkspaceView(button.dataset.appView);
-    if (button.dataset.appView !== 'drafts') {
-      clearTimeout(window.applicationPreparationPoll);
-    }
-    if (['automation','activity'].includes(button.dataset.appView)) {
-      $('#auto-apply-status').textContent = 'Loading…';
-      loadAutoApply().catch((error) => notice(error.message, true));
-    }
-    if (button.dataset.appView === 'history') loadSubmissionHistory().catch((error) => notice(error.message, true));
-    if (button.dataset.appView === 'drafts') loadApplications().catch((error) => notice(error.message, true));
-  }));
+  $('#application-filter-toggle').addEventListener('click', () => {
+    setApplicationFilterPopoverOpen($('#application-filter-popover').hidden);
+  });
+  document.addEventListener('click', (event) => {
+    if (!event.target.closest('.application-controls')) setApplicationFilterPopoverOpen(false);
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || $('#application-filter-popover').hidden) return;
+    setApplicationFilterPopoverOpen(false);
+    $('#application-filter-toggle').focus();
+  });
   const reloadApplications = () => { applicationsPage = 1; loadApplications().catch((error) => notice(error.message, true)); };
   $('#application-query').addEventListener('input', reloadApplications);
   for (const selector of ['#application-review-filter','#application-company-filter','#application-sent-filter']) {
     $(selector).addEventListener('change', reloadApplications);
   }
+  $('#application-clear-filters').addEventListener('click', () => {
+    for (const selector of ['#application-query','#application-review-filter','#application-company-filter','#application-sent-filter']) $(selector).value = '';
+    reloadApplications();
+  });
   $('#applications-prev').addEventListener('click', () => {
     applicationsPage = Math.max(1, applicationsPage - 1);
     loadApplications().catch((error) => notice(error.message, true));
@@ -2585,12 +2538,12 @@ function renderApplicationList(total = applicationsTotal) {
       const prepErr = applicationErrors.get(item.vacancy_id) || (['credits','failed','quota'].includes(item.category) ? { what: formatErrorDetails(item.reason).what } : null);
       return `<button type="button" class="item clickable application-card surface-action ${selected ? 'is-selected' : ''} ${prepErr ? 'has-error' : ''}" data-preparation="${item.vacancy_id}" aria-pressed="${selected ? 'true' : 'false'}">
         <div class="item-title">${escapeHtml(item.job_title)}</div>
+        <div class="item-meta">${escapeHtml(item.company)}</div>
         <div class="application-card-status">
           <span class="status-badge status-badge--${tone}">${escapeHtml(item.label)}</span>
-          ${prepErr ? '<span class="status-badge status-badge--danger">Error</span>' : ''}
         </div>
-        ${prepErr ? `<div class="item-error-preview" title="${escapeHtml(prepErr.what)}"><strong>Issue:</strong> ${escapeHtml(prepErr.what)}</div>` : ''}
-        <div class="item-meta">${escapeHtml(item.company)} · ${item.score} match · ${statusNote}</div>
+        ${prepErr ? `<div class="item-error-preview" title="${escapeHtml(prepErr.what)}">${escapeHtml(prepErr.what)}</div>` : ''}
+        <div class="item-meta">${item.score} match · ${statusNote}</div>
         <div class="item-meta">Updated ${when(item.updated_at)}</div>
       </button>`;
     }
@@ -2601,12 +2554,11 @@ function renderApplicationList(total = applicationsTotal) {
     const errInfo = applicationErrors.get(draft.id);
     return `<button type="button" class="item clickable application-card surface-action ${selected ? 'is-selected' : ''} ${errInfo ? 'has-error' : ''}" data-application="${draft.id}" aria-pressed="${selected ? 'true' : 'false'}">
       <div class="item-title">${escapeHtml(draft.job_title)}</div>
+      <div class="item-meta">${escapeHtml(draft.company)}</div>
       <div class="application-card-status">
         <span class="status-badge status-badge--${tone}">${escapeHtml(applicationReviewLabel(draft))}</span>
-        ${errInfo ? '<span class="status-badge status-badge--danger">Error</span>' : ''}
       </div>
-      ${errInfo ? `<div class="item-error-preview" title="${escapeHtml(errInfo.what)}"><strong>Issue:</strong> ${escapeHtml(errInfo.what)}</div>` : ''}
-      <div class="item-meta">${escapeHtml(draft.company)} · ${escapeHtml(providerLabel(draft.provider_mode))}</div>
+      ${errInfo ? `<div class="item-error-preview" title="${escapeHtml(errInfo.what)}">${escapeHtml(errInfo.what)}</div>` : ''}
       <div class="item-meta">Updated ${when(draft.updated_at)}${delivery ? ` · ${escapeHtml(delivery)}` : ''}</div>
     </button>`;
   }).join('');
@@ -2620,7 +2572,10 @@ function renderApplicationList(total = applicationsTotal) {
   }));
   list.querySelectorAll('[data-preparation]').forEach((node) => node.addEventListener('click', () => {
     const item = applicationPreparations.find((entry) => entry.vacancy_id === node.dataset.preparation);
-    if (item) showPreparationIssue(item);
+    if (item) {
+      showPreparationIssue(item);
+      if (window.matchMedia('(max-width: 900px)').matches) scrollNodeIntoView($('#application-detail'), {block:'start'});
+    }
   }));
 }
 
@@ -2642,17 +2597,28 @@ function showApplicationRegenerating(id) {
 
 async function loadApplications(selectedId = null, preferredScreen = null) {
   bindApplicationWorkspace();
-  const query = new URLSearchParams({
+  const pageQuery = () => new URLSearchParams({
     page: applicationsPage,
     page_size: 25,
     q: $('#application-query').value.trim(),
     review: $('#application-review-filter').value,
     company: $('#application-company-filter').value,
     delivery: $('#application-sent-filter').value,
+    ...(selectedId ? {focus_id:selectedId} : {}),
   });
-  const [result, preparations] = await Promise.all([
-    api(`/api/applications/page?${query}`), api('/api/application-preparations')
+  let [result, preparations] = await Promise.all([
+    api(`/api/applications/page?${pageQuery()}`), api('/api/application-preparations')
   ]);
+  if (selectedId && !result.focus_found && [
+    '#application-query', '#application-review-filter', '#application-company-filter', '#application-sent-filter'
+  ].some((selector) => $(selector).value)) {
+    for (const selector of [
+      '#application-query', '#application-review-filter', '#application-company-filter', '#application-sent-filter'
+    ]) $(selector).value = '';
+    applicationsPage = 1;
+    result = await api(`/api/applications/page?${pageQuery()}`);
+    notice('Filters cleared to open the selected application.');
+  }
   applicationDrafts = result.items;
   applicationPreparations = preparations;
   applicationsTotal = result.total;
@@ -2669,8 +2635,7 @@ async function loadApplications(selectedId = null, preferredScreen = null) {
       }
     }
     activePreparationJobId = null;
-    setApplicationWorkspaceView('drafts');
-  } else if (!activeApplicationId || !applicationDrafts.some((draft) => draft.id === activeApplicationId)) {
+  } else if (!activePreparationJobId && (!activeApplicationId || !applicationDrafts.some((draft) => draft.id === activeApplicationId))) {
     activeApplicationId = applicationDrafts[0]?.id || null;
     if (location.hash.startsWith('#applications/')) {
       history.replaceState({tab:'applications'}, '', activeApplicationId ? `#applications/${activeApplicationId}` : '#applications');
@@ -2682,30 +2647,28 @@ async function loadApplications(selectedId = null, preferredScreen = null) {
     activeApplicationId = completedPreparation.id;
   }
   renderApplicationList(result.total);
-  if (applicationWorkspaceView === 'drafts') {
-    if (activeApplicationId) {
-      const currentDraft = applicationDrafts.find((d) => d.id === activeApplicationId);
-      const isUnchanged = !selectedId && renderedDraftState && currentDraft &&
-        renderedDraftState.id === currentDraft.id &&
-        renderedDraftState.updated_at === currentDraft.updated_at &&
-        renderedDraftState.review_status === currentDraft.review_status &&
-        renderedDraftState.status === currentDraft.status &&
-        (!preferredScreen || renderedDraftState.screen === preferredScreen);
-      if (!isUnchanged) {
-        await showApplication(activeApplicationId, preferredScreen);
-      }
-    } else if (completedPreparation) await showApplication(completedPreparation.id, preferredScreen);
-    else if (activePreparationJobId) {
-      const issue = applicationPreparations.find((item) => item.vacancy_id === activePreparationJobId);
-      if (issue) showPreparationIssue(issue);
-    } else {
-      const detail = $('#application-detail');
-      if (detail) detail.innerHTML = '<div class="panel empty"><p>No application drafts to display.</p></div>';
+  if (activeApplicationId) {
+    const currentDraft = applicationDrafts.find((d) => d.id === activeApplicationId);
+    const isUnchanged = !selectedId && renderedDraftState && currentDraft &&
+      renderedDraftState.id === currentDraft.id &&
+      renderedDraftState.updated_at === currentDraft.updated_at &&
+      renderedDraftState.review_status === currentDraft.review_status &&
+      renderedDraftState.status === currentDraft.status &&
+      (!preferredScreen || renderedDraftState.screen === preferredScreen);
+    if (!isUnchanged) {
+      await showApplication(activeApplicationId, preferredScreen);
     }
+  } else if (completedPreparation) await showApplication(completedPreparation.id, preferredScreen);
+  else if (activePreparationJobId) {
+    const issue = applicationPreparations.find((item) => item.vacancy_id === activePreparationJobId);
+    if (issue) showPreparationIssue(issue);
+  } else {
+    const detail = $('#application-detail');
+    if (detail) detail.innerHTML = '<div class="panel empty"><p>No application drafts to display.</p></div>';
   }
   clearTimeout(window.applicationPreparationPoll);
   if (applicationPreparations.some((item) => ['queued','preparing'].includes(item.status)) &&
-      $('#applications').classList.contains('active') && applicationWorkspaceView === 'drafts') {
+      $('#applications').classList.contains('active')) {
     window.applicationPreparationPoll = setTimeout(() => loadApplications().catch((error) => notice(error.message, true)), 3000);
   }
 }
@@ -2730,7 +2693,12 @@ async function loadSubmissionHistory() {
       <p>${escapeHtml(submissionEvidenceText(submission))}</p>
       <div class="actions"><button type="button" data-history-application="${submission.draft_id}" class="secondary">Open application</button>${submission.resume_available ? `<a class="button-link" href="/api/submissions/${submission.id}/resume" target="_blank" rel="noopener noreferrer">Exact resume ↗</a>` : ''}</div>
     </article>`).join('') : '<p class="empty">No submission history matches this search.</p>';
-  list.querySelectorAll('[data-history-application]').forEach((button) => button.addEventListener('click', () => loadApplications(button.dataset.historyApplication).catch((error) => notice(error.message, true))));
+  list.querySelectorAll('[data-history-application]').forEach((button) => button.addEventListener('click', () => showTab(`applications/${button.dataset.historyApplication}`)));
+}
+
+async function loadApplicationHistory() {
+  bindApplicationWorkspace();
+  await Promise.all([loadAutoApply(), loadSubmissionHistory()]);
 }
 
 async function loadAutoApply() {
@@ -2769,10 +2737,11 @@ async function loadAutoApply() {
   activity.innerHTML = data.recent.length ? `${data.recent.map((item) =>
     `<div class="item"><div class="item-title">${escapeHtml(item.title)} · ${escapeHtml(item.company)} <span class="status-badge status-badge--${applicationReviewTone({review_status:item.status})}">${escapeHtml(applicationReviewLabel(item.status))}</span></div><div class="item-meta">${item.requested_by === 'manual' ? 'Requested by you' : item.analysis_status === 'done' && item.score != null ? `${escapeHtml(item.score)}/100 automatic match` : 'Automatic match'} · ${escapeHtml(item.detail || '')}</div><div class="actions">${item.draft_id ? `<button type="button" data-auto-draft="${item.draft_id}">Open application</button>` : `<button type="button" data-auto-job="${item.vacancy_id}">Open job</button>`}</div></div>`
   ).join('')}` : '<p class="hint">No preparation activity yet.</p>';
-  activity.querySelectorAll('[data-auto-draft]').forEach((button) => button.addEventListener('click', () => loadApplications(button.dataset.autoDraft).catch((error) => notice(error.message, true))));
+  activity.querySelectorAll('[data-auto-draft]').forEach((button) => button.addEventListener('click', () => showTab(`applications/${button.dataset.autoDraft}`)));
   activity.querySelectorAll('[data-auto-job]').forEach((button) => button.addEventListener('click', async () => { await openJobInJobs(button.dataset.autoJob); }));
   const preparationRunning = data.recent.some((item) => ['queued','preparing','needs_confirmation'].includes(item.status));
-  if ((data.enabled || preparationRunning || aiFailures.running) && $('#applications').classList.contains('active') && ['automation','activity'].includes(applicationWorkspaceView)) {
+  if ((data.enabled || preparationRunning || aiFailures.running) &&
+      ($('#settings').classList.contains('active') || $('#application-history').classList.contains('active'))) {
     window.autoApplyPoll = setTimeout(() => loadAutoApply().catch((error) => notice(error.message, true)), 5000);
   }
 }
@@ -2835,6 +2804,9 @@ function isLinkedInJobPostingUrl(value) {
 }
 
 function applicationActionTarget(destination) {
+  if (destination.kind === 'linkedin_easy_apply' && !isLinkedInJobPostingUrl(destination.url)) {
+    return 'Invalid LinkedIn posting. Correct this in Package.';
+  }
   return destination.email || destination.url || 'No verified destination';
 }
 
@@ -3005,9 +2977,9 @@ function showPreparationIssue(item) {
   if ($('#applications').classList.contains('active') && location.hash !== '#applications') {
     history.replaceState({tab:'applications'}, '', '#applications');
   }
-  setApplicationWorkspaceView('drafts');
   activeApplicationId = null;
   activePreparationJobId = item.vacancy_id;
+  renderedDraftState = null;
   renderApplicationList();
   if (item?.vacancy_id) {
     api(`/api/jobs/${item.vacancy_id}/seen`, {method:'POST', body:'{}'}).catch(() => {});
@@ -3016,16 +2988,19 @@ function showPreparationIssue(item) {
   const detail = $('#application-detail');
   const inProgress = ['queued', 'preparing'].includes(item.status);
   const tone = ['credits','failed','quota'].includes(item.category) ? 'danger' : inProgress ? 'info' : 'warning';
-  const alertTitle = item.status === 'queued' ? 'Preparation queued' : item.status === 'preparing' ? 'Preparation in progress' : 'No draft was created';
+  const interrupted = /Job Radar stopped during preparation|restarted|interrupted/i.test(item.reason || '');
+  const alertTitle = item.status === 'queued' ? 'Preparation queued' : item.status === 'preparing' ? 'Preparation in progress' : interrupted ? 'Preparation stopped' : 'Draft could not be prepared';
   const formattedReason = formatErrorDetails(item.reason, item.retryable ? 'Click Retry preparation to generate the draft now.' : 'Check your drafting provider settings or view the job details.');
   detail.innerHTML = `<div class="application-review-header">
       <div><p class="eyebrow">APPLICATION PREPARATION</p><h2>${escapeHtml(item.job_title)}</h2><p class="item-meta">${escapeHtml(item.company)} · ${item.score} match</p></div>
       <span class="status-badge status-badge--${tone}">${escapeHtml(item.label)}</span>
     </div>
-    <div class="application-alert application-alert--${tone}">
-      <strong>${escapeHtml(alertTitle)}</strong>
-      <p><strong>What happened:</strong> ${escapeHtml(formattedReason.what)}</p>
-      <p><strong>Next step:</strong> ${escapeHtml(formattedReason.next)}</p>
+    <div class="application-preparation-state">
+      <span class="application-preparation-icon" aria-hidden="true">${inProgress ? '…' : '!'}</span>
+      <div><h3>${escapeHtml(alertTitle)}</h3>
+      <p>${escapeHtml(interrupted ? 'Job Radar stopped before it finished creating this draft.' : formattedReason.what)}</p>
+      ${!inProgress ? `<p class="hint">${escapeHtml(formattedReason.next)}</p>` : ''}
+      </div>
     </div>
     <p class="hint">${item.provider ? `Drafting with ${escapeHtml(providerLabel(item.provider))}. ` : ''}No application has been sent.</p>
     <div class="actions">
@@ -3085,7 +3060,6 @@ let activeApplicationScreen = 'first-glance';
 
 async function showApplication(id, preferredScreen = null) {
   if ($('#applications').classList.contains('active') && location.hash !== `#applications/${id}`) history.replaceState({tab:'applications'}, '', `#applications/${id}`);
-  setApplicationWorkspaceView('drafts');
   activeApplicationId = id;
   activePreparationJobId = null;
   renderApplicationList();
@@ -3101,6 +3075,7 @@ async function showApplication(id, preferredScreen = null) {
   try {
     [draft, profile] = await Promise.all([api(`/api/applications/${id}`), api('/api/profile')]);
   } catch (error) {
+    if (activeApplicationId !== id || activePreparationJobId) return;
     if (error.status === 404) {
       activeApplicationId = null;
       if (location.hash.startsWith('#applications/')) {
@@ -3120,6 +3095,7 @@ async function showApplication(id, preferredScreen = null) {
     throw error;
   }
   const job = draft.job || await api(`/api/jobs/${draft.vacancy_id}`).catch(() => ({}));
+  if (activeApplicationId !== id || activePreparationJobId) return;
   if (draft?.vacancy_id) {
     markJobUiSeen(draft.vacancy_id, draft.seen_at);
   }
@@ -3150,19 +3126,28 @@ async function showApplication(id, preferredScreen = null) {
   const canSend = !sent && !uncertain && draft.send_ready && ['awaiting_review','needs_review'].includes(draft.review_status);
   const canInspect = !sent && !uncertain && (destination.kind === 'linkedin_easy_apply' ||
     (destination.kind === 'web' && !isLinkedInJobPostingUrl(destination.url)));
-  const collectLinkedInForm = canInspect && draft.review_status !== 'skipped' && destination.kind === 'linkedin_easy_apply' && !formData.complete;
-  const collectionError = collectLinkedInForm && (applicationFormCollectionErrors.has(id)
+  const formLoaded = formData.signature && formData.destination_url === destination.url &&
+    (destination.kind !== 'linkedin_easy_apply' || formData.kind === 'linkedin_easy_apply' && formData.complete);
+  const collectApplicationForm = canInspect && !['skipped','preparing','regenerating','queued','sending'].includes(draft.review_status) &&
+    (!formLoaded || formData.collection_error);
+  const collectionError = collectApplicationForm && (applicationFormCollectionErrors.has(id)
     ? applicationFormCollectionErrors.get(id) : formData.collection_error);
   const linkedinStep = Math.max(0, ...(formData.fields || []).map((field) => Number(field.step) || 0));
   const linkedinFormStatus = formData.complete
     ? `All ${formData.steps_total || linkedinStep} LinkedIn steps reviewed`
     : collectionError ? 'Application questions could not be loaded.' : 'Loading all LinkedIn application questions…';
   const actionTarget = applicationActionTarget(destination);
+  const additionalEmailOptions = draft.additional_email_options || [];
   const detail = $('#application-detail');
 
   const sightings = job.observations || [];
   const preferredSighting = sightings[0] || null;
   const originalPostingUrl = draft.job_posting_url || (preferredSighting?.url && /^https?:\/\//i.test(preferredSighting.url) ? preferredSighting.url : null);
+  const originalSourceKind = preferredSighting?.kind || draft.job_source_kind;
+  const originalSourceLabel = originalSourceKind === 'linkedin' ? 'LinkedIn'
+    : originalSourceKind === 'facebook' ? 'Facebook'
+    : originalSourceKind === 'career' ? `${draft.company} career page`
+    : 'Original posting';
   const links = sightings.length ? sightings.map((source) =>
     `<div class="job-sighting" data-sighting-id="${source.id}"><div><a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(source.name)}</a> <span class="pill muted">${escapeHtml(source.kind)}</span> ${preferredSighting?.id === source.id ? '<span class="status-badge status-badge--success">Preferred source</span>' : ''}<small>${escapeHtml(source.merge_reason_label || '')} · first seen ${relativeWhen(source.first_seen_at)}</small></div></div>`
   ).join('') : '';
@@ -3205,7 +3190,6 @@ async function showApplication(id, preferredScreen = null) {
   detail.innerHTML = `
     <div class="application-review-header">
       <div>
-        <p class="eyebrow" id="application-screen-eyebrow">APPLICATION · ${currentScreen === 'package' ? 'PACKAGE' : 'FIRST GLANCE'}</p>
         <h2>${escapeHtml(draft.job_title)}</h2>
         <p class="item-meta">${escapeHtml(draft.company)}${job.location ? ` · ${escapeHtml(job.location)}` : (draft.job_location ? ` · ${escapeHtml(draft.job_location)}` : '')} · ${escapeHtml(providerLabel(draft.provider_mode))}${job.work_mode ? ` · ${escapeHtml(job.work_mode)}` : (draft.job_work_mode ? ` · ${escapeHtml(draft.job_work_mode)}` : '')}</p>
       </div>
@@ -3213,8 +3197,6 @@ async function showApplication(id, preferredScreen = null) {
         <span class="status-badge status-badge--${reviewTone}">${escapeHtml(applicationReviewLabel(draft))}</span>
       </div>
     </div>
-
-    ${activeErrorBanner}
 
     <nav class="application-screen-nav application-review-nav" aria-label="Application review screens">
       <button type="button" data-app-screen="first-glance" aria-current="${currentScreen === 'first-glance'}">
@@ -3227,31 +3209,13 @@ async function showApplication(id, preferredScreen = null) {
       </button>
     </nav>
 
+    ${activeErrorBanner}
+
     <div id="screen-first-glance" class="application-screen-view" ${currentScreen === 'first-glance' ? '' : 'hidden'}>
-      <section id="application-review-overview" class="application-activity-section surface-status">
-        <div class="section-head">
-          <div>
-            <h3>${sent ? 'Application sent' : uncertain ? 'Submission status uncertain' : 'My last activities with this application'}</h3>
-            <p class="hint">${sent ? 'Submission record and delivery confirmation' : uncertain ? 'Submission outcome requires confirmation on employer site' : 'Status, attention items, and recent application activity'}</p>
-          </div>
-          <div class="activity-header-badges">
-            <span class="pill muted">${escapeHtml(destination.kind === 'email' ? 'Email package' : destination.kind === 'linkedin_message' ? 'Direct message package' : ['web','linkedin_easy_apply'].includes(destination.kind) ? 'Form package' : 'Manual handoff')}</span>
-          </div>
-        </div>
-
-        <div class="activity-destination-note">
-          <small>Destination: <strong>${escapeHtml(applicationActionLabel(destination))}</strong> · ${escapeHtml(actionTarget)}</small>
-        </div>
-
-        ${(sent || uncertain) ? renderSubmissionProof(draft.latest_submission, true) : ''}
+      <div class="application-review-alerts">
         ${applicationAlert('danger', 'Sending is blocked', blockers)}
         ${applicationAlert('warning', 'Review before sending', warnings)}
-
-        <div class="activity-timeline">
-          ${activitiesHtml}
-        </div>
-      </section>
-
+      </div>
       <div class="overview-metrics-row">
         <div class="metric-card surface-status">
           <div class="metric-card-head">
@@ -3263,30 +3227,71 @@ async function showApplication(id, preferredScreen = null) {
           </div>
           <div class="metric-source-meta">
             ${matchCompleted ? `<p class="metric-signal"><strong>Evidence confidence:</strong> ${Math.max(0, 100 - Number(job.uncertainty || 0))}%</p>` : '<p class="hint">Review in progress</p>'}
-            ${matchCompleted && job.missing_evidence?.length ? `<p class="metric-subtext">Missing evidence: ${escapeHtml(job.missing_evidence.join(', '))}</p>` : ''}
+            <p class="metric-subtext">${matchCompleted ? `Match reviewed${job.analyzed_at || draft.job_analyzed_at ? ` · ${relativeWhen(job.analyzed_at || draft.job_analyzed_at)}` : ''}` : 'Match review pending'}</p>
           </div>
         </div>
 
         <div class="metric-card surface-status">
           <div class="metric-card-head">
             <span class="eyebrow">JOB ORIGINALITY</span>
-            ${sightings.length > 1 ? `<span class="pill muted">Seen on ${sightings.length - 1} other source${sightings.length - 1 === 1 ? '' : 's'}</span>` : '<span class="pill muted">Single source</span>'}
           </div>
           <div class="metric-card-primary">
             ${originalPostingUrl
-              ? `<a class="metric-source-link button-link" href="${escapeHtml(originalPostingUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(preferredSighting?.name || 'Original posting')} ↗</a>`
-              : `<strong class="metric-source-name">${escapeHtml(preferredSighting?.name || draft.job_source_kind || 'Original source')}</strong>`
+              ? `<a class="metric-source-link button-link" href="${escapeHtml(originalPostingUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(originalSourceLabel)} ↗</a>`
+              : `<strong class="metric-source-name">${escapeHtml(originalSourceLabel)}</strong>`
             }
           </div>
           <div class="metric-source-meta">
-            <p class="metric-signal"><strong>Source type:</strong> ${escapeHtml(preferredSighting?.kind || draft.job_source_kind || 'web')}</p>
             <p class="metric-subtext">First seen ${relativeWhen(preferredSighting?.first_seen_at || job.first_seen_at || draft.created_at)}</p>
             <button type="button" class="text-button" id="btn-view-job-in-jobs" style="margin-top:0.35rem;padding:0;">View job in Jobs</button>
           </div>
         </div>
+
+        <div class="metric-card surface-status metric-card--destination">
+          <div class="metric-card-head"><span class="eyebrow">DESTINATION</span></div>
+          <div class="metric-card-primary"><strong class="metric-source-name">${escapeHtml(applicationActionLabel(destination))}</strong></div>
+          <div class="metric-source-meta"><p class="metric-subtext">${escapeHtml(actionTarget)}</p></div>
+        </div>
       </div>
 
-      ${renderJobAnalysis(job, score)}
+      ${renderJobAnalysis(job, score, {showStatus:false})}
+
+      <section id="application-review-overview" class="application-activity-section surface-status">
+        <div class="section-head">
+          <div>
+            <h3>Change log</h3>
+            <p class="hint">${sent ? 'Submission record and delivery confirmation' : uncertain ? 'Submission outcome requires confirmation on employer site' : 'Recent application activity'}</p>
+          </div>
+        </div>
+
+        ${(sent || uncertain) ? (draft.submissions || [draft.latest_submission]).map((submission) => renderSubmissionProof(submission, true)).join('') : ''}
+
+        <div class="activity-timeline">
+          ${activitiesHtml}
+        </div>
+      </section>
+
+      ${!sent && !uncertain ? `<section class="application-review-section surface-editable" id="application-manual-send">
+        <div class="section-head"><div><h3>Already sent this yourself?</h3><p class="hint">Record an application you sent outside Job Radar, such as a Facebook Messenger message. Use this only after you sent the application, not for an initial question.</p></div></div>
+        <details id="manual-send-disclosure">
+          <summary>I sent it manually</summary>
+          <div class="form-grid">
+            <label>Channel<select id="manual-send-channel"><option>Facebook Messenger</option><option>LinkedIn message</option><option>Email</option><option>Web form</option><option>Other</option></select></label>
+            <label>Where you sent it<input id="manual-send-target" value="${escapeHtml(['facebook','linkedin'].includes(draft.job_source_kind) ? originalPostingUrl || '' : '')}" placeholder="Post link, recipient, or website" required></label>
+          </div>
+          <label>Note (optional)<input id="manual-send-note" placeholder="For example: sent my CV and introduction"></label>
+          <div class="actions"><button type="button" class="primary" id="record-manual-send">Save sent status</button></div>
+        </details>
+      </section>` : ''}
+
+      ${sent && additionalEmailOptions.length ? `<section class="application-review-section surface-editable" id="application-additional-email">
+        <div class="section-head"><div><h3>Email listed in the posting</h3><p class="hint">This is a second application channel. Review the address, subject, message, and attached resume before sending.</p></div></div>
+        <label>Send to<select id="additional-email-address">${additionalEmailOptions.map((option) => `<option value="${escapeHtml(option.email)}">${escapeHtml(option.email)}</option>`).join('')}</select></label>
+        <label>Subject<input id="additional-email-subject" value="${escapeHtml(additionalEmailOptions[0].suggested_subject)}"></label>
+        <label>Message<textarea id="additional-email-body" rows="8">${escapeHtml(message.body || '')}</textarea></label>
+        <p class="hint">The reviewed resume PDF will be attached.</p>
+        <div class="actions"><button type="button" class="primary" id="send-additional-email">Send application email</button></div>
+      </section>` : ''}
 
       <details class="detail-disclosure">
         <summary>Original job description</summary>
@@ -3355,7 +3360,7 @@ async function showApplication(id, preferredScreen = null) {
         <div class="section-head">
           <div>
             <h3>Form answers and attachments</h3>
-            <p class="hint">${formData.action ? `Form submits to ${escapeHtml(formData.action)} (${escapeHtml(formData.method || 'GET')})` : formData.opener ? `Opened through ${escapeHtml(formData.opener.label || 'the career page button')}` : destination.kind === 'linkedin_easy_apply' ? escapeHtml(linkedinFormStatus) : 'Inspect the application page to load its fields here.'}</p>
+            <p class="hint">${formData.action ? `Form submits to ${escapeHtml(formData.action)} (${escapeHtml(formData.method || 'GET')})` : formData.opener ? `Opened through ${escapeHtml(formData.opener.label || 'the career page button')}` : destination.kind === 'linkedin_easy_apply' ? escapeHtml(linkedinFormStatus) : collectionError ? 'Application questions could not be loaded.' : collectApplicationForm ? 'Loading application questions…' : 'Review your answers and attachments below.'}</p>
           </div>
         </div>
         ${!sent && (linkedinManual || destination.kind === 'linkedin_easy_apply') ? `
@@ -3368,19 +3373,19 @@ async function showApplication(id, preferredScreen = null) {
             <button id="btn-switch-linkedin-msg" type="button" class="secondary">Send direct message on LinkedIn</button>
           </div>
         </div>` : ''}
-        ${canInspect && destination.kind !== 'linkedin_easy_apply' ? `
+        ${canInspect && destination.kind !== 'linkedin_easy_apply' && formLoaded && !collectApplicationForm && draft.review_status !== 'skipped' ? `
         <div class="application-form-inspection-banner surface-status">
           <p class="hint">Job Radar uses a browser to discover the questions on this form and prefill answers from your profile.</p>
           <div class="actions" style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
-            <button id="inspect-form-inline" type="button" class="secondary">Inspect form fields</button>
+            <button id="inspect-form-inline" type="button" class="secondary">Reload application questions</button>
             ${(draft.job_source_kind === 'linkedin' || (draft.job_posting_url && draft.job_posting_url.includes('linkedin.com'))) ? `<button id="btn-switch-linkedin-msg" type="button" class="text-button">Or switch to direct LinkedIn message</button>` : ''}
           </div>
         </div>` : ''}
-        ${collectLinkedInForm ? `<div class="application-form-collection" role="status">${collectionError
+        ${collectApplicationForm ? `<div class="application-form-collection" role="status">${collectionError
           ? `<p>${escapeHtml(collectionError)}</p><button id="retry-application-questions" type="button" class="secondary">Retry loading questions</button>`
           : '<p>Loading all application questions. You can review and answer them together when this finishes.</p>'}</div>` : ''}
-        ${!collectLinkedInForm && formData.inspection_blockers?.length ? applicationAlert('warning', 'Answers needed', formData.inspection_blockers) : ''}
-        <div class="application-form-fields">${collectLinkedInForm ? '' : renderApplicationFormFields(formData.fields || [], draft)}</div>
+        ${!collectApplicationForm && formData.inspection_blockers?.length ? applicationAlert('warning', 'Answers needed', formData.inspection_blockers) : ''}
+        <div class="application-form-fields">${collectApplicationForm ? '' : renderApplicationFormFields(formData.fields || [], draft)}</div>
       </section>
 
       <div class="application-destination surface-editable">
@@ -3395,6 +3400,7 @@ async function showApplication(id, preferredScreen = null) {
           <label>Channel<select id="draft-destination-kind" data-draft-field><option value="web" ${destination.kind === 'web' ? 'selected' : ''}>Web form</option><option value="email" ${destination.kind === 'email' ? 'selected' : ''}>Email</option><option value="linkedin_easy_apply" ${destination.kind === 'linkedin_easy_apply' ? 'selected' : ''}>LinkedIn Easy Apply</option><option value="linkedin_message" ${destination.kind === 'linkedin_message' ? 'selected' : ''}>Direct message on LinkedIn</option><option value="manual" ${!['web','email','linkedin_easy_apply','linkedin_message'].includes(destination.kind) ? 'selected' : ''}>Manual review</option></select></label>
           <label>Application form URL, email, or LinkedIn URL<input id="draft-destination" data-draft-field value="${escapeHtml(destination.url || destination.email || '')}"></label>
         </div>
+        ${linkedinEasyApply && !isLinkedInJobPostingUrl(destination.url) ? '<p class="hint">This draft has an email saved as its Easy Apply URL. Choose Email for that address, or enter the LinkedIn job posting URL.</p>' : ''}
       </div>
 
       ${!sent && recentChanges.length ? `
@@ -3409,7 +3415,7 @@ async function showApplication(id, preferredScreen = null) {
         <label>Section<select id="regenerate-section"><option value="summary">Professional summary</option><option value="experience">Experience bullets</option><option value="projects">Selected projects and bullets</option><option value="education">Education wording</option><option value="achievements">Achievements</option><option value="skills">Skills</option>${['email', 'linkedin_message'].includes(destination.kind) ? '<option value="message">Application experience and project fit</option>' : ''}<option value="all" ${draft.provider === 'chatgpt_web' ? 'selected' : ''}>${webGenerator ? 'Full resume draft' : 'Full draft · uses more quota'}</option></select></label>
         <label>Custom instructions<textarea id="regenerate-prompt" rows="3" placeholder="Example: make the summary shorter and emphasize production search work"></textarea></label>
         <div class="actions"><button id="regenerate-draft" class="secondary" ${webGenerator ? 'hidden' : ''} ${draft.provider === 'template' || sent || uncertain ? 'disabled' : ''}>Regenerate selected section</button><button id="chatgpt-input" class="secondary" ${webGenerator ? '' : 'hidden'} ${sent || uncertain ? 'disabled' : ''}>Regenerate selected section</button></div>
-        ${sent ? '<p class="hint">This application has been sent. Its reviewed message and resume are preserved in the submission receipt.</p>' : ''}
+        ${sent ? '<p class="hint">Delivery records are shown above. Job Radar preserves the exact package for sends it made.</p>' : ''}
         ${draft.provider === 'template' && !webGenerator ? '<p class="hint">This draft used the basic template. Create a new draft with an AI provider to regenerate it with instructions.</p>' : ''}
       </section>
 
@@ -3430,13 +3436,64 @@ async function showApplication(id, preferredScreen = null) {
       </div>
     </div>`;
 
+  const fitSummary = detail.querySelector('#screen-first-glance .job-decision-summary');
+  const changeLog = detail.querySelector('#application-review-overview');
+  if (fitSummary && changeLog) fitSummary.after(changeLog);
+  const manualSend = detail.querySelector('#application-manual-send');
+  if (manualSend) detail.querySelector('#screen-first-glance')?.append(manualSend);
+
   const draftContext = { type: 'application', id, title: draft.job_title, company: draft.company };
+  const manualChannel = detail.querySelector('#manual-send-channel');
+  if (manualChannel) {
+    manualChannel.value = draft.job_source_kind === 'facebook' ? 'Facebook Messenger'
+      : draft.job_source_kind === 'linkedin' ? 'LinkedIn message' : 'Other';
+    manualChannel.addEventListener('change', () => {
+      const target = detail.querySelector('#manual-send-target');
+      if (manualChannel.value === 'Email' && target.value === originalPostingUrl) target.value = '';
+    });
+  }
+  detail.querySelector('#record-manual-send')?.addEventListener('click', async (event) => {
+    const channel = manualChannel.value;
+    const target = detail.querySelector('#manual-send-target').value.trim();
+    const note = detail.querySelector('#manual-send-note').value.trim();
+    if (!target) { notice('Enter where you sent the application.', true, null, draftContext); return; }
+    const button = beginPending(event.currentTarget, 'Recording…');
+    try {
+      const result = await api(`/api/applications/${id}/record-manual-send`, {
+        method:'POST', body:JSON.stringify({channel, target, note}),
+      });
+      await loadApplications(id, 'first-glance');
+      notice(result.outcome?.label || 'Manual send recorded.', false, null, draftContext);
+    } catch (error) { notice(error.message, true, null, draftContext); }
+    finally { if (button.isConnected) endPending(button); }
+  });
+  detail.querySelector('#additional-email-address')?.addEventListener('change', (event) => {
+    const option = additionalEmailOptions.find((item) => item.email === event.currentTarget.value);
+    if (option) detail.querySelector('#additional-email-subject').value = option.suggested_subject;
+  });
+  detail.querySelector('#send-additional-email')?.addEventListener('click', async (event) => {
+    const email = detail.querySelector('#additional-email-address').value;
+    const subject = detail.querySelector('#additional-email-subject').value.trim();
+    const body = detail.querySelector('#additional-email-body').value.trim();
+    if (!subject || !body) { notice('Review the email subject and message before sending.', true, null, draftContext); return; }
+    if (!window.confirm(`Send a second application to ${email} with subject “${subject}” and the reviewed resume PDF?`)) return;
+    const button = beginPending(event.currentTarget, 'Sending email…');
+    try {
+      const result = await api(`/api/applications/${id}/send-additional-email`, {
+        method:'POST', body:JSON.stringify({email, subject, body, package_hash:draft.package_hash}),
+      });
+      await loadApplications(id, 'first-glance');
+      notice(`${result.outcome?.label || 'Email updated'}${result.receipt ? `: ${result.receipt}` : ''}`,
+        result.status !== 'sent_confirmed', null, draftContext);
+    } catch (error) { notice(error.message, true, null, draftContext); }
+    finally { if (button.isConnected) endPending(button); }
+  });
   const showActiveApplicationErrorBanner = (errInfo) => {
     let banner = detail.querySelector('#active-application-error-banner');
     if (!banner) {
-      const header = detail.querySelector('.application-review-header');
-      if (header) {
-        header.insertAdjacentHTML('afterend', `
+      const screenNav = detail.querySelector('.application-screen-nav');
+      if (screenNav) {
+        screenNav.insertAdjacentHTML('afterend', `
           <div id="active-application-error-banner" class="application-alert application-alert--danger" role="alert" style="margin-bottom:1rem;">
             <div class="application-alert-header">
               <strong>Recent issue on this application</strong>
@@ -3573,6 +3630,14 @@ async function showApplication(id, preferredScreen = null) {
   detail.querySelectorAll('[data-draft-field]').forEach((field) => {
     for (const eventName of ['input','change']) field.addEventListener(eventName, () => markDirty(field));
   });
+  detail.querySelector('#draft-destination-kind')?.addEventListener('change', (event) => {
+    const target = detail.querySelector('#draft-destination');
+    if (event.target.value === 'linkedin_easy_apply' && target && !isLinkedInJobPostingUrl(target.value.trim())) {
+      target.value = '';
+      target.placeholder = 'LinkedIn job posting URL';
+      markDirty(target);
+    }
+  });
 
   $('#regenerate-draft')?.addEventListener('click', async () => {
     const prompt = $('#regenerate-prompt').value.trim();
@@ -3630,6 +3695,7 @@ async function showApplication(id, preferredScreen = null) {
     try {
       const messageOnly = dirtySections.size === 1 && dirtySections.has('message_data');
       const saved = await saveApplication(id, draft, dirtySections);
+      if (dirtySections.has('destination')) applicationFormCollectionErrors.delete(id);
       clearApplicationError(id);
       detail.querySelector('#active-application-error-banner')?.remove();
       if (messageOnly) {
@@ -3707,8 +3773,6 @@ async function showApplication(id, preferredScreen = null) {
     detail.querySelectorAll('[data-app-screen]').forEach((btn) => {
       btn.setAttribute('aria-current', btn.dataset.appScreen === screen ? 'true' : 'false');
     });
-    const eyebrow = detail.querySelector('#application-screen-eyebrow');
-    if (eyebrow) eyebrow.textContent = screen === 'package' ? 'APPLICATION · PACKAGE' : 'APPLICATION · FIRST GLANCE';
     const firstGlanceEl = detail.querySelector('#screen-first-glance');
     const packageEl = detail.querySelector('#screen-package');
     if (firstGlanceEl && packageEl) {
@@ -3800,15 +3864,17 @@ async function showApplication(id, preferredScreen = null) {
     screen: currentScreen,
   };
   detail.focus({preventScroll:true});
-  if (collectLinkedInForm) {
-    detail.querySelectorAll('[data-draft-field],#regenerate-draft,#chatgpt-input,#save-draft,#send-draft').forEach((control) => { control.disabled = true; });
+  if (collectApplicationForm) {
+    if (!collectionError) detail.querySelectorAll('[data-draft-field],#regenerate-draft,#chatgpt-input,#save-draft,#send-draft').forEach((control) => { control.disabled = true; });
     const collectQuestions = async () => {
       if (applicationFormCollections.has(id)) return;
       applicationFormCollections.add(id);
       try {
         const collected = await api(`/api/applications/${id}/inspect`, {method:'POST'});
-        if (!collected.form_data?.complete) {
-          throw new Error(collected.form_data?.inspection_blockers?.join('; ') || 'LinkedIn did not load all application questions.');
+        const collectedKind = collected.destination?.kind;
+        if ((collectedKind === 'linkedin_easy_apply' && !collected.form_data?.complete) ||
+            (collectedKind === 'web' && (!collected.form_data?.signature || collected.form_data.destination_url !== collected.destination.url))) {
+          throw new Error(collected.form_data?.inspection_blockers?.join('; ') || 'The application questions could not be loaded.');
         }
         clearApplicationError(id);
         applicationFormCollectionErrors.delete(id);
@@ -3862,6 +3928,9 @@ async function saveApplication(id, draft, dirtySections) {
   if (dirtySections.has('destination')) {
     const kind = $('#draft-destination-kind').value;
     const value = $('#draft-destination').value.trim();
+    if (kind === 'linkedin_easy_apply' && !isLinkedInJobPostingUrl(value)) {
+      throw new Error('LinkedIn Easy Apply needs a LinkedIn job posting URL. Choose Email to use an email address.');
+    }
     const editedDestination = kind === 'email' ? {kind, email:value} : {kind, url:value};
     const originalValue = draft.destination.url || draft.destination.email || '';
     const sameDestination = kind === draft.destination.kind && value === originalValue;
@@ -4089,6 +4158,23 @@ async function loadEvidence(focusId = null) {
   renderRepositoryResults($('#repo-filter')?.value || '');
 }
 
+function setProfileMenuOpen(open) {
+  $('#profile-menu').hidden = !open;
+  $('#profile-menu-toggle').setAttribute('aria-expanded', String(open));
+}
+
+$('#profile-menu-toggle').addEventListener('click', () => {
+  setProfileMenuOpen($('#profile-menu').hidden);
+});
+document.addEventListener('click', (event) => {
+  if (!event.target.closest('.nav-utility')) setProfileMenuOpen(false);
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape' || $('#profile-menu').hidden) return;
+  setProfileMenuOpen(false);
+  $('#profile-menu-toggle').focus();
+});
+
 document.querySelectorAll('[data-tab]').forEach((control) => control.addEventListener('click', (event) => {
   if (control.matches('a[href^="#"]')) {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -4102,20 +4188,61 @@ function applyJobControls() {
   jobsPage = 1; activeJob = null; activeJobPinned = false; syncJobsHash('push');
   loadJobs().catch((error) => notice(error.message, true));
 }
-$('#job-search').addEventListener('click', applyJobControls);
-$('#job-query').addEventListener('keydown', (event) => { if (event.key === 'Enter') applyJobControls(); });
+function setJobFilterPopoverOpen(open) {
+  $('#job-filter-popover').hidden = !open;
+  $('#job-filter-toggle').setAttribute('aria-expanded', String(open));
+}
+function setJobImportPopoverOpen(open) {
+  $('#job-import-popover').hidden = !open;
+  $('#job-import-toggle').setAttribute('aria-expanded', String(open));
+}
+$('#job-import-toggle').addEventListener('click', () => {
+  const open = $('#job-import-popover').hidden;
+  setJobFilterPopoverOpen(false);
+  setJobImportPopoverOpen(open);
+  if (open) $('#job-import [name="company"]').focus();
+});
+document.addEventListener('click', (event) => {
+  if (!event.target.closest('.job-import-control')) setJobImportPopoverOpen(false);
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape' || $('#job-import-popover').hidden) return;
+  setJobImportPopoverOpen(false);
+  $('#job-import-toggle').focus();
+});
+$('#job-filter-toggle').addEventListener('click', () => setJobFilterPopoverOpen($('#job-filter-popover').hidden));
+document.addEventListener('click', (event) => {
+  if (!event.target.closest('.jobs-controls')) setJobFilterPopoverOpen(false);
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape' || $('#job-filter-popover').hidden) return;
+  setJobFilterPopoverOpen(false);
+  $('#job-filter-toggle').focus();
+});
+let jobSearchTimer;
+$('#job-query').addEventListener('input', () => {
+  clearTimeout(jobSearchTimer);
+  jobSearchTimer = setTimeout(applyJobControls, 300);
+});
+$('#job-query').addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter') return;
+  clearTimeout(jobSearchTimer);
+  applyJobControls();
+});
 for (const selector of ['#job-decision','#job-application','#job-outcome','#job-score','#job-freshness','#job-work-mode','#job-source','#job-seniority','#job-fit','#job-sort']) {
   $(selector).addEventListener('change', applyJobControls);
 }
 for (const selector of ['#job-location','#job-score']) {
   $(selector).addEventListener('keydown', (event) => { if (event.key === 'Enter') applyJobControls(); });
 }
-document.querySelectorAll('[data-job-inbox]').forEach((button) => button.addEventListener('click', () => {
-  setJobsInboxMode(button.dataset.jobInbox);
+$('#job-inbox').addEventListener('change', (event) => {
+  setJobsInboxMode(event.target.value);
   applyJobControls();
-}));
+});
 $('#jobs-clear-filters').addEventListener('click', () => {
   for (const [key, selector] of Object.entries(JOB_FILTERS)) $(selector).value = key === 'sort' ? 'best' : key === 'fit' ? 'eligible' : '';
+  setJobsInboxMode('since_last_visit');
+  setJobFilterPopoverOpen(false);
   applyJobControls();
   notice('Job filters reset to defaults.');
 });
@@ -4181,6 +4308,26 @@ $('#job-ignore-reason-dialog').addEventListener('close', () => { pendingIgnoreJo
 for (const selector of ['#source-kind', '#source-status', '#source-enabled', '#source-success', '#source-sort']) {
   $(selector).addEventListener('change', () => { sourcePage = 1; loadSources().catch((error) => notice(error.message, true)); });
 }
+function setSourceFilterPopoverOpen(open) {
+  $('#source-filter-popover').hidden = !open;
+  $('#source-filter-toggle').setAttribute('aria-expanded', String(open));
+}
+$('#source-filter-toggle').addEventListener('click', () => setSourceFilterPopoverOpen($('#source-filter-popover').hidden));
+$('#source-clear-filters').addEventListener('click', () => {
+  for (const selector of ['#source-kind', '#source-status', '#source-enabled', '#source-success']) $(selector).value = '';
+  $('#source-sort').value = 'attention';
+  sourcePage = 1;
+  setSourceFilterPopoverOpen(false);
+  loadSources().catch((error) => notice(error.message, true));
+});
+document.addEventListener('click', (event) => {
+  if (!event.target.closest('.source-search-shell')) setSourceFilterPopoverOpen(false);
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape' || $('#source-filter-popover').hidden) return;
+  setSourceFilterPopoverOpen(false);
+  $('#source-filter-toggle').focus();
+});
 $('#source-query').addEventListener('input', () => {
   sourcePage = 1;
   clearTimeout(window.sourceFilterTimer);
@@ -4210,7 +4357,7 @@ document.querySelectorAll('input[name="employer-scope"]').forEach((input) => inp
 $('#employers-prev').addEventListener('click', () => { employerPage = Math.max(1, employerPage - 1); loadEmployers().catch((error) => notice(error.message, true)); });
 $('#employers-next').addEventListener('click', () => { employerPage += 1; loadEmployers().catch((error) => notice(error.message, true)); });
 
-for (const site of ['linkedin', 'facebook', 'zalo']) {
+for (const site of ['linkedin', 'facebook']) {
   $(`#setup-${site}-start`).addEventListener('click', async (event) => {
     const button = beginPending(event.currentTarget, 'Opening Chrome…');
     try {
@@ -4528,10 +4675,15 @@ $('#source-form').addEventListener('submit', async (event) => {
   try {
     const data = Object.fromEntries(new FormData(event.target));
     const result = await api('/api/sources', {method:'POST', body:JSON.stringify(data)});
-    event.target.reset(); syncSourceNameField(); await loadSources(); notice(`${result.name} added`);
+    event.target.reset(); syncSourceNameField(); $('#source-add-dialog').close(); await loadSources(); notice(`${result.name} added`);
   } catch(error) { notice(error.message, true); }
   finally { endPending(pendingButton); }
 });
+$('#source-add-toggle').addEventListener('click', () => {
+  $('#source-add-dialog').showModal();
+  $('#source-form [name="kind"]').focus();
+});
+$('#source-add-cancel').addEventListener('click', () => $('#source-add-dialog').close());
 
 function syncSourceNameField() {
   const form = $('#source-form');
@@ -4571,7 +4723,7 @@ $('#job-import').addEventListener('submit', async (event) => {
     const data = Object.fromEntries(new FormData(event.target));
     if (!data.apply_url) data.apply_url = null;
     const result = await api('/api/jobs/import', {method:'POST', body:JSON.stringify(data)});
-    event.target.reset(); await loadJobs(); await showJob(result.id); notice('Job added');
+    event.target.reset(); setJobImportPopoverOpen(false); await loadJobs(); await showJob(result.id); notice('Job added');
   } catch(error) { notice(error.message, true); }
   finally { endPending(pendingButton); }
 });
@@ -4663,26 +4815,6 @@ $('#scan-now').addEventListener('click', async () => {
     await Promise.all([loadSources(), loadHome()]);
     const blocked = result.sign_in_needed?.length ? ` ${result.sign_in_needed.join(' and ')} need sign-in.` : '';
     notice(result.queued ? `Checking ${result.queued} source${result.queued === 1 ? '' : 's'} now.${blocked}` : `All available sources are already checking or queued.${blocked}`);
-  } catch(error) { notice(error.message, true); }
-  finally { endPending(button); }
-});
-
-$('#scan-due').addEventListener('click', async (event) => {
-  const button = beginPending(event.currentTarget, 'Queueing…');
-  try {
-    const result = await api('/api/scan/due', {method:'POST'});
-    await loadSources();
-    notice(result.queued ? `${result.queued} due sources added to the scan queue.` : 'All due sources are already queued or scanning.');
-  } catch(error) { notice(error.message, true); }
-  finally { endPending(button); }
-});
-
-$('#scan-unscanned').addEventListener('click', async (event) => {
-  const button = beginPending(event.currentTarget, 'Prioritizing…');
-  try {
-    const result = await api('/api/scan/unscanned', {method:'POST'});
-    await loadSources();
-    notice(result.queued || result.prioritized ? `${result.queued} added and ${result.prioritized} moved forward. ${result.waiting} waiting, ${result.scanning} scanning.` : 'All unscanned sources are already first in the queue or need sign-in.');
   } catch(error) { notice(error.message, true); }
   finally { endPending(button); }
 });

@@ -32,8 +32,12 @@ def _clip_prose(value: str, limit: int) -> str:
 
 class ProjectResult(BaseModel):
     area: str = Field(min_length=2, max_length=80)
-    outcome: str = Field(min_length=12, max_length=400)
+    outcome: str = Field(min_length=12, max_length=650)
     source: str = Field(min_length=2, max_length=160)
+    dataset: str = Field(default="", max_length=160)
+    scope: str = Field(default="", max_length=240)
+    primary: bool = False
+    required_metrics: list[str] = Field(default_factory=list, max_length=5)
 
 
 class ProjectContent(BaseModel):
@@ -49,6 +53,10 @@ class ProjectResultRaw(BaseModel):
     area: str
     outcome: str
     source: str
+    dataset: str = ""
+    scope: str = ""
+    primary: bool = False
+    required_metrics: list[str] = Field(default_factory=list)
 
 
 class ProjectContentRaw(BaseModel):
@@ -89,8 +97,10 @@ def generate_project_content(db: Database, evidence_id: str, provider: str = "co
                 title=_clip_prose(generated.title, 160), what=_clip_prose(generated.what, 500),
                 why=_clip_prose(generated.why, 500), how=_clip_prose(generated.how, 800),
                 tech_stack=[item.strip() for item in generated.tech_stack if item.strip()][:12],
-                results=[ProjectResult(area=_clip_prose(item.area, 80), outcome=_clip_prose(item.outcome, 400),
-                                       source=_clip_prose(item.source, 160)) for item in generated.results[:5]],
+                results=[ProjectResult(area=_clip_prose(item.area, 80), outcome=_clip_prose(item.outcome, 650),
+                                       source=_clip_prose(item.source, 160), dataset=_clip_prose(getattr(item, "dataset", ""), 160),
+                                       scope=_clip_prose(getattr(item, "scope", ""), 240), primary=getattr(item, "primary", False),
+                                       required_metrics=getattr(item, "required_metrics", [])[:5]) for item in generated.results[:5]],
             )
         except (RuntimeError, ValueError) as error:
             previous_details = json.loads(card.get("details") or "{}")
@@ -102,6 +112,7 @@ def generate_project_content(db: Database, evidence_id: str, provider: str = "co
         results = [{"id": f"r{index + 1}", **item.model_dump()} for index, item in enumerate(content.results)]
         details = {"schema_version": 2, "what": content.what, "why": content.why, "how": content.how,
                    "results": results, "summary": content.what, "tech_stack": content.tech_stack,
+                   "required_result_ids": [item["id"] for item in results if item.get("primary")],
                    "bullets": [item["outcome"] for item in results], "source_commit": card["commit_sha"],
                    "generated_by": provider}
         claim = results[0]["outcome"]

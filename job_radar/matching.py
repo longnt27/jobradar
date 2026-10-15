@@ -12,7 +12,7 @@ import subprocess
 from .writing_preferences import get_preferences
 from .db import Database, now
 from .auto_apply import AutoApplyManager
-from .local_analysis import ANALYSIS_VERSION, LocalModelUnavailable, RECOMMENDED_MODEL, analyze_job, validate_local_model
+from .local_analysis import ANALYSIS_VERSION, LocalModelUnavailable, RECOMMENDED_MODEL, analyze_job, validate_local_model, save_extracted_job_identity
 from .settings import Settings
 
 
@@ -234,6 +234,8 @@ class MatchManager:
                         "analysis_error=NULL,analyzed_at=?,updated_at=? WHERE id=? AND analysis_status='running' AND updated_at=?",
                         (score, json.dumps(detail, ensure_ascii=False), model, now(), now(), job["id"], job["updated_at"]),
                     ).rowcount
+                    if changed:
+                        save_extracted_job_identity(conn, job["id"], detail.get("facts", {}))
                 if not changed:
                     self.db.execute("UPDATE vacancies SET analysis_status='pending',analysis_stage=NULL WHERE id=? AND analysis_status='running'", (job["id"],))
                 else:

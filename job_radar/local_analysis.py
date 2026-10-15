@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from datetime import datetime, timezone
 from collections.abc import Callable
 from typing import Annotated, Any
@@ -26,7 +27,8 @@ class LocalModelUnavailable(RuntimeError):
 
 
 class JobFacts(BaseModel):
-    role: str = Field(max_length=100)
+    role: str = Field(max_length=100, description="Concise actual job title preserving stated junior/senior/intern level and specialization, excluding recruiting copy, location, salary, and calls to apply")
+    company: str = Field(default="", max_length=160, description="Named hiring employer, not the recruiter or posting platform; empty if unknown")
     seniority: str = Field(max_length=40)
     required_skills: list[Annotated[str, Field(max_length=60)]] = Field(max_length=8)
     preferred_skills: list[Annotated[str, Field(max_length=60)]] = Field(max_length=8)
@@ -43,6 +45,101 @@ class JobFacts(BaseModel):
 class Criterion(BaseModel):
     score: int = Field(ge=1, le=10)
     reason: str = Field(max_length=180)
+
+
+class JobIdentity(BaseModel):
+    role: str = Field(max_length=100, description="Full actual position from the posting; use a stated expansion such as BA (Business Analyst) -> Business Analyst; preserve AI/ML acronyms and meaningful level")
+    company: str = Field(default="", max_length=100, description="Only the hiring employer's proper name, never a location, recruitment slogan, recruiter contact, or job title; empty if unknown")
+
+
+def extract_job_identity(job: dict, model: str, writing_preferences: dict | None = None) -> JobIdentity:
+    prompt = re.sub(r"\s*POSTING:\s*$", "\n", render_prompt(writing_preferences, 'job_facts'), flags=re.I)
+    prompt += (
+        "Read the title and description to extract the actual position. Remove recruiting copy, location, and salary. "
+        "Keep the explicitly stated position level and meaningful specialization from the title, even if the description does not repeat them. "
+        "Use the full position name when the description expands an abbreviation in parentheses. "
+        "For example, 'Vị trí: BA (Business Analyst)' means role='Business Analyst'. "
+        "Identity examples: '[Ngoại Giao Đoàn] Cần gấp AI Engineer' -> role='AI Engineer', company=''; "
+        "'[Q7HCM] Em cần AI Engineer, ib Zalo' -> role='AI Engineer', company=''; "
+        "'AI NATIVE SOFTWARE ENGINEER ơi! WEEDS VINA mở DEAL XỊN' -> role='AI Native Software Engineer', company='WEEDS VINA'; "
+        "'PANCAKE TUYỂN DỤNG BA' -> role='Business Analyst', company='PANCAKE'. "
+        "'[HN] Junior, AI Engineer' -> role='Junior AI Engineer', company=''. "
+        "'WE’RE HIRING | COMPUTER VISION' -> role='Computer Vision', company=''; do not add Engineer unless the posting states it. "
+        "An address, generic 'cty global', industrial park, Zalo contact, and full recruitment headline are not company names.\n"
+    )
+    return _generate(model, prompt + "\nPOSTING:\n" + json.dumps({"title": job.get("title"), "description": job.get("description")}, ensure_ascii=False)[:20000], JobIdentity)
+
+
+def save_extracted_job_identity(conn, vacancy_id: str, facts: dict) -> None:
+    """Persist a grounded LLM position; retain known native hiring employers."""
+    from .ingest import _employer_id, normalize_text
+    from .db import new_id, now
+
+    sightings = conn.execute(
+        "SELECT o.id,o.raw_text,o.content_hash,o.payload,s.kind FROM vacancy_observations vo "
+        "JOIN observations o ON o.id=vo.observation_id JOIN sources s ON s.id=o.source_id WHERE vo.vacancy_id=?",
+        (vacancy_id,),
+    ).fetchall()
+    if not sightings:
+        return
+    social_only = all(row["kind"] == "facebook" for row in sightings)
+    job = conn.execute("SELECT title,company,employer_id FROM vacancies WHERE id=?", (vacancy_id,)).fetchone()
+    source_parts = []
+    for row in sightings:
+        payload = json.loads(row["payload"])
+        original_title = (payload.get("extracted_identity") or {}).get("source_title", payload.get("title", ""))
+        source_parts.append(row["raw_text"] + (" " + str(original_title) if row["kind"] != "facebook" else ""))
+    source_text = " ".join(source_parts)
+    source = normalize_text(unicodedata.normalize("NFKC", source_text))
+    employer_source = normalize_text(unicodedata.normalize("NFKC", " ".join(
+        re.sub(r"(?m)^\s*(?:\[[^\]]+\]\s*)+", "", row["raw_text"]) for row in sightings)))
+    def grounded(value: str) -> bool:
+        words = normalize_text(unicodedata.normalize("NFKC", value)).split()
+        if not words:
+            return False
+        source_words = set(source.split())
+        # Accept an LLM's canonical expansion of an acronym actually present in the posting.
+        acronyms = {token.casefold() for token in re.findall(r"\b[A-Z]{2,5}\b", source_text)}
+        def supported(index: int) -> bool:
+            if index == len(words):
+                return True
+            if words[index] in source_words and supported(index + 1):
+                return True
+            return any("".join(word[0] for word in words[index:end]) in acronyms and supported(end)
+                       for end in range(index + 2, min(index + 5, len(words)) + 1))
+        return supported(0)
+    role = str(facts.get("role") or "").strip()
+    company = str(facts.get("company") or "").strip()
+    if social_only and not grounded(role):
+        stated_specialization = re.sub(r"\s+(?:Engineer|Specialist|Developer)$", "", role, flags=re.I).strip()
+        if len(stated_specialization.split()) >= 2 and grounded(stated_specialization):
+            role = stated_specialization
+    title = role if grounded(role) else job["title"]
+    def named_employer(value: str) -> bool:
+        return bool(value) and normalize_text(value) in employer_source and not re.search(
+            r"^(?:facebook(?: post)?|saramin|unknown employer|cty global|global tech company|công ty em|company)$|"
+            r"tuyển|hiring|\binb\b|zalo|\bkcn\b|\bengineer\b|\bdeveloper\b|\d{7}|hà nội|hồ chí minh|\bHCM\b", value, re.I)
+    if social_only:
+        company = company if named_employer(company) else job["company"] if named_employer(job["company"]) else "Facebook post"
+    else:
+        company = job["company"]
+    employer_id = job["employer_id"]
+    if company != job["company"]:
+        employer_id = _employer_id(conn, company)
+        if not employer_id:
+            employer_id = new_id()
+            conn.execute("INSERT INTO employers(id,name,category,created_at,updated_at) VALUES(?,?,'discovered',?,?)", (employer_id, company, now(), now()))
+    conn.execute("UPDATE vacancies SET title=?,company=?,employer_id=? WHERE id=?", (title, company, employer_id, vacancy_id))
+    conn.execute("UPDATE vacancy_fts SET title=?,company=? WHERE vacancy_id=?", (title, company, vacancy_id))
+    for observation in sightings:
+        payload = json.loads(observation["payload"])
+        previous_identity = payload.get("extracted_identity") or {}
+        source_title = previous_identity.get("source_title", payload.get("title", ""))
+        source_company = previous_identity.get("source_company", payload.get("company", ""))
+        payload.update(title=title, company=company)
+        payload["extracted_identity"] = {"content_hash": observation["content_hash"], "title": title, "company": company,
+                                         "source_title": source_title, "source_company": source_company}
+        conn.execute("UPDATE observations SET payload=? WHERE id=?", (json.dumps(payload, ensure_ascii=False), observation["id"]))
 
 
 class MatchJudgment(BaseModel):
@@ -93,7 +190,7 @@ def _generate(model: str, prompt: str, result_type: type[BaseModel]) -> BaseMode
     payload = {"model": model, "prompt": prompt, "stream": False,
                "format": result_type.model_json_schema(), "think": False,
                "options": {"temperature": 0, "num_ctx": 8192, "num_predict": 1400}}
-    stage = "job facts" if result_type is JobFacts else "match scores"
+    stage = "job facts" if result_type is JobFacts else "job identity" if result_type is JobIdentity else "match scores"
     try:
         with httpx.Client(timeout=httpx.Timeout(180, connect=5), trust_env=False) as client:
             for budget in (1400, 3000):
@@ -585,6 +682,10 @@ def analyze_job(job: dict, profile: dict, projects: list[dict], model: str,
         + json.dumps(posting, ensure_ascii=False)
     )
     facts = _ground_facts(_generate(model, facts_prompt, JobFacts), posting)
+    if facts.role:
+        job = {**job, "title": facts.role}
+    if facts.company:
+        job = {**job, "company": facts.company}
     if on_stage:
         on_stage("scoring")
     rule_only = {name: {"score": 5, "reason": "Not graded after the eligibility check."}

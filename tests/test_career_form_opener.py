@@ -101,6 +101,54 @@ def test_form_structure_filters_hidden_dummy_inputs() -> None:
     asyncio.run(run())
 
 
+def test_job_search_placeholder_is_not_an_application_form() -> None:
+    from job_radar.apply import _form_structure
+
+    async def run():
+        playwright, browser, page = await _page('''
+            <form action="/Job/BoxSearchHomeSubmit">
+              <input name="txtFilterKeyword" placeholder="Tên công việc, vị trí bạn muốn ứng tuyển...">
+              <button type="submit">Tìm kiếm</button>
+            </form>''')
+        try:
+            try:
+                await _form_structure(page)
+            except ValueError as error:
+                assert "No recognizable application form" in str(error)
+            else:
+                raise AssertionError("Job search must not become an application destination")
+        finally:
+            await browser.close()
+            await playwright.stop()
+
+    asyncio.run(run())
+
+
+def test_application_form_is_selected_instead_of_job_search() -> None:
+    from job_radar.apply import _form_structure
+
+    async def run():
+        playwright, browser, page = await _page('''
+            <form action="/search">
+              <input name="keyword" required placeholder="Search applications">
+              <input name="searchLocation" required><input name="searchDepartment" required>
+              <button type="submit">Search</button>
+            </form>
+            <form action="/apply" method="post">
+              <label>Email <input name="email" type="email" required></label>
+              <button type="submit">Submit application</button>
+            </form>''')
+        try:
+            form = await _form_structure(page)
+            assert form["form_index"] == 1
+            assert [field["name"] for field in form["fields"]] == ["email"]
+        finally:
+            await browser.close()
+            await playwright.stop()
+
+    asyncio.run(run())
+
+
 def test_signatures_compatible_normalizes_labels() -> None:
     from job_radar.apply import _signatures_compatible
 

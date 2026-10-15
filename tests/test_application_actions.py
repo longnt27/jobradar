@@ -16,6 +16,65 @@ from job_radar.settings import Settings
 from job_radar.web import create_app
 
 
+def test_accessibility_contact_is_not_an_application_destination() -> None:
+    from job_radar.application_action import _instruction_emails
+
+    assert _instruction_emails(
+        "During the application process, candidates needing a disability accommodation "
+        "may e-mail myhr.support@qualcomm.com or call the toll-free number."
+    ) == []
+    assert _instruction_emails("Ứng tuyển: Gửi CV về careers@example.com") == ["careers@example.com"]
+
+
+def test_career_page_support_mailto_is_not_an_application_destination() -> None:
+    from job_radar.apply import _find_application_email
+
+    class Body:
+        async def inner_text(self, **_kwargs):
+            return "Candidates needing an accommodation may email myhr.support@qualcomm.com."
+
+    class Page:
+        async def evaluate(self, _script):
+            return ["myhr.support@qualcomm.com"]
+
+        def locator(self, _selector):
+            return Body()
+
+    assert asyncio.run(_find_application_email(Page())) is None
+
+
+def test_form_defaults_leave_unverified_personal_answers_blank() -> None:
+    from job_radar.apply import _default_answer
+
+    profile = {"name": "Alex Example"}
+    for label in ("Date of birth", "Years of experience", "Current salary", "Available duration", "Work authorization"):
+        field = {"index": 0, "type": "text", "name": label, "id": "", "label": label, "group_label": ""}
+        assert _default_answer(field, profile, {"body": "I built a search system."}) == ""
+
+
+def test_react_aria_required_fields_are_collected() -> None:
+    from job_radar.apply import _form_structure
+
+    async def scenario() -> None:
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(headless=True)
+            try:
+                page = await browser.new_page()
+                await page.set_content("""
+                    <form action="/apply"><label for="first_name">First Name</label>
+                    <input id="first_name" aria-label="First Name" aria-required="true">
+                    <label for="salary">Salary expectation</label>
+                    <input id="salary" aria-label="Salary expectation" aria-required="true">
+                    <button type="submit">Apply</button></form>
+                """)
+                fields = (await _form_structure(page))["fields"]
+                assert [field["required"] for field in fields] == [True, True]
+            finally:
+                await browser.close()
+
+    asyncio.run(scenario())
+
+
 def _source(db, kind: str) -> str:
     row = db.one("SELECT id FROM sources WHERE kind=? LIMIT 1", (kind,))
     if row:
@@ -85,6 +144,61 @@ def test_linkedin_easy_apply_is_distinct_from_external_apply(tmp_path: Path) -> 
     assert draft["job_source_kind"] == "linkedin"
 
 
+def test_collected_web_form_still_requires_answers_and_attachments(tmp_path: Path) -> None:
+    from job_radar.drafting import get_draft
+
+    draft = _prepare(tmp_path, "career", ObservedJob(
+        "https://example.org/jobs/1", "Engineer", "Example", "Build systems.",
+        apply_url="https://example.org/apply/1",
+    ))
+    app = create_app(Settings(tmp_path))
+    db = app.state.db
+    form = {"signature": "collected", "destination_url": draft["destination"]["url"], "fields": [
+        {"index": 0, "type": "text", "name": "years", "label": "Years", "required": True},
+        {"index": 1, "type": "checkbox", "name": "consent", "label": "Consent", "required": True},
+        {"index": 2, "type": "radio", "name": "location", "group_label": "Location", "label": "Hanoi", "required": True},
+        {"index": 3, "type": "radio", "name": "location", "group_label": "Location", "label": "Remote", "required": True},
+        {"index": 4, "type": "file", "name": "resume", "label": "Resume", "required": True, "accept": ".pdf"},
+    ], "answers": {}, "attachments": {}}
+    db.execute("UPDATE application_drafts SET form_data=? WHERE id=?", (json.dumps(form), draft["id"]))
+    assert set(send_readiness(db, app.state.settings, get_draft(db, draft["id"]))) == {
+        "Answer required: Years", "Answer required: Consent", "Choose an option: Location", "Choose an attachment for Resume",
+    }
+    form["answers"] = {"0": "2", "1": "yes", "3": "yes"}
+    form["attachments"] = {"4": {"kind": "resume"}}
+    db.execute("UPDATE application_drafts SET form_data=? WHERE id=?", (json.dumps(form), draft["id"]))
+    assert send_readiness(db, app.state.settings, get_draft(db, draft["id"])) == []
+
+
+def test_background_collection_failure_is_saved_without_discarding_answers(tmp_path: Path, monkeypatch) -> None:
+    from job_radar.drafting import get_draft
+    from playwright.async_api import Error as PlaywrightError
+
+    draft = _prepare(tmp_path, "career", ObservedJob(
+        "https://example.org/jobs/1", "Engineer", "Example", "Build systems.",
+        apply_url="https://example.org/apply/1",
+    ))
+    app = create_app(Settings(tmp_path))
+    db = app.state.db
+    form = {"fields": [], "answers": {"0": "Saved answer"}, "attachments": {}}
+    db.execute("UPDATE application_drafts SET form_data=? WHERE id=?", (json.dumps(form), draft["id"]))
+
+    async def fail(*_args):
+        raise PlaywrightError("Application page could not be reached.")
+
+    monkeypatch.setattr("job_radar.apply._inspect_form", fail)
+    try:
+        asyncio.run(inspect_form(db, app.state.settings, draft["id"]))
+    except PlaywrightError:
+        pass
+    else:
+        raise AssertionError("The caller must receive the collection failure")
+    saved = get_draft(db, draft["id"])
+    assert saved["form_data"]["answers"] == form["answers"]
+    assert saved["form_data"]["collection_error"] == "Application page could not be reached."
+    assert send_readiness(db, app.state.settings, saved) == ["Application page could not be reached."]
+
+
 def test_linkedin_easy_apply_requires_complete_reviewed_fields_before_send(tmp_path: Path) -> None:
     from job_radar.drafting import get_draft, set_discovered_linkedin_destination
 
@@ -105,7 +219,7 @@ def test_linkedin_easy_apply_requires_complete_reviewed_fields_before_send(tmp_p
             "destination_url": "https://www.linkedin.com/jobs/view/107", "complete": False}
     db.execute("UPDATE application_drafts SET form_data=? WHERE id=?", (json.dumps(form), draft["id"]))
     blocked = send_readiness(db, app.state.settings, get_draft(db, draft["id"]))
-    assert any("Inspect every LinkedIn application step" in item for item in blocked)
+    assert "LinkedIn application questions have not finished loading." in blocked
     assert any("Years of experience" in item for item in blocked)
 
     form["complete"] = True
@@ -143,7 +257,7 @@ def test_saving_linkedin_answers_clears_stale_missing_answer_warnings(tmp_path: 
     assert updated["form_data"]["inspection_blockers"] == []
     assert not updated["form_data"]["complete"]
     readiness = send_readiness(db, app.state.settings, updated)
-    assert readiness == ["Inspect every LinkedIn application step before sending"]
+    assert readiness == ["LinkedIn application questions have not finished loading."]
 
     missing_again = client.patch(f"/api/applications/{draft['id']}", json={
         "form_data": {**updated["form_data"], "answers": {"0": "", "1": "1"}}
@@ -520,7 +634,7 @@ def test_inspect_form_falls_back_to_discovered_email(tmp_path: Path) -> None:
         thread.join(timeout=5)
 
 
-def test_linkedin_direct_message_action_and_submission(tmp_path: Path) -> None:
+def test_linkedin_direct_message_action_requires_manual_sending(tmp_path: Path) -> None:
     from job_radar.application_action import describe_application_action
     from job_radar.drafting import get_draft, set_discovered_linkedin_message_destination
 
@@ -546,11 +660,10 @@ def test_linkedin_direct_message_action_and_submission(tmp_path: Path) -> None:
 
     # Verify send readiness
     blockers = send_readiness(client.app.state.db, client.app.state.settings, updated)
-    assert blockers == []
+    assert blockers == ["LinkedIn direct messages cannot be sent automatically. Open LinkedIn and send this message yourself."]
 
     # Send application
-    res = asyncio.run(send_application(client.app.state.db, client.app.state.settings, draft["id"], updated["package_hash"]))
-    assert res["status"] == "submitted_confirmed"
-    assert "Direct message outreach confirmed on LinkedIn" in res["receipt"]
-    assert res["outcome"]["key"] == "application_submitted"
-    assert res["outcome"]["label"] == "Direct message sent"
+    import pytest
+    with pytest.raises(ValueError, match="cannot be sent automatically"):
+        asyncio.run(send_application(client.app.state.db, client.app.state.settings, draft["id"], updated["package_hash"]))
+    assert client.app.state.db.one("SELECT COUNT(*) AS count FROM submissions WHERE draft_id=?", (draft["id"],))["count"] == 0

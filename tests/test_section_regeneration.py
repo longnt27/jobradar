@@ -80,7 +80,7 @@ def test_project_regeneration_replaces_only_approved_project_section(tmp_path: P
     def fake_provider(_provider, prompt, response_type):
         assert set(response_type.model_fields) == {"selected_evidence_ids", "project_bullets", "project_focus", "bold_phrases"}
         assert "email_subject" not in prompt
-        assert "one to three complementary job-relevant result IDs" in prompt
+        assert "primary and complementary job-relevant result IDs" in prompt
         assert "combine their supported outcomes in the single second bullet" in prompt
         assert "Every metric in bullet 2 must be supported by a result ID in project_focus" in prompt
         assert "Keep internal logs and trace artifacts out of result bullets" in prompt
@@ -181,9 +181,11 @@ def test_message_regeneration_uses_verified_facebook_source_and_specific_job_evi
     assert "Do not write a greeting, posting source, education, call to action" in captured[0]
     assert "3D reconstruction pipeline for robot data generation" in captured[0]
     body = revised["message_data"]["body"]
-    assert "bài đăng tuyển AI Engineer của SETA trên Facebook" in body
-    assert "Đại học Bách khoa Hà Nội. Tôi từng thực tập" in body
-    assert "Rất mong có cơ hội trao đổi sâu hơn" in body
+    assert "ứng tuyển vị trí AI Engineer tại SETA" in body
+    assert "Tôi từng thực tập vị trí AI Engineer tại VinSmart Future" in body
+    assert "Tôi gửi kèm CV" in body
+    assert "Facebook" not in body
+    assert "Đại học Bách khoa Hà Nội" not in body
     assert body.endswith("Nguyễn Trung Long")
     assert revised["resume_data"] == before["resume_data"]
     assert [change["section"] for change in revised["changes"]] == ["message"]

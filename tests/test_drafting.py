@@ -109,7 +109,7 @@ def test_codex_provider_uses_scoped_cli_and_schema(monkeypatch) -> None:
     assert "bold_phrases" in schemas[0]["properties"]
     assert "Select exactly three approved project IDs" in prompts[0]
     assert "Bullet 1 explains the problem, what the project does, and how it works" in prompts[0]
-    assert "one to three complementary job-relevant result IDs" in prompts[0]
+    assert "primary and complementary job-relevant result IDs" in prompts[0]
     assert "combine their supported outcomes in the single second bullet" in prompts[0]
     assert "PA-MPJPE" in prompts[0]
     assert "Every metric in bullet 2 must be supported by a result ID in project_focus" in prompts[0]
@@ -144,7 +144,7 @@ def test_template_application_note_is_brief_and_points_to_resume() -> None:
     assert len(body.split()) <= 90
     assert "AI Engineer Intern" in body and "Example Labs" in body
     assert "personal projects" in body.lower()
-    assert "attached resume" in body.lower()
+    assert "attached my resume" in body.lower()
     assert "18%" not in body and "93%" not in body
 
 
@@ -156,9 +156,10 @@ def test_application_note_assembles_verified_source_and_profile_around_fit() -> 
     first = _compose_application_message(job, profile, "I built Python search systems at Prior Co.")
     second = _compose_application_message(job, profile, "I built retrieval systems at Prior Co.")
     assert first["subject"] == second["subject"] == "Application for Search Engineer – Alex Example"
-    assert "on LinkedIn and feel the role fits my experience and skills" in first["body"]
-    assert "I studied Computer Science at Example University. I built Python search systems" in first["body"]
-    assert "Please see my attached resume for details." in first["body"]
+    assert "I’m applying for the Search Engineer position at Example AI." in first["body"]
+    assert "I built Python search systems" in first["body"]
+    assert "Example University" not in first["body"]
+    assert "I've attached my resume" in first["body"]
     assert first["body"].replace("Python search", "retrieval") == second["body"]
     assert "on LinkedIn" not in _compose_application_message({**job, "posting_source": None}, profile,
                                                    "I built Python search systems at Prior Co.")["body"]

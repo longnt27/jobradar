@@ -118,10 +118,16 @@ def test_employer_api_uses_user_facing_coverage_states(tmp_path: Path) -> None:
     assert row["live_coverage"] == "temporarily_unavailable"
 
 
-def test_check_now_api_uses_all_enabled_sources_without_scheduler_categories(tmp_path: Path, monkeypatch) -> None:
+def test_check_now_api_prioritizes_never_checked_and_failed_sources(tmp_path: Path, monkeypatch) -> None:
     app = create_app(Settings(tmp_path))
     client = TestClient(app)
     captured = {}
+    rows = app.state.db.all("SELECT id FROM sources WHERE enabled=1 LIMIT 2")
+    never_checked, failed = (row["id"] for row in rows)
+    app.state.db.execute("UPDATE sources SET last_success_at='2026-10-15T00:00:00+00:00',"
+                         "last_attempt_at='2026-10-15T00:00:00+00:00',last_status='success' WHERE enabled=1")
+    app.state.db.execute("UPDATE sources SET last_success_at=NULL WHERE id=?", (never_checked,))
+    app.state.db.execute("UPDATE sources SET last_status='failed' WHERE id=?", (failed,))
 
     def fake_queue(source_ids, *, manual=False):
         captured["ids"] = list(source_ids)
@@ -136,6 +142,7 @@ def test_check_now_api_uses_all_enabled_sources_without_scheduler_categories(tmp
     assert captured["manual"] is True
     assert response.json()["total_sources"] == len(captured["ids"])
     assert response.json()["queued"] == len(captured["ids"])
+    assert captured["ids"][:2] == [never_checked, failed]
 
 
 def test_discovery_trust_ui_uses_user_first_language() -> None:
@@ -146,10 +153,12 @@ def test_discovery_trust_ui_uses_user_first_language() -> None:
 
     assert 'id="scan-now">Check for jobs now' in html
     assert "Discovery coverage" in html
-    assert "Scan diagnostics and advanced controls" in html
+    assert "Scan diagnostics and advanced controls" not in html
+    assert 'id="source-add-dialog"' in html
+    assert 'id="source-filter-popover"' in html
     assert "Filter discovery coverage" in html
 
-    assert "Seen on ${job.sighting_count} source" in js
+    assert "Sources (${job.sighting_count})" in js
     assert "Mark as a different job" in js
     assert "Preferred source" in js
     assert "coverageLabel" in js

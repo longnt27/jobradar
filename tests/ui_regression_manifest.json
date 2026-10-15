@@ -1,14 +1,13 @@
 {
   "viewports": {
-    "desktop": {"width": 1440, "height": 1000},
-    "tablet": {"width": 1024, "height": 900},
-    "mobile": {"width": 390, "height": 844}
+    "desktop": {"width": 1440, "height": 1000}
   },
   "surfaces": {
     "home": {"hash": "#home", "active": "#home.active", "anchors": ["#home-hero", "#home-loop", "#home-actions", "#home-health-status"]},
-    "queue": {"hash": "#queue", "active": "#queue.active", "anchors": ["#queue-summary", ".queue-grid"]},
-    "jobs": {"hash": "#jobs?inbox=all", "active": "#jobs.active", "anchors": [".jobs-controls", "#job-list"]},
-    "applications": {"hash": "#applications/{draft_id}", "active": "#applications.active", "anchors": [".applications-view-tabs", ".applications-workspace", "#application-detail"]},
+    "queue": {"hash": "#queue", "active": "#queue.active", "anchors": [".queue-grid", "#queue-scan-active", "#queue-analysis-active", "#queue-draft-active"]},
+    "jobs": {"hash": "#jobs?inbox=all&job={job_id}", "active": "#jobs.active", "anchors": [".jobs-controls", "#job-list", "#job-detail .job-score-badge"]},
+    "applications": {"hash": "#applications/{draft_id}", "active": "#applications.active", "anchors": [".application-controls", ".applications-workspace", "#application-detail"]},
+    "application-history": {"hash": "#application-history", "active": "#application-history.active", "anchors": ["#auto-apply-activity", "#submission-history-list"]},
     "profile": {"hash": "#profile", "active": "#profile.active", "anchors": ["#profile-summary-panel", "#resume-panel"]},
     "projects": {"hash": "#projects", "active": "#projects.active", "anchors": ["#project-add-form", "#project-editor"]},
     "sources": {"hash": "#sources", "active": "#sources.active", "anchors": [".source-operations", "#source-list"]},

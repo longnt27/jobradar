@@ -66,6 +66,18 @@ def test_web_message_save_reuses_resume_and_does_not_notify_telegram(tmp_path: P
     assert client.get(f"/api/applications/{draft['id']}").json()["telegram_status"] == "web_only"
 
 
+def test_message_edit_refreshes_copied_form_cover_answer(tmp_path: Path) -> None:
+    client = TestClient(create_app(Settings(tmp_path)))
+    draft = _prepared(client, "https://example.org/apply")
+    old_body = draft["message_data"]["body"]
+    form = {"answers": {"0": old_body, "1": "My own answer"}}
+    saved = client.patch(f"/api/applications/{draft['id']}", json={"form_data": form}).json()
+    changed = client.patch(f"/api/applications/{draft['id']}", json={
+        "message_data": {**saved["message_data"], "body": "A stronger application message."},
+    }).json()
+    assert changed["form_data"]["answers"] == {"0": "A stronger application message.", "1": "My own answer"}
+
+
 def test_manual_application_is_registered_for_review_and_edit_refreshes_version(tmp_path: Path) -> None:
     app = create_app(Settings(tmp_path))
     client = TestClient(app)
@@ -211,7 +223,7 @@ def test_web_form_inspection_and_one_click_submit(tmp_path: Path) -> None:
         assert inspected.status_code == 200, inspected.text
         answers = inspected.json()["form_data"]["answers"]
         assert "Alex Example" in answers.values()
-        assert any("I saw the posting" in value and "attached resume" in value for value in answers.values())
+        assert any("I’m applying for" in value and "attached my resume" in value for value in answers.values())
         form_data = inspected.json()["form_data"]
         resume_field = next(field for field in form_data["fields"] if field["type"] == "file")
         form_data["attachments"] = {str(resume_field["index"]): {"kind": "resume"}}
@@ -225,6 +237,54 @@ def test_web_form_inspection_and_one_click_submit(tmp_path: Path) -> None:
         assert result.status_code == 200, result.text
         assert result.json()["status"] == "submitted_confirmed"
         assert len(posted) == 1
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_web_form_refills_required_answer_cleared_by_later_control(tmp_path: Path) -> None:
+    posted = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = b'''<html><body><form method="post" action="/apply">
+              <label>First Name <input id="first_name" name="first_name" required></label>
+              <label>Last Name <input id="last_name" name="last_name" required
+                oninput="if (!window.cleared) { document.getElementById('first_name').value = ''; window.cleared = true; }"></label>
+              <button type="submit">Apply</button></form></body></html>'''
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self):
+            posted.append(self.rfile.read(int(self.headers["Content-Length"])))
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(b"<html><body>Thank you. Application received.</body></html>")
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        client = TestClient(create_app(Settings(tmp_path)))
+        draft = _prepared(client, f"http://127.0.0.1:{server.server_port}/apply")
+        inspected = client.post(f"/api/applications/{draft['id']}/inspect").json()
+        form_data = inspected["form_data"]
+        for field in form_data["fields"]:
+            if field["name"] == "first_name":
+                form_data["answers"][str(field["index"])] = "Alex"
+            elif field["name"] == "last_name":
+                form_data["answers"][str(field["index"])] = "Example"
+        reviewed = client.patch(f"/api/applications/{draft['id']}", json={"form_data": form_data}).json()
+        outcome = client.post(f"/api/applications/{draft['id']}/send", json={"package_hash": reviewed["package_hash"]})
+        assert outcome.json()["status"] == "submitted_confirmed"
+        assert len(posted) == 1
+        assert b"first_name=Alex" in posted[0]
+        assert b"last_name=Example" in posted[0]
     finally:
         server.shutdown()
         server.server_close()

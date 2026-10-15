@@ -141,7 +141,8 @@ def test_section_and_chatgpt_regeneration_use_saved_prompts_and_preserve_custom_
             {'id': ids[0], 'bullets': ['Built search.', 'Reached 95% accuracy.']},
         ]}))
     # The full-resume reply follows the same preferences and does not backfill to three.
-    revised = apply_chatgpt_reply(db, settings, draft['id'], 'all', json.dumps({'summary': 'A revised search engineer.', 'projects': [
+    revised = apply_chatgpt_reply(db, settings, draft['id'], 'all', json.dumps({'summary': 'A revised search engineer.',
+        'fit_text': 'I built search systems and measured project results.', 'projects': [
         {'id': ids[0], 'bullets': ['Built search.', 'Reached 95% accuracy.', 'Reduced latency by 40%.']},
     ]}))
     assert len(revised['resume_data']['projects']) == 1

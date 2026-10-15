@@ -75,6 +75,7 @@ def test_application_tab_reviews_regenerates_sends_and_shows_receipt(tmp_path: P
                     page.get_by_role("button", name="Save changes").click()
                 assert detail_response.value.status == 200, detail_response.value.text()
                 page.locator("#application-dirty-state").get_by_text("Saved").wait_for()
+                page.locator("#notice").get_by_text("Application saved", exact=True).wait_for()
                 assert client.get(f"/api/applications/{draft['id']}").json()["resume_data"]["experience"][0]["bullets"] == original_bullets
                 item = page.locator('[data-experience-bullets="0"]')
                 if not item.is_visible():
@@ -85,10 +86,14 @@ def test_application_tab_reviews_regenerates_sends_and_shows_receipt(tmp_path: P
                     page.get_by_role("button", name="Save changes").click()
                 assert saved_response.value.status == 200, saved_response.value.text()
                 page.locator("#application-dirty-state").get_by_text("Saved").wait_for()
+                page.locator("#notice").get_by_text("Application saved", exact=True).wait_for()
                 saved = client.get(f"/api/applications/{draft['id']}").json()
                 assert r"\textbf{Python systems}" in saved["resume_data"]["experience"][0]["bullets"][0]
                 resume_hash = saved["resume_hash"]
                 page.locator('#application-review-resume img[alt="Resume page 1"]').wait_for()
+                page.wait_for_function("""() => [...document.querySelectorAll('#application-review-resume img')]
+                    .every(image => image.complete && image.naturalWidth > 0)""")
+                page.wait_for_load_state("networkidle")
                 resume_requests = []
                 page.on("request", lambda request: resume_requests.append(request.url)
                         if f"/api/applications/{draft['id']}/resume/preview" in request.url else None)
@@ -102,7 +107,8 @@ def test_application_tab_reviews_regenerates_sends_and_shows_receipt(tmp_path: P
                 assert client.get(f"/api/applications/{draft['id']}").json()["resume_hash"] == resume_hash
                 assert not resume_requests
                 assert page.get_by_label("Custom instructions").is_visible()
-                page.locator('.sidebar [data-tab="settings"]').click()
+                page.get_by_role("button", name="Profile menu").click()
+                page.locator('.app-header [data-tab="settings"]').click()
                 page.locator('#provider-form select[name="provider"]').select_option('chatgpt_web')
                 assert page.get_by_role("button", name="Log in to ChatGPT").is_visible()
                 with page.expect_response(lambda response: response.url.endswith('/api/chatgpt/login') and response.status == 200):
@@ -132,7 +138,7 @@ def test_application_tab_reviews_regenerates_sends_and_shows_receipt(tmp_path: P
                 change_note.wait_for(state="visible")
                 assert change_note.is_visible()
                 page.get_by_role("button", name="Approve & send").click()
-                page.locator("#application-review-overview").get_by_role("heading", name="Application sent").wait_for()
+                page.locator("#application-review-overview").get_by_role("heading", name="Change log").wait_for()
                 assert sent == [draft["id"]]
                 assert page.locator("#application-review-overview").get_by_text("SMTP accepted message").first.is_visible()
                 overview = page.locator("#application-review-overview")
@@ -142,7 +148,7 @@ def test_application_tab_reviews_regenerates_sends_and_shows_receipt(tmp_path: P
                 assert page.locator("#send-draft").is_disabled()
                 assert page.locator("#send-draft").inner_text() == "Email sent"
                 page.reload()
-                page.locator("#application-review-overview").get_by_role("heading", name="Application sent").wait_for()
+                page.locator("#application-review-overview").get_by_role("heading", name="Change log").wait_for()
                 assert overview.get_by_text("Review before sending").count() == 0
                 assert overview.get_by_text("Sending is blocked").count() == 0
                 assert sent == [draft["id"]]

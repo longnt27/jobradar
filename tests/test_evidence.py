@@ -263,6 +263,35 @@ def test_structured_project_needs_complete_reviewed_brief_before_resumes(tmp_pat
     assert card["claim"] == complete["results"][0]["outcome"]
 
 
+def test_project_review_preserves_dataset_and_required_metrics(tmp_path: Path) -> None:
+    import json
+    from job_radar.db import new_id, now
+    client = TestClient(create_app(Settings(tmp_path)))
+    db = client.app.state.db
+    repository_id, evidence_id = new_id(), new_id()
+    db.execute("INSERT INTO repository_snapshots(id,url,local_path,commit_sha,summary,inspected_at) VALUES(?,?,?,?,?,?)",
+               (repository_id, "https://github.com/alex/speech", "", "abc123", "{}", now()))
+    details = {"schema_version": 2, "what": "A phoneme scoring system.", "why": "Assess pronunciation without an aligner.",
+               "how": "Scores CTC posteriors against expert phone labels.", "required_result_ids": ["r1"],
+               "results": [{"id": "r1", "area": "Speech scoring", "outcome": "Phone PCC reached 0.645 on SpeechOcean762.",
+                            "source": "README.md", "dataset": "SpeechOcean762", "scope": "Held-out speakers",
+                            "primary": True, "required_metrics": ["0.645"]}]}
+    db.execute("INSERT INTO evidence(id,kind,title,claim,details,repository_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+               (evidence_id, "project", "Speech", "Phone scoring", json.dumps(details), repository_id, now(), now()))
+    # The project editor submits its visible fields; source metadata must survive that round trip.
+    editor_details = {**details, "results": [{key: details["results"][0][key] for key in ("id", "area", "outcome", "source")}]}
+    assert client.patch(f"/api/evidence/{evidence_id}", json={"details": editor_details, "approved": True}).status_code == 200
+    saved = json.loads(db.one("SELECT details FROM evidence WHERE id=?", (evidence_id,))["details"])
+    assert saved["results"][0]["dataset"] == "SpeechOcean762"
+    assert saved["results"][0]["required_metrics"] == ["0.645"]
+    assert saved["required_result_ids"] == ["r1"]
+    editor_details["results"][0]["outcome"] = "Phone PCC reached 0.655 on SpeechOcean762."
+    assert client.patch(f"/api/evidence/{evidence_id}", json={"details": editor_details}).status_code == 200
+    edited = json.loads(db.one("SELECT details FROM evidence WHERE id=?", (evidence_id,))["details"])
+    assert edited["results"][0]["required_metrics"] == ["0.655"]
+    assert edited["results"][0]["dataset"] == "SpeechOcean762"
+
+
 def test_reviewing_project_does_not_requeue_completed_job_matches(tmp_path: Path) -> None:
     import json
     from job_radar.db import new_id, now
@@ -311,7 +340,7 @@ def test_project_generation_safely_bounds_provider_results(tmp_path: Path, monke
         return ProjectContentRaw(title="Search", what="A Python search system.",
                                  why="Helps users find relevant documents.",
                                  how="Builds a searchable index from document text.",
-                                 results=[{"area": "Search", "outcome": ("Supported search result with complete words. " * 12) if i == 0 else f"Supported search result number {i}.", "source": "README.md"}
+                                 results=[{"area": "Search", "outcome": ("Supported search result with complete words. " * 30) if i == 0 else f"Supported search result number {i}.", "source": "README.md"}
                                           for i in range(10)])
     monkeypatch.setattr("job_radar.drafting._provider_json", fake_provider)
     result = generate_project_content(db, evidence_id, "codex")

@@ -89,6 +89,7 @@ def test_application_status_order_and_saved_draft_failure_history(tmp_path: Path
                 assert "Needs changes" in page.locator("#application-detail").inner_text()
                 assert "Generation failed" not in page.locator("#application-detail").inner_text()
 
+                page.get_by_role("button", name="Filter applications").click()
                 page.locator("#application-review-filter").select_option("preparation_failed")
                 page.wait_for_function("document.querySelectorAll('#application-list .application-card').length === 2")
                 assert page.locator("#application-list .item-title").all_text_contents() == ["Role failed", "Pending application"]
@@ -187,15 +188,29 @@ def test_application_workspace_filters_reviews_and_confirms_send(tmp_path: Path,
                 page.locator("#applications.active").wait_for()
                 page.locator("#application-list [data-application]").first.wait_for()
                 assert not auto_apply_requests
+                assert page.locator("#applications .applications-view-tabs").count() == 0
+                assert page.locator(".application-list-pane #application-query").is_visible()
+                assert page.locator("#application-filter-popover").is_hidden()
+                page.get_by_role("button", name="Filter applications").click()
+                assert page.locator("#application-review-filter").is_visible()
+                assert page.locator("#application-company-filter").is_visible()
+                page.keyboard.press("Escape")
+                assert page.locator("#application-filter-popover").is_hidden()
+
+                page.get_by_role("button", name="Profile menu").click()
+                page.locator("#profile-menu [data-tab='application-history']").click()
+                page.locator("#application-history.active").wait_for()
+                page.locator("#auto-apply-activity .item, #auto-apply-activity .hint").first.wait_for()
+                assert page.locator("#auto-apply-activity").is_visible()
+                page.locator("#submission-history-page-summary").get_by_text("No submissions").wait_for()
 
                 with page.expect_response(lambda response: "/api/auto-apply?summary_only=true" in response.url, timeout=30000):
-                    page.get_by_role("tab", name="Automation").click()
-                assert page.locator("#auto-apply-form").is_visible()
+                    page.get_by_role("button", name="Profile menu").click()
+                    page.locator("#profile-menu [data-tab='settings']").click()
+                assert page.locator("#settings #auto-apply-form").count() == 1
                 assert auto_apply_requests
-                assert page.locator("#applications-drafts-view").is_hidden()
-                page.get_by_role("tab", name="Activity").click()
-                assert page.locator("#auto-apply-activity").is_visible()
-                page.get_by_role("tab", name="Drafts").click()
+                page.locator(".nav-primary [data-tab='applications']").click()
+                page.locator("#applications.active").wait_for()
 
                 assert page.locator("#application-list [data-application]").count() == 2
                 page.locator("#application-query").fill("Other")
@@ -204,6 +219,7 @@ def test_application_workspace_filters_reviews_and_confirms_send(tmp_path: Path,
                 page.locator("#application-query").fill("")
                 page.wait_for_function("document.querySelectorAll('#application-list [data-application]').length === 2")
 
+                page.get_by_role("button", name="Filter applications").click()
                 page.locator("#application-company-filter").select_option(label="Example")
                 page.wait_for_function("document.querySelectorAll('#application-list [data-application]').length === 1")
                 page.locator("#application-company-filter").select_option("")
@@ -214,16 +230,38 @@ def test_application_workspace_filters_reviews_and_confirms_send(tmp_path: Path,
                 assert "Research Engineer" in page.locator("#application-list").inner_text()
                 page.locator("#application-review-filter").select_option("")
                 page.wait_for_function("document.querySelectorAll('#application-list [data-application]').length === 2")
+                page.keyboard.press("Escape")
 
                 first_card = page.locator(f'[data-application="{first["id"]}"]')
                 first_card.click()
                 assert first_card.locator(".item-title").inner_text() == "Platform Engineer"
                 assert first_card.locator(".application-card-status").inner_text() == "Ready for review"
+                assert first_card.locator(".item-meta").first.inner_text() == "Example"
+                assert "Basic template" not in first_card.inner_text()
+                assert first_card.locator(".item-meta").first.bounding_box()["y"] < first_card.locator(".application-card-status").bounding_box()["y"]
                 assert first_card.get_attribute("aria-pressed") == "true"
                 page.wait_for_function("document.activeElement === document.querySelector('#application-detail')")
                 assert "is-selected" in (first_card.get_attribute("class") or "")
                 assert "Basic template" in page.locator("#application-detail").inner_text()
                 assert "local template; no model inference" not in page.locator("#application-detail").inner_text()
+                assert page.locator("#application-screen-eyebrow").count() == 0
+                assert page.locator("#application-review-overview h3").inner_text() == "Change log"
+                assert page.locator("#application-review-overview .application-alert").count() == 0
+                assert page.locator("#application-review-overview .activity-destination-note").count() == 0
+                assert page.locator("#screen-first-glance > .overview-metrics-row .metric-card").count() == 3
+                assert page.locator(".metric-card--destination .eyebrow").inner_text() == "DESTINATION"
+                assert page.evaluate("""() => {
+                  const screen = document.querySelector('#screen-first-glance');
+                  const children = [...screen.children];
+                  const position = selector => children.findIndex(node => node.matches(selector));
+                  return position('.overview-metrics-row') < position('.job-decision-summary') &&
+                    position('.job-decision-summary') < position('#application-review-overview');
+                }""")
+                assert "Match review" in page.locator(".metric-card").first.inner_text()
+                pane_bounds = page.locator(".application-list-pane").bounding_box()
+                detail_bounds = page.locator("#application-detail").bounding_box()
+                assert abs(pane_bounds["y"] + pane_bounds["height"] - detail_bounds["y"] - detail_bounds["height"]) < 3
+                assert page.evaluate("document.querySelector('#application-detail').scrollHeight > document.querySelector('#application-detail').clientHeight")
                 assert page.get_by_role("button", name="View job in Jobs").is_visible()
                 assert page.get_by_role("button", name="Next: Review package →").is_visible()
                 page.get_by_role("button", name="Next: Review package →").click()
@@ -271,12 +309,14 @@ def test_application_workspace_filters_reviews_and_confirms_send(tmp_path: Path,
                 blocker.wait_for()
                 assert "destination" in blocker.inner_text().lower()
                 page.set_viewport_size({"width": 1280, "height": 900})
+                assert blocker.locator("xpath=..").get_attribute("class") == "application-review-alerts"
+                assert page.evaluate("document.querySelector('#screen-first-glance').firstElementChild.classList.contains('application-review-alerts')")
                 page.get_by_role("button", name="View job in Jobs").click()
                 page.get_by_role("heading", name="Research Engineer").wait_for()
                 assert page.locator("#jobs.active").is_visible()
                 assert f"job={second['vacancy_id']}" in page.url
                 assert "inbox=all" in page.url
-                assert page.get_by_role("tab", name="All jobs").get_attribute("aria-selected") == "true"
+                assert page.locator("#job-inbox").input_value() == "all"
                 selected_card = page.locator(f'#job-list [data-job-card="{second["vacancy_id"]}"]')
                 selected_card.wait_for()
                 assert selected_card.get_by_text("Research Engineer").is_visible()
@@ -284,7 +324,7 @@ def test_application_workspace_filters_reviews_and_confirms_send(tmp_path: Path,
                 assert page.locator("#job-list [data-job-card]").first.get_attribute("data-job-card") == second["vacancy_id"]
                 page.reload()
                 selected_card.wait_for()
-                assert page.get_by_role("tab", name="All jobs").get_attribute("aria-selected") == "true"
+                assert page.locator("#job-inbox").input_value() == "all"
                 assert page.locator("#job-list [data-job-card]").count() == 10
             finally:
                 browser.close()
@@ -335,7 +375,7 @@ def test_quota_failure_appears_in_drafts_and_can_be_retried(tmp_path: Path) -> N
                 assert "Out of credits" in issue.inner_text()
                 issue.click()
                 detail = page.locator("#application-detail")
-                assert "No draft was created" in detail.inner_text()
+                assert "Draft could not be prepared" in detail.inner_text()
                 detail.get_by_role("button", name="Retry preparation").click()
                 confirmation = page.locator("#job-prepare-confirm-dialog")
                 confirmation.wait_for(state="visible")
@@ -355,8 +395,9 @@ def test_application_workspace_static_contract() -> None:
     css = (static / "app.css").read_text()
     js = (static / "app.js").read_text()
 
-    for label in ("Drafts", "Automation", "Activity"):
-        assert f'data-app-view="{label.lower()}"' in html
+    assert 'id="application-history" class="tab"' in html
+    assert 'id="auto-apply-panel"' in html
+    assert 'data-app-view=' not in html
     for control in ("application-query", "application-review-filter", "application-company-filter", "application-sent-filter"):
         assert f'id="{control}"' in html
 
@@ -375,7 +416,7 @@ def test_application_workspace_static_contract() -> None:
     assert "renderApplicationFormField" in js
     assert "application-attachment-upload" in js
     assert "Resume page" in js
-    assert "My last activities with this application" in js
+    assert "<h3>Change log</h3>" in js
     assert "btn-discard-draft" in js
     assert "Telegram review delivery" in js
     assert "Regenerate selected section" in js
@@ -453,8 +494,8 @@ def test_application_error_tracks_originating_application_when_switching_cards(t
                 # Verify app1 card in sidebar shows error badging
                 app1_card = page.locator(f'[data-application="{app1["id"]}"]')
                 assert "has-error" in (app1_card.get_attribute("class") or "")
-                assert "Error" in app1_card.inner_text()
-                assert "Issue:" in app1_card.inner_text()
+                assert "Each LaTeX bullet line must start" in app1_card.inner_text()
+                assert app1_card.locator(".status-badge").count() == 1
 
                 # Switch to app2
                 app2_card = page.locator(f'[data-application="{app2["id"]}"]')
