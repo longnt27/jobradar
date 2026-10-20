@@ -64,17 +64,17 @@ def render_prompt(preferences: dict | None, key: str, **context: Any) -> str:
                              preference(preferences, key))
     if key == "application_draft" and preference(preferences, "resume_max_pages") != 1:
         result = result.replace("Fill one A4 page", f"Fill up to {preference(preferences, 'resume_max_pages')} A4 pages")
-    if key in {"application_draft", "section_projects", "chatgpt_projects", "chatgpt_all"}:
+    if key in {"application_draft", "section_projects"}:
         count = preference(preferences, "project_count")
         bullets = preference(preferences, "project_bullet_count")
         if count != 3 or bullets != 2 or key in (preferences or {}):
             result += (f"\nResume structure: select {count} distinct approved projects when available, otherwise all available. "
                        f"For each AI project return {bullets} bullets: introduction first, supported results in the remaining bullets.\n")
-    if key in (preferences or {}) and DEFAULTS[key]["group"] in {"AI prompts", "ChatGPT prompts", "Job analysis"}:
+    if key in (preferences or {}) and DEFAULTS[key]["group"] in {"AI prompts", "Job analysis"}:
         result += "\n\n" + PROMPT_CONTRACT
-    if key in {"application_draft", "section_projects", "chatgpt_projects", "chatgpt_all"}:
+    if key in {"application_draft", "section_projects"}:
         result += PROJECT_EVIDENCE_CONTRACT
-    if key in {"application_fit", "application_draft", "section_message", "chatgpt_message", "chatgpt_all"}:
+    if key in {"application_fit", "application_draft", "section_message"}:
         result += MESSAGE_EVIDENCE_CONTRACT
     return result
 

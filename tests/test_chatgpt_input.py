@@ -743,16 +743,16 @@ def test_application_prompt_contains_thinking_bold_and_bullet_rules(tmp_path: Pa
     draft = prepare_draft(db, app.state.settings, job["id"], "chatgpt_web")
 
     prompt = application_prompt(db, draft["id"], "all", "")
-    assert "maximum thinking effort" in prompt
+    assert "Return only JSON matching the schema" in prompt
     assert "bold_phrases" in prompt
-    assert "exactly three approved projects" in prompt
-    assert "exactly two bullets" in prompt
-    assert "what/how" in prompt
+    assert "Select exactly three approved project IDs" in prompt
+    assert "exactly two project_bullets" in prompt
+    assert "Bullet 1 explains the problem" in prompt
     assert "measured results" in prompt
     assert "Name the dataset, evaluated population, device, or baseline" in prompt
     assert "professional summary" in prompt
     assert "technologies belong strictly in Skills" in prompt
-    assert "Do NOT include academic caveats" in prompt
+    assert "Do not copy repository caveat notes" in prompt
 
     summary_prompt = application_prompt(db, draft["id"], "summary", "")
     assert "clean, high-level, cohesive professional summary" in summary_prompt

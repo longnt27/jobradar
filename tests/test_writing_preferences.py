@@ -6,10 +6,12 @@ from fastapi.testclient import TestClient
 from pypdf import PdfReader
 
 from job_radar.chatgpt_handoff import application_prompt, apply_chatgpt_reply
-from job_radar.drafting import ModelDraft, ProjectBullets, _run_provider, _selected_resume_projects, prepare_draft, regenerate_draft, render_resume
+from job_radar.drafting import (ModelDraft, ProjectBullets, _job_for_drafting, _run_provider,
+                                 _selected_resume_projects, application_draft_prompt,
+                                 prepare_draft, regenerate_draft, render_resume)
 from job_radar.settings import Settings
 from job_radar.web import create_app
-from job_radar.writing_preferences import DEFAULTS, get_preferences, render_prompt
+from job_radar.writing_preferences import DEFAULTS, get_preferences, profile_with_preferences, render_prompt
 
 
 def entries(client):
@@ -126,9 +128,10 @@ def test_section_and_chatgpt_regeneration_use_saved_prompts_and_preserve_custom_
     draft = prepare_draft(db, settings, job_id, 'chatgpt_web')
     save(client, 'project_count', 1)
     save(client, 'project_bullet_count', 3)
-    save(client, 'chatgpt_projects', 'Prefer a compact portfolio with {project_count} project and {project_bullet_count} bullets.')
+    save(client, 'section_projects', 'Prefer a compact portfolio with {project_count} project and {project_bullet_count} bullets.')
     prompt = application_prompt(db, draft['id'], 'projects', 'Focus on search.')
     assert 'Prefer a compact portfolio with one project and three bullets.' in prompt
+    assert not any(key.startswith('chatgpt_') for key in entries(client))
     assert 'exactly three approved projects' not in prompt
     assert 'Focus on search.' in prompt
     revised = apply_chatgpt_reply(db, settings, draft['id'], 'projects', json.dumps({'projects': [
@@ -149,6 +152,7 @@ def test_section_and_chatgpt_regeneration_use_saved_prompts_and_preserve_custom_
     assert len(revised['resume_data']['projects'][0]['bullets']) == 3
 
     save(client, 'section_summary', 'Use a short designer summary.')
+    assert 'Use a short designer summary.' in application_prompt(db, draft['id'], 'summary', 'Improve clarity.')
     captured = []
     def section(_provider, prompt, response_type):
         captured.append(prompt)
@@ -158,6 +162,38 @@ def test_section_and_chatgpt_regeneration_use_saved_prompts_and_preserve_custom_
     assert revised['resume_data']['summary'] == 'Designer building reliable systems.'
     assert 'Use a short designer summary.' in captured[0]
     assert 'Applied AI Engineer' not in captured[0]
+
+
+def test_chatgpt_web_uses_shared_full_draft_prompt_and_schema(tmp_path):
+    client = TestClient(create_app(Settings(tmp_path)))
+    job_id, ids = candidate(client)
+    db, settings = client.app.state.db, client.app.state.settings
+    draft = prepare_draft(db, settings, job_id, 'chatgpt_web')
+    save(client, 'application_draft', 'Write a cohesive summary, then select {project_count} projects. {application_fit}')
+    cards = db.all("SELECT e.id,e.kind,e.title,e.claim,e.details,r.url AS repository_url "
+                   "FROM evidence e LEFT JOIN repository_snapshots r ON r.id=e.repository_id "
+                   "WHERE e.approved=1 AND e.kind='project' ORDER BY e.created_at DESC")
+    for card in cards:
+        card['details'] = json.loads(card['details'])
+    shared = application_draft_prompt(_job_for_drafting(db, job_id), profile_with_preferences(db), cards)
+    web_prompt = application_prompt(db, draft['id'], 'all', '')
+    assert web_prompt.startswith(shared)
+    assert '"title": "ModelDraft"' in web_prompt
+    assert not any(key.startswith('chatgpt_') for key in entries(client))
+
+    reply = ModelDraft(
+        selected_evidence_ids=ids,
+        project_bullets=[ProjectBullets(evidence_id=identifier,
+            bullets=['Built a Python search system.', 'Reached 95% accuracy on search evaluation.'],
+            skills=['Python', 'Search', 'Evaluation']) for identifier in ids],
+        summary='Search engineer building reliable evaluation systems.',
+        fit_text='I built and evaluated search systems.',
+    )
+    revised = apply_chatgpt_reply(db, settings, draft['id'], 'all', reply.model_dump_json())
+    assert revised['resume_data']['summary'] == reply.summary
+    assert len(revised['resume_data']['projects']) == 3
+    assert revised['message_data']['body']
+    assert not any('starter draft' in warning for warning in revised['warnings'])
 
 
 def test_custom_layout_is_rendered_and_original_pdf_is_retained(tmp_path):

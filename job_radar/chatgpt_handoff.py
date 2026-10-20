@@ -19,10 +19,13 @@ from typing import Any, AsyncContextManager
 
 from playwright.async_api import Browser, Page, Playwright, TimeoutError as PlaywrightTimeoutError, async_playwright
 
-from .writing_preferences import get_preferences, preference, profile_with_preferences, render_prompt
+from .writing_preferences import get_preferences, preference, profile_with_preferences
 from .db import Database
 from .desktop_handoff import activate_app, frontmost_app_bundle, hide_chrome, launch_background_browser, return_to_job_radar
-from .drafting import _compose_application_message, _job_for_drafting, _job_language, _leadership_summary_rule, get_draft, update_draft, validate_message_leadership, validate_project_evidence
+from .drafting import (ModelDraft, SECTION_SCHEMAS, _compose_application_message, _job_for_drafting,
+                       _fit_in_job_language, _resume_from_model, _revised_section, _selected_resume_projects,
+                       application_draft_prompt, get_draft, section_instruction, strict_response_schema, update_draft,
+                       validate_message_leadership, validate_project_evidence)
 from .settings import Settings
 from .social_browser import chrome_executable, chrome_profile_process, close_orphaned_chrome
 
@@ -105,6 +108,19 @@ def application_prompt(db: Database, draft_id: str, section: str, instruction: s
     if not job:
         raise ValueError("The original job is unavailable")
     profile = profile_with_preferences(db)
+    if section == "all":
+        cards = db.all(
+            "SELECT e.id,e.kind,e.title,e.claim,e.details,r.url AS repository_url "
+            "FROM evidence e LEFT JOIN repository_snapshots r ON r.id=e.repository_id "
+            "WHERE e.approved=1 AND e.kind='project' ORDER BY e.created_at DESC"
+        )
+        for card in cards:
+            card["details"] = json.loads(card["details"] or "{}")
+        return (
+            application_draft_prompt(job, profile, cards, instruction.strip())
+            + "\n\nReturn only a JSON object matching this schema, with no commentary or code fence:\n"
+            + json.dumps(strict_response_schema(ModelDraft), ensure_ascii=False)
+        )
     resume = draft["resume_data"]
     current = (draft["message_data"] if section == "message" else
                {key: resume.get(key) for key in ("summary", "experience", "projects", "education", "achievements", "skills", "skill_groups")}
@@ -118,7 +134,7 @@ def application_prompt(db: Database, draft_id: str, section: str, instruction: s
         "selected_projects": resume.get("projects", []),
         "current_section": current,
     }
-    if section in {"all", "projects"}:
+    if section == "projects":
         cards = db.all(
             "SELECT e.id,e.title,e.claim,e.details,r.url AS repository_url "
             "FROM evidence e LEFT JOIN repository_snapshots r ON r.id=e.repository_id "
@@ -132,14 +148,13 @@ def application_prompt(db: Database, draft_id: str, section: str, instruction: s
             for card in cards
             for details in [json.loads(card["details"] or "{}")]
         ]
-    preferences = profile["writing_preferences"]
-    rules = render_prompt(preferences, f"chatgpt_{section}", message_language=_job_language(job),
-                          leadership_rule=_leadership_summary_rule(profile, job))
+    rules = section_instruction(profile["writing_preferences"], section, job, profile)
     return (
-        render_prompt(preferences, "chatgpt_intro", section=section) +
-        f"Rules: {rules}\n\n"
-        f"User instructions: {instruction.strip() or 'Improve relevance and clarity without changing supported facts.'}\n\n"
-        f"Application context (JSON):\n{json.dumps(context, ensure_ascii=False, default=str)}"
+        rules
+        + f"Revision request: {instruction.strip() or 'Improve relevance and clarity without changing supported facts.'}\n\n"
+        + f"Application context (JSON):\n{json.dumps(context, ensure_ascii=False, default=str)}\n\n"
+        + "Return only a JSON object matching this schema, with no commentary or code fence:\n"
+        + json.dumps(strict_response_schema(SECTION_SCHEMAS[section]), ensure_ascii=False)
     )
 
 
@@ -706,6 +721,31 @@ def _apply_projects_reply(draft: dict, reply: str, db: Database, settings: Setti
 
 def _apply_all_reply(draft: dict, reply: str, db: Database, settings: Settings, instruction: str = "") -> dict:
     data = _extract_json_or_none(reply)
+    if isinstance(data, dict) and "project_bullets" in data and "selected_evidence_ids" in data:
+        model = ModelDraft.model_validate(data)
+        job = _job_for_drafting(db, draft["vacancy_id"])
+        if not job:
+            raise ValueError("The original job is unavailable")
+        profile = profile_with_preferences(db)
+        cards = db.all(
+            "SELECT e.id,e.kind,e.title,e.claim,e.details,r.url AS repository_url "
+            "FROM evidence e LEFT JOIN repository_snapshots r ON r.id=e.repository_id "
+            "WHERE e.approved=1 AND e.kind='project' ORDER BY e.created_at DESC"
+        )
+        for card in cards:
+            card["details"] = json.loads(card["details"] or "{}")
+        model = _fit_in_job_language("chatgpt_web", job, model)
+        selected, projects = _selected_resume_projects(job, cards, model, "chatgpt_web", profile["writing_preferences"])
+        resume = _resume_from_model(profile, model, selected, projects, "chatgpt_web")
+        message = _compose_application_message(job, profile, model.fit_text)
+        updated = update_draft(db, settings, draft["id"], {"resume_data": resume, "message_data": message})
+        db.execute("UPDATE application_drafts SET evidence_ids=? WHERE id=?",
+                   (json.dumps([card["id"] for card in selected]), draft["id"]))
+        remaining = [warning for warning in updated["warnings"] if not warning.startswith("This is a starter draft.")]
+        if remaining != updated["warnings"]:
+            db.execute("UPDATE application_drafts SET warnings=? WHERE id=?",
+                       (json.dumps(remaining, ensure_ascii=False), draft["id"]))
+        return get_draft(db, draft["id"])
     if isinstance(data, dict):
         for root_key in ("resume", "resume_data", "application", "draft", "candidate", "revised", "data"):
             if root_key in data and isinstance(data[root_key], dict):
@@ -846,11 +886,41 @@ def apply_chatgpt_reply(db: Database, settings: Settings, draft_id: str, section
     handler = handlers.get(section)
     if not handler:
         raise ValueError(f"Unknown application section {section}")
-    sig = inspect.signature(handler)
-    if "instruction" in sig.parameters:
-        updated = handler(draft, reply, db, settings, instruction=instruction)
+    data = _extract_json_or_none(reply)
+    if section in SECTION_SCHEMAS and isinstance(data, dict) and (
+        (section == "summary" and "summary" in data) or
+        (section == "message" and "fit" in data) or
+        any(key in data for key in ("positions", "selected_evidence_ids", "entries", "achievements", "groups"))
+    ):
+        model = SECTION_SCHEMAS[section].model_validate(data)
+        job = _job_for_drafting(db, draft["vacancy_id"])
+        profile = profile_with_preferences(db)
+        if section == "message":
+            message = _compose_application_message(job, profile, model.fit)
+            updated = update_draft(db, settings, draft_id, {"message_data": message})
+        else:
+            cards = []
+            if section == "projects":
+                cards = db.all(
+                    "SELECT e.id,e.title,e.claim,e.details,r.url AS repository_url "
+                    "FROM evidence e LEFT JOIN repository_snapshots r ON r.id=e.repository_id "
+                    "WHERE e.approved=1 AND e.kind='project' ORDER BY e.created_at DESC"
+                )
+                for card in cards:
+                    card["details"] = json.loads(card["details"] or "{}")
+            resume, message, selected_ids = _revised_section(
+                draft, section, model, cards, job, profile["writing_preferences"])
+            updated = update_draft(db, settings, draft_id, {"resume_data": resume, "message_data": message})
+            if selected_ids is not None:
+                db.execute("UPDATE application_drafts SET evidence_ids=? WHERE id=?",
+                           (json.dumps(selected_ids), draft_id))
+                updated = get_draft(db, draft_id)
     else:
-        updated = handler(draft, reply, db, settings)
+        sig = inspect.signature(handler)
+        if "instruction" in sig.parameters:
+            updated = handler(draft, reply, db, settings, instruction=instruction)
+        else:
+            updated = handler(draft, reply, db, settings)
 
     if updated.get("package_hash") == draft.get("package_hash"):
         raise ValueError("No changes were applied from ChatGPT response")
@@ -878,22 +948,7 @@ def run_chatgpt_web_json(prompt: str, response_type: Any, settings: Settings | N
     if not chatgpt_logged_in(s.browser_profile):
         raise RuntimeError("ChatGPT Web is not signed in; open ChatGPT in Chrome and sign in first")
 
-    schema = response_type.model_json_schema()
-
-    def strict(node: object) -> None:
-        if isinstance(node, list):
-            for child in node:
-                strict(child)
-        elif isinstance(node, dict):
-            for key in ("default", "minLength", "maxLength", "minItems", "maxItems", "pattern", "format"):
-                node.pop(key, None)
-            if node.get("type") == "object":
-                node["additionalProperties"] = False
-                node["required"] = list(node.get("properties", {}))
-            for child in list(node.values()):
-                strict(child)
-
-    strict(schema)
+    schema = strict_response_schema(response_type)
 
     chatgpt_prompt = (
         f"{prompt}\n\n"
