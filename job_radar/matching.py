@@ -12,7 +12,9 @@ import subprocess
 from .writing_preferences import get_preferences
 from .db import Database, now
 from .auto_apply import AutoApplyManager
+from .job_inbox import auto_shortlist_strong_matches
 from .local_analysis import ANALYSIS_VERSION, LocalModelUnavailable, RECOMMENDED_MODEL, analyze_job, validate_local_model, save_extracted_job_identity
+from .search_intent import normalize_search_intent
 from .settings import Settings
 
 
@@ -59,6 +61,8 @@ class MatchManager:
                 "OR analysis_status='not_configured' OR (analysis_status='done' AND analysis_model<>?)",
                 (model,),
             )
+        threshold = normalize_search_intent(self.db.get_setting("search_intent", {}))["strong_match_threshold"]
+        auto_shortlist_strong_matches(self.db, threshold)
         self.tasks = [asyncio.create_task(self._loop()) for _ in range(2)]
         self.task = self.tasks[0]
 
@@ -240,6 +244,8 @@ class MatchManager:
                     self.db.execute("UPDATE vacancies SET analysis_status='pending',analysis_stage=NULL WHERE id=? AND analysis_status='running'", (job["id"],))
                 else:
                     self._failure_counts.pop(job["id"], None)
+                    threshold = normalize_search_intent(self.db.get_setting("search_intent", {}))["strong_match_threshold"]
+                    auto_shortlist_strong_matches(self.db, threshold, job["id"])
                     if self.auto_apply:
                         self.auto_apply.wake()
             except asyncio.CancelledError:

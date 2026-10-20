@@ -895,6 +895,7 @@ button.danger,.text-button.danger{color:var(--danger-text,#a4382d);border-color:
 .preference-form-actions{display:flex;align-items:center;gap:14px;padding:16px;border-top:1px solid var(--border,#e8eeea)}
 .preference-form-actions p{margin:0}
 .home-grid{align-items:stretch}
+.home-grid .home-activity-panel .home-queue{grid-template-columns:minmax(0,1fr)}
 .home-grid .panel{height:100%}
 .home-health-panel{display:flex;flex-direction:column}
 .home-health-details{display:grid;gap:8px;margin:14px 0}

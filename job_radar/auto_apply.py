@@ -1071,8 +1071,9 @@ class AutoApplyManager:
         threshold = preferences["strong_match_threshold"]
         rows = self.db.all(
             "SELECT id,title,company,location,score,score_detail,first_seen_at FROM vacancies "
-            "WHERE analysis_status='done' AND score>=? AND decision_state='undecided' "
+            "WHERE analysis_status='done' AND score>=? AND decision_state IN ('undecided','shortlisted') "
             "AND snoozed_until IS NULL AND datetime(first_seen_at)>=datetime('now','-1 day') "
+            "AND NOT EXISTS(SELECT 1 FROM feedback f WHERE f.vacancy_id=vacancies.id) "
             "ORDER BY score DESC,first_seen_at DESC LIMIT 50",
             (threshold,),
         )

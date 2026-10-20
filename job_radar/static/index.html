@@ -45,12 +45,7 @@
       <div id="social-auth-banner" role="alert" hidden><span id="social-auth-message"></span><button id="social-auth-action" class="secondary" type="button">Sign in again</button></div>
 
       <section id="home" class="tab active">
-        <div class="hero" id="home-hero">
-          <div><p class="eyebrow">TODAY</p><h2 id="home-title">Work the next best thing.</h2><p id="home-description">Triage what is new, prepare the jobs you want, review applications, then track outcomes.</p></div>
-          <button id="home-primary" class="primary" type="button">Start with new jobs →</button>
-        </div>
-
-        <div id="metrics" class="metrics home-metrics" aria-label="Daily job search counts"></div>
+        <div id="metrics" class="metrics home-metrics" aria-label="App dashboard totals"></div>
 
         <section class="panel home-loop-panel" aria-labelledby="home-loop-title">
           <div class="section-head"><div><h3 id="home-loop-title">Daily loop</h3><p class="hint">Each step opens the exact filtered workflow behind the count.</p></div></div>
@@ -58,10 +53,7 @@
         </section>
 
         <div class="two-col home-grid">
-          <section class="panel home-priority-panel" aria-labelledby="home-priority-title">
-            <div class="section-head"><div><h3 id="home-priority-title">What deserves attention</h3><p id="home-action-count" class="hint"></p></div><button id="home-show-all-priorities" class="text-button" type="button">Open workflow →</button></div>
-            <div id="home-actions" class="home-actions" aria-live="polite"></div>
-          </section>
+          <section class="panel home-activity-panel" aria-labelledby="home-activity-title"><div class="section-head"><div><h3 id="home-activity-title">Background activity</h3></div><button class="text-button" data-tab="queue" type="button">View queue →</button></div><div id="home-queue" class="home-queue" aria-live="polite"></div></section>
           <section class="panel home-health-panel" aria-labelledby="home-health-title">
             <div class="section-head"><div><h3 id="home-health-title">Radar confidence</h3><p id="source-summary" class="hint"></p></div><span id="home-health-status" class="status-badge status-badge--neutral"></span></div>
             <p id="home-health-message" class="hint"></p>
@@ -69,14 +61,6 @@
             <button id="home-health-action" class="text-button" type="button">Review radar health →</button>
           </section>
         </div>
-
-        <details class="panel home-capabilities-panel">
-          <summary>Capabilities and optional setup</summary>
-          <div class="section-head"><div><p class="hint">Discovery works on its own. Application features unlock separately when you need them.</p></div><span id="home-setup-status" class="status-badge status-badge--neutral"></span></div>
-          <div id="home-steps" class="stack"></div><div id="home-optional" class="home-optional"></div>
-        </details>
-
-        <div class="panel home-activity-panel"><div class="section-head"><div><h3>Background activity</h3></div><button class="text-button" data-tab="queue" type="button">View queue →</button></div><div id="home-queue" class="home-queue" aria-live="polite"></div></div>
       </section>
 
       <section id="guide" class="tab guide-page">
@@ -182,7 +166,7 @@
                 <div class="application-search-row"><svg class="application-search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m16 16 5 5"/></svg><input id="application-query" type="search" placeholder="Search applications" aria-label="Search applications"><button id="application-filter-toggle" type="button" aria-label="Filter applications" aria-expanded="false" aria-controls="application-filter-popover" title="Filter applications"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/><circle cx="9" cy="7" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="11" cy="17" r="2"/></svg></button></div>
                 <div id="application-filter-popover" class="application-filter-popover" hidden>
                   <div class="application-filter-heading"><strong>Filter applications</strong><button id="application-clear-filters" class="text-button" type="button">Clear filters</button></div>
-                  <label>Review status<select id="application-review-filter"><option value="">All review states</option><option value="preparation_failed">Generation failed</option><option value="awaiting_review">Ready for review</option><option value="needs_review">Needs changes</option><option value="submission_uncertain">Submission status uncertain</option><option value="sent">Sent</option><option value="sending">Sending</option><option value="regenerating">Regenerating</option><option value="draft">Draft</option></select></label>
+                  <label>Review status<select id="application-review-filter"><option value="">All review states</option><option value="actionable">Needs your review</option><option value="preparation_failed">Generation failed</option><option value="awaiting_review">Ready for review</option><option value="needs_review">Needs changes</option><option value="submission_uncertain">Submission status uncertain</option><option value="sent">Sent</option><option value="sending">Sending</option><option value="regenerating">Regenerating</option><option value="draft">Draft</option></select></label>
                   <label>Company<select id="application-company-filter"><option value="">All companies</option></select></label>
                   <label>Delivery<select id="application-sent-filter"><option value="">All delivery states</option><option value="unsent">Not sent</option><option value="sent">Confirmed sent</option><option value="uncertain">Uncertain</option></select></label>
                 </div>

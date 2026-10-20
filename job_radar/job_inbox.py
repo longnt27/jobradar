@@ -17,6 +17,42 @@ DECISIONS = {"undecided", "shortlisted", "ignored", "later"}
 OUTCOMES = {"none", "interview", "rejected", "offer"}
 CONFIRMED_SUBMISSIONS = {"sent_confirmed", "submitted_confirmed"}
 UNCERTAIN_SUBMISSIONS = {"sending", "submitted_unconfirmed"}
+APPLICATION_REVIEW_SQL = (
+    "CASE "
+    "WHEN EXISTS(SELECT 1 FROM submissions su WHERE su.draft_id=d.id AND su.status IN ('submitted_unconfirmed','sending')) THEN 'submission_uncertain' "
+    "WHEN EXISTS(SELECT 1 FROM submissions ss WHERE ss.draft_id=d.id AND ss.status IN ('sent_confirmed','submitted_confirmed')) THEN 'sent' "
+    "WHEN d.status IN ('sent','submission_uncertain') THEN d.status "
+    "WHEN a.status IN ('regenerating','preparing','queued','sending') THEN a.status "
+    "WHEN d.status='failed' OR a.status='failed' THEN 'failed' "
+    "WHEN d.status='skipped' OR a.status='skipped' THEN 'skipped' "
+    "WHEN d.project_refresh_error IS NOT NULL THEN 'needs_review' "
+    "ELSE COALESCE(a.status,'draft') END"
+)
+
+
+def auto_shortlist_strong_matches(db: Database, threshold: int, job_id: str | None = None) -> int:
+    """Shortlist scored jobs that have never received an explicit user decision."""
+    timestamp = now()
+    with db.connection() as conn:
+        conn.execute(
+            "UPDATE vacancies SET decision_state='undecided',state='new',auto_shortlisted=0,updated_at=? "
+            "WHERE auto_shortlisted=1 AND decision_state='shortlisted' "
+            "AND analysis_status='done' AND score<? "
+            "AND NOT EXISTS(SELECT 1 FROM feedback f WHERE f.vacancy_id=vacancies.id) "
+            "AND (? IS NULL OR id=?)",
+            (timestamp, threshold, job_id, job_id),
+        )
+        result = conn.execute(
+            "UPDATE vacancies SET decision_state='shortlisted',state='interesting',auto_shortlisted=1,updated_at=? "
+            "WHERE analysis_status='done' AND score>=? AND decision_state='undecided' "
+            "AND snoozed_until IS NULL "
+            "AND NOT EXISTS(SELECT 1 FROM feedback f WHERE f.vacancy_id=vacancies.id) "
+            "AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=vacancies.employer_id "
+            "AND e.coverage_status='excluded_hcm') "
+            "AND (? IS NULL OR id=?)",
+            (timestamp, threshold, job_id, job_id),
+        )
+        return result.rowcount
 
 
 def _parse_time(value: str | None) -> datetime | None:
@@ -96,7 +132,7 @@ def set_decision(
     timestamp = now()
     with db.connection() as conn:
         conn.execute(
-            "UPDATE vacancies SET decision_state=?,snoozed_until=?,state=?,updated_at=? WHERE id=?",
+            "UPDATE vacancies SET decision_state=?,snoozed_until=?,state=?,auto_shortlisted=0,updated_at=? WHERE id=?",
             (decision, snooze_value, legacy, timestamp, job_id),
         )
         conn.execute(

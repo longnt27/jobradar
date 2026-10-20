@@ -775,51 +775,32 @@ async function openHomeRoute(route) {
       await showTab('settings');
       $('#auto-apply-panel').open = true;
     } else if (['activity', 'history'].includes(view)) await showTab('application-history');
-    else await showTab(draft ? `applications/${draft}` : 'applications');
+    else {
+      $('#application-query').value = '';
+      $('#application-review-filter').value = params.get('review') || '';
+      $('#application-company-filter').value = '';
+      $('#application-sent-filter').value = '';
+      applicationsPage = 1;
+      await showTab(draft ? `applications/${draft}` : 'applications');
+    }
     return;
   }
   await showTab(route.tab);
 }
 
-function homePriorityLabel(kind) {
-  return ({
-    submission_uncertain:'Check submission',
-    application_review:'Review application',
-    application_confirmation:'Confirm method',
-    shortlisted_to_prepare:'Prepare shortlisted job',
-    strong_unseen_job:'Strong new match',
-    unseen_job:'New job',
-    track_application:'Track outcome',
-  })[kind] || String(kind || '').replaceAll('_', ' ');
-}
-
-function homePriorityToneClass(tone) {
-  return ({
-    danger:'status-badge--danger',
-    warning:'status-badge--warning',
-    success:'status-badge--success',
-    info:'status-badge--info',
-  })[tone] || 'status-badge--neutral';
-}
 
 async function loadHome() {
-  const [data, profile, setup, discovery] = await Promise.all([
-    api('/api/status'), api('/api/profile'), api('/api/setup'), api('/api/discovery/coverage')
+  const [data, setup, discovery] = await Promise.all([
+    api('/api/status'), api('/api/setup'), api('/api/discovery/coverage')
   ]);
   renderSocialAuth(setup.browser, setup.linkedin_automation_paused);
   const home = data.home || {};
   const counts = home.counts || {};
-  const capabilities = setup.capabilities || {};
-  const discoveryCapability = capabilities.discovery || {ready:false,status:'not_configured',detail:'Add a job source.'};
-  const preparationCapability = capabilities.application_preparation || {ready:false,missing:[]};
-  const automaticCapability = capabilities.automatic_drafts || {ready:false,missing:[]};
-  const complete = Boolean(discoveryCapability.ready);
-
   const metrics = [
-    {label:'Unseen jobs', value:counts.unseen_jobs || 0, route:{tab:'jobs',params:{inbox:'unseen'}}},
+    {label:'Total jobs found', value:counts.total_jobs || 0, route:home.routes?.total_jobs},
     {label:`Strong matches (${data.strong_match_threshold}+)`, value:counts.strong_matches || 0, route:home.routes?.strong_matches},
-    {label:'Applications to review', value:(counts.drafts_to_review || 0) + (counts.submission_uncertain || 0), route:home.routes?.applications},
-    {label:'Applied to track', value:counts.tracking || 0, route:{tab:'jobs',params:{application:'applied',outcome:'none',inbox:'all'}}},
+    {label:'Applications drafted', value:counts.applications_drafted || 0, route:home.routes?.applications_drafted},
+    {label:'Applications sent', value:counts.applications_sent || 0, route:home.routes?.applications_sent},
   ];
   $('#metrics').innerHTML = metrics.map((item, index) =>
     `<button type="button" class="metric home-metric" data-home-metric="${index}"><strong>${item.value}</strong><span>${escapeHtml(item.label)}</span><small>Open →</small></button>`
@@ -859,7 +840,7 @@ async function loadHome() {
   const healthDetails = sourceIssues.slice(0, 3).map((source) =>
     `<div class="home-health-detail"><strong>${escapeHtml(source.name)} · ${escapeHtml(source.coverage?.label || 'Needs attention')}</strong><small>${escapeHtml(source.coverage?.detail || '')}</small></div>`);
   if (sourceIssues.length > 3) healthDetails.push(`<div class="home-health-detail"><strong>${sourceIssues.length - 3} more source${sourceIssues.length === 4 ? '' : 's'} need attention</strong></div>`);
-  healthDetails.push(`<div class="home-health-detail"><strong>Job match reviews</strong><small>${pendingReviews} waiting or running · ${failedReviews} failed${setup.matching.model ? ` · ${escapeHtml(setup.matching.model)}` : ' · No local model selected'}</small></div>`);
+  if (pendingReviews || failedReviews) healthDetails.push(`<div class="home-health-detail"><strong>Job match reviews</strong><small>${pendingReviews} waiting or running · ${failedReviews} failed</small></div>`);
   $('#home-health-details').innerHTML = healthDetails.join('');
   $('#home-health-status').textContent = discoveryNeedsAttention || sourceIssues.length || failedReviews ? 'Needs attention' : pendingReviews ? 'Reviewing jobs' : 'Healthy';
   $('#home-health-status').className = `status-badge status-badge--${discoveryNeedsAttention || sourceIssues.length || failedReviews ? 'warning' : pendingReviews ? 'info' : 'success'}`;
@@ -867,61 +848,6 @@ async function loadHome() {
   $('#home-health-action').textContent = discoveryNeedsAttention || sourceIssues.length ? 'Review job sources →' : 'Review match queue →';
   const healthRoute = discoveryNeedsAttention || sourceIssues.length ? {tab:'sources'} : {tab:'queue'};
   $('#home-health-action').onclick = () => openHomeRoute(healthRoute).catch((error) => notice(error.message, true));
-
-  const required = [
-    {label:'Job discovery', detail:discoveryCapability.detail || discovery.label, done:Boolean(discoveryCapability.ready), attention:discoveryCapability.status === 'attention', tab:'sources'},
-  ];
-  const optional = [
-    {label:'Detailed local match review', done:Boolean(setup.matching.model), detail:setup.matching.model ? `Using ${setup.matching.model}` : 'Optional · fallback ranking still works', tab:'settings', panel:'provider-panel'},
-    {label:'Application preparation', done:Boolean(preparationCapability.ready), detail:preparationCapability.ready ? 'Ready to prepare applications' : `Optional · needs ${(preparationCapability.missing || []).join(', ') || 'setup'}`, tab:'profile'},
-    {label:'Automatic draft preparation', done:Boolean(automaticCapability.ready), detail:automaticCapability.ready ? 'Ready if you choose to enable it' : `Optional · needs ${(automaticCapability.missing || []).join(', ') || 'setup'}`, tab:'applications'},
-    {label:'Telegram reviews', done:setup.telegram_configured, detail:setup.telegram_configured ? 'Connected' : 'Optional · not configured', tab:'settings', panel:'telegram-panel'},
-    {label:'Email sending', done:setup.smtp_test?.status === 'accepted', detail:setup.smtp_test?.status === 'accepted' ? 'Connected and tested' : setup.smtp_configured ? 'Optional · configured, test pending' : 'Optional · not configured', tab:'settings', panel:'smtp-panel'},
-  ];
-  $('#home-setup-status').textContent = complete ? (discoveryCapability.status === 'attention' ? 'Discovery ready · check coverage' : 'Discovery ready') : 'Add a job source';
-  $('#home-setup-status').className = complete ? (discoveryCapability.status === 'attention' ? 'status-badge status-badge--warning' : 'status-badge status-badge--success') : 'status-badge status-badge--warning';
-  $('#home-steps').innerHTML = required.map((step) =>
-    `<button class="step-row ${step.done ? 'is-done' : ''}" data-home-step="${step.tab}"><span class="step-check ${step.done ? 'done' : ''}">${step.done ? (step.attention ? '!' : '✓') : '○'}</span><span><strong>${escapeHtml(step.label)}</strong><small>${escapeHtml(step.detail)}</small></span><span class="step-arrow">→</span></button>`
-  ).join('');
-  $('#home-optional').innerHTML = `<h4>Optional capabilities</h4>${optional.map((step) =>
-    `<button class="home-optional-row" data-home-step="${step.tab}" data-setup-panel="${step.panel || ''}"><span><strong>${escapeHtml(step.label)}</strong><small>${escapeHtml(step.detail)}</small></span><span class="status-badge ${step.done ? 'status-badge--success' : 'status-badge--neutral'}">${step.done ? 'Ready' : 'Optional'}</span></button>`
-  ).join('')}`;
-  document.querySelectorAll('[data-home-step]').forEach((button) => button.addEventListener('click', () =>
-    button.dataset.setupPanel ? openSetupPanel(button.dataset.setupPanel) : showTab(button.dataset.homeStep)
-  ));
-
-  const priorities = home.priority_items || [];
-  $('#home-action-count').textContent = home.headline || '';
-  if (priorities.length) {
-    $('#home-actions').innerHTML = priorities.map((item, index) =>
-      `<button class="home-action-row" data-home-priority="${index}">
-        <span><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.subtitle)}</small></span>
-        <span class="status-badge ${homePriorityToneClass(item.tone)}">${escapeHtml(homePriorityLabel(item.kind))}</span>
-        <span class="step-arrow">→</span>
-      </button>`
-    ).join('');
-  } else if (home.state === 'radar_degraded') {
-    $('#home-actions').innerHTML = '<div class="home-empty-warning"><strong>No user action is queued.</strong><p>That does not mean the search is clear: discovery or match review is degraded. Check radar confidence before trusting an empty inbox.</p></div>';
-  } else {
-    $('#home-actions').innerHTML = '<div class="home-empty-clear"><strong>You’re caught up.</strong><p>No new jobs need triage and no applications need review right now.</p></div>';
-  }
-  $('#home-actions').querySelectorAll('[data-home-priority]').forEach((button) => button.addEventListener('click', () =>
-    openHomeRoute(priorities[Number(button.dataset.homePriority)].route).catch((error) => notice(error.message, true))
-  ));
-
-  const firstRoute = priorities[0]?.route || (health.degraded ? health.route : {tab:'jobs',params:{inbox:'unseen'}});
-  $('#home-show-all-priorities').hidden = !priorities.length;
-  $('#home-show-all-priorities').onclick = () => openHomeRoute(firstRoute).catch((error) => notice(error.message, true));
-
-  $('#home-title').textContent = !complete ? 'Start with job discovery.' : home.headline || 'Work the next best thing.';
-  $('#home-description').textContent = !complete
-    ? 'Add at least one job source. Discovery is useful on its own; application features stay optional.'
-    : home.state === 'radar_degraded'
-      ? 'You are caught up on user actions, but discovery or match review needs attention before the radar can be trusted.'
-      : 'Triage what is new, prepare the jobs you want, review applications, then track outcomes.';
-  $('#home-hero').classList.toggle('is-compact', complete);
-  $('#home-primary').textContent = !complete ? 'Add a job source →' : priorities.length ? 'Open top priority →' : health.degraded ? 'Review radar health →' : 'Check unseen jobs →';
-  $('#home-primary').onclick = () => openHomeRoute(!complete ? {tab:'sources'} : firstRoute).catch((error) => notice(error.message, true));
 
   await loadHomeQueue();
 }
@@ -938,14 +864,20 @@ async function loadHomeQueue() {
     ...queue.analysis.failed.map((item) => ({kind:'analysis', label:'Match', item, status:'Needs attention'})),
     ...(queue.drafts.attention || []).map((item) => ({kind:'draft', label:'Draft', item, status:'Confirm application method'})),
   ];
-  const preview = [...running, ...attention, ...waiting].slice(0, 6);
+  const preview = [...running, ...attention, ...waiting].slice(0, 5);
   $('#home-queue').innerHTML = preview.length ? preview.map(({kind, label, item, status}) =>
     `<button type="button" class="home-queue-row" data-home-queue-kind="${kind}" data-home-queue-id="${item.id}" ${item.draft_id ? `data-home-queue-draft="${item.draft_id}"` : ''}><span class="home-queue-kind">${label}</span><span class="home-queue-title">${escapeHtml(kind === 'scan' ? item.name : item.title)}</span><small>${status}</small></button>`
   ).join('') : '<p class="queue-empty">Nothing running or waiting.</p>';
   $('#home-queue').querySelectorAll('[data-home-queue-kind]').forEach((button) => button.addEventListener('click', async () => {
     const kind = button.dataset.homeQueueKind, id = button.dataset.homeQueueId;
     if (kind === 'scan') {
+      const source = preview.find((entry) => entry.kind === 'scan' && entry.item.id === id)?.item;
+      $('#source-query').value = source?.name || '';
       $('#source-kind').value = '';
+      $('#source-status').value = '';
+      $('#source-enabled').value = '';
+      $('#source-success').value = '';
+      sourcePage = 1;
       await showTab('sources');
       const card = [...document.querySelectorAll('#source-list [data-source-id]')].find((node) => node.dataset.sourceId === id);
       scrollNodeIntoView(card, {block:'center'});

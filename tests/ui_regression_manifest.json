@@ -3,7 +3,7 @@
     "desktop": {"width": 1440, "height": 1000}
   },
   "surfaces": {
-    "home": {"hash": "#home", "active": "#home.active", "anchors": ["#home-hero", "#home-loop", "#home-actions", "#home-health-status"]},
+    "home": {"hash": "#home", "active": "#home.active", "anchors": ["#metrics", "#home-loop", "#home-queue", "#home-health-status"]},
     "queue": {"hash": "#queue", "active": "#queue.active", "anchors": [".queue-grid", "#queue-scan-active", "#queue-analysis-active", "#queue-draft-active"]},
     "jobs": {"hash": "#jobs?inbox=all&job={job_id}", "active": "#jobs.active", "anchors": [".jobs-controls", "#job-list", "#job-detail .job-score-badge"]},
     "applications": {"hash": "#applications/{draft_id}", "active": "#applications.active", "anchors": [".application-controls", ".applications-workspace", "#application-detail"]},

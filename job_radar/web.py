@@ -57,7 +57,7 @@ from .linkedin_application import discover_linkedin_apply
 from .github import list_public_repositories
 from .mail_config import save_smtp, send_test_email, smtp_config, smtp_config_fingerprint
 from .local_analysis import clean_saved_analysis, list_local_models, validate_local_model
-from .job_inbox import (application_filter_sql, enrich_jobs, mark_application_seen, mark_seen, release_due_snoozes,
+from .job_inbox import (APPLICATION_REVIEW_SQL, application_filter_sql, enrich_jobs, mark_application_seen, mark_seen, release_due_snoozes,
                         set_decision, set_manual_applied, set_recruiting_outcome)
 from .home_dashboard import build_home_dashboard
 from .matching import MatchManager
@@ -464,7 +464,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         discovery = summarize_discovery(sources())
         home = build_home_dashboard(db, discovery, threshold)
         counts["unseen_jobs"] = home["counts"]["unseen_jobs"]
-        counts["high_fit_new"] = home["counts"]["strong_matches"]
         counts["drafts_needing_review"] = home["counts"]["drafts_to_review"]
         return {
             "counts": counts,
@@ -1906,17 +1905,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             })
         return {**result, "processing": processing}
 
-    application_review_expr = (
-        "CASE "
-        "WHEN EXISTS(SELECT 1 FROM submissions su WHERE su.draft_id=d.id AND su.status IN ('submitted_unconfirmed','sending')) THEN 'submission_uncertain' "
-        "WHEN EXISTS(SELECT 1 FROM submissions ss WHERE ss.draft_id=d.id AND ss.status IN ('sent_confirmed','submitted_confirmed')) THEN 'sent' "
-        "WHEN d.status IN ('sent','submission_uncertain') THEN d.status "
-        "WHEN a.status IN ('regenerating','preparing','queued','sending') THEN a.status "
-        "WHEN d.status='failed' OR a.status='failed' THEN 'failed' "
-        "WHEN d.status='skipped' OR a.status='skipped' THEN 'skipped' "
-        "WHEN d.project_refresh_error IS NOT NULL THEN 'needs_review' "
-        "ELSE COALESCE(a.status,'draft') END"
-    )
+    application_review_expr = APPLICATION_REVIEW_SQL
 
     def application_page_data(page: int, page_size: int, q: str = "", review: str = "",
                               company: str = "", delivery: str = "", full: bool = False,
@@ -1938,7 +1927,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "WHEN 'sent' THEN 1 WHEN 'submission_uncertain' THEN 1 WHEN 'sending' THEN 1 "
             "WHEN 'skipped' THEN 0 ELSE 2 END"
         )
-        if review:
+        if review == "actionable":
+            clauses.append(f"({review_expr}) IN ('awaiting_review','needs_review','submission_uncertain')")
+        elif review:
             if review == "preparation_failed":
                 clauses.append(f"{review_expr}='failed'")
             else:

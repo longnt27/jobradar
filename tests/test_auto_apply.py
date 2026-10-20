@@ -283,7 +283,7 @@ def test_existing_scored_jobs_can_be_queued_for_draft_review(tmp_path: Path) -> 
     _scored_job(app, "Below Threshold Engineer", 79)
     with TestClient(app) as client:
         assert client.post("/api/auto-apply/queue-existing").status_code == 409
-        app.state.auto_apply_manager.configure(True, 80)
+        app.state.auto_apply_manager.configure(True, 80, {"include_shortlisted": True})
         assert _wait_for_status(app, old_id, "skipped")
         assert client.get("/api/auto-apply").json()["eligible_existing"] == 1
         assert client.get("/api/auto-apply").json()["highest_existing_score"] == 92
