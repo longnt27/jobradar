@@ -42,7 +42,8 @@ class MatchManager:
     def status(self) -> dict:
         counts = {row["analysis_status"]: row["count"] for row in self.db.all(
             "SELECT analysis_status,COUNT(*) AS count FROM vacancies GROUP BY analysis_status")}
-        return {"model": self.db.get_setting("matching_model", ""), "recommended": RECOMMENDED_MODEL,
+        return {"model": self.db.get_setting("matching_model", ""),
+                "parsing_model": self.db.get_setting("parsing_model", ""), "recommended": RECOMMENDED_MODEL,
                 "pending": counts.get("pending", 0) + counts.get("running", 0),
                 "completed": counts.get("done", 0), "failed": counts.get("failed", 0),
                 "download_state": self.pull_state, "download_progress": self.pull_progress,
@@ -52,14 +53,16 @@ class MatchManager:
     async def start(self) -> None:
         self.loop = asyncio.get_running_loop()
         model = self.db.get_setting("matching_model", "")
+        parsing_model = self.db.get_setting("parsing_model", "") or model
         if model:
             if self.db.get_setting("analysis_version", 0) != ANALYSIS_VERSION:
                 self.invalidate_all()
                 self.db.set_setting("analysis_version", ANALYSIS_VERSION)
             self.db.execute(
                 "UPDATE vacancies SET analysis_status='pending',analysis_stage=NULL WHERE analysis_status='running' "
-                "OR analysis_status='not_configured' OR (analysis_status='done' AND analysis_model<>?)",
-                (model,),
+                "OR analysis_status='not_configured' OR (analysis_status='done' AND "
+                "(analysis_model<>? OR COALESCE(analysis_parsing_model,analysis_model)<>?))",
+                (model, parsing_model),
             )
         threshold = normalize_search_intent(self.db.get_setting("search_intent", {}))["strong_match_threshold"]
         auto_shortlist_strong_matches(self.db, threshold)
@@ -80,6 +83,13 @@ class MatchManager:
         if selected != self.db.get_setting("matching_model", ""):
             self.db.set_setting("matching_model", selected)
             self.db.set_setting("matching_model_activated_at", now())
+            self.invalidate_all()
+        return selected
+
+    def select_parsing_model(self, model: str) -> str:
+        selected = validate_local_model(model)
+        if selected != self.db.get_setting("parsing_model", ""):
+            self.db.set_setting("parsing_model", selected)
             self.invalidate_all()
         return selected
 
@@ -202,6 +212,7 @@ class MatchManager:
     async def _loop(self) -> None:
         while True:
             model = self.db.get_setting("matching_model", "")
+            parsing_model = self.db.get_setting("parsing_model", "") or model
             job = self.db.one(
                 "SELECT * FROM vacancies WHERE analysis_status='pending' ORDER BY first_seen_at DESC LIMIT 1") if model else None
             if not job:
@@ -226,17 +237,17 @@ class MatchManager:
                     lambda stage: self.db.execute(
                         "UPDATE vacancies SET analysis_stage=? WHERE id=? AND analysis_status='running'",
                         (stage, job["id"])),
-                    preferences, get_preferences(self.db),
+                    preferences, get_preferences(self.db), parsing_model,
                 )
                 self.service_error = None
-                if model != self.db.get_setting("matching_model", ""):
+                if model != self.db.get_setting("matching_model", "") or parsing_model != (self.db.get_setting("parsing_model", "") or model):
                     self.db.execute("UPDATE vacancies SET analysis_status='pending',analysis_stage=NULL WHERE id=? AND analysis_status='running'", (job["id"],))
                     continue
                 with self.db.connection() as conn:
                     changed = conn.execute(
-                        "UPDATE vacancies SET score=?,score_detail=?,analysis_status='done',analysis_stage=NULL,analysis_model=?,"
+                        "UPDATE vacancies SET score=?,score_detail=?,analysis_status='done',analysis_stage=NULL,analysis_model=?,analysis_parsing_model=?,"
                         "analysis_error=NULL,analyzed_at=?,updated_at=? WHERE id=? AND analysis_status='running' AND updated_at=?",
-                        (score, json.dumps(detail, ensure_ascii=False), model, now(), now(), job["id"], job["updated_at"]),
+                        (score, json.dumps(detail, ensure_ascii=False), model, parsing_model, now(), now(), job["id"], job["updated_at"]),
                     ).rowcount
                     if changed:
                         save_extracted_job_identity(conn, job["id"], detail.get("facts", {}))

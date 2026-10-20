@@ -59,6 +59,38 @@ def test_local_analysis_extracts_facts_and_weights_nine_scores(monkeypatch) -> N
     assert stages == ["scoring"]
 
 
+def test_job_parsing_and_matching_can_use_different_local_models(monkeypatch) -> None:
+    used = []
+
+    def generate(model, _prompt, result_type):
+        used.append((model, result_type))
+        if result_type is JobFacts:
+            return JobFacts(role="AI Engineer", seniority="", required_skills=["Python"],
+                            preferred_skills=[], years_required=None, location="Hanoi", work_mode="",
+                            responsibilities=["Build models"], education=[], languages=[], summary="")
+        return MatchJudgment(**{name: Criterion(score=8, reason="Fits")
+                                for name in MatchJudgment.model_fields if name != "summary"}, summary="Fits")
+
+    monkeypatch.setattr("job_radar.local_analysis._generate", generate)
+    _, detail = analyze_job({"title": "AI Engineer", "description": "Build Python models in Hanoi.",
+                             "location": "Hanoi"}, {}, [], "matching:latest", parsing_model="parsing:latest")
+    assert used == [("parsing:latest", JobFacts), ("matching:latest", MatchJudgment)]
+    assert detail["parsing_model"] == "parsing:latest"
+
+
+def test_resume_and_parsing_settings_persist_independently(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("job_radar.web.shutil.which", lambda command: "/usr/bin/" + command)
+    monkeypatch.setattr("job_radar.matching.validate_local_model", lambda model: model)
+    app = create_app(Settings(tmp_path))
+    client = TestClient(app)
+    assert client.put("/api/profile/resume-provider", json={"provider": "codex"}).status_code == 200
+    assert client.put("/api/parsing/model", json={"model": "parsing:latest"}).status_code == 200
+    setup = client.get("/api/setup").json()
+    assert setup["resume_extraction_provider"] == "codex"
+    assert setup["matching"]["parsing_model"] == "parsing:latest"
+    assert client.delete("/api/parsing/model").json()["parsing_model"] == ""
+
+
 def test_binance_advanced_degree_is_graded_evidence_and_role_stays_about_role(monkeypatch) -> None:
     calls = []
     def generate(_model, _prompt, result_type):

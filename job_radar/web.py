@@ -22,6 +22,7 @@ from playwright.async_api import Error as PlaywrightError
 from pydantic import BaseModel, Field, HttpUrl
 
 from .writing_preferences import create_writing_router, get_preferences
+from . import __version__
 from .db import Database, new_id, now
 from .discovery import merge_reason_label, source_coverage, split_observation, summarize_discovery
 from .dedup import merge_vacancies
@@ -179,6 +180,12 @@ class ResumeImportInput(BaseModel):
 
 class ProviderInput(BaseModel):
     provider: Literal["codex_local", "codex", "agy", "claude", "chatgpt_web"]
+    model: str = Field(default="", max_length=100)
+
+
+class ResumeProviderInput(BaseModel):
+    provider: Literal["codex_local", "codex", "agy", "claude"]
+    model: str = Field(default="", max_length=100)
 
 
 class MatchingModelInput(BaseModel):
@@ -537,8 +544,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         chatgpt_status = chatgpt_input.status()
         availability["chatgpt_web_logged_in"] = chatgpt_status["logged_in"]
         return {
+            "app_version": __version__,
             "profile_complete": bool(profile.get("name") and profile.get("email")),
             "selected_provider": provider,
+            "resume_extraction_provider": db.get_setting("resume_extraction_provider", ""),
+            "resume_extraction_model": db.get_setting("resume_extraction_model", ""),
+            "application_writing_model": db.get_setting("application_writing_model", ""),
             "approved_evidence": approved_projects,
             "facebook_groups": db.one("SELECT COUNT(*) AS count FROM sources WHERE kind='facebook' AND enabled=1")["count"],
             "linkedin_searches": db.one("SELECT COUNT(*) AS count FROM sources WHERE kind='linkedin' AND enabled=1")["count"],
@@ -566,6 +577,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "provider_processing": {name: provider_processing(name) for name in ("codex_local", "codex", "agy", "claude", "chatgpt_web")},
             "capabilities": capabilities,
         }
+
+    @app.get("/api/update/status")
+    async def update_status():
+        releases_url = "https://github.com/longnt27/jobradar/releases"
+        try:
+            async with httpx.AsyncClient(timeout=8) as client:
+                response = await client.get("https://api.github.com/repos/longnt27/jobradar/releases/latest",
+                                            headers={"Accept": "application/vnd.github+json"})
+            if response.status_code == 404:
+                return {"current": __version__, "latest": None, "update_available": False,
+                        "url": releases_url, "message": "No published release is available yet."}
+            response.raise_for_status()
+            release = response.json()
+            latest = str(release.get("tag_name") or "").removeprefix("v")
+            current_parts = tuple(int(part) for part in re.findall(r"\d+", __version__)[:3])
+            latest_parts = tuple(int(part) for part in re.findall(r"\d+", latest)[:3])
+            available = bool(latest_parts and latest_parts > current_parts)
+            return {"current": __version__, "latest": latest or None, "update_available": available,
+                    "url": release.get("html_url") or releases_url,
+                    "message": "A newer release is available." if available else "You have the latest published release."}
+        except (httpx.HTTPError, ValueError, KeyError):
+            return {"current": __version__, "latest": None, "update_available": False,
+                    "url": releases_url, "message": "Could not check for updates. Try again later."}
 
     @app.post("/api/setup/browser/start")
     async def start_browser_login(payload: BrowserLoginInput):
@@ -733,6 +767,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(422, str(error)) from error
         return match_manager.status()
 
+    @app.put("/api/parsing/model")
+    async def choose_parsing_model(payload: MatchingModelInput):
+        try:
+            await asyncio.to_thread(match_manager.select_parsing_model, payload.model)
+        except (ValueError, RuntimeError) as error:
+            raise HTTPException(422, str(error)) from error
+        return match_manager.status()
+
+    @app.delete("/api/parsing/model")
+    def use_matching_model_for_parsing():
+        if db.get_setting("parsing_model", ""):
+            db.set_setting("parsing_model", "")
+            match_manager.invalidate_all()
+        return match_manager.status()
+
     @app.post("/api/matching/model/download", status_code=202)
     async def download_matching_model():
         try:
@@ -843,12 +892,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         profile = db.get_setting("profile", {})
         profile["drafting_provider"] = payload.provider
         save_profile(profile)
-        return {"provider": payload.provider, "mode": PROVIDERS[payload.provider],
+        db.set_setting("application_writing_model", payload.model.strip() if payload.provider != "chatgpt_web" else "")
+        return {"provider": payload.provider, "model": db.get_setting("application_writing_model", ""), "mode": PROVIDERS[payload.provider],
                 "automatic_drafts_paused": False}
+
+    @app.put("/api/profile/resume-provider")
+    def set_resume_provider(payload: ResumeProviderInput):
+        if not provider_available(payload.provider):
+            raise HTTPException(422, f"{payload.provider} is not available on this Mac")
+        db.set_setting("resume_extraction_provider", payload.provider)
+        db.set_setting("resume_extraction_model", payload.model.strip())
+        return {"provider": payload.provider, "model": db.get_setting("resume_extraction_model", "")}
 
     @app.post("/api/profile/resume/pdf")
     async def import_pdf_resume(file: UploadFile = File(...), provider: str = Form("")):
-        provider = provider.strip() or str(db.get_setting("profile", {}).get("drafting_provider") or "")
+        provider = provider.strip() or str(db.get_setting("resume_extraction_provider", "") or db.get_setting("profile", {}).get("drafting_provider") or "")
         if provider not in {"codex_local", "codex", "agy", "claude"}:
             raise HTTPException(422, "Choose how this resume should be processed before importing it")
         if not provider_available(provider):
@@ -856,7 +914,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         data = await file.read(10_000_001)
         try:
             writing = get_preferences(db)
-            arguments = (data, provider, writing) if writing else (data, provider)
+            model = str(db.get_setting("resume_extraction_model", "") or "") if provider == db.get_setting("resume_extraction_provider", "") else ""
+            arguments = (data, provider, writing, model) if model else (data, provider, writing) if writing else (data, provider)
             extracted = await asyncio.to_thread(extract_resume, *arguments)
         except (ValueError, RuntimeError) as error:
             raise HTTPException(422, str(error)) from error

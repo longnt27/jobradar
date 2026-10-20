@@ -3,7 +3,6 @@ from io import BytesIO
 import json
 import os
 import socket
-import sys
 import time
 from pathlib import Path
 from threading import Thread
@@ -21,10 +20,7 @@ from job_radar.web import create_app
 
 ROOT = Path(__file__).parents[1]
 MANIFEST = json.loads((Path(__file__).with_name("ui_regression_manifest.json")).read_text())
-# Screenshot fingerprints are platform-sensitive: the shipped macOS reference
-# and reviewed GitHub Actions Ubuntu reference are intentionally independent.
-BASELINE_FILE = "ui_visual_baselines_linux.json" if sys.platform.startswith("linux") else "ui_visual_baselines.json"
-VISUAL_BASELINES = json.loads((Path(__file__).with_name(BASELINE_FILE)).read_text())
+VISUAL_BASELINES = json.loads((Path(__file__).with_name("ui_visual_baselines.json")).read_text())
 ARTIFACT_DIR = ROOT / os.environ.get("JOB_RADAR_UI_ARTIFACTS", "artifacts/ui-regression")
 
 
@@ -429,8 +425,8 @@ def test_core_surfaces_have_stable_desktop_visual_contract(
             manual_action = page.locator("#manual-send-disclosure summary")
             assert manual_action.is_visible()
             assert manual_action.bounding_box()["width"] > 100
-            # The manual-send control has a browser interaction test; keep the
-            # older cross-platform screenshot focused on the surrounding layout.
+            # The manual-send control has a browser interaction test; keep this
+            # screenshot focused on the surrounding layout.
             page.locator("#application-manual-send").evaluate("element => element.style.display = 'none'")
         page.evaluate("window.scrollTo(0, 0)")
         snapshot_surface = surface if theme == "light" else f"{surface}-dark"
@@ -550,6 +546,7 @@ def test_top_navigation_uses_stacked_tabs_and_profile_menu(ui_server, browser) -
         page.locator("#settings.active").wait_for()
         assert not menu.is_visible()
         assert menu_button.get_attribute("aria-expanded") == "false"
+        page.get_by_role("button", name="Close Settings").click()
         menu_button.click()
         menu.get_by_role("button", name="Application history").click()
         page.locator("#application-history.active").wait_for()

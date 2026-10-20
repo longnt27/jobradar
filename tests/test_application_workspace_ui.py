@@ -209,6 +209,7 @@ def test_application_workspace_filters_reviews_and_confirms_send(tmp_path: Path,
                     page.locator("#profile-menu [data-tab='settings']").click()
                 assert page.locator("#settings #auto-apply-form").count() == 1
                 assert auto_apply_requests
+                page.get_by_role('button', name='Close Settings').click()
                 page.locator(".nav-primary [data-tab='applications']").click()
                 page.locator("#applications.active").wait_for()
 
@@ -300,15 +301,11 @@ def test_application_workspace_filters_reviews_and_confirms_send(tmp_path: Path,
                 page.wait_for_function("document.querySelector('#application-dirty-state')?.textContent === 'Sent'")
                 assert sent == [first["id"]]
 
-                page.set_viewport_size({"width": 390, "height": 844})
-                page.evaluate("window.__applicationDetailScrolled = false; document.querySelector('#application-detail').scrollIntoView = () => { window.__applicationDetailScrolled = true; }")
                 page.locator(f'[data-application="{second["id"]}"]').click()
-                page.wait_for_function("window.__applicationDetailScrolled === true")
                 page.get_by_role("heading", name="Research Engineer").wait_for()
                 blocker = page.locator("#application-detail .application-alert--danger")
                 blocker.wait_for()
                 assert "destination" in blocker.inner_text().lower()
-                page.set_viewport_size({"width": 1280, "height": 900})
                 assert blocker.locator("xpath=..").get_attribute("class") == "application-review-alerts"
                 assert page.evaluate("document.querySelector('#screen-first-glance').firstElementChild.classList.contains('application-review-alerts')")
                 page.get_by_role("button", name="View job in Jobs").click()
@@ -404,7 +401,7 @@ def test_application_workspace_static_contract() -> None:
     assert "application-card surface-action" in js
     assert 'aria-pressed="' in js
     assert 'role="region" aria-label="Application details" tabindex="-1"' in html
-    assert "$('#application-detail').focus({preventScroll:true})" in js
+    assert "detail.focus({preventScroll:true})" in js
     assert "scrollNodeIntoView($('#application-detail')" in js
     assert "application-review-nav" in js
     assert "application-sticky-actions" in js

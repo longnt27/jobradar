@@ -1096,3 +1096,62 @@ main:has(#applications.active)>.topbar{flex:none;margin-bottom:18px}
 .resume-preview-skeleton{max-width:640px;margin:0 auto}
 .resume-preview-skeleton .skeleton-card{min-height:520px;background:var(--surface-subtle,#f7faf8)}
 @media(max-width:700px){.application-questions-skeleton{grid-template-columns:1fr}}
+
+/* Settings uses two visible navigation levels and direct controls. */
+.brand-logo{width:52px;height:52px}
+.settings-dialog{position:fixed;width:min(930px,calc(100vw - 48px));height:min(540px,calc(100dvh - 80px));max-width:none;max-height:none;margin:auto;padding:0;overflow:hidden;display:flex;flex-direction:column;border:1px solid var(--control-border,#afcaba);border-radius:16px;background:var(--surface,#fff);color:var(--text-strong,#14262a);box-shadow:0 28px 70px rgba(0,0,0,.42)}
+.settings-dialog:not([open]){display:none}
+.settings-dialog::backdrop{background:rgba(0,0,0,.62)}
+.settings-dialog-header{display:flex;align-items:center;justify-content:space-between;flex:none;min-height:68px;padding:0 28px}
+.settings-dialog-header h2{margin:0;font-size:24px;letter-spacing:-.04em}
+.settings-dialog-header button{width:34px;height:34px;padding:0;border:1px solid var(--control-border,#bfd2c4);border-radius:8px;background:transparent;color:var(--text-strong,#14262a);font-size:22px;line-height:1}
+.settings-primary{display:grid;grid-template-columns:repeat(3,1fr);flex:none;padding:0 28px;border-bottom:1px solid var(--border,#e0e8e3)}
+.settings-primary button{height:47px;padding:0 4px;border:0;border-bottom:3px solid transparent;background:transparent;color:var(--text-muted,#667b70);text-align:left;font-weight:750}
+.settings-primary button[aria-selected="true"]{border-bottom-color:var(--accent-border,#3a9e6a);color:var(--accent-text,#1e7955)}
+.settings-secondary{display:flex;gap:6px;flex:none;overflow-x:auto;padding:12px 28px;border-bottom:1px solid var(--border,#e0e8e3);background:var(--surface-subtle,#f3f7f3);white-space:nowrap}
+.settings-secondary button{flex:none;padding:8px 11px;border:1px solid transparent;border-radius:7px;background:transparent;color:var(--text-muted,#667b70);font-size:12px;font-weight:700}
+.settings-secondary button[aria-selected="true"]{border-color:var(--accent-border,#9acbaa);background:var(--accent-bg,#e4f3e8);color:var(--text-strong,#17442c)}
+.settings-body{flex:1;min-height:0;overflow:auto;padding:16px 28px 30px}
+.settings-pane[hidden]{display:none}
+.settings-pane{max-width:100%}
+#settings .panel,#settings .flow-panel{padding:0;margin:0;border:0;border-radius:0;background:transparent;box-shadow:none}
+#settings details.flow-panel>summary,#settings #search-intent-advanced>summary{display:none}
+#settings details.flow-panel[open]>summary{margin:0}
+#settings .settings-appearance-panel{padding:15px 0;border-bottom:1px solid var(--border,#e0e8e3)}
+#settings .settings-appearance-panel label{display:grid;grid-template-columns:minmax(0,1fr) 220px;align-items:center;max-width:none;font-size:14px}
+#settings .settings-appearance-panel select{width:220px}
+#settings #search-intent-panel .search-intent-body{padding:0}
+#settings #search-intent-panel .search-intent-summary{padding:10px 0;border:0;background:transparent}
+#settings #search-intent-panel .search-intent-advanced{margin:0}
+#settings #search-intent-panel .search-intent-advanced>p{margin:8px 0 12px}
+#settings .preference-form{margin-top:12px}
+#settings #auto-apply-panel>p{margin:8px 0 20px}
+#settings #auto-apply-form{padding:8px 0 0}
+#settings .ai-model-section{padding:8px 0 18px}
+#settings .ai-model-section .section-head{display:none}
+#settings .ai-model-section>p{margin:4px 0 18px}
+#settings #provider-panel .ai-model-section+.ai-model-section{border:0}
+#settings #writing-preferences-panel{padding-top:20px;border-top:1px solid var(--border,#e0e8e3)}
+#settings #writing-preferences-panel>p{margin:0 0 12px}
+#settings #writing-preferences-editor{margin:0}
+#settings .job-analysis-panel{margin-top:20px;padding-top:18px;border-top:1px solid var(--border,#e0e8e3)}
+#settings .job-analysis-heading strong,#settings #job-analysis-settings{display:none}
+#settings .job-analysis-heading p{margin:0}
+#settings .social-sign-in-content{margin:0}
+#settings .social-site-row{margin:0;padding:16px 0;border:0;border-bottom:1px solid var(--border,#e0e8e3);border-radius:0}
+#settings .social-site-row strong{display:none}
+#settings #social-sign-in-panel>p,#settings #telegram-panel>p,#settings #smtp-panel>p{margin:8px 0 18px}
+#settings #setup-telegram-form,#settings #setup-smtp-form{margin-top:14px}
+#settings .settings-form{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:12px;margin:14px 0 8px}
+#settings .settings-form label{min-width:0}
+#settings .settings-form button{white-space:nowrap}
+#settings .settings-form button{justify-self:start}
+#settings #provider-form{max-width:none}
+#settings #provider-availability{padding:0;border:0;background:transparent}
+#settings .settings-form--stacked{grid-template-columns:1fr}
+#settings .settings-row{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:76px;padding:12px 0;border-bottom:1px solid var(--border,#e0e8e3)}
+#settings .settings-row strong,#settings .settings-row small{display:block}
+#settings .settings-row small{margin-top:4px;color:var(--text-muted,#708378);font-size:12px}
+#settings .tab-skeleton{background:var(--surface,#fff);border-radius:inherit;padding:26px}
+#settings #notice{margin:0 28px 10px}
+.app-header .nav-primary button,.app-header .nav-queue{height:52px}

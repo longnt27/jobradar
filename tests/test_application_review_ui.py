@@ -109,12 +109,15 @@ def test_application_tab_reviews_regenerates_sends_and_shows_receipt(tmp_path: P
                 assert page.get_by_label("Custom instructions").is_visible()
                 page.get_by_role("button", name="Profile menu").click()
                 page.locator('.app-header [data-tab="settings"]').click()
+                page.wait_for_function("!document.querySelector('#settings').hasAttribute('aria-busy')")
+                page.get_by_role('tab', name='AI Models', exact=True).click()
+                page.get_by_role('tab', name='Application writing').click()
                 page.locator('#provider-form select[name="provider"]').select_option('chatgpt_web')
                 assert page.get_by_role("button", name="Log in to ChatGPT").is_visible()
                 with page.expect_response(lambda response: response.url.endswith('/api/chatgpt/login') and response.status == 200):
                     page.get_by_role("button", name="Log in to ChatGPT").click()
                 with page.expect_response(lambda response: response.url.endswith('/api/profile/provider') and response.request.method == 'PUT'):
-                    page.get_by_role("button", name="Save provider").click()
+                    page.get_by_role("button", name="Save model").click()
                 assert client.get('/api/profile').json()['drafting_provider'] == 'chatgpt_web'
                 page.goto(f"http://127.0.0.1:{port}/#applications/{draft['id']}")
                 page.locator("#btn-next-to-package").click()

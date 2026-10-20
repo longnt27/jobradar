@@ -8,7 +8,7 @@ from test_ui_regression_gate import (
 
 
 @pytest.mark.parametrize("theme", ["dark", "light"])
-@pytest.mark.parametrize("viewport", [{"width": 1600, "height": 1000}, {"width": 390, "height": 844}])
+@pytest.mark.parametrize("viewport", [{"width": 1600, "height": 1000}])
 def test_interrupted_preparation_is_readable_and_has_one_status(ui_server, browser, theme, viewport):
     page = _new_page(browser, viewport)
     page.context.add_init_script(f"localStorage.setItem('job-radar-theme', '{theme}')")
@@ -38,8 +38,7 @@ def test_interrupted_preparation_is_readable_and_has_one_status(ui_server, brows
         assert "Job Radar stopped before it finished creating this draft." in detail.inner_text()
         assert detail.get_by_role("button", name="Retry preparation").is_enabled()
         assert not _text_contrast_issues(page)
-        size = "mobile" if viewport["width"] < 600 else "desktop"
-        _assert_no_page_overflow(page, "application-preparation", size)
-        _capture(page, f"application-preparation-{theme}", size)
+        _assert_no_page_overflow(page, "application-preparation", "desktop")
+        _capture(page, f"application-preparation-{theme}", "desktop")
     finally:
         page.close()

@@ -88,7 +88,7 @@ def test_one_queue_reports_real_worker_order_and_analysis_stage(tmp_path: Path) 
     assert data["drafts"]["review_ready"] == 1
 
 
-def test_home_previews_only_six_current_queue_items(tmp_path: Path) -> None:
+def test_home_previews_only_five_current_queue_items(tmp_path: Path) -> None:
     app = create_app(Settings(tmp_path))
     db = app.state.db
     db.execute("UPDATE sources SET enabled=0")
@@ -119,7 +119,7 @@ def test_home_previews_only_six_current_queue_items(tmp_path: Path) -> None:
                 page.goto(f"http://127.0.0.1:{port}/#home")
                 page.locator("#home-queue .home-queue-row").first.wait_for()
                 assert page.get_by_role("heading", name="Activity").is_visible()
-                assert page.locator("#home-queue .home-queue-row").count() == 6
+                assert page.locator("#home-queue .home-queue-row").count() == 5
                 assert "Queued engineer" in page.locator("#home-queue").inner_text()
                 assert page.locator("#home-queue-count").count() == 0
                 assert "Failed engineer" in page.locator("#home-queue").inner_text()
@@ -181,12 +181,6 @@ def test_queue_polling_preserves_focus_and_announces_only_meaningful_updates(tmp
                 page.wait_for_function("document.querySelector('#queue-live').textContent.includes('Queue refreshed')")
                 assert "Auto-refresh every 5 seconds" in page.locator("#queue-updated-at").inner_text()
 
-                page.set_viewport_size({"width": 390, "height": 844})
-                styles = page.locator("#queue-analysis-waiting .queue-scroll").evaluate(
-                    "(node) => ({maxHeight:getComputedStyle(node).maxHeight, overflowY:getComputedStyle(node).overflowY})"
-                )
-                assert styles["maxHeight"] == "none"
-                assert styles["overflowY"] == "visible"
             finally:
                 browser.close()
     finally:

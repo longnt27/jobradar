@@ -674,14 +674,15 @@ def _ground_facts(facts: JobFacts, posting: dict) -> JobFacts:
 
 def analyze_job(job: dict, profile: dict, projects: list[dict], model: str,
                 on_stage: Callable[[str], None] | None = None,
-                preferences: dict | None = None, writing_preferences: dict | None = None) -> tuple[int, dict]:
+                preferences: dict | None = None, writing_preferences: dict | None = None,
+                parsing_model: str | None = None) -> tuple[int, dict]:
     posting = {key: job.get(key) for key in ("company", "title", "location", "work_mode")}
     posting["description"] = (job.get("description") or "")[:16_000]
     facts_prompt = (
         render_prompt(writing_preferences, 'job_facts')
         + json.dumps(posting, ensure_ascii=False)
     )
-    facts = _ground_facts(_generate(model, facts_prompt, JobFacts), posting)
+    facts = _ground_facts(_generate(parsing_model or model, facts_prompt, JobFacts), posting)
     if facts.role:
         job = {**job, "title": facts.role}
     if facts.company:
@@ -694,7 +695,7 @@ def analyze_job(job: dict, profile: dict, projects: list[dict], model: str,
     _, gated_criteria, early_exclusions = finalize_match(job, facts.model_dump(), profile, rule_only, preferences)
     if early_exclusions:
         excluded = None
-        return 0, {"method": "local_llm", "model": model, "facts": facts.model_dump(),
+        return 0, {"method": "local_llm", "model": model, "parsing_model": parsing_model or model, "facts": facts.model_dump(),
                    "criteria": gated_criteria, "weights": CRITERION_WEIGHTS,
                    "hard_exclusions": early_exclusions, "scoring_skipped": True,
                    "explanation": "This job is outside your current application limits.",
@@ -731,7 +732,7 @@ def analyze_job(job: dict, profile: dict, projects: list[dict], model: str,
             criteria[name] = {"score": 5, "reason": "Not stated in the posting; neutral."}
     score, criteria, exclusions = finalize_match(job, facts.model_dump(), profile, criteria, preferences)
     excluded = None
-    detail = {"method": "local_llm", "model": model, "facts": facts.model_dump(),
+    detail = {"method": "local_llm", "model": model, "parsing_model": parsing_model or model, "facts": facts.model_dump(),
               "criteria": criteria, "weights": CRITERION_WEIGHTS, "hard_exclusions": exclusions,
               "explanation": "This job is outside your current application limits." if exclusions else experience_gap_summary(facts.years_required, profile) or judgment.summary,
               "excluded_role": excluded}

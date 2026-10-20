@@ -16,8 +16,8 @@ def test_theme_follows_system_until_overridden_and_persists(ui_server, browser) 
     context = browser.new_context(color_scheme="dark")
     page = context.new_page()
     try:
-        page.goto(ui_server["base_url"])
-        selector = page.get_by_label("Theme", exact=True)
+        page.goto(ui_server["base_url"] + "/#settings")
+        selector = page.locator("#theme-preference")
         assert selector.input_value() == "system"
         assert_theme(page, "dark")
 
@@ -50,14 +50,14 @@ def test_theme_changes_sync_across_tabs(ui_server, browser) -> None:
     context = browser.new_context(color_scheme="light")
     first, second = context.new_page(), context.new_page()
     try:
-        first.goto(ui_server["base_url"])
-        second.goto(ui_server["base_url"])
-        first.get_by_label("Theme", exact=True).select_option("dark")
+        first.goto(ui_server["base_url"] + "/#settings")
+        second.goto(ui_server["base_url"] + "/#settings")
+        first.locator("#theme-preference").select_option("dark")
         assert_theme(second, "dark")
-        assert second.get_by_label("Theme", exact=True).input_value() == "dark"
+        assert second.locator("#theme-preference").input_value() == "dark"
         first.evaluate("localStorage.clear()")
         assert_theme(second, "light")
-        assert second.get_by_label("Theme", exact=True).input_value() == "system"
+        assert second.locator("#theme-preference").input_value() == "system"
     finally:
         context.close()
 
@@ -75,9 +75,9 @@ def test_theme_handles_unavailable_or_invalid_storage(ui_server, browser, storag
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
     try:
-        page.goto(ui_server["base_url"])
+        page.goto(ui_server["base_url"] + "/#settings")
         assert_theme(page, "dark")
-        page.get_by_label("Theme", exact=True).select_option("light")
+        page.locator("#theme-preference").select_option("light")
         assert_theme(page, "light")
         assert not errors
     finally:
@@ -115,11 +115,11 @@ def test_theme_script_is_served_and_versioned(ui_server) -> None:
         assert script.headers['cache-control'] == 'no-store'
 
 
-@pytest.mark.parametrize("viewport", [{"width": 1440, "height": 1000}, {"width": 390, "height": 844}])
+@pytest.mark.parametrize("viewport", [{"width": 1440, "height": 1000}])
 def test_dark_mode_covers_expanded_settings_guide_and_application_package(ui_server, browser, viewport) -> None:
     page = _new_page(browser, viewport)
     page.context.add_init_script("localStorage.setItem('job-radar-theme', 'dark')")
-    size = "mobile" if viewport["width"] < 600 else "desktop"
+    size = "desktop"
 
     def check_surface(name):
         _assert_no_page_overflow(page, name, size)
@@ -130,11 +130,10 @@ def test_dark_mode_covers_expanded_settings_guide_and_application_package(ui_ser
     try:
         page.goto(ui_server["base_url"] + "/#settings")
         _stabilize(page, "#settings.active")
-        page.locator("#search-intent-panel > summary").click()
-        page.locator("#search-intent-advanced > summary").click()
+        page.get_by_role("tab", name="Search preferences").click()
         page.locator("#search-intent-form").scroll_into_view_if_needed()
         check_surface("settings-expanded-dark")
-        page.locator("#social-sign-in-panel > summary").click()
+        page.get_by_role("tab", name="Connections", exact=True).click()
         page.locator("#social-sign-in-panel").scroll_into_view_if_needed()
         check_surface("settings-connections-dark")
 

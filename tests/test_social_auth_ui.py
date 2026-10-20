@@ -32,20 +32,24 @@ def test_social_sign_in_is_a_setup_step_and_expiry_is_visible_from_jobs(tmp_path
                 page.set_default_timeout(3000)
                 page.goto(f"http://127.0.0.1:{port}/#settings")
                 page.locator("#settings.active").wait_for()
-                page.locator("#social-sign-in-panel summary").click()
+                page.get_by_role("tab", name="Connections", exact=True).click()
                 assert page.locator("#social-sign-in-panel").evaluate("node => node.open")
                 assert page.locator("#settings").get_attribute("class").find("active") >= 0
                 page.wait_for_function("document.querySelector('#provider-availability').textContent.trim().length > 0")
                 page.locator("#social-sign-in-panel[open]").wait_for()
                 assert page.get_by_role("button", name="Sign in to LinkedIn").is_visible()
+                page.get_by_role("tab", name="Facebook").click()
                 assert page.get_by_role("button", name="Sign in to Facebook").is_visible()
-                assert page.get_by_role("button", name="Sign in to Zalo").count() == 0
+                page.get_by_role("tab", name="Zalo").click()
+                assert page.get_by_role("button", name="Sign in to Zalo").is_visible()
+                page.get_by_role("tab", name="LinkedIn").click()
                 assert page.locator("#setup-browser-finish").count() == 0
 
                 app.state.db.set_setting("social_login_completed_at_linkedin", "2026-10-01T12:00:00+00:00")
                 page.evaluate("window.dispatchEvent(new Event('focus'))")
                 page.wait_for_function("document.querySelector('#linkedin-sign-in-status').textContent === 'Connected'")
                 app.state.db.set_setting("social_reauth_required_linkedin", "1")
+                page.get_by_role("button", name="Close Settings").click()
                 page.get_by_role("button", name="Jobs", exact=True).first.click()
                 banner = page.locator("#social-auth-banner")
                 banner.wait_for(state="visible")
@@ -54,22 +58,25 @@ def test_social_sign_in_is_a_setup_step_and_expiry_is_visible_from_jobs(tmp_path
                 assert page.locator("#social-sign-in-panel").evaluate("node => node.open")
                 assert page.locator("#social-sign-in-panel [data-tab='sources']").count() == 0
                 assert page.locator("#setup-facebook-form").count() == 0
+                page.get_by_role("button", name="Close Settings").click()
                 page.get_by_role("button", name="Job sources", exact=True).click()
                 page.locator("#sources.active").wait_for()
                 assert page.locator(".app-header nav [data-tab='sources']").get_attribute("class") == "active"
                 assert page.locator("#jobs [data-tab='sources']").count() == 0
                 assert page.locator("#home [data-tab='sources']").count() == 0
-                page.locator("#sources details summary").filter(has_text="Add a source").click()
+                page.locator("#source-add-toggle").click()
                 assert page.locator("#source-name-label").is_hidden()
                 page.locator("#source-form [name='url']").fill("https://www.facebook.com/groups/AIJobsVietnam/")
                 page.locator("#source-form button[type='submit']").click()
                 page.get_by_text("AI Jobs Vietnam added").wait_for()
+                page.locator("#source-add-toggle").click()
                 page.locator("#source-form [name='kind']").select_option("career")
                 assert page.locator("#source-name-label").is_visible()
                 assert page.locator("#source-form [name='name']").get_attribute("required") is not None
                 page.locator("#source-form [name='kind']").select_option("linkedin")
                 assert page.locator("#source-name-label").is_hidden()
                 assert "LinkedIn Jobs search link" in page.locator("#source-url-hint").inner_text()
+                page.locator("#source-add-cancel").click()
                 page.locator(".app-header nav [data-tab='employers']").click()
                 page.locator("#employers.active").wait_for()
                 assert page.locator(".app-header nav [data-tab='employers']").get_attribute("class") == "active"

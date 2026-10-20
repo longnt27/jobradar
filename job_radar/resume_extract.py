@@ -10,7 +10,7 @@ from pypdf import PdfReader
 
 from .writing_preferences import render_prompt
 from .db import new_id, now
-from .drafting import _provider_json
+from .drafting import _provider_json, provider_model_override
 
 
 class ExtractedPosition(BaseModel):
@@ -65,13 +65,17 @@ def read_resume_pdf(data: bytes) -> str:
     return text[:50_000]
 
 
-def extract_resume(data: bytes, provider: str, writing_preferences: dict | None = None) -> dict:
+def extract_resume(data: bytes, provider: str, writing_preferences: dict | None = None, model: str = "") -> dict:
     text = read_resume_pdf(data)
     prompt = (
         render_prompt(writing_preferences, 'resume_import')
         + text
     )
-    result = _provider_json(provider, prompt, ExtractedResume)
+    token = provider_model_override.set(model)
+    try:
+        result = _provider_json(provider, prompt, ExtractedResume)
+    finally:
+        provider_model_override.reset(token)
     profile = {
         "name": result.name.strip(), "email": result.email.strip(), "phone": result.phone.strip(),
         "location": result.location.strip(), "summary": result.summary.strip(),
@@ -87,5 +91,5 @@ def extract_resume(data: bytes, provider: str, writing_preferences: dict | None 
     }
     profile["skills"] = [skill.strip() for item in result.skill_groups if item.category.casefold() != "languages"
                          for skill in item.skills if skill.strip()]
-    profile["resume_import"] = {"provider": provider, "imported_at": now(), "sha256": hashlib.sha256(data).hexdigest()}
+    profile["resume_import"] = {"provider": provider, "model": model, "imported_at": now(), "sha256": hashlib.sha256(data).hexdigest()}
     return profile

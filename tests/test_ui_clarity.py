@@ -74,7 +74,10 @@ def test_jobs_keeps_search_in_left_pane_and_settings_owns_review_and_theme(clari
             page.locator("#profile-menu [data-tab='settings']").click()
             page.wait_for_function("document.querySelector('#job-analysis-model').textContent.includes('qwen3.5')")
             assert "120" in page.locator("#matching-overview").inner_text()
+            page.get_by_role("tab", name="AI Models", exact=True).click()
+            page.get_by_role("tab", name="Job matching").click()
             assert page.locator("#settings .job-analysis-panel").is_visible()
+            page.get_by_role("tab", name="General", exact=True).click()
             assert page.locator("#settings #theme-preference").is_visible()
             page.locator("#theme-preference").select_option("dark")
             assert page.evaluate("document.documentElement.dataset.theme") == "dark"
@@ -112,8 +115,9 @@ def test_settings_employers_and_tutorial_have_clear_starting_views(clarity_app) 
             page = browser.new_page(viewport={"width": 1280, "height": 900})
             page.goto(base + "/#settings")
             page.wait_for_function("document.querySelector('#search-intent-summary strong').textContent.includes('match')")
-            assert not page.locator("#search-intent-panel").evaluate("node => node.open")
-            assert "Search preferences" in page.locator("#search-intent-panel > summary").inner_text()
+            page.get_by_role("tab", name="Search preferences").click()
+            assert page.locator("#search-intent-form").is_visible()
+            page.get_by_role("button", name="Close Settings").click()
             page.get_by_role("button", name="Employers", exact=True).first.click()
             page.locator("#employer-list .employer").first.wait_for()
             assert page.locator("#employer-list .employer").count() <= 18
@@ -147,12 +151,11 @@ def test_profile_and_settings_load_only_what_is_visible(clarity_app) -> None:
             page.locator("#profile-menu [data-tab='settings']").click()
             page.wait_for_function("document.querySelector('#search-intent-glance').textContent.includes('Strong')")
             page.locator("#tab-loading").wait_for(state="hidden")
-            assert not any(url.endswith("/api/matching/models") for url in requests)
-            assert page.locator("#settings").evaluate("node => node.getBoundingClientRect().width") > 1100
-
-            page.locator("#provider-panel > summary").click()
-            page.wait_for_function("document.querySelector('#matching-model-form').dataset.saved !== undefined")
-            assert sum(url.endswith("/api/matching/models") for url in requests) == 1
+            assert any(url.endswith("/api/matching/models") for url in requests)
+            assert page.locator("#settings").evaluate("node => node.getBoundingClientRect().width") < 1100
+            page.get_by_role("tab", name="AI Models", exact=True).click()
+            page.get_by_role("tab", name="Job matching").click()
+            assert page.locator("#matching-model-form select").is_visible()
         finally:
             browser.close()
 
@@ -215,8 +218,7 @@ def test_settings_switches_threshold_location_and_top_navigation_layout(clarity_
         browser = playwright.chromium.launch(headless=True)
         try:
             page = browser.new_page(viewport={"width": 1440, "height": 900})
-            page.goto(base + "/#settings")
-            page.locator("#search-intent-status").get_by_text("Automatic").wait_for()
+            page.goto(base + "/#home")
             page.get_by_role("button", name="Profile menu").click()
             guide = page.locator(".app-header [data-tab='guide']").bounding_box()
             queue = page.locator(".app-header [data-tab='queue']").bounding_box()
@@ -229,11 +231,10 @@ def test_settings_switches_threshold_location_and_top_navigation_layout(clarity_
             assert page.locator(".app-header nav [data-tab]").evaluate_all(
                 "nodes => nodes.map(node => node.dataset.tab)"
             ) == ["home", "jobs", "applications", "sources", "employers", "queue", "profile", "settings", "application-history", "guide"]
-            page.locator("#search-intent-panel > summary").click()
-            panel = page.locator("#search-intent-panel").bounding_box()
-            summary = page.locator("#search-intent-summary").bounding_box()
-            assert panel and summary and summary["x"] - panel["x"] >= 20
-            page.locator("#search-intent-advanced > summary").click()
+            page.locator("#profile-menu [data-tab='settings']").click()
+            page.wait_for_function("!document.querySelector('#settings').hasAttribute('aria-busy')")
+            page.get_by_role("tab", name="Search preferences").click()
+            assert page.locator("#search-intent-form").is_visible()
             assert page.locator('#search-intent-form [name="auto_preferred_locations"]').is_checked()
             assert page.locator('#search-intent-form [name="preferred_locations"]').is_disabled()
             page.locator('#search-intent-form [name="auto_preferred_locations"]').uncheck()
@@ -246,9 +247,7 @@ def test_settings_switches_threshold_location_and_top_navigation_layout(clarity_
             assert saved["preferred_locations"] == ["Hanoi", "Remote"]
             assert saved["hard_constraints"]["location"] is False
             assert page.locator("#search-intent-panel").locator("#pref-strong-threshold").count() == 0
-            page.get_by_role("button", name="Profile menu").click()
-            page.locator('#profile-menu [data-tab="settings"]').click()
-            page.locator('#auto-apply-panel > summary').click()
+            page.get_by_role('tab', name='Draft automation').click()
             page.wait_for_function("document.querySelector('#auto-apply-form').dataset.initialized === 'true'")
             threshold = page.locator('#auto-apply-form [name="threshold"]')
             assert threshold.is_editable()

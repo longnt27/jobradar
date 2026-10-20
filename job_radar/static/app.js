@@ -678,6 +678,10 @@ function renderSocialAuth(browser, linkedinPaused = false) {
     button.textContent = needsSignIn ? `Sign in to ${label}` : `Reconnect ${label}`;
     button.disabled = ['opening', 'open'].includes(browser.state);
   }
+  const zaloConnected = connected.includes('zalo') && !(browser.sites || []).includes('zalo');
+  $('#zalo-sign-in-status').textContent = zaloConnected ? 'Connected' : (browser.sites || []).includes('zalo') ? 'Session expired' : 'Sign-in needed';
+  $('#setup-zalo-start').textContent = zaloConnected ? 'Reconnect Zalo' : 'Sign in to Zalo';
+  $('#setup-zalo-start').disabled = ['opening', 'open'].includes(browser.state);
 }
 
 async function refreshSocialAuth() {
@@ -686,17 +690,108 @@ async function refreshSocialAuth() {
 }
 
 async function openSocialSignIn() {
-  await openSetupPanel('social-sign-in-panel');
+  await openSettings('Connections', 'LinkedIn');
 }
 
 async function openSetupPanel(id) {
-  const loading = showTab('settings');
-  const panel = $(`#${id}`);
-  const step = panel.closest('details.flow-panel') || panel;
-  step.open = true;
-  scrollNodeIntoView(panel, {block:'start'});
-  await loading;
-  step.open = true;
+  const destination = {
+    'provider-panel':['AI Models', 'Application writing'],
+    'matching-panel':['AI Models', 'Job matching'],
+    'auto-apply-panel':['General', 'Draft automation'],
+    'search-intent-panel':['General', 'Search preferences'],
+    'social-sign-in-panel':['Connections', 'LinkedIn'],
+    'telegram-panel':['Connections', 'Telegram'],
+    'smtp-panel':['Connections', 'SMTP'],
+    'writing-preferences-panel':['AI Models', 'Application writing'],
+  }[id] || ['General', 'Appearance'];
+  await openSettings(...destination);
+}
+
+const settingsSections = {
+  General:['Appearance', 'Updates', 'Search preferences', 'Draft automation'],
+  'AI Models':['Resume extraction', 'Application writing', 'Job parsing', 'Job matching'],
+  Connections:['LinkedIn', 'Facebook', 'Telegram', 'Zalo', 'SMTP'],
+};
+let settingsGroup = 'General';
+let settingsSubtab = 'Appearance';
+let settingsReturnHash = '#home';
+
+function buildSettingsModal() {
+  const body = $('#settings-body');
+  const pane = (group, subtab) => {
+    const node = document.createElement('div');
+    node.className = 'settings-pane';
+    node.dataset.settingsGroup = group;
+    node.dataset.settingsSubtab = subtab;
+    body.append(node);
+    return node;
+  };
+  const panes = {};
+  for (const [group, subtabs] of Object.entries(settingsSections)) {
+    for (const subtab of subtabs) panes[`${group}/${subtab}`] = pane(group, subtab);
+  }
+  const place = (group, subtab, selector) => panes[`${group}/${subtab}`].append($(selector));
+  place('General', 'Appearance', '.settings-appearance-panel');
+  place('General', 'Search preferences', '#search-intent-panel');
+  place('General', 'Draft automation', '#auto-apply-panel');
+  place('AI Models', 'Application writing', '#provider-panel');
+  place('AI Models', 'Application writing', '#writing-preferences-panel');
+  place('AI Models', 'Job matching', '#matching-panel');
+  place('AI Models', 'Job matching', '.job-analysis-panel');
+  place('Connections', 'LinkedIn', '#social-sign-in-panel');
+  place('Connections', 'Facebook', '#social-sign-in-panel .social-site-row:nth-child(2)');
+  place('Connections', 'Telegram', '#telegram-panel');
+  place('Connections', 'SMTP', '#smtp-panel');
+  for (const id of ['search-intent-panel', 'search-intent-advanced', 'auto-apply-panel', 'provider-panel', 'social-sign-in-panel', 'telegram-panel', 'smtp-panel', 'writing-preferences-panel']) {
+    $(`#${id}`).open = true;
+  }
+  panes['General/Updates'].innerHTML = '<div class="settings-row"><div><strong>Installed version</strong><small id="settings-version"></small></div><button id="settings-check-updates" class="secondary" type="button">Check for updates</button></div><p id="settings-update-result" class="hint" role="status"></p>';
+  panes['AI Models/Resume extraction'].innerHTML = '<form id="resume-model-form" class="settings-form settings-form--stacked"><label>Provider<select name="provider" required><option value="">Choose a provider</option><option value="codex_local">Codex OSS · local Ollama model</option><option value="codex">Codex CLI · remote model</option><option value="agy">Antigravity CLI · remote model</option><option value="claude">Claude Code CLI · remote model</option></select></label><label>Model<input name="model" maxlength="100" placeholder="Provider default, or enter a model ID" list="resume-model-options"><datalist id="resume-model-options"></datalist></label><button class="primary" type="submit">Save model</button></form><p id="resume-model-processing" class="hint"></p>';
+  panes['AI Models/Job parsing'].innerHTML = '<form id="parsing-model-form" class="settings-form"><label>Installed text model<select name="model"><option value="">Use job matching model</option></select></label><button class="primary" type="submit">Use model</button></form><p class="hint">Extracts the role, requirements, location, and application details from each posting.</p><p id="parsing-model-detail" class="hint" role="status"></p>';
+  panes['Connections/Zalo'].innerHTML = '<div class="settings-row"><div><strong>Connection</strong><small id="zalo-sign-in-status">Sign-in needed</small></div><button id="setup-zalo-start" class="primary" type="button">Sign in to Zalo</button></div><form id="zalo-template-form" class="settings-form settings-form--stacked"><label>Message template<textarea name="template" rows="7" required></textarea></label><button class="primary" type="submit">Save template</button></form>';
+  $('#settings-staging').remove();
+  renderSettingsNavigation();
+}
+
+function renderSettingsNavigation() {
+  $('#settings-primary').innerHTML = Object.keys(settingsSections).map((group) => `<button type="button" role="tab" data-settings-group="${group}" aria-selected="${group === settingsGroup}">${group}</button>`).join('');
+  $('#settings-secondary').innerHTML = settingsSections[settingsGroup].map((subtab) => `<button type="button" role="tab" data-settings-subtab="${subtab}" aria-selected="${subtab === settingsSubtab}">${subtab}</button>`).join('');
+  $('#settings-body').querySelectorAll('.settings-pane').forEach((pane) => {
+    const active = pane.dataset.settingsGroup === settingsGroup && pane.dataset.settingsSubtab === settingsSubtab;
+    pane.classList.toggle('active', active);
+    pane.hidden = !active;
+  });
+  $('#settings-body').scrollTop = 0;
+  $('#settings-primary').querySelectorAll('[data-settings-group]').forEach((button) => button.addEventListener('click', () => {
+    settingsGroup = button.dataset.settingsGroup;
+    settingsSubtab = settingsSections[settingsGroup][0];
+    renderSettingsNavigation();
+  }));
+  $('#settings-secondary').querySelectorAll('[data-settings-subtab]').forEach((button) => button.addEventListener('click', () => {
+    settingsSubtab = button.dataset.settingsSubtab;
+    renderSettingsNavigation();
+  }));
+}
+
+async function openSettings(group = 'General', subtab = 'Appearance') {
+  settingsGroup = group;
+  settingsSubtab = subtab;
+  renderSettingsNavigation();
+  await showTab('settings');
+}
+
+function closeSettingsModal() {
+  const dialog = $('#settings');
+  if (!dialog.open) return;
+  dialog.close();
+  dialog.classList.remove('active');
+  $('#tab-loading').before($('#notice'));
+  clearTimeout(window.setupPoll);
+  clearTimeout(window.matchingPoll);
+  clearTimeout(window.matchingStatusPoll);
+  history.replaceState({tab:settingsReturnHash.slice(1).split('/')[0]}, '', settingsReturnHash);
+  document.title = `${$('#page-title').textContent} · Job Radar`;
+  $('#profile-menu-toggle').classList.remove('active');
 }
 
 async function loadSetup() {
@@ -771,10 +866,8 @@ async function openHomeRoute(route) {
   if (route.tab === 'applications') {
     const view = params.get('view') || 'drafts';
     const draft = params.get('draft');
-    if (view === 'automation') {
-      await showTab('settings');
-      $('#auto-apply-panel').open = true;
-    } else if (['activity', 'history'].includes(view)) await showTab('application-history');
+    if (view === 'automation') await openSettings('General', 'Draft automation');
+    else if (['activity', 'history'].includes(view)) await showTab('application-history');
     else {
       $('#application-query').value = '';
       $('#application-review-filter').value = params.get('review') || '';
@@ -1919,7 +2012,6 @@ function renderPreferenceSuggestions(result) {
       const result = await api(`/api/preferences/suggestions/${id}/${action}`, {method:'POST'});
       if (result.preferences) {
         renderSearchIntentForm(result.preferences);
-        delete $('#auto-apply-form').dataset.initialized;
         notice('Preference updated from your repeated decisions.');
       } else {
         notice('Suggestion dismissed.');
@@ -1931,7 +2023,7 @@ function renderPreferenceSuggestions(result) {
 }
 
 async function loadSettings() {
-  const [profile, setup, intent, suggestions] = await Promise.all([
+  const [profile, setup, intent, suggestions, , , , , zaloTemplate] = await Promise.all([
     api('/api/profile'),
     loadSetup(),
     api('/api/search-intent'),
@@ -1939,14 +2031,26 @@ async function loadSettings() {
     window.JobRadarWriting?.mount($('#writing-preferences-editor'), {api, notice}),
     loadMatchingReviewStatus(),
     loadAutoApply(),
+    loadMatchingModels(),
+    api('/api/setup/zalo-template'),
   ]);
   renderSearchIntentForm(intent);
   renderPreferenceSuggestions(suggestions);
   const availability = {codex:setup.providers.codex, codex_local:setup.providers.codex && setup.providers.ollama,
     agy:setup.providers.agy, claude:setup.providers.claude, chatgpt_web:setup.providers.chatgpt_web};
+  $('#settings-version').textContent = setup.app_version || 'Unknown';
   const providerForm = $('#provider-form');
   providerForm.querySelectorAll('option[value]').forEach((option) => { if (option.value) option.disabled = !availability[option.value]; });
   providerForm.elements.provider.value = profile.drafting_provider || '';
+  providerForm.elements.model.value = setup.application_writing_model || '';
+  syncWritingModelInput();
+  configureProviderSelect($('#resume-model-form').elements.provider, setup, setup.resume_extraction_provider || '');
+  $('#resume-model-form').elements.model.value = setup.resume_extraction_model || '';
+  $('#resume-model-processing').textContent = processingCopy(setup, $('#resume-model-form').elements.provider.value, 'Resume text');
+  if (!$('#zalo-template-form').dataset.initialized) {
+    $('#zalo-template-form').elements.template.value = zaloTemplate.template;
+    $('#zalo-template-form').dataset.initialized = 'true';
+  }
   const isChatGpt = providerForm.elements.provider.value === 'chatgpt_web';
   const chatgptSetup = $('#chatgpt-web-setup');
   chatgptSetup.hidden = !isChatGpt;
@@ -1964,12 +2068,6 @@ async function loadSettings() {
   const modelCount = Number(Boolean(profile.drafting_provider)) + Number(Boolean(setup.matching.model));
   setStepStatus('#provider-status', modelCount === 2 ? 'Both configured' : modelCount ? '1 of 2 configured' : 'Choose models', modelCount === 2 ? '' : 'warning');
   setStepStatus('#drafting-status', profile.drafting_provider ? `Using ${providerLabel(profile.drafting_provider)}` : 'Choose a provider', profile.drafting_provider ? '' : 'warning');
-  const hasResume = Boolean(profile.name && profile.email);
-  const needsSocial = Boolean(profile.drafting_provider && hasResume && (setup.browser.sites.length || ['linkedin','facebook'].some(site => !setup.browser.connected_sites.includes(site))));
-  const setupPanels = ['provider-panel','social-sign-in-panel','telegram-panel','smtp-panel'];
-  if (!setupPanels.some((id) => $(`#${id}`).open)) {
-    closeSetupPanels(modelCount < 2 ? 'provider-panel' : needsSocial ? 'social-sign-in-panel' : null);
-  }
   return setup;
 }
 
@@ -1987,7 +2085,7 @@ async function loadProfile() {
     ? 'Review the structured details below, or import a newer resume to replace them.'
     : 'Upload a text-based PDF to seed your structured profile. Choose how this import is processed here; application drafting setup is separate.';
   const resumeForm = $('#pdf-resume-form');
-  configureProviderSelect(resumeForm.elements.provider, setup, profile.drafting_provider || '');
+  configureProviderSelect(resumeForm.elements.provider, setup, setup.resume_extraction_provider || profile.drafting_provider || '');
   $('#resume-processing-disclosure').textContent = processingCopy(setup, resumeForm.elements.provider.value, 'Your resume text');
   resumeForm.elements.provider.onchange = () => {
     $('#resume-processing-disclosure').textContent = processingCopy(setup, resumeForm.elements.provider.value, 'Your resume text');
@@ -2064,8 +2162,22 @@ async function loadMatchingModels() {
   $('#matching-model-form').dataset.saved = saved || '';
   select.replaceChildren(new Option('Choose an installed model', ''));
   for (const model of data.models) select.add(new Option(`${model.name} · ${(model.size / 1e9).toFixed(1)} GB`, model.name));
+  for (const datalist of ['#resume-model-options', '#writing-model-options']) {
+    $(datalist).replaceChildren(...data.models.map((model) => new Option(model.name, model.name)));
+  }
   if (saved && !data.models.some((model) => model.name === saved)) select.add(new Option(`${saved} (unavailable)`, saved));
   select.value = saved || '';
+  const parsingForm = $('#parsing-model-form');
+  const parsingSelect = parsingForm.elements.model;
+  const savedParsing = data.matching.parsing_model || '';
+  parsingForm.dataset.saved = savedParsing;
+  parsingSelect.replaceChildren(new Option('Use job matching model', ''));
+  for (const model of data.models) parsingSelect.add(new Option(`${model.name} · ${(model.size / 1e9).toFixed(1)} GB`, model.name));
+  if (savedParsing && !data.models.some((model) => model.name === savedParsing)) parsingSelect.add(new Option(`${savedParsing} (unavailable)`, savedParsing));
+  parsingSelect.value = savedParsing;
+  parsingForm.querySelector('button[type="submit"]').disabled = true;
+  parsingForm.querySelector('button[type="submit"]').textContent = savedParsing ? 'Selected' : 'Using matching model';
+  $('#parsing-model-detail').textContent = savedParsing ? '' : 'Using the job matching model until you choose a separate parsing model.';
   const saveButton = $('#matching-model-form button[type="submit"]');
   saveButton.disabled = !select.value || select.value === saved;
   saveButton.textContent = select.value && select.value === saved ? 'Selected' : 'Use model';
@@ -2237,6 +2349,29 @@ async function showTab(name, historyMode = 'push') {
   name = requested[0];
   if (name === 'setup') name = 'settings';
   if (name === 'overview') name = 'home';
+  if (name === 'settings') {
+    const dialog = $('#settings');
+    if (!dialog.open) {
+      settingsReturnHash = location.hash && !['#settings', '#setup'].includes(location.hash) ? location.hash : '#home';
+      dialog.showModal();
+    }
+    dialog.classList.add('active');
+    $('#settings-primary').before($('#notice'));
+    setProfileMenuOpen(false);
+    $('#profile-menu-toggle').classList.add('active');
+    if (historyMode === 'replace') history.replaceState({tab:'settings'}, '', '#settings');
+    else if (historyMode === 'push' && location.hash !== '#settings') history.pushState({tab:'settings'}, '', '#settings');
+    document.title = 'Settings · Job Radar';
+    const requestId = setTabLoading(dialog, true);
+    try { return await loadSettings(); }
+    catch (error) { notice(error.message, true); }
+    finally { setTabLoading(dialog, false, requestId); }
+  }
+  if ($('#settings').open) {
+    $('#settings').close();
+    $('#settings').classList.remove('active');
+    $('#tab-loading').before($('#notice'));
+  }
   if (!document.getElementById(name)?.classList.contains('tab')) name = 'home';
   if (name !== 'settings') clearTimeout(window.setupPoll);
   if (name !== 'settings') clearTimeout(window.matchingPoll);
@@ -4588,7 +4723,6 @@ $('#search-intent-form').addEventListener('submit', async (event) => {
   try {
     const saved = await api('/api/search-intent', {method:'PUT', body:JSON.stringify(payload)});
     renderSearchIntentForm(saved);
-    delete $('#auto-apply-form').dataset.initialized;
     $('#search-intent-message').textContent = 'Saved. Existing jobs are being rescored against these preferences.';
     notice('Search preferences saved');
   } catch(error) { $('#search-intent-message').textContent = error.message; notice(error.message, true); }
@@ -4654,17 +4788,26 @@ $('#provider-form').addEventListener('submit', async (event) => {
   const pendingButton = beginPending(event.submitter || event.target.querySelector('button[type="submit"]'), 'Saving…');
   try {
     const provider = event.target.elements.provider.value;
-    const result = await api('/api/profile/provider', {method:'PUT', body:JSON.stringify({provider})});
+    const model = event.target.elements.model.value.trim();
+    const result = await api('/api/profile/provider', {method:'PUT', body:JSON.stringify({provider, model})});
     await loadSettings();
     notice(result.automatic_drafts_paused
       ? 'ChatGPT Web saved. Automatic drafts paused; prepare jobs manually and review the browser reply.'
-      : 'Application writing provider saved.');
+      : 'Application writing model saved.');
   } catch(error) { notice(error.message, true); }
   finally { endPending(pendingButton); }
 });
 
+function syncWritingModelInput() {
+  const input = $('#provider-form').elements.model;
+  const browserProvider = $('#provider-form').elements.provider.value === 'chatgpt_web';
+  input.disabled = browserProvider;
+  input.placeholder = browserProvider ? 'Selected in ChatGPT Web' : 'Provider default, or enter a model ID';
+}
+
 $('#provider-form').elements.provider.addEventListener('change', (event) => {
   $('#chatgpt-web-setup').hidden = event.target.value !== 'chatgpt_web';
+  syncWritingModelInput();
 });
 
 $('#chatgpt-web-login').addEventListener('click', async (event) => {
@@ -4860,12 +5003,81 @@ $('#scan-now').addEventListener('click', async () => {
   finally { endPending(button); }
 });
 
+buildSettingsModal();
+$('#settings-close').addEventListener('click', closeSettingsModal);
+$('#settings').addEventListener('cancel', (event) => { event.preventDefault(); closeSettingsModal(); });
+$('#settings').addEventListener('click', (event) => { if (event.target === $('#settings')) closeSettingsModal(); });
+$('#settings-check-updates').addEventListener('click', async (event) => {
+  const button = beginPending(event.currentTarget, 'Checking…');
+  try {
+    const result = await api('/api/update/status');
+    $('#settings-update-result').textContent = result.message;
+    if (result.update_available) {
+      const link = document.createElement('a');
+      link.href = result.url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = `Open version ${result.latest} →`;
+      $('#settings-update-result').append(' ', link);
+    }
+  } catch (error) { $('#settings-update-result').textContent = error.message; }
+  finally { endPending(button); }
+});
+$('#resume-model-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const button = beginPending(event.submitter, 'Saving…');
+  try {
+    await api('/api/profile/resume-provider', {method:'PUT', body:JSON.stringify({provider:event.target.elements.provider.value, model:event.target.elements.model.value.trim()})});
+    await loadSettings();
+    notice('Resume extraction model saved.');
+  } catch (error) { notice(error.message, true); }
+  finally { endPending(button); }
+});
+$('#resume-model-form').elements.provider.addEventListener('change', (event) => {
+  $('#resume-model-processing').textContent = processingCopy({provider_processing:projectProcessing}, event.target.value, 'Resume text');
+});
+$('#parsing-model-form').elements.model.addEventListener('change', (event) => {
+  const form = $('#parsing-model-form');
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = event.target.value === form.dataset.saved;
+  button.textContent = button.disabled ? event.target.value ? 'Selected' : 'Using matching model' : event.target.value ? 'Use model' : 'Use matching model';
+});
+$('#parsing-model-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const button = beginPending(event.submitter, 'Saving…');
+  try {
+    const model = event.target.elements.model.value;
+    await api('/api/parsing/model', model ? {method:'PUT', body:JSON.stringify({model})} : {method:'DELETE'});
+    await loadSettings();
+    notice('Job parsing model saved. Existing jobs are being reviewed.');
+  } catch (error) { notice(error.message, true); }
+  finally { endPending(button); }
+});
+$('#setup-zalo-start').addEventListener('click', async (event) => {
+  const button = beginPending(event.currentTarget, 'Opening Chrome…');
+  try {
+    await api('/api/setup/browser/start', {method:'POST', body:JSON.stringify({site:'zalo'})});
+    await loadSetup();
+    notice('Chrome opened for Zalo sign-in.');
+  } catch (error) { notice(error.message, true); }
+  finally { endPending(button); }
+});
+$('#zalo-template-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const button = beginPending(event.submitter, 'Saving…');
+  try {
+    await api('/api/setup/zalo-template', {method:'PUT', body:JSON.stringify({template:event.target.elements.template.value})});
+    notice('Zalo message template saved.');
+  } catch (error) { notice(error.message, true); }
+  finally { endPending(button); }
+});
+
 window.addEventListener('popstate', () => showTab(location.hash.slice(1) || 'home', 'none'));
 function refreshAfterReturn() {
   clearTimeout(window.returnRefresh);
   window.returnRefresh = setTimeout(() => {
     const active = document.querySelector('.tab.active')?.id;
-    const refresh = active === 'settings' ? loadSettings : active === 'home' ? loadHome : refreshSocialAuth;
+    const refresh = $('#settings').open ? loadSettings : active === 'home' ? loadHome : refreshSocialAuth;
     refresh().catch((error) => notice(error.message, true));
   }, 100);
 }

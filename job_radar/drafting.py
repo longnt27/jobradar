@@ -6,7 +6,9 @@ import re
 import shutil
 import subprocess
 import tempfile
+from contextvars import ContextVar
 from datetime import date, datetime
+from functools import wraps
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -28,6 +30,19 @@ PROVIDERS = {
     "agy": "remote inference through local Antigravity CLI",
     "claude": "remote inference through local Claude Code CLI",
 }
+
+provider_model_override: ContextVar[str] = ContextVar("provider_model_override", default="")
+
+
+def with_application_model(function):
+    @wraps(function)
+    def wrapped(db: Database, *args, **kwargs):
+        token = provider_model_override.set(str(db.get_setting("application_writing_model", "") or ""))
+        try:
+            return function(db, *args, **kwargs)
+        finally:
+            provider_model_override.reset(token)
+    return wrapped
 
 
 LEGACY_DESTINATION_WARNING = "No application destination is known. Add an email address or application URL before sending."
@@ -769,6 +784,7 @@ def _provider_json(provider: str, prompt: str, response_type: type[BaseModel]) -
         from .chatgpt_handoff import run_chatgpt_web_json
         return run_chatgpt_web_json(prompt, response_type)
     command = "codex" if provider.startswith("codex") else provider
+    selected_model = provider_model_override.get().strip()
     if not shutil.which(command):
         raise RuntimeError(f"{command} CLI is not installed")
     schema = response_type.model_json_schema()
@@ -800,6 +816,9 @@ def _provider_json(provider: str, prompt: str, response_type: type[BaseModel]) -
             args = [command, "--print", "--json-schema", str(schema_file), "--disable-slash-commands", prompt]
         else:
             args = [command, "--print", "--json-schema", json.dumps(schema), "--tools", "", prompt]
+        if selected_model:
+            model_option_at = 2 if provider.startswith("codex") else 1
+            args[model_option_at:model_option_at] = ["--model", selected_model]
         result = subprocess.run(args, input=prompt if provider.startswith("codex") else "", cwd=temp, text=True, capture_output=True, timeout=240, check=False)
         if result.returncode:
             output = (result.stderr or result.stdout).strip()
@@ -940,6 +959,7 @@ def _resume_from_model(profile: dict, model: ModelDraft, selected: list[dict],
     return resume
 
 
+@with_application_model
 def prepare_draft(db: Database, settings: Settings, vacancy_id: str, provider: str = "codex",
                   draft_id: str | None = None, custom_prompt: str = "") -> dict:
     if provider not in PROVIDERS:
@@ -998,6 +1018,7 @@ def prepare_draft(db: Database, settings: Settings, vacancy_id: str, provider: s
     return get_draft(db, identifier)
 
 
+@with_application_model
 def refresh_draft_projects(db: Database, settings: Settings, draft_id: str) -> dict:
     """Retarget project bullets and emphasis while preserving reviewed application edits."""
     previous = get_draft(db, draft_id)
@@ -1033,6 +1054,7 @@ def refresh_draft_projects(db: Database, settings: Settings, draft_id: str) -> d
     return get_draft(db, draft_id)
 
 
+@with_application_model
 def refresh_draft_content(db: Database, settings: Settings, draft_id: str,
                           custom_prompt: str = "", required_project_ids: tuple[str, ...] = ()) -> dict:
     """Regenerate one complete draft without discarding reviewed answers or destination."""
@@ -1238,6 +1260,7 @@ def _revised_section(previous: dict, section: str, model: BaseModel, cards: list
     return resume, message, selected_ids
 
 
+@with_application_model
 def regenerate_draft(db: Database, settings: Settings, draft_id: str, prompt: str, section: str = "all") -> dict:
     if not prompt.strip() or len(prompt) > 2000:
         raise ValueError("Enter custom instructions under 2000 characters")
