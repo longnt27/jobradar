@@ -751,6 +751,7 @@ function buildSettingsModal() {
       <label><input type="radio" name="update-check-mode" value="automatic"> Automatically, once a day</label>
       <label><input type="radio" name="update-check-mode" value="manual" checked> Only when I check</label>
     </fieldset>
+    <label class="update-beta-choice"><input id="settings-include-beta" type="checkbox"> Include beta releases</label>
     <div class="update-check-actions"><button id="settings-check-updates" class="secondary" type="button">Check now</button><span id="settings-update-checked" class="hint"></span></div>
     <div id="settings-update-result" class="hint" role="status" aria-live="polite"></div>`;
   panes['AI Models/Resume extraction'].innerHTML = '<form id="resume-model-form" class="settings-form settings-form--stacked"><label>Provider<select name="provider" required><option value="">Choose a provider</option><option value="codex_local">Codex OSS · local Ollama model</option><option value="codex">Codex CLI · remote model</option><option value="agy">Antigravity CLI · remote model</option><option value="claude">Claude Code CLI · remote model</option></select></label><label>Model<input name="model" maxlength="100" placeholder="Provider default, or enter a model ID" list="resume-model-options"><datalist id="resume-model-options"></datalist></label><button class="primary" type="submit">Save model</button></form><p id="resume-model-processing" class="hint"></p>';
@@ -2092,6 +2093,7 @@ async function loadSettings() {
   $('#settings-version').textContent = setup.app_version || 'Unknown';
   const updateMode = document.querySelector(`#settings input[name="update-check-mode"][value="${updatePreference.mode}"]`);
   if (updateMode) updateMode.checked = true;
+  $('#settings-include-beta').checked = updatePreference.include_beta === true;
   renderUpdateStatus(updateStatus);
   const providerForm = $('#provider-form');
   providerForm.querySelectorAll('option[value]').forEach((option) => { if (option.value) option.disabled = !availability[option.value]; });
@@ -5061,21 +5063,31 @@ buildSettingsModal();
 $('#settings-close').addEventListener('click', closeSettingsModal);
 $('#settings').addEventListener('cancel', (event) => { event.preventDefault(); closeSettingsModal(); });
 $('#settings').addEventListener('click', (event) => { if (event.target === $('#settings')) closeSettingsModal(); });
-document.querySelectorAll('#settings input[name="update-check-mode"]').forEach((input) => input.addEventListener('change', async (event) => {
-  if (!event.target.checked) return;
-  try {
-    await api('/api/update/preferences', {method:'PUT', body:JSON.stringify({mode:event.target.value})});
-    if (event.target.value === 'automatic') await checkAutomaticUpdates();
-  } catch (error) {
-    const preference = await api('/api/update/preferences');
-    document.querySelector(`#settings input[name="update-check-mode"][value="${preference.mode}"]`).checked = true;
-    renderUpdateStatus({message:error.message});
-  }
-}));
+let updatePreferenceSave = Promise.resolve();
+function saveUpdatePreferences() {
+  const mode = document.querySelector('#settings input[name="update-check-mode"]:checked').value;
+  const includeBeta = $('#settings-include-beta').checked;
+  updatePreferenceSave = updatePreferenceSave.then(async () => {
+    try {
+      await api('/api/update/preferences', {method:'PUT', body:JSON.stringify({mode, include_beta:includeBeta})});
+      renderUpdateStatus(await api('/api/update/status'));
+      if (mode === 'automatic') await checkAutomaticUpdates();
+    } catch (error) {
+      const preference = await api('/api/update/preferences');
+      document.querySelector(`#settings input[name="update-check-mode"][value="${preference.mode}"]`).checked = true;
+      $('#settings-include-beta').checked = preference.include_beta === true;
+      renderUpdateStatus({message:error.message});
+    }
+  });
+  return updatePreferenceSave;
+}
+document.querySelectorAll('#settings input[name="update-check-mode"]').forEach((input) => input.addEventListener('change', saveUpdatePreferences));
+$('#settings-include-beta').addEventListener('change', saveUpdatePreferences);
 $('#settings-check-updates').addEventListener('click', async (event) => {
   const button = beginPending(event.currentTarget, 'Checking…');
   try {
     $('#settings-update-result').innerHTML = '<span class="skeleton-line update-check-skeleton"></span>';
+    await updatePreferenceSave;
     renderUpdateStatus(await api('/api/update/status?force=true'));
   } catch (error) { $('#settings-update-result').textContent = error.message; }
   finally { endPending(button); }

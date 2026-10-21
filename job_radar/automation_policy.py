@@ -172,7 +172,7 @@ def automation_eligibility(
         elif job.get("score") is None or int(job["score"]) < config["threshold"]:
             reasons.append(f"The match score is below {config['threshold']}.")
         else:
-            fit = fit_summary(job.get("score"), detail, preferences)
+            fit = fit_summary(job.get("score"), detail, preferences, job)
             if fit["fit_class"] == "outside":
                 reasons.append("The job violates a hard search preference.")
 

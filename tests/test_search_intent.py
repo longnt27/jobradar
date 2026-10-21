@@ -63,6 +63,17 @@ def test_fit_summary_distinguishes_strong_stretch_uncertain_and_outside() -> Non
     assert outside["fit_class"] == "outside"
 
 
+def test_fit_summary_uses_saved_location_and_mode_when_model_facts_are_empty() -> None:
+    detail = {"facts": {"location": "", "work_mode": "", "required_skills": ["Python"],
+                        "years_required": 1, "education": ["Bachelor"]},
+              "criteria": {"location": {"score": 5, "reason": "Posting location is unknown."},
+                           "work_mode": {"score": 5, "reason": "Work mode is not stated."}}}
+    job = {"location": "Đống Đa (On-site)", "work_mode": ""}
+    summary = fit_summary(90, detail, {}, job)
+    assert summary["missing_evidence"] == []
+    assert summary["uncertainty"] == 0
+
+
 def test_salary_discovery_constraint_is_separate_and_only_hard_when_configured() -> None:
     assert salary_floor("Salary: 20–30 million VND", "VND") == 20_000_000
     assert salary_floor("Salary: $2,000 USD", "VND") is None

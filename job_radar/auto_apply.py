@@ -1070,7 +1070,7 @@ class AutoApplyManager:
         preferences = normalize_search_intent(self.db.get_setting("search_intent", {}))
         threshold = preferences["strong_match_threshold"]
         rows = self.db.all(
-            "SELECT id,title,company,location,score,score_detail,first_seen_at FROM vacancies "
+            "SELECT id,title,company,location,work_mode,score,score_detail,first_seen_at FROM vacancies "
             "WHERE analysis_status='done' AND score>=? AND decision_state IN ('undecided','shortlisted') "
             "AND snoozed_until IS NULL AND datetime(first_seen_at)>=datetime('now','-1 day') "
             "AND NOT EXISTS(SELECT 1 FROM feedback f WHERE f.vacancy_id=vacancies.id) "
@@ -1083,7 +1083,7 @@ class AutoApplyManager:
                 detail = json.loads(row.get("score_detail") or "{}")
             except (TypeError, ValueError):
                 detail = {}
-            summary = fit_summary(row.get("score"), detail, preferences)
+            summary = fit_summary(row.get("score"), detail, preferences, row)
             if summary["fit_class"] == "strong":
                 strong.append(row)
             if len(strong) >= limit:

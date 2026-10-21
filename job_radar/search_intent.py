@@ -7,6 +7,8 @@ import re
 from datetime import datetime
 from typing import Any
 
+from .location_mode import split_location_work_mode
+
 MODE_KEYS = (
     "role_families",
     "seniority_levels",
@@ -384,11 +386,18 @@ def posting_salary_floor(value: str, expected_currency: str | None = None) -> fl
     return None
 
 
-def fit_summary(score: int | None, detail: dict[str, Any] | None, preferences: dict[str, Any]) -> dict[str, Any]:
+def fit_summary(score: int | None, detail: dict[str, Any] | None, preferences: dict[str, Any],
+                job: dict[str, Any] | None = None) -> dict[str, Any]:
     detail = detail if isinstance(detail, dict) else {}
     prefs = normalize_search_intent(preferences)
     criteria = detail.get("criteria") if isinstance(detail.get("criteria"), dict) else {}
     facts = detail.get("facts") if isinstance(detail.get("facts"), dict) else {}
+    source_location, source_mode = split_location_work_mode((job or {}).get("location"), (job or {}).get("work_mode"))
+    specific_location = bool(source_location and not re.fullmatch(
+        r"(?:search by location|vietnam|việt nam|anywhere|unspecified|unknown|multiple locations)",
+        source_location, re.I))
+    known_place_or_mode = {"location": bool(facts.get("location") or specific_location),
+                           "work_mode": bool(facts.get("work_mode") or source_mode)}
     missing = []
     field_labels = {
         "required_skills": "required skills",
@@ -403,9 +412,11 @@ def fit_summary(score: int | None, detail: dict[str, Any] | None, preferences: d
         fact_missing = (
             key == "required_skills" and not facts.get("required_skills") or
             key == "experience" and facts.get("years_required") is None or
-            key in {"location", "work_mode", "education"} and not facts.get(key)
+            key in {"location", "work_mode"} and not known_place_or_mode[key] or
+            key == "education" and not facts.get("education")
         )
-        if fact_missing or any(word in reason for word in ("not stated", "unknown", "unavailable", "cannot verify", "unverified")):
+        reason_missing = any(word in reason for word in ("not stated", "unknown", "unavailable", "cannot verify", "unverified"))
+        if fact_missing or (reason_missing and not known_place_or_mode.get(key, False)):
             missing.append(label)
     ranked = []
     for key, item in criteria.items():

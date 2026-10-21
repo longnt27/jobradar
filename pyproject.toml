@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "job-radar"
-version = "0.2.0"
+version = "0.1.0-beta"
 description = "Local job discovery and reviewed application assistant"
 requires-python = ">=3.12"
 dependencies = [

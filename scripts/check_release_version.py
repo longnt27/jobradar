@@ -10,8 +10,8 @@ from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
 tag = sys.argv[1] if len(sys.argv) == 2 else ""
-if not re.fullmatch(r"v\d+\.\d+\.\d+", tag):
-    raise SystemExit("Release tag must look like v1.2.3")
+if not re.fullmatch(r"v\d+\.\d+\.\d+(?:-beta)?", tag):
+    raise SystemExit("Release tag must look like v1.2.3 or v1.2.3-beta")
 
 version = tag[1:]
 project_version = tomllib.loads((root / "pyproject.toml").read_text())["project"]["version"]

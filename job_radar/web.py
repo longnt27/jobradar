@@ -109,6 +109,7 @@ class BrowserLoginInput(BaseModel):
 
 class UpdatePreferenceInput(BaseModel):
     mode: Literal["manual", "automatic"]
+    include_beta: bool | None = None
 
 
 class EmployerInput(BaseModel):
@@ -462,12 +463,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         recent = db.all("SELECT scan_runs.*, sources.name AS source_name FROM scan_runs JOIN sources ON sources.id=scan_runs.source_id ORDER BY started_at DESC LIMIT 10")
         preferences = db.get_setting("search_intent", {})
         strong_jobs = []
-        for item in db.all("SELECT id,title,company,score,score_detail FROM vacancies WHERE decision_state='undecided' AND snoozed_until IS NULL AND analysis_status='done' AND score>=? ORDER BY score DESC,first_seen_at DESC", (threshold,)):
+        for item in db.all("SELECT id,title,company,location,work_mode,score,score_detail FROM vacancies WHERE decision_state='undecided' AND snoozed_until IS NULL AND analysis_status='done' AND score>=? ORDER BY score DESC,first_seen_at DESC", (threshold,)):
             try:
                 detail = json.loads(item.pop("score_detail") or "{}")
             except (TypeError, ValueError):
                 detail = {}
-            item.update(fit_summary(item.get("score"), detail, preferences))
+            item.update(fit_summary(item.get("score"), detail, preferences, item))
             if item["fit_class"] == "strong":
                 strong_jobs.append(item)
         counts["high_fit_new"] = len(strong_jobs)
@@ -592,7 +593,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.put("/api/update/preferences")
     def set_update_preferences(payload: UpdatePreferenceInput):
-        return save_release_check_preference(db, payload.mode)
+        return save_release_check_preference(db, payload.mode, payload.include_beta)
 
     @app.get("/api/update/status")
     async def update_status(force: bool = False):
@@ -1485,7 +1486,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 {"label": key.replace("_", " ").title(), "score": item.get("score"), "reason": item.get("reason", "")}
                 for key, item in criteria.items() if isinstance(item, dict) and isinstance(item.get("score"), (int, float))
             ]
-            row.update(fit_summary(row.get("score"), detail, db.get_setting("search_intent", {})))
+            row.update(fit_summary(row.get("score"), detail, db.get_setting("search_intent", {}), row))
             row["seniority_key"] = seniority_key(f"{facts.get('seniority') or ''} {row.get('title') or ''}")
             row.pop("score_detail", None)
         attach_job_sources(rows)
@@ -1533,7 +1534,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             detail = json.loads(row.get("score_detail") or "{}")
         except (TypeError, ValueError):
             detail = {}
-        row.update(fit_summary(row.get("score"), detail, db.get_setting("search_intent", {})))
+        row.update(fit_summary(row.get("score"), detail, db.get_setting("search_intent", {}), row))
         feedback = db.one(
             "SELECT reason FROM feedback WHERE vacancy_id=? AND state=? AND reason IS NOT NULL "
             "ORDER BY created_at DESC LIMIT 1",
