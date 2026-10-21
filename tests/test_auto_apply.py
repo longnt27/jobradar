@@ -358,6 +358,40 @@ def test_auto_apply_requires_verified_destination_before_provider_work(tmp_path:
         assert not app.state.db.one("SELECT id FROM submissions WHERE vacancy_id=?", (identifier,))
 
 
+def test_automatic_draft_can_wait_for_form_review_when_destination_verification_is_off(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    app = create_app(Settings(tmp_path))
+    db = app.state.db
+    db.execute("UPDATE sources SET enabled=0")
+    db.set_setting("profile", {"name": "Alex Example", "email": "alex@example.org",
+        "experience": [{"company": "Example Labs", "role": "Engineer", "dates": "2024–2026",
+                        "bullets": ["Built Python systems."]}], "drafting_provider": "template"})
+    manager = app.state.auto_apply_manager
+    manager.configure(True, 80, {"require_verified_destination": False})
+    job_id = _scored_job(app, "Form Review Engineer", 88, "https://example.org/apply")
+    db.execute(
+        "INSERT INTO auto_application_attempts(vacancy_id,status,requested_by,created_at,updated_at) "
+        "VALUES(?,'preparing','automation','2026-10-21','2026-10-21')",
+        (job_id,),
+    )
+
+    async def unexpected_inspection(*_args):
+        raise AssertionError("form inspection should wait for review")
+
+    async def quiet_review(*_args):
+        return None
+
+    monkeypatch.setattr("job_radar.auto_apply.inspect_form", unexpected_inspection)
+    monkeypatch.setattr(manager, "notify_review", quiet_review)
+    asyncio.run(manager._process(job_id))
+
+    attempt = db.one("SELECT status,draft_id FROM auto_application_attempts WHERE vacancy_id=?", (job_id,))
+    assert attempt["status"] == "needs_review"
+    assert attempt["draft_id"]
+    assert db.one("SELECT id FROM application_drafts WHERE id=?", (attempt["draft_id"],))
+
+
 def test_auto_apply_setting_requires_local_matching_and_profile(tmp_path: Path) -> None:
     app = create_app(Settings(tmp_path))
     app.state.db.execute("UPDATE sources SET enabled=0")

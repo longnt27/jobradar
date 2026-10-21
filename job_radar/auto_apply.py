@@ -584,7 +584,7 @@ class AutoApplyManager:
                 if await self._record_failure(job_id, f"Application button inspection needs attention: {error}", draft["id"]):
                     return
                 return
-        if draft["destination"].get("kind") in {"web", "linkedin_easy_apply"}:
+        if draft["destination"].get("kind") in {"web", "linkedin_easy_apply"} and (manual or not unverified_opt_in):
             try:
                 async with self.browser_lock:
                     draft = await inspect_form(self.db, self.settings, draft["id"])
