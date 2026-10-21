@@ -1099,7 +1099,7 @@ main:has(#applications.active)>.topbar{flex:none;margin-bottom:18px}
 
 /* Settings uses two visible navigation levels and direct controls. */
 .brand-logo{width:52px;height:52px}
-.settings-dialog{position:fixed;width:min(930px,calc(100vw - 48px));height:min(540px,calc(100dvh - 80px));max-width:none;max-height:none;margin:auto;padding:0;overflow:hidden;display:flex;flex-direction:column;border:1px solid var(--control-border,#afcaba);border-radius:16px;background:var(--surface,#fff);color:var(--text-strong,#14262a);box-shadow:0 28px 70px rgba(0,0,0,.42)}
+.settings-dialog{position:fixed;width:min(930px,calc(100vw - 48px));height:calc(100dvh - 32px);max-width:none;max-height:none;margin:auto;padding:0;overflow:hidden;display:flex;flex-direction:column;border:1px solid var(--control-border,#afcaba);border-radius:16px;background:var(--surface,#fff);color:var(--text-strong,#14262a);box-shadow:0 28px 70px rgba(0,0,0,.42)}
 .settings-dialog:not([open]){display:none}
 .settings-dialog::backdrop{background:rgba(0,0,0,.62)}
 .settings-dialog-header{display:flex;align-items:center;justify-content:space-between;flex:none;min-height:68px;padding:0 28px}
