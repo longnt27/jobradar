@@ -75,6 +75,7 @@ from .settings import Settings
 from .scanner import ScanManager
 from .service import service_path
 from .social_browser import chrome_executable, close_orphaned_chrome, social_login_at
+from .updates import cached_release_status, check_for_release, release_check_preference, save_release_check_preference
 from .work_queue import work_queue
 
 
@@ -104,6 +105,10 @@ class SourceInput(BaseModel):
 
 class BrowserLoginInput(BaseModel):
     site: Literal["linkedin", "facebook", "zalo"]
+
+
+class UpdatePreferenceInput(BaseModel):
+    mode: Literal["manual", "automatic"]
 
 
 class EmployerInput(BaseModel):
@@ -322,7 +327,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await match_manager.stop()
             await scan_manager.stop()
 
-    app = FastAPI(title="Job Radar", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="Job Radar", version=__version__, lifespan=lifespan)
+    update_check_lock = asyncio.Lock()
 
     @app.middleware("http")
     async def follow_combined_job(request, call_next):
@@ -578,28 +584,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "capabilities": capabilities,
         }
 
+    @app.get("/api/update/preferences")
+    def update_preferences():
+        return release_check_preference(db)
+
+    @app.put("/api/update/preferences")
+    def set_update_preferences(payload: UpdatePreferenceInput):
+        return save_release_check_preference(db, payload.mode)
+
     @app.get("/api/update/status")
-    async def update_status():
-        releases_url = "https://github.com/longnt27/jobradar/releases"
-        try:
-            async with httpx.AsyncClient(timeout=8) as client:
-                response = await client.get("https://api.github.com/repos/longnt27/jobradar/releases/latest",
-                                            headers={"Accept": "application/vnd.github+json"})
-            if response.status_code == 404:
-                return {"current": __version__, "latest": None, "update_available": False,
-                        "url": releases_url, "message": "No published release is available yet."}
-            response.raise_for_status()
-            release = response.json()
-            latest = str(release.get("tag_name") or "").removeprefix("v")
-            current_parts = tuple(int(part) for part in re.findall(r"\d+", __version__)[:3])
-            latest_parts = tuple(int(part) for part in re.findall(r"\d+", latest)[:3])
-            available = bool(latest_parts and latest_parts > current_parts)
-            return {"current": __version__, "latest": latest or None, "update_available": available,
-                    "url": release.get("html_url") or releases_url,
-                    "message": "A newer release is available." if available else "You have the latest published release."}
-        except (httpx.HTTPError, ValueError, KeyError):
-            return {"current": __version__, "latest": None, "update_available": False,
-                    "url": releases_url, "message": "Could not check for updates. Try again later."}
+    async def update_status(force: bool = False):
+        if not force:
+            return cached_release_status(db)
+        async with update_check_lock:
+            return await check_for_release(db)
 
     @app.post("/api/setup/browser/start")
     async def start_browser_login(payload: BrowserLoginInput):

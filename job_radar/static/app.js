@@ -745,7 +745,13 @@ function buildSettingsModal() {
   for (const id of ['search-intent-panel', 'search-intent-advanced', 'auto-apply-panel', 'provider-panel', 'social-sign-in-panel', 'telegram-panel', 'smtp-panel', 'writing-preferences-panel']) {
     $(`#${id}`).open = true;
   }
-  panes['General/Updates'].innerHTML = '<div class="settings-row"><div><strong>Installed version</strong><small id="settings-version"></small></div><button id="settings-check-updates" class="secondary" type="button">Check for updates</button></div><p id="settings-update-result" class="hint" role="status"></p>';
+  panes['General/Updates'].innerHTML = `<div class="settings-row"><div><strong>Installed version</strong><small id="settings-version"></small></div></div>
+    <fieldset class="update-check-mode"><legend>Check for updates</legend>
+      <label><input type="radio" name="update-check-mode" value="automatic"> Automatically, once a day</label>
+      <label><input type="radio" name="update-check-mode" value="manual" checked> Only when I check</label>
+    </fieldset>
+    <div class="update-check-actions"><button id="settings-check-updates" class="secondary" type="button">Check now</button><span id="settings-update-checked" class="hint"></span></div>
+    <div id="settings-update-result" class="hint" role="status" aria-live="polite"></div>`;
   panes['AI Models/Resume extraction'].innerHTML = '<form id="resume-model-form" class="settings-form settings-form--stacked"><label>Provider<select name="provider" required><option value="">Choose a provider</option><option value="codex_local">Codex OSS · local Ollama model</option><option value="codex">Codex CLI · remote model</option><option value="agy">Antigravity CLI · remote model</option><option value="claude">Claude Code CLI · remote model</option></select></label><label>Model<input name="model" maxlength="100" placeholder="Provider default, or enter a model ID" list="resume-model-options"><datalist id="resume-model-options"></datalist></label><button class="primary" type="submit">Save model</button></form><p id="resume-model-processing" class="hint"></p>';
   panes['AI Models/Job parsing'].innerHTML = '<form id="parsing-model-form" class="settings-form"><label>Installed text model<select name="model"><option value="">Use job matching model</option></select></label><button class="primary" type="submit">Use model</button></form><p class="hint">Extracts the role, requirements, location, and application details from each posting.</p><p id="parsing-model-detail" class="hint" role="status"></p>';
   panes['Connections/Zalo'].innerHTML = '<div class="settings-row"><div><strong>Connection</strong><small id="zalo-sign-in-status">Sign-in needed</small></div><button id="setup-zalo-start" class="primary" type="button">Sign in to Zalo</button></div><form id="zalo-template-form" class="settings-form settings-form--stacked"><label>Message template<textarea name="template" rows="7" required></textarea></label><button class="primary" type="submit">Save template</button></form>';
@@ -2022,8 +2028,50 @@ function renderPreferenceSuggestions(result) {
   }));
 }
 
+function renderUpdateStatus(result) {
+  const output = $('#settings-update-result');
+  if (!output || !result) return;
+  output.textContent = result.message;
+  $('#settings-update-checked').textContent = result.checked_at ? `Last checked ${when(result.checked_at)}` : '';
+  if (result.update_available && result.url) {
+    const link = document.createElement('a');
+    link.href = result.url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = `View release ${result.latest} →`;
+    const instructions = document.createElement('a');
+    instructions.href = 'https://github.com/longnt27/jobradar#updates-and-releases';
+    instructions.target = '_blank';
+    instructions.rel = 'noopener noreferrer';
+    instructions.textContent = 'Install instructions →';
+    output.append(' ', link, ' · ', instructions);
+  }
+}
+
+let updateCheckInProgress = null;
+let announcedUpdateVersion = null;
+async function checkAutomaticUpdates() {
+  if (updateCheckInProgress) return updateCheckInProgress;
+  updateCheckInProgress = (async () => {
+    const preference = await api('/api/update/preferences');
+    if (preference.mode !== 'automatic') return;
+    let status = await api('/api/update/status');
+    const elapsed = Date.now() - Date.parse(status.checked_at || '');
+    const interval = status.status === 'error' ? 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+    if (!Number.isFinite(elapsed) || elapsed >= interval) status = await api('/api/update/status?force=true');
+    renderUpdateStatus(status);
+    if (status.update_available && status.latest !== announcedUpdateVersion) {
+      announcedUpdateVersion = status.latest;
+      notice(`Job Radar ${status.latest} is available.`, false, {
+        label:'View update', onClick:() => openSettings('General', 'Updates'),
+      });
+    }
+  })().finally(() => { updateCheckInProgress = null; });
+  return updateCheckInProgress;
+}
+
 async function loadSettings() {
-  const [profile, setup, intent, suggestions, , , , , zaloTemplate] = await Promise.all([
+  const [profile, setup, intent, suggestions, , , , , zaloTemplate, updatePreference, updateStatus] = await Promise.all([
     api('/api/profile'),
     loadSetup(),
     api('/api/search-intent'),
@@ -2033,12 +2081,17 @@ async function loadSettings() {
     loadAutoApply(),
     loadMatchingModels(),
     api('/api/setup/zalo-template'),
+    api('/api/update/preferences'),
+    api('/api/update/status'),
   ]);
   renderSearchIntentForm(intent);
   renderPreferenceSuggestions(suggestions);
   const availability = {codex:setup.providers.codex, codex_local:setup.providers.codex && setup.providers.ollama,
     agy:setup.providers.agy, claude:setup.providers.claude, chatgpt_web:setup.providers.chatgpt_web};
   $('#settings-version').textContent = setup.app_version || 'Unknown';
+  const updateMode = document.querySelector(`#settings input[name="update-check-mode"][value="${updatePreference.mode}"]`);
+  if (updateMode) updateMode.checked = true;
+  renderUpdateStatus(updateStatus);
   const providerForm = $('#provider-form');
   providerForm.querySelectorAll('option[value]').forEach((option) => { if (option.value) option.disabled = !availability[option.value]; });
   providerForm.elements.provider.value = profile.drafting_provider || '';
@@ -5007,19 +5060,22 @@ buildSettingsModal();
 $('#settings-close').addEventListener('click', closeSettingsModal);
 $('#settings').addEventListener('cancel', (event) => { event.preventDefault(); closeSettingsModal(); });
 $('#settings').addEventListener('click', (event) => { if (event.target === $('#settings')) closeSettingsModal(); });
+document.querySelectorAll('#settings input[name="update-check-mode"]').forEach((input) => input.addEventListener('change', async (event) => {
+  if (!event.target.checked) return;
+  try {
+    await api('/api/update/preferences', {method:'PUT', body:JSON.stringify({mode:event.target.value})});
+    if (event.target.value === 'automatic') await checkAutomaticUpdates();
+  } catch (error) {
+    const preference = await api('/api/update/preferences');
+    document.querySelector(`#settings input[name="update-check-mode"][value="${preference.mode}"]`).checked = true;
+    renderUpdateStatus({message:error.message});
+  }
+}));
 $('#settings-check-updates').addEventListener('click', async (event) => {
   const button = beginPending(event.currentTarget, 'Checking…');
   try {
-    const result = await api('/api/update/status');
-    $('#settings-update-result').textContent = result.message;
-    if (result.update_available) {
-      const link = document.createElement('a');
-      link.href = result.url;
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
-      link.textContent = `Open version ${result.latest} →`;
-      $('#settings-update-result').append(' ', link);
-    }
+    $('#settings-update-result').innerHTML = '<span class="skeleton-line update-check-skeleton"></span>';
+    renderUpdateStatus(await api('/api/update/status?force=true'));
   } catch (error) { $('#settings-update-result').textContent = error.message; }
   finally { endPending(button); }
 });
@@ -5079,8 +5135,12 @@ function refreshAfterReturn() {
     const active = document.querySelector('.tab.active')?.id;
     const refresh = $('#settings').open ? loadSettings : active === 'home' ? loadHome : refreshSocialAuth;
     refresh().catch((error) => notice(error.message, true));
+    checkAutomaticUpdates().catch(() => {});
   }, 100);
 }
 window.addEventListener('focus', refreshAfterReturn);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshAfterReturn(); });
-showTab(location.hash.slice(1) || 'home', 'replace');
+window.setInterval(() => { if (!document.hidden) checkAutomaticUpdates().catch(() => {}); }, 60 * 60 * 1000);
+showTab(location.hash.slice(1) || 'home', 'replace').finally(() => {
+  checkAutomaticUpdates().catch(() => {});
+});

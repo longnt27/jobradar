@@ -164,11 +164,27 @@ The background service automatically runs in the background. Manage it from the 
 
 | Action | Command |
 | --- | --- |
-| Update repository and restart service | `./install.sh` |
+| Reinstall current checkout and restart service | `./install.sh` |
 | Restart background service | `.venv/bin/job-radar install-service` |
 | Stop and remove macOS background service | `.venv/bin/job-radar uninstall-service` |
 | Run app in foreground (debug / logs) | `.venv/bin/job-radar serve` |
 | Run test suite | `.venv/bin/pytest -v` |
+
+### Updates and releases
+
+In **Settings → General → Updates**, choose automatic checks (once a day while the app is open) or manual checks. Manual checking is the default. **Check now** is always available. A newer published release links to its GitHub release page; checking never installs or restarts the app.
+
+To install a published release from your repository checkout, replace `vX.Y.Z` with its tag:
+
+```sh
+git fetch origin tag vX.Y.Z
+git merge --ff-only vX.Y.Z
+./install.sh
+```
+
+The fast-forward requirement protects local commits. If the checkout has diverged or has conflicting edits, resolve that before installing the release. Job data is stored outside the checkout.
+
+For maintainers, bump both `pyproject.toml` and `job_radar/__init__.py`, run `uv lock`, and push the version commit to `main`. Pushing a matching `vX.Y.Z` tag runs the release workflow, which verifies the versions, builds archives, and publishes a GitHub release. Do not tag an unmerged commit.
 
 ### Data Storage & Paths
 All data is stored locally in `~/Library/Application Support/JobRadar`:

@@ -1152,6 +1152,14 @@ main:has(#applications.active)>.topbar{flex:none;margin-bottom:18px}
 #settings .settings-row{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:76px;padding:12px 0;border-bottom:1px solid var(--border,#e0e8e3)}
 #settings .settings-row strong,#settings .settings-row small{display:block}
 #settings .settings-row small{margin-top:4px;color:var(--text-muted,#708378);font-size:12px}
+.update-check-mode{display:grid;gap:12px;margin:22px 0;padding:0;border:0}
+.update-check-mode legend{margin-bottom:12px;padding:0;font-size:14px;font-weight:750;color:var(--text-strong,#14262a)}
+.update-check-mode label{display:flex;align-items:center;gap:10px;font-size:14px;font-weight:500;cursor:pointer}
+.update-check-mode input{width:auto;margin:0;accent-color:var(--accent-fill,#80d6a8)}
+.update-check-actions{display:flex;align-items:center;gap:16px}
+.update-check-actions .hint{font-size:12px}
+#settings-update-result{min-height:24px;margin:16px 0 0}
+.update-check-skeleton{width:min(300px,100%)}
 #settings .tab-skeleton{background:var(--surface,#fff);border-radius:inherit;padding:26px}
 #settings #notice{margin:0 28px 10px}
 .app-header .nav-primary button,.app-header .nav-queue{height:52px}
