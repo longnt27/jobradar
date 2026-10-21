@@ -378,6 +378,7 @@ def reconcile_vacancy(conn: sqlite3.Connection, vacancy_id: str, profile: dict, 
 
 def refresh_vacancy(conn: sqlite3.Connection, vacancy_id: str, profile: dict, matching_model: str) -> None:
     from .ingest import normalize_url
+    from .location_mode import split_location_work_mode
     old = dict(conn.execute("SELECT * FROM vacancies WHERE id=?", (vacancy_id,)).fetchone())
     sightings = conn.execute("SELECT o.*,s.kind FROM vacancy_observations vo JOIN observations o ON o.id=vo.observation_id JOIN sources s ON s.id=o.source_id WHERE vo.vacancy_id=? ORDER BY CASE s.kind WHEN 'career' THEN 0 WHEN 'linkedin' THEN 1 ELSE 2 END,o.last_seen_at DESC,o.id", (vacancy_id,)).fetchall()
     if not sightings:
@@ -386,11 +387,12 @@ def refresh_vacancy(conn: sqlite3.Connection, vacancy_id: str, profile: dict, ma
     primary = payloads[0]
     fields = {key: primary.get(key) or next((p.get(key) for p in payloads if p.get(key)), old.get(key))
               for key in ("company", "title", "description", "location", "work_mode", "apply_url", "published_at")}
+    fields["location"], fields["work_mode"] = split_location_work_mode(fields["location"], fields["work_mode"])
     if fields["apply_url"]:
         fields["apply_url"] = normalize_url(fields["apply_url"])
     first_seen = min([old["first_seen_at"], *[r["first_seen_at"] for r in sightings]])
     last_seen = max([old["last_seen_at"], *[r["last_seen_at"] for r in sightings]])
-    changed = any((old.get(key) or "") != (fields.get(key) or "") for key in ("title", "description", "location", "published_at"))
+    changed = any((old.get(key) or "") != (fields.get(key) or "") for key in ("title", "description", "location", "work_mode", "published_at"))
     conn.execute("UPDATE vacancies SET company=?,title=?,description=?,location=?,work_mode=?,apply_url=?,published_at=?,first_seen_at=?,last_seen_at=?,updated_at=? WHERE id=?",
                  (*[fields[k] for k in ("company", "title", "description", "location", "work_mode", "apply_url", "published_at")], first_seen, last_seen, now(), vacancy_id))
     if (changed or (matching_model and old["analysis_status"] == "done" and old["analysis_model"] != matching_model)) and old["analysis_status"] != "dismissed":

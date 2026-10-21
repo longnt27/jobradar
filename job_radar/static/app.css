@@ -682,7 +682,7 @@ button.danger,.text-button.danger{color:var(--danger-text,#a4382d);border-color:
 .decision-card--fit{background:var(--surface-hover,#f5fbf7);border-color:var(--control-border,#cfe3d7)}
 .decision-card--risk{background:var(--warning-bg,#fffaf2);border-color:var(--warning-border,#ebd9b5)}
 .decision-card--basics{grid-column:1/-1}
-.decision-basics-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px}
+.decision-basics-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:9px}
 .decision-basics-grid>div{padding:9px 10px;border-radius:8px;background:var(--surface-overlay,rgba(255,255,255,.7))}
 .decision-basics-grid span,.decision-basics-grid strong,.decision-basics-grid small{display:block}
 .decision-basics-grid span{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted,#647a70);font-weight:750}

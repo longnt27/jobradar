@@ -291,6 +291,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         db.set_setting("search_intent", migrated_intent)
         if raw_intent:
             rescore_vacancies(db, profile, migrated_intent)
+    from .location_mode import normalize_saved_locations
+    normalize_saved_locations(db)
     clean_saved_analysis(db)
     scan_manager = ScanManager(db, settings)
     chatgpt_input = ChatGPTInputManager(settings, scan_manager.browser_lock, scan_manager.priority_browser, db=db)

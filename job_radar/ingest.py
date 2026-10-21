@@ -3,11 +3,12 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from .db import Database, new_id, now
 from .ranking import score_job
+from .location_mode import split_location_work_mode
 
 
 @dataclass
@@ -44,6 +45,8 @@ def _employer_id(conn, company: str) -> str | None:
 def ingest(db: Database, source_id: str, job: ObservedJob) -> tuple[str, bool]:
     from .dedup import assess, career_requisition, employer_keys, find_match, reconcile_vacancy, refresh_vacancy, remember_match, vacancy_records
 
+    location, work_mode = split_location_work_mode(job.location, job.work_mode)
+    job = replace(job, location=location, work_mode=work_mode)
     url = normalize_url(job.url)
     raw = job.raw_text or job.description
     digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()

@@ -82,7 +82,7 @@ function renderJobAnalysis(job, score, {showStatus = true} = {}) {
   const criteriaEntries = completed && score?.criteria ? Object.entries(score.criteria)
     .filter(([,item]) => item && typeof item === 'object' && Number.isFinite(item.score)) : [];
   const best = [...criteriaEntries].sort((a,b) => b[1].score - a[1].score).filter(([,item]) => item.score >= 7).slice(0, 2);
-  const gaps = [...criteriaEntries].sort((a,b) => a[1].score - b[1].score).filter(([,item]) => item.score <= 5).slice(0, 2);
+  const gaps = [...criteriaEntries].sort((a,b) => a[1].score - b[1].score).filter(([,item]) => item.score <= 4).slice(0, 2);
   const labelFor = (key) => ({
     role:'Role', required_skills:'Required skills', preferred_skills:'Preferred skills',
     experience:'Experience', responsibilities:'Responsibilities', location:'Location',
@@ -102,7 +102,8 @@ function renderJobAnalysis(job, score, {showStatus = true} = {}) {
   const salary = facts.salary_range || 'Not stated';
   const basics = `<div class="decision-basics-grid">
       <div><span>Salary</span><strong>${escapeHtml(salary)}</strong><small>Not included in the match score</small></div>
-      <div><span>Location</span><strong>${escapeHtml([facts.location || job.location, facts.work_mode || job.work_mode].filter(Boolean).join(' · ') || 'Not stated')}</strong></div>
+      <div><span>Location</span><strong>${escapeHtml(job.location || facts.location || 'Not stated')}</strong></div>
+      <div><span>Work mode</span><strong>${escapeHtml(job.work_mode || facts.work_mode || 'Not stated')}</strong></div>
       <div><span>Experience</span><strong>${facts.years_required == null ? 'Not stated' : `${escapeHtml(facts.years_required)} years`}</strong></div>
       <div><span>Role</span><strong>${escapeHtml([facts.role || job.title, facts.seniority].filter(Boolean).join(' · '))}</strong></div>
     </div>`;

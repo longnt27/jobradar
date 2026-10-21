@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from .writing_preferences import render_prompt
 from .db import Database
+from .location_mode import split_location_work_mode
 from .search_intent import extract_required_years, location_matches_preference, normalize_search_intent, salary_floor, seniority_key
 
 
@@ -417,7 +418,7 @@ def finalize_match(job: dict, facts: dict, profile: dict,
     if re.search(r"\b(?:bachelor|master|ph\.?d|degree|education|university|school|college)\b", graded["role"]["reason"], re.I):
         graded["role"] = role_fallback(job, profile)
 
-    location = str(job.get("location") or "").strip()
+    location, source_mode = split_location_work_mode(job.get("location"), job.get("work_mode"))
     trusted_location = bool(location and not GENERIC_LOCATION.fullmatch(location))
     if not location or GENERIC_LOCATION.fullmatch(location):
         description = str(job.get("description") or "")
@@ -425,7 +426,8 @@ def finalize_match(job: dict, facts: dict, profile: dict,
         stated = direct.group(1).strip()[:100] if direct else ""
         trusted_location = bool(stated and not GENERIC_LOCATION.fullmatch(stated))
         location = stated if trusted_location else str(facts.get("location") or "").strip()
-    mode = str(facts.get("work_mode") or job.get("work_mode") or "").strip()
+    location, inferred_mode = split_location_work_mode(location)
+    mode = source_mode or inferred_mode or str(facts.get("work_mode") or "").strip()
     remote = bool((REMOTE_MODE.search(location) or REMOTE_MODE.search(mode) or REMOTE_MODE.search(str(job.get("work_mode") or ""))
                    or REMOTE_WORK.search(str(job.get("description") or "")))
                   and not REMOTE_NEGATION.search(posting))
@@ -615,6 +617,10 @@ def clean_saved_analysis(db: Database) -> int:
         if isinstance(before, list):
             facts["languages"] = filter_spoken_languages(before, row["description"].casefold())
         if isinstance(facts, dict):
+            source_location, source_mode = split_location_work_mode(row["location"], row["work_mode"])
+            fact_location, fact_mode = split_location_work_mode(facts.get("location"), facts.get("work_mode"))
+            facts["location"] = source_location if source_location and not GENERIC_LOCATION.fullmatch(source_location) else fact_location
+            facts["work_mode"] = source_mode or fact_mode
             facts["salary_range"] = grounded_salary_range(facts.get("salary_range") or "", f"{row['title']}\n{row['description']}")
             facts["years_required"] = extract_years_required(f"{row['title']} {row['description']}")
             if degree := advanced_degree_requirement(row["description"]):
@@ -660,6 +666,10 @@ def _ground_facts(facts: JobFacts, posting: dict) -> JobFacts:
     for key in ("location", "work_mode"):
         if values[key] and not mentioned(values[key]):
             values[key] = ""
+    source_location, source_mode = split_location_work_mode(posting.get("location"), posting.get("work_mode"))
+    fact_location, fact_mode = split_location_work_mode(values["location"], values["work_mode"])
+    values["location"] = source_location if source_location and not GENERIC_LOCATION.fullmatch(source_location) else fact_location
+    values["work_mode"] = source_mode or fact_mode
     if not any(word in source for word in ("junior", "mid", "senior", "lead", "principal", "intern", "entry")):
         values["seniority"] = ""
     values["years_required"] = extract_years_required(source)
