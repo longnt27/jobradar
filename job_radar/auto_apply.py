@@ -532,7 +532,7 @@ class AutoApplyManager:
             "o.first_seen_at,o.id LIMIT 1",
             (job_id,),
         )
-        if source and source["kind"] == "linkedin" and is_linkedin_job_posting_url(source.get("url")):
+        if (manual or not unverified_opt_in) and source and source["kind"] == "linkedin" and is_linkedin_job_posting_url(source.get("url")):
             try:
                 async with self.browser_lock:
                     action = await discover_linkedin_apply(self.settings, source["url"])
@@ -563,7 +563,7 @@ class AutoApplyManager:
         if not manual and not self._still_eligible(job_id):
             self._set_status(job_id, "needs_review", "Automatic preparation paused or job score changed.", draft["id"])
             return
-        if draft.get("job_source_kind") == "linkedin" and draft["destination"].get("kind") not in {"web", "email"}:
+        if (manual or not unverified_opt_in) and draft.get("job_source_kind") == "linkedin" and draft["destination"].get("kind") not in {"web", "email"}:
             try:
                 async with self.browser_lock:
                     action = await discover_linkedin_apply(self.settings, draft["job_posting_url"])

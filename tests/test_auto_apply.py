@@ -392,6 +392,43 @@ def test_automatic_draft_can_wait_for_form_review_when_destination_verification_
     assert db.one("SELECT id FROM application_drafts WHERE id=?", (attempt["draft_id"],))
 
 
+def test_automatic_draft_does_not_check_linkedin_before_writing_when_verification_is_off(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    app = create_app(Settings(tmp_path))
+    db = app.state.db
+    db.execute("UPDATE sources SET enabled=0,kind='linkedin'")
+    db.set_setting("profile", {"name": "Alex Example", "email": "alex@example.org",
+        "experience": [{"company": "Example Labs", "role": "Engineer", "dates": "2024–2026",
+                        "bullets": ["Built Python systems."]}], "drafting_provider": "template"})
+    manager = app.state.auto_apply_manager
+    manager.configure(True, 80, {"require_verified_destination": False})
+    job_id = _scored_job(app, "LinkedIn Review Engineer", 88, "https://www.linkedin.com/jobs/view/123456789")
+    db.execute("UPDATE observations SET url='https://www.linkedin.com/jobs/view/123456789' "
+               "WHERE id IN (SELECT observation_id FROM vacancy_observations WHERE vacancy_id=?)", (job_id,))
+    db.execute(
+        "INSERT INTO auto_application_attempts(vacancy_id,status,requested_by,created_at,updated_at) "
+        "VALUES(?,'preparing','automation','2026-10-21','2026-10-21')",
+        (job_id,),
+    )
+    calls = []
+
+    async def unexpected_discovery(*_args):
+        calls.append(True)
+        return {"kind": "closed", "detail": "Do not check before drafting"}
+
+    async def quiet_review(*_args):
+        return None
+
+    monkeypatch.setattr("job_radar.auto_apply.discover_linkedin_apply", unexpected_discovery)
+    monkeypatch.setattr(manager, "notify_review", quiet_review)
+    asyncio.run(manager._process(job_id))
+
+    assert calls == []
+    assert db.one("SELECT id FROM application_drafts WHERE vacancy_id=?", (job_id,))
+    assert db.one("SELECT decision_state FROM vacancies WHERE id=?", (job_id,))["decision_state"] == "undecided"
+
+
 def test_auto_apply_setting_requires_local_matching_and_profile(tmp_path: Path) -> None:
     app = create_app(Settings(tmp_path))
     app.state.db.execute("UPDATE sources SET enabled=0")
