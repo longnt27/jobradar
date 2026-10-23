@@ -213,7 +213,7 @@ def split_observation(db: Database, vacancy_id: str, observation_id: str) -> str
             conn.execute(
                 "UPDATE vacancies SET score=?,score_detail=?,analysis_status=?,analysis_error=NULL WHERE id=?",
                 (old_score, json.dumps(old_detail, ensure_ascii=False),
-                 "pending" if matching_model and old_row["analysis_status"] != "dismissed" else old_row["analysis_status"],
+                 "pending" if matching_model and old_row["analysis_status"] not in {"dismissed", "deferred"} else old_row["analysis_status"],
                  vacancy_id),
             )
             conn.execute(

@@ -21,7 +21,7 @@ Everything runs on your Mac. Your profile, credentials, sessions, and data stay 
 ## Key Capabilities
 
 - **Autonomous Multi-Source Sourcing:** Continuously scans 123 configured company career portals, LinkedIn job search feeds, and curated Facebook recruiting groups every 4 hours.
-- **Local AI Match Scoring:** Uses a local Ollama model to evaluate real role fit, required/preferred skills, experience depth, and work mode without leaking your data to third parties.
+- **Neutral Job Parsing and Deterministic Scoring:** A local Ollama model extracts posting facts once. Job Radar scores those facts against your preferences without another model call; the model writes fit and caution notes only for strong matches.
 - **Hard Constraints & Intent Filtering:** Filter by seniority levels, role families, preferred/excluded employers, salary minimums, negative keywords, and location constraints (e.g., Hanoi only or Remote).
 - **Evidence-Grounded Resume Tailoring:** Connect your GitHub to inspect public repositories, generate verified project contribution cards, and selectively map proven results to matching vacancies.
 - **Flexible AI Drafting Engine:**
@@ -79,7 +79,7 @@ The installer will:
 Open **My profile** and complete the setup steps:
 
 ### 1. Set Up AI Models
-- **Local Matching Model:** Choose an installed Ollama model (e.g., `qwen2.5:7b` or `llama3.2`) to evaluate qualitative job fit and extract vacancy requirements locally. You can download recommended models directly from the UI.
+- **Local Job Parsing Model:** Choose an installed Ollama model (e.g., `qwen2.5:7b` or `llama3.2`) to extract vacancy facts locally. It also writes qualitative notes for strong matches; scoring itself is deterministic.
 - **Drafting Provider:** Choose how your resumes and cover messages will be written:
   - **ChatGPT Web:** Connects directly to [chatgpt.com](https://chatgpt.com) using your saved Chrome browser profile. Click **Log in to ChatGPT** to sign in once. Job Radar enters the prompt, waits for ChatGPT to generate the response, receives the answer, and applies it to your draft automatically.
   - **Codex CLI / Antigravity CLI / Claude Code CLI:** Fast terminal CLI tools running on your Mac.
@@ -124,18 +124,21 @@ Use **Theme** in the top-right corner to choose **Light**, **Dark**, or **System
 
 ```mermaid
 flowchart LR
-    A["Job Feeds\n(Careers, LinkedIn, FB)"] --> B["Local AI Scorer\n(Ollama)"]
-    B --> C{"Match Score\n>= Threshold?"}
-    C -- No --> D["Triage in Jobs Inbox\n(Shortlist / Later / Ignore)"]
-    C -- Yes --> E["Draft Preparation\n(ChatGPT Web / CLI / Local)"]
+    A["Job Feeds\n(Careers, LinkedIn, FB)"] --> B["Neutral Job Facts\n(Local Ollama parser)"]
+    B --> C["User Score\n(Deterministic factors)"]
+    C --> H{"Strong match\nwith enough evidence?"}
+    H -- No --> D["Triage in Jobs Inbox\n(Shortlist / Later / Ignore)"]
+    H -- Yes --> E["Draft Preparation\n(ChatGPT Web / CLI / Local)"]
     E --> F["Review Screen / Telegram\n(Inspect, Edit, Regenerate)"]
     F --> G["Approve & Send\n(Email / Web Form / Easy Apply)"]
 ```
 
 ### 1. Triaging the Jobs Feed
 - Navigate to **Jobs** to see all detected vacancies with live match scores, role fit summaries, detected salaries, and freshness indicators.
-- **Search Intent & Constraints:** Set custom preferences under Search Intent (role families, maximum years of experience, Hanoi or Remote preferences, negative keywords). Postings violating hard rules receive an instant score of 0.
+- **Search Intent & Constraints:** Choose preferred or strict criteria for role, skills, experience, location, work mode, employer, and salary. Matching factors multiply into a score from 0 to 100; unavailable posting facts are neutral in the score and lower its confidence. Changing preferences rescales cached jobs without reparsing them.
 - **Quick Decisions:** Triage jobs with **Shortlist**, **Save for later** (snoozes for 7 days), or **Ignore**.
+
+Parsed posting facts live in `job_facts`, separate from the local user's `user_job_scores`. The read-only `/api/job-pool/jobs` and `/api/job-pool/jobs/{id}` endpoints expose the neutral pool without profile or score data. Existing parsed jobs are migrated into this pool on startup without invoking the model. The Jobs interface reads a score projection from `vacancies` for compatibility.
 
 ### 2. Preparing and Reviewing Applications
 - **Automatic Draft Preparation:** Turn on **Auto-apply** with a score threshold (e.g. 80+). When a strong match appears, Job Radar selects the top matching projects, writes targeted bullet points, translates Vietnamese postings to appropriate email messages, and renders the PDF resume.

@@ -65,6 +65,8 @@ from .matching import MatchManager
 from .notifications import discover_telegram_chats, save_telegram, telegram_config
 from .preparation import preparation_preflight
 from .ranking import rescore_vacancies, score_job
+from .job_pool import backfill_legacy_facts
+from .user_scoring import rescore_cached_jobs
 from .search_intent import (apply_auto_search_intent, fit_summary, migrate_search_intent,
                             normalize_search_intent, reset_search_preference, seniority_key)
 from .resume_import import parse_resume_template
@@ -295,6 +297,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     from .location_mode import normalize_saved_locations
     normalize_saved_locations(db)
     clean_saved_analysis(db)
+    backfill_legacy_facts(db)
+    rescore_cached_jobs(db, profile, migrated_intent)
     scan_manager = ScanManager(db, settings)
     chatgpt_input = ChatGPTInputManager(settings, scan_manager.browser_lock, scan_manager.priority_browser, db=db)
     register_chatgpt_input_manager(chatgpt_input)
@@ -780,7 +784,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def use_matching_model_for_parsing():
         if db.get_setting("parsing_model", ""):
             db.set_setting("parsing_model", "")
-            match_manager.invalidate_all()
+            match_manager.wake()
         return match_manager.status()
 
     @app.post("/api/matching/model/download", status_code=202)
@@ -1516,6 +1520,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "pages": max(1, (total + page_size - 1) // page_size),
             "inbox": {"unseen": unseen_count, "since_last_visit": since_count, "outside": outside_count, "since": since or None},
         }
+
+    @app.get("/api/job-pool/jobs")
+    def pooled_jobs(page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=200)):
+        """User-independent parsed jobs for a separate job-pool consumer."""
+        total = db.one("SELECT COUNT(*) AS count FROM job_facts")["count"]
+        rows = db.all(
+            "SELECT f.vacancy_id,f.facts,f.parser_model,f.parser_version,f.source_signature,f.parsed_at "
+            "FROM job_facts f JOIN vacancies v ON v.id=f.vacancy_id "
+            "ORDER BY v.first_seen_at DESC,f.vacancy_id LIMIT ? OFFSET ?",
+            (page_size, (page - 1) * page_size),
+        )
+        for row in rows:
+            row["facts"] = json.loads(row["facts"])
+        return {"items": rows, "page": page, "page_size": page_size, "total": total}
+
+    @app.get("/api/job-pool/jobs/{job_id}")
+    def pooled_job(job_id: str):
+        row = db.one(
+            "SELECT vacancy_id,facts,parser_model,parser_version,source_signature,parsed_at "
+            "FROM job_facts WHERE vacancy_id=?", (job_id,),
+        )
+        if not row:
+            raise HTTPException(404, "Parsed job not found")
+        row["facts"] = json.loads(row["facts"])
+        return row
 
     @app.get("/api/jobs/{job_id}")
     def job(job_id: str):

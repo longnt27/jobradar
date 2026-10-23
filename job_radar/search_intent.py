@@ -40,6 +40,10 @@ DEFAULT_SEARCH_INTENT = {
         "employer": True,
         "minimum_salary": False,
         "experience": True,
+        "required_skills": False,
+        "preferred_skills": False,
+        "preferred_employers": False,
+        "negative_keywords": False,
     },
     "minimum_salary": None,
     "salary_currency": "VND",
@@ -390,6 +394,21 @@ def fit_summary(score: int | None, detail: dict[str, Any] | None, preferences: d
                 job: dict[str, Any] | None = None) -> dict[str, Any]:
     detail = detail if isinstance(detail, dict) else {}
     prefs = normalize_search_intent(preferences)
+    if detail.get("method") == "deterministic":
+        criteria = detail.get("criteria") if isinstance(detail.get("criteria"), dict) else {}
+        ranked = sorted((float(item["score"]), key, str(item.get("reason") or ""))
+                        for key, item in criteria.items() if isinstance(item, dict)
+                        and isinstance(item.get("score"), (int, float)))
+        exclusions = detail.get("hard_exclusions") or []
+        confidence = max(0, min(100, int(detail.get("confidence", 0))))
+        fit_class = ("outside" if exclusions else "uncertain" if score is None or confidence < 50
+                     else "strong" if score >= prefs["strong_match_threshold"] else "stretch")
+        positive = next(({"criterion": key, "reason": reason} for value, key, reason in reversed(ranked)
+                         if value >= 7), None)
+        gap = next(({"criterion": key, "reason": reason} for value, key, reason in ranked if value <= 4), None)
+        return {"fit_class": fit_class, "strong_match_threshold": prefs["strong_match_threshold"],
+                "uncertainty": 100 - confidence, "missing_evidence": detail.get("missing_evidence") or [],
+                "strongest_signal": positive, "main_gap": gap}
     criteria = detail.get("criteria") if isinstance(detail.get("criteria"), dict) else {}
     facts = detail.get("facts") if isinstance(detail.get("facts"), dict) else {}
     source_location, source_mode = split_location_work_mode((job or {}).get("location"), (job or {}).get("work_mode"))

@@ -111,6 +111,27 @@ CREATE TABLE IF NOT EXISTS vacancies (
   updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_vacancies_rank ON vacancies(score DESC, first_seen_at DESC);
+CREATE TABLE IF NOT EXISTS job_facts (
+  vacancy_id TEXT PRIMARY KEY REFERENCES vacancies(id) ON DELETE CASCADE,
+  facts TEXT NOT NULL,
+  parser_model TEXT NOT NULL,
+  parser_version INTEGER NOT NULL,
+  source_signature TEXT NOT NULL,
+  parsed_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS user_job_scores (
+  user_id TEXT NOT NULL,
+  vacancy_id TEXT NOT NULL REFERENCES vacancies(id) ON DELETE CASCADE,
+  score INTEGER NOT NULL,
+  confidence INTEGER NOT NULL,
+  detail TEXT NOT NULL,
+  profile_signature TEXT NOT NULL,
+  preference_signature TEXT NOT NULL,
+  facts_signature TEXT NOT NULL,
+  scored_at TEXT NOT NULL,
+  PRIMARY KEY(user_id,vacancy_id)
+);
+CREATE INDEX IF NOT EXISTS idx_user_job_scores_rank ON user_job_scores(user_id,score DESC);
 CREATE TABLE IF NOT EXISTS vacancy_observations (
   vacancy_id TEXT NOT NULL REFERENCES vacancies(id),
   observation_id TEXT NOT NULL UNIQUE REFERENCES observations(id),

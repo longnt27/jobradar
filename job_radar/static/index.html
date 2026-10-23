@@ -261,9 +261,11 @@
                 <div class="preference-row" data-preference-field="work_modes"><div class="preference-row-label"><label for="pref-work-modes">Work modes</label><small data-preference-source="work_modes"></small></div><select id="pref-work-modes" name="work_modes" multiple size="3"><option value="remote">Remote</option><option value="hybrid">Hybrid</option><option value="onsite">On-site</option></select><label class="switch-control"><input name="auto_work_modes" type="checkbox" role="switch" checked><span>Auto</span></label><label class="switch-control"><input name="hard_work_mode" type="checkbox" role="switch"><span>Hard constraint</span></label></div>
                 <div class="preference-row"><label for="pref-min-salary">Minimum salary</label><input id="pref-min-salary" name="minimum_salary" type="number" min="0" placeholder="e.g. 30000000"><span></span><label class="switch-control"><input name="hard_minimum_salary" type="checkbox" role="switch"><span>Hard constraint</span></label></div>
                 <div class="preference-row"><label for="pref-salary-currency">Salary currency</label><input id="pref-salary-currency" name="salary_currency" value="VND"><span></span><label class="switch-control"><input name="salary_unknown_ok" type="checkbox" role="switch" checked><span>Keep unknown</span></label></div>
-                <div class="preference-row"><label for="pref-employers">Preferred employers</label><input id="pref-employers" name="preferred_employers" placeholder="Comma-separated"><span></span><span></span></div>
+                <div class="preference-row"><label for="pref-employers">Preferred employers</label><input id="pref-employers" name="preferred_employers" placeholder="Comma-separated"><span></span><label class="switch-control"><input name="hard_preferred_employers" type="checkbox" role="switch"><span>Hard constraint</span></label></div>
                 <div class="preference-row"><label for="pref-excluded-employers">Excluded employers</label><input id="pref-excluded-employers" name="excluded_employers" placeholder="Comma-separated"><span></span><label class="switch-control"><input name="hard_employer" type="checkbox" role="switch" checked><span>Hard constraint</span></label></div>
-                <div class="preference-row"><label for="pref-negative-keywords">Negative preferences</label><input id="pref-negative-keywords" name="negative_keywords" placeholder="sales, night shift"><span></span><span></span></div>
+                <div class="preference-row"><label for="pref-negative-keywords">Negative preferences</label><input id="pref-negative-keywords" name="negative_keywords" placeholder="sales, night shift"><span></span><label class="switch-control"><input name="hard_negative_keywords" type="checkbox" role="switch"><span>Hard constraint</span></label></div>
+                <div class="preference-row"><span>Required skills</span><span class="hint">Match against skills in your profile</span><span></span><label class="switch-control"><input name="hard_required_skills" type="checkbox" role="switch"><span>Hard constraint</span></label></div>
+                <div class="preference-row"><span>Preferred skills</span><span class="hint">Match against skills in your profile</span><span></span><label class="switch-control"><input name="hard_preferred_skills" type="checkbox" role="switch"><span>Hard constraint</span></label></div>
                 <div class="preference-form-actions"><button class="primary" type="submit">Save preferences</button><p id="search-intent-message" class="hint" role="status" aria-live="polite"></p></div>
               </form>
             </details>
@@ -284,7 +286,8 @@
           </div>
           <div class="ai-model-section" id="matching-panel">
             <div class="section-head"><h3>Local job matching</h3><span id="matching-status" class="pill warning">Choose a model</span></div>
-            <p class="matching-intro">A local Ollama model extracts job requirements and scores each match against your experience and selected projects. It is separate from the application writing provider.</p>
+            <p class="matching-intro">A local Ollama model extracts neutral job facts. Job Radar calculates scores from your preferences; the model writes fit notes only for strong matches.</p>
+            <p id="matching-processing-disclosure" class="hint"></p>
             <div class="matching-controls">
               <form id="matching-model-form"><label>Installed text model<select name="model" required><option value="">Choose an installed model</option></select></label><button class="primary" type="submit">Use model</button></form>
               <button id="matching-refresh" class="text-button" type="button">Refresh models</button>

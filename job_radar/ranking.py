@@ -4,7 +4,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from .db import Database, now
+from .db import Database
 from .search_intent import extract_required_years, location_matches_preference, normalize_search_intent, posting_salary_floor, seniority_key
 import json
 
@@ -112,10 +112,22 @@ def score_job(job: dict[str, Any], profile: dict[str, Any], preferences: dict[st
 
 
 def rescore_vacancies(db: Database, profile: dict[str, Any], preferences: dict[str, Any] | None = None) -> None:
-    pending = bool(db.get_setting("matching_model"))
+    """Update user scores from cached facts; no model call or parsing queue."""
+    from .user_scoring import rescore_cached_jobs
+
+    selected = preferences if preferences is not None else db.get_setting("search_intent", {})
+    rescore_cached_jobs(db, profile, selected, force=True)
     with db.connection() as conn:
-        rows = conn.execute("SELECT id,company,title,description,location,published_at,first_seen_at FROM vacancies").fetchall()
+        rows = conn.execute(
+            "SELECT id,company,title,description,location,published_at,first_seen_at "
+            "FROM vacancies WHERE analysis_status IN ('pending','not_configured','failed')"
+        ).fetchall()
         for row in rows:
             score, detail = score_job(dict(row), profile, preferences)
-            conn.execute("UPDATE vacancies SET score=?,score_detail=?,analysis_status=?,analysis_error=NULL,updated_at=? WHERE id=? AND analysis_status!='dismissed'",
-                         (score, json.dumps(detail, ensure_ascii=False), "pending" if pending else "not_configured", now(), row["id"]))
+            conn.execute(
+                "UPDATE vacancies SET score=?,score_detail=? WHERE id=? "
+                "AND analysis_status IN ('pending','not_configured','failed')",
+                (score, json.dumps(detail, ensure_ascii=False), row["id"]),
+            )
+    from .job_inbox import auto_shortlist_strong_matches
+    auto_shortlist_strong_matches(db, normalize_search_intent(selected)["strong_match_threshold"])

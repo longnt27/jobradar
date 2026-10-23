@@ -9,13 +9,17 @@ import re
 import shutil
 import subprocess
 
-from .writing_preferences import get_preferences
 from .db import Database, now
 from .auto_apply import AutoApplyManager
 from .job_inbox import auto_shortlist_strong_matches
-from .local_analysis import ANALYSIS_VERSION, LocalModelUnavailable, RECOMMENDED_MODEL, analyze_job, validate_local_model, save_extracted_job_identity
-from .search_intent import normalize_search_intent
+from .job_pool import neutralize_facts, save_job_facts
+from .local_analysis import (
+    ANALYSIS_VERSION, LocalModelUnavailable, RECOMMENDED_MODEL, extract_job_facts,
+    strong_match_notes, validate_local_model, save_extracted_job_identity,
+)
+from .search_intent import normalize_search_intent, role_family, seniority_key
 from .settings import Settings
+from .user_scoring import preference_signature, save_user_score, score_job_for_user, signature
 
 
 log = logging.getLogger(__name__)
@@ -46,6 +50,7 @@ class MatchManager:
                 "parsing_model": self.db.get_setting("parsing_model", ""), "recommended": RECOMMENDED_MODEL,
                 "pending": counts.get("pending", 0) + counts.get("running", 0),
                 "completed": counts.get("done", 0), "failed": counts.get("failed", 0),
+                "deferred": counts.get("deferred", 0),
                 "download_state": self.pull_state, "download_progress": self.pull_progress,
                 "download_detail": self.pull_detail, "download_error": self.pull_error,
                 "service_error": self.service_error}
@@ -53,16 +58,12 @@ class MatchManager:
     async def start(self) -> None:
         self.loop = asyncio.get_running_loop()
         model = self.db.get_setting("matching_model", "")
-        parsing_model = self.db.get_setting("parsing_model", "") or model
         if model:
             if self.db.get_setting("analysis_version", 0) != ANALYSIS_VERSION:
-                self.invalidate_all()
                 self.db.set_setting("analysis_version", ANALYSIS_VERSION)
             self.db.execute(
                 "UPDATE vacancies SET analysis_status='pending',analysis_stage=NULL WHERE analysis_status='running' "
-                "OR analysis_status='not_configured' OR (analysis_status='done' AND "
-                "(analysis_model<>? OR COALESCE(analysis_parsing_model,analysis_model)<>?))",
-                (model, parsing_model),
+                "OR analysis_status='not_configured'",
             )
         threshold = normalize_search_intent(self.db.get_setting("search_intent", {}))["strong_match_threshold"]
         auto_shortlist_strong_matches(self.db, threshold)
@@ -83,21 +84,25 @@ class MatchManager:
         if selected != self.db.get_setting("matching_model", ""):
             self.db.set_setting("matching_model", selected)
             self.db.set_setting("matching_model_activated_at", now())
-            self.invalidate_all()
+            self.db.execute(
+                "UPDATE vacancies SET analysis_status='pending',analysis_stage=NULL "
+                "WHERE analysis_status='not_configured'"
+            )
+            self._wake()
         return selected
 
     def select_parsing_model(self, model: str) -> str:
         selected = validate_local_model(model)
         if selected != self.db.get_setting("parsing_model", ""):
             self.db.set_setting("parsing_model", selected)
-            self.invalidate_all()
+            self._wake()
         return selected
 
     def invalidate_all(self) -> None:
         self._failure_counts.clear()
         if not self.db.get_setting("matching_model", ""):
             return
-        self.db.execute("UPDATE vacancies SET analysis_status='pending',analysis_stage=NULL,analysis_error=NULL WHERE analysis_status NOT IN ('pending','dismissed')")
+        self.db.execute("UPDATE vacancies SET analysis_status='pending',analysis_stage=NULL,analysis_error=NULL WHERE analysis_status NOT IN ('pending','dismissed','deferred')")
         self._wake()
 
     def _wake(self) -> None:
@@ -213,8 +218,18 @@ class MatchManager:
         while True:
             model = self.db.get_setting("matching_model", "")
             parsing_model = self.db.get_setting("parsing_model", "") or model
-            job = self.db.one(
-                "SELECT * FROM vacancies WHERE analysis_status='pending' ORDER BY first_seen_at DESC LIMIT 1") if model else None
+            job = None
+            if model:
+                with self.db.connection() as conn:
+                    candidate = conn.execute(
+                        "SELECT * FROM vacancies WHERE analysis_status='pending' "
+                        "ORDER BY first_seen_at DESC LIMIT 1"
+                    ).fetchone()
+                    if candidate and conn.execute(
+                        "UPDATE vacancies SET analysis_status='running',analysis_stage='extracting' "
+                        "WHERE id=? AND analysis_status='pending'", (candidate["id"],),
+                    ).rowcount:
+                        job = dict(candidate)
             if not job:
                 self.wake_event.clear()
                 try:
@@ -222,43 +237,60 @@ class MatchManager:
                 except asyncio.TimeoutError:
                     pass
                 continue
-            self.db.execute("UPDATE vacancies SET analysis_status='running',analysis_stage='extracting' WHERE id=?", (job["id"],))
-            profile = self.db.get_setting("profile", {})
-            projects = self.db.all("SELECT title,claim,details FROM evidence WHERE kind='project' AND approved=1 ORDER BY created_at DESC LIMIT 8")
-            for project in projects:
-                try:
-                    project["details"] = json.loads(project["details"])
-                except ValueError:
-                    project["details"] = {}
             try:
-                preferences = self.db.get_setting("search_intent", {})
-                score, detail = await asyncio.to_thread(
-                    analyze_job, job, profile, projects, model,
-                    lambda stage: self.db.execute(
-                        "UPDATE vacancies SET analysis_stage=? WHERE id=? AND analysis_status='running'",
-                        (stage, job["id"])),
-                    preferences, get_preferences(self.db), parsing_model,
+                source_links = self.db.all(
+                    "SELECT o.url,s.kind FROM vacancy_observations vo "
+                    "JOIN observations o ON o.id=vo.observation_id "
+                    "JOIN sources s ON s.id=o.source_id WHERE vo.vacancy_id=?",
+                    (job["id"],),
                 )
-                self.service_error = None
-                if model != self.db.get_setting("matching_model", "") or parsing_model != (self.db.get_setting("parsing_model", "") or model):
-                    self.db.execute("UPDATE vacancies SET analysis_status='pending',analysis_stage=NULL WHERE id=? AND analysis_status='running'", (job["id"],))
-                    continue
+                parsed = await asyncio.to_thread(
+                    extract_job_facts, {**job, "source_links": source_links}, parsing_model,
+                )
+                facts = await asyncio.to_thread(neutralize_facts, self.db, job, parsed)
+                self.db.execute(
+                    "UPDATE vacancies SET analysis_stage='scoring' "
+                    "WHERE id=? AND analysis_status='running'", (job["id"],),
+                )
+                profile = self.db.get_setting("profile", {})
+                preferences = self.db.get_setting("search_intent", {})
                 with self.db.connection() as conn:
-                    changed = conn.execute(
-                        "UPDATE vacancies SET score=?,score_detail=?,analysis_status='done',analysis_stage=NULL,analysis_model=?,analysis_parsing_model=?,"
-                        "analysis_error=NULL,analyzed_at=?,updated_at=? WHERE id=? AND analysis_status='running' AND updated_at=?",
-                        (score, json.dumps(detail, ensure_ascii=False), model, parsing_model, now(), now(), job["id"], job["updated_at"]),
-                    ).rowcount
-                    if changed:
-                        save_extracted_job_identity(conn, job["id"], detail.get("facts", {}))
+                    current = conn.execute(
+                        "SELECT * FROM vacancies WHERE id=? AND analysis_status='running' AND updated_at=?",
+                        (job["id"], job["updated_at"]),
+                    ).fetchone()
+                    changed = bool(current)
+                    if current:
+                        save_extracted_job_identity(conn, job["id"], facts)
+                        current = dict(conn.execute("SELECT * FROM vacancies WHERE id=?", (job["id"],)).fetchone())
+                        facts["role"] = current["title"]
+                        facts["company"] = current["company"]
+                        facts["role_family_key"] = role_family(current["title"])
+                        facts["seniority_key"] = seniority_key(
+                            f"{facts.get('seniority') or ''} {current['title']}"
+                        )
+                        save_job_facts(conn, current, facts, parsing_model)
+                        score, confidence, detail = score_job_for_user(current, facts, profile, preferences)
+                        save_user_score(conn, job["id"], facts, profile, preferences, score, confidence, detail)
+                        conn.execute(
+                            "UPDATE vacancies SET analysis_status='done',analysis_stage=NULL,analysis_model=?,"
+                            "analysis_parsing_model=?,analysis_error=NULL,analyzed_at=?,updated_at=? WHERE id=?",
+                            (model, parsing_model, now(), now(), job["id"]),
+                        )
                 if not changed:
-                    self.db.execute("UPDATE vacancies SET analysis_status='pending',analysis_stage=NULL WHERE id=? AND analysis_status='running'", (job["id"],))
+                    self.db.execute(
+                        "UPDATE vacancies SET analysis_status='pending',analysis_stage=NULL "
+                        "WHERE id=? AND analysis_status='running'", (job["id"],),
+                    )
                 else:
+                    self.service_error = None
                     self._failure_counts.pop(job["id"], None)
-                    threshold = normalize_search_intent(self.db.get_setting("search_intent", {}))["strong_match_threshold"]
+                    threshold = normalize_search_intent(preferences)["strong_match_threshold"]
                     auto_shortlist_strong_matches(self.db, threshold, job["id"])
                     if self.auto_apply:
                         self.auto_apply.wake()
+                    if score >= threshold and confidence >= 50:
+                        await self._add_strong_match_notes(job["id"], facts, profile, preferences, model)
             except asyncio.CancelledError:
                 self.db.execute("UPDATE vacancies SET analysis_status='pending',analysis_stage=NULL WHERE id=? AND analysis_status='running'", (job["id"],))
                 raise
@@ -281,3 +313,42 @@ class MatchManager:
                         (f"Failed after 3 attempts: {str(error)[:200]}", job["id"]),
                     )
             await asyncio.sleep(0.1)
+
+    async def _add_strong_match_notes(self, vacancy_id: str, facts: dict, profile: dict,
+                                      preferences: dict, model: str) -> None:
+        projects = self.db.all(
+            "SELECT title,claim,details FROM evidence WHERE kind='project' AND approved=1 "
+            "ORDER BY created_at DESC LIMIT 8"
+        )
+        for project in projects:
+            try:
+                project["details"] = json.loads(project["details"])
+            except ValueError:
+                project["details"] = {}
+        try:
+            notes = await asyncio.to_thread(strong_match_notes, facts, profile, projects, model)
+        except Exception as error:
+            log.warning("Could not write fit notes for job %s: %s", vacancy_id, error)
+            return
+        expected_profile = signature(profile)
+        expected_preferences = preference_signature(preferences)
+        with self.db.connection() as conn:
+            row = conn.execute(
+                "SELECT detail,profile_signature,preference_signature FROM user_job_scores "
+                "WHERE user_id='local' AND vacancy_id=?", (vacancy_id,),
+            ).fetchone()
+            if not row or row["profile_signature"] != expected_profile or \
+                    row["preference_signature"] != expected_preferences:
+                return
+            detail = json.loads(row["detail"])
+            detail["fit"] = notes["fit"]
+            detail["watch_out"] = notes["watch_out"]
+            payload = json.dumps(detail, ensure_ascii=False)
+            conn.execute(
+                "UPDATE user_job_scores SET detail=? WHERE user_id='local' AND vacancy_id=?",
+                (payload, vacancy_id),
+            )
+            conn.execute(
+                "UPDATE vacancies SET score_detail=? WHERE id=? AND analysis_status='done'",
+                (payload, vacancy_id),
+            )

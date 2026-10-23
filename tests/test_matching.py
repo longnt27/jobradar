@@ -26,6 +26,47 @@ def test_matching_status_endpoint_reports_model_and_backlog(tmp_path: Path) -> N
     assert "completed" in status and "failed" in status
 
 
+def test_editing_experience_preserves_completed_match(tmp_path: Path) -> None:
+    app = create_app(Settings(tmp_path))
+    client = TestClient(app)
+    db = app.state.db
+    db.set_setting("matching_model", "test:small")
+    job_id = client.post("/api/jobs/import", json={
+        "company": "Example", "title": "AI Engineer", "description": "Build AI systems."
+    }).json()["id"]
+    cached_detail = json.dumps({"method": "local_llm", "explanation": "Saved match"})
+    db.execute(
+        "UPDATE vacancies SET analysis_status='done',analysis_model='test:small',"
+        "analysis_parsing_model='test:small',score=87,score_detail=? WHERE id=?",
+        (cached_detail, job_id),
+    )
+    profile = client.get("/api/profile").json()
+    profile["experience"] = [{"role": "Engineer", "dates": "2023-2025"}]
+    assert client.put("/api/profile", json=profile).status_code == 200
+    saved = db.one("SELECT analysis_status,score,score_detail FROM vacancies WHERE id=?", (job_id,))
+    assert saved == {"analysis_status": "done", "score": 87, "score_detail": cached_detail}
+
+
+def test_deferred_match_stays_paused_when_seen_in_another_scan(tmp_path: Path) -> None:
+    app = create_app(Settings(tmp_path))
+    db = app.state.db
+    db.set_setting("matching_model", "test:small")
+    source_id = db.one("SELECT id FROM sources LIMIT 1")["id"]
+    original = ObservedJob(
+        url="https://example.org/jobs/paused-match", company="Example",
+        title="AI Engineer", description="Build AI systems.",
+    )
+    job_id, _ = ingest(db, source_id, original)
+    db.execute("UPDATE vacancies SET analysis_status='deferred' WHERE id=?", (job_id,))
+    ingest(db, source_id, ObservedJob(
+        url=original.url, company=original.company, title=original.title,
+        description="Build AI systems with Python.",
+    ))
+    assert db.one("SELECT analysis_status FROM vacancies WHERE id=?", (job_id,))["analysis_status"] == "deferred"
+    app.state.match_manager.invalidate_all()
+    assert db.one("SELECT analysis_status FROM vacancies WHERE id=?", (job_id,))["analysis_status"] == "deferred"
+
+
 def test_local_analysis_extracts_facts_and_weights_nine_scores(monkeypatch) -> None:
     prompts = []
     stages = []
@@ -143,7 +184,7 @@ def test_vietnamese_jd_requirements_survive_small_model_noise() -> None:
     assert "Senior" not in facts.summary
 
 
-def test_analysis_policy_change_queues_existing_jobs_once(tmp_path) -> None:
+def test_analysis_policy_change_preserves_completed_jobs(tmp_path) -> None:
     settings = Settings(tmp_path)
     app = create_app(settings)
     db = app.state.db
@@ -154,7 +195,7 @@ def test_analysis_policy_change_queues_existing_jobs_once(tmp_path) -> None:
     manager = MatchManager(db, settings)
     async def start_and_stop():
         await manager.start()
-        assert db.one("SELECT analysis_status FROM vacancies WHERE id=?", (job_id,))["analysis_status"] == "pending"
+        assert db.one("SELECT analysis_status FROM vacancies WHERE id=?", (job_id,))["analysis_status"] == "done"
         await manager.stop()
     asyncio.run(start_and_stop())
     assert db.get_setting("analysis_version", 0) == 5
@@ -312,10 +353,13 @@ def test_model_setting_backfills_jobs_without_changing_drafting_provider(tmp_pat
     app = create_app(Settings(tmp_path))
     app.state.db.execute("UPDATE sources SET enabled=0")
     monkeypatch.setattr("job_radar.matching.validate_local_model", lambda model: model)
-    monkeypatch.setattr("job_radar.matching.analyze_job", lambda *_args: (83, {
-        "method": "local_llm", "facts": {"required_skills": ["Python"], "responsibilities": ["Build models"]},
-        "criteria": {"role": {"score": 9, "reason": "Relevant role"}}, "explanation": "Good fit.",
-    }))
+    monkeypatch.setattr("job_radar.matching.extract_job_facts", lambda *_args: {
+        "role": "AI Engineer", "company": "Example", "seniority": "", "required_skills": ["Python"],
+        "preferred_skills": [], "years_required": None, "location": "Hanoi", "work_mode": "",
+        "responsibilities": ["Build models"], "education": [], "languages": [], "salary_range": "",
+        "summary": "Build models", "due_date": "", "apply_destination": {"kind": "unknown", "target": ""},
+    })
+    monkeypatch.setattr("job_radar.matching.strong_match_notes", lambda *_args: {"fit": "Relevant role", "watch_out": ""})
     with TestClient(app) as client:
         identifier = client.post("/api/jobs/import", json={"company": "Example", "title": "AI Engineer",
             "description": "Build Python models in Hanoi."}).json()["id"]
@@ -327,7 +371,8 @@ def test_model_setting_backfills_jobs_without_changing_drafting_provider(tmp_pat
                 break
             time.sleep(.02)
         assert job["analysis_status"] == "done"
-        assert job["score"] == 83
+        assert job["score"] == 100
+        assert json.loads(job["score_detail"])["method"] == "deterministic"
         assert json.loads(job["score_detail"])["facts"]["responsibilities"] == ["Build models"]
         assert client.get("/api/profile").json()["drafting_provider"] == ""
         assert client.get("/api/setup").json()["matching"]["completed"] == 1
@@ -339,7 +384,7 @@ def test_ollama_outage_keeps_jobs_queued(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr("job_radar.matching.validate_local_model", lambda model: model)
     def unavailable(*_args):
         raise LocalModelUnavailable("Ollama is offline")
-    monkeypatch.setattr("job_radar.matching.analyze_job", unavailable)
+    monkeypatch.setattr("job_radar.matching.extract_job_facts", unavailable)
     with TestClient(app) as client:
         identifier = client.post("/api/jobs/import", json={"company": "Example", "title": "AI Engineer",
             "description": "Build Python models in Hanoi."}).json()["id"]

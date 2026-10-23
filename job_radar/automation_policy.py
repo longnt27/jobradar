@@ -175,6 +175,8 @@ def automation_eligibility(
             fit = fit_summary(job.get("score"), detail, preferences, job)
             if fit["fit_class"] == "outside":
                 reasons.append("The job violates a hard search preference.")
+            elif detail.get("method") == "deterministic" and fit["fit_class"] == "uncertain":
+                reasons.append("The posting lacks enough evidence for automatic preparation.")
 
     if config["require_verified_destination"]:
         preflight = preparation_preflight(db, job_id, job_data=job, observations=observations)

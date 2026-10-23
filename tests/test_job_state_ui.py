@@ -232,6 +232,7 @@ def test_browser_job_inbox_triage_marks_seen_without_deciding(tmp_path: Path) ->
          '"criteria":{"role":{"score":9,"reason":"Strong role fit"},"location":{"score":4,"reason":"Hybrid commute"}},'
          '"weights":{"role":30,"location":10},"explanation":"Good role fit."}', first),
     )
+    app.state.db.set_setting("search_intent", {"strong_match_threshold": 100})
 
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))

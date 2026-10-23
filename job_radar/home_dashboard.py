@@ -32,7 +32,9 @@ def build_home_dashboard(
         "strong_matches": _count(
             db,
             f"SELECT COUNT(*) AS count FROM vacancies v WHERE {VISIBLE_JOB} "
-            "AND v.analysis_status='done' AND v.score>=?",
+            "AND v.analysis_status='done' AND v.score>=? "
+            "AND (json_extract(v.score_detail,'$.method') IS NOT 'deterministic' OR "
+            "COALESCE(json_extract(v.score_detail,'$.confidence'),0)>=50)",
             (threshold,),
         ),
         "applications_drafted": _count(db, "SELECT COUNT(*) AS count FROM application_drafts"),

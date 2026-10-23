@@ -87,12 +87,17 @@ function renderJobAnalysis(job, score, {showStatus = true} = {}) {
     role:'Role', required_skills:'Required skills', preferred_skills:'Preferred skills',
     experience:'Experience', responsibilities:'Responsibilities', location:'Location',
     work_mode:'Work mode', education:'Education', freshness:'Freshness',
+    role_family:'Role', seniority:'Seniority', minimum_salary:'Salary',
+    preferred_employers:'Preferred employer', employer:'Excluded employer',
+    negative_keywords:'Negative preferences',
   })[key] || key.replaceAll('_', ' ').replace(/^./, (letter) => letter.toUpperCase());
-  const whyItems = !completed ? '<li>Match review is in progress. Read the posting to judge fit for now.</li>' : best.length
+  const whyItems = !completed ? '<li>Match review is in progress. Read the posting to judge fit for now.</li>' : score?.fit
+    ? `<li>${escapeHtml(score.fit)}</li>` : best.length
     ? best.map(([key,item]) => `<li><strong>${escapeHtml(labelFor(key))}:</strong> ${escapeHtml(item.reason || 'Good fit')}</li>`).join('')
     : job.strongest_signal?.reason ? `<li>${escapeHtml(job.strongest_signal.reason)}</li>`
     : score?.explanation ? `<li>${escapeHtml(score.explanation)}</li>` : '<li>No strong fit signal has been identified yet.</li>';
   const riskItems = completed ? [
+    ...(score?.watch_out ? [`<li>${escapeHtml(score.watch_out)}</li>`] : []),
     ...(score?.hard_exclusions || []).map((reason) => `<li>${escapeHtml(reason)}</li>`),
     ...gaps.map(([key,item]) => `<li><strong>${escapeHtml(labelFor(key))}:</strong> ${escapeHtml(item.reason || 'Needs a closer look')}</li>`),
     ...(!gaps.length && job.main_gap?.reason ? [`<li>${escapeHtml(job.main_gap.reason)}</li>`] : []),
@@ -101,11 +106,13 @@ function renderJobAnalysis(job, score, {showStatus = true} = {}) {
   const watchOut = !completed ? '<li>Check the posting requirements while the new review runs.</li>' : riskItems.length ? riskItems.join('') : '<li>No major gap identified by the current match review. Check the posting for anything the model missed.</li>';
   const salary = facts.salary_range || 'Not stated';
   const basics = `<div class="decision-basics-grid">
-      <div><span>Salary</span><strong>${escapeHtml(salary)}</strong><small>Not included in the match score</small></div>
+      <div><span>Salary</span><strong>${escapeHtml(salary)}</strong></div>
       <div><span>Location</span><strong>${escapeHtml(job.location || facts.location || 'Not stated')}</strong></div>
       <div><span>Work mode</span><strong>${escapeHtml(job.work_mode || facts.work_mode || 'Not stated')}</strong></div>
       <div><span>Experience</span><strong>${facts.years_required == null ? 'Not stated' : `${escapeHtml(facts.years_required)} years`}</strong></div>
       <div><span>Role</span><strong>${escapeHtml([facts.role || job.title, facts.seniority].filter(Boolean).join(' · '))}</strong></div>
+      ${facts.due_date ? `<div><span>Apply by</span><strong>${escapeHtml(facts.due_date)}</strong></div>` : ''}
+      ${facts.apply_destination?.kind && facts.apply_destination.kind !== 'unknown' ? `<div><span>Apply via</span><strong>${escapeHtml(facts.apply_destination.kind.replaceAll('_', ' '))}</strong><small>${escapeHtml(facts.apply_destination.target || '')}</small></div>` : ''}
     </div>`;
 
   const list = (label, items) => items?.length ? `<div><strong>${label}</strong><ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul></div>` : '';
@@ -115,11 +122,15 @@ function renderJobAnalysis(job, score, {showStatus = true} = {}) {
   </details>` : '';
 
   const weighted = criteriaEntries.map(([key,item]) => {
+    if (score?.method === 'deterministic') {
+      const factor = score?.factors?.[key] || {};
+      return `<div class="criterion-row"><div class="criterion-copy"><strong>${escapeHtml(labelFor(key))}</strong><small>${escapeHtml(item.reason || '')}</small></div><div class="criterion-score"><span>×${Number(factor.factor ?? 1).toFixed(2)}</span><small>${factor.available === false ? 'unknown' : escapeHtml(factor.mode || 'preferred')}</small></div></div>`;
+    }
     const weight = Number(score?.weights?.[key] || 0);
     return `<div class="criterion-row"><div class="criterion-copy"><strong>${escapeHtml(labelFor(key))}</strong><small>${escapeHtml(item.reason || '')}</small></div><div class="criterion-score"><span>${escapeHtml(item.score)}/10</span><small>${weight}% weight</small></div><div class="criterion-weight"><span style="width:${Math.max(4, Math.min(100, weight))}%"></span></div></div>`;
   }).join('');
   const breakdown = weighted ? `<details class="detail-disclosure"><summary>Detailed match breakdown</summary>
-    <p>${escapeHtml(score?.explanation || '')}</p><div class="criteria-list">${weighted}</div>
+    <p>${escapeHtml(score?.explanation || '')}${score?.method === 'deterministic' ? ` Confidence ${escapeHtml(score.confidence)}%.` : ''}</p><div class="criteria-list">${weighted}</div>
   </details>` : '';
 
   return `<div class="job-decision-summary">
@@ -1072,6 +1083,9 @@ async function loadQueue(options = {}) {
     ? `<div class="queue-now-head">Working now</div>${analysis.active.map((item) => queueRow(item, 'analysis', item.stage === 'scoring' ? 'Checking match' : 'Reading job details', true)).join('')}`
     : '<p class="queue-empty">No job being analyzed.</p>';
   queueWaiting($('#queue-analysis-waiting'), analysis.waiting, 'analysis', () => 'Read job, then check match');
+  if (analysis.deferred) {
+    $('#queue-analysis-waiting').insertAdjacentHTML('beforeend', `<p class="hint">${analysis.deferred} older match reviews paused. New jobs will still be checked automatically.</p>`);
+  }
   $('#queue-analysis-failed').innerHTML = analysis.failed.length ? `<div class="queue-waiting-head queue-failed-head">Needs attention</div><div class="queue-scroll">${analysis.failed.map((item) => `<div class="queue-failed-row">${queueRow(item, 'analysis', 'Match review failed')}<button type="button" class="text-button" data-queue-dismiss="${item.id}" aria-label="Dismiss failed analysis for ${escapeHtml(item.title)}">Dismiss</button></div>`).join('')}</div>` : '';
   $('#queue-analysis-failed').querySelectorAll('[data-queue-dismiss]').forEach((button) => button.addEventListener('click', async () => {
     beginPending(button, 'Dismissing…');
@@ -1978,7 +1992,7 @@ function renderSearchIntentForm(intent) {
   form.elements.salary_currency.value = intent.salary_currency || 'VND';
   form.elements.salary_unknown_ok.checked = intent.salary_unknown_ok !== false;
   const hard = intent.hard_constraints || {};
-  for (const key of ['role_family','seniority','location','work_mode','experience','employer','minimum_salary']) {
+  for (const key of ['role_family','seniority','location','work_mode','experience','employer','minimum_salary','preferred_employers','negative_keywords','required_skills','preferred_skills']) {
     form.elements[`hard_${key}`].checked = Boolean(hard[key]);
   }
   for (const name of SEARCH_MODE_FIELDS) syncPreferenceModeField(form, name, intent);
@@ -2213,6 +2227,7 @@ async function loadPersonalDetails() {
 async function loadMatchingModels() {
   clearTimeout(window.matchingPoll);
   const data = await api('/api/matching/models');
+  $('#matching-processing-disclosure').textContent = 'The job posting stays on this Mac for local parsing. Your profile details and approved project evidence stay on this Mac and are used only for fit notes on strong matches.';
   const select = $('#matching-model-form').elements.model;
   const saved = data.matching.model;
   $('#matching-model-form').dataset.saved = saved || '';
@@ -2291,6 +2306,7 @@ async function loadMatchingReviewStatus() {
   $('#job-analysis-model').textContent = matching.model ? `Using ${matching.model}` : 'No local matching model selected';
   const progress = matching.pending
     ? `${matching.completed} reviewed · ${matching.pending} waiting or in progress. Reviews continue in the background.`
+    : matching.deferred ? `${matching.completed} reviewed · ${matching.deferred} older reviews paused.`
     : matching.model ? `${matching.completed} reviewed · all saved jobs are up to date.` : 'Choose a local model in Settings to review job fit.';
   $('#matching-overview').textContent = matching.service_error
     ? `Review paused: ${matching.service_error}`
@@ -4773,7 +4789,7 @@ $('#search-intent-form').addEventListener('submit', async (event) => {
       ...(currentSearchIntent?.preference_modes || {}),
       ...Object.fromEntries(SEARCH_MODE_FIELDS.map((name) => [name, form.elements[`auto_${name}`].checked ? 'auto' : 'custom'])),
     },
-    hard_constraints: Object.fromEntries(['role_family','seniority','location','work_mode','experience','employer','minimum_salary']
+    hard_constraints: Object.fromEntries(['role_family','seniority','location','work_mode','experience','employer','minimum_salary','preferred_employers','negative_keywords','required_skills','preferred_skills']
       .map((key) => [key, form.elements[`hard_${key}`].checked])),
   };
   try {

@@ -37,7 +37,9 @@ def auto_shortlist_strong_matches(db: Database, threshold: int, job_id: str | No
         conn.execute(
             "UPDATE vacancies SET decision_state='undecided',state='new',auto_shortlisted=0,updated_at=? "
             "WHERE auto_shortlisted=1 AND decision_state='shortlisted' "
-            "AND analysis_status='done' AND score<? "
+            "AND analysis_status='done' AND (score<? OR "
+            "(json_extract(score_detail,'$.method')='deterministic' AND "
+            "COALESCE(json_extract(score_detail,'$.confidence'),0)<50)) "
             "AND NOT EXISTS(SELECT 1 FROM feedback f WHERE f.vacancy_id=vacancies.id) "
             "AND (? IS NULL OR id=?)",
             (timestamp, threshold, job_id, job_id),
@@ -45,6 +47,8 @@ def auto_shortlist_strong_matches(db: Database, threshold: int, job_id: str | No
         result = conn.execute(
             "UPDATE vacancies SET decision_state='shortlisted',state='interesting',auto_shortlisted=1,updated_at=? "
             "WHERE analysis_status='done' AND score>=? AND decision_state='undecided' "
+            "AND (json_extract(score_detail,'$.method') IS NOT 'deterministic' OR "
+            "COALESCE(json_extract(score_detail,'$.confidence'),0)>=50) "
             "AND snoozed_until IS NULL "
             "AND NOT EXISTS(SELECT 1 FROM feedback f WHERE f.vacancy_id=vacancies.id) "
             "AND NOT EXISTS(SELECT 1 FROM employers e WHERE e.id=vacancies.employer_id "

@@ -86,4 +86,5 @@ def test_point_of_use_privacy_controls_are_visible() -> None:
     assert 'id="project-processing-provider"' in html
     assert "processingCopy(setup, resumeForm.elements.provider.value, 'Your resume text')" in js
     assert "The repository snapshot used to draft project evidence" in js
-    assert "The job posting, your profile details, and approved project evidence" in js
+    assert "The job posting stays on this Mac for local parsing" in js
+    assert "Your profile details and approved project evidence stay on this Mac" in js

@@ -392,10 +392,13 @@ def refresh_vacancy(conn: sqlite3.Connection, vacancy_id: str, profile: dict, ma
         fields["apply_url"] = normalize_url(fields["apply_url"])
     first_seen = min([old["first_seen_at"], *[r["first_seen_at"] for r in sightings]])
     last_seen = max([old["last_seen_at"], *[r["last_seen_at"] for r in sightings]])
-    changed = any((old.get(key) or "") != (fields.get(key) or "") for key in ("title", "description", "location", "work_mode", "published_at"))
+    changed = any((old.get(key) or "") != (fields.get(key) or "") for key in
+                  ("company", "title", "description", "location", "work_mode", "apply_url", "published_at"))
     conn.execute("UPDATE vacancies SET company=?,title=?,description=?,location=?,work_mode=?,apply_url=?,published_at=?,first_seen_at=?,last_seen_at=?,updated_at=? WHERE id=?",
                  (*[fields[k] for k in ("company", "title", "description", "location", "work_mode", "apply_url", "published_at")], first_seen, last_seen, now(), vacancy_id))
-    if (changed or (matching_model and old["analysis_status"] == "done" and old["analysis_model"] != matching_model)) and old["analysis_status"] != "dismissed":
+    if changed and old["analysis_status"] not in {"dismissed", "deferred"}:
+        conn.execute("DELETE FROM user_job_scores WHERE vacancy_id=?", (vacancy_id,))
+        conn.execute("DELETE FROM job_facts WHERE vacancy_id=?", (vacancy_id,))
         score, detail = score_job({**fields, "first_seen_at": first_seen}, profile)
         conn.execute("UPDATE vacancies SET score=?,score_detail=?,analysis_status=?,analysis_error=NULL WHERE id=?",
                      (score, json.dumps(detail, ensure_ascii=False), "pending" if matching_model else "not_configured", vacancy_id))

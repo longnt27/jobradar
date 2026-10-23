@@ -110,7 +110,7 @@ def test_matching_and_telegram_are_visible_setup_steps_and_facts_render(tmp_path
                 breakdown = page.locator("#job-detail summary").filter(has_text="Detailed match breakdown")
                 assert "82" in page.locator("#job-detail .job-score-badge").inner_text()
                 breakdown.click()
-                assert "not included in the match score" in page.locator("#job-detail").inner_text().lower()
+                assert "salary" in page.locator("#job-detail .decision-basics-grid").inner_text().lower()
                 assert page.locator("#job-detail .score").count() == 0
                 assert page.locator("#job-detail .criterion-weight").count() >= 1
                 assert page.get_by_role("button", name="Open AI Engineer at Example").locator(".score-high").inner_text() == "82"
@@ -175,7 +175,13 @@ def test_failed_matching_jobs_are_visible_and_retryable_from_settings(tmp_path: 
     db.set_setting("analysis_version", ANALYSIS_VERSION)
     monkeypatch.setattr("job_radar.web.list_local_models", lambda: [{"name": "test:small", "size": 123456789}])
     monkeypatch.setattr("job_radar.web.validate_local_model", lambda model: model)
-    monkeypatch.setattr("job_radar.matching.analyze_job", lambda *_args: (75, {"method": "local_llm"}))
+    monkeypatch.setattr("job_radar.matching.extract_job_facts", lambda job, _model: {
+        "role": job["title"], "company": job["company"], "seniority": "",
+        "required_skills": ["Python"], "preferred_skills": [], "years_required": None,
+        "location": "", "work_mode": "", "responsibilities": [], "education": [],
+        "languages": [], "salary_range": "", "summary": "", "due_date": "",
+        "apply_destination": {"kind": "unknown", "target": ""},
+    })
     client = TestClient(app)
     for number in (1, 2):
         identifier = client.post("/api/jobs/import", json={"company": "Example", "title": f"Engineer {number}",

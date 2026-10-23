@@ -36,6 +36,8 @@ def work_queue(db: Database, scans: ScanManager, matching: MatchManager,
     analysis_failed = db.all(
         "SELECT id,title,company,analysis_error AS detail FROM vacancies "
         "WHERE analysis_status='failed' ORDER BY updated_at DESC")
+    analysis_deferred = db.one(
+        "SELECT COUNT(*) AS count FROM vacancies WHERE analysis_status='deferred'")["count"]
     for position, row in enumerate(analysis_waiting, 1):
         row["position"] = position
 
@@ -88,6 +90,7 @@ def work_queue(db: Database, scans: ScanManager, matching: MatchManager,
     return {
         "scans": {"active": scan_active, "waiting": scan_waiting},
         "analysis": {"active": analysis_active, "waiting": analysis_waiting, "failed": analysis_failed,
+                     "deferred": analysis_deferred,
                      "model": db.get_setting("matching_model", ""), "service_error": matching.service_error},
         "drafts": {"active": draft_active, "waiting": draft_waiting,
                    "attention": needs_confirmation,
