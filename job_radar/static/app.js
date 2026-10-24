@@ -1316,6 +1316,7 @@ function bindJobCards(jobs) {
     const requestId = setRegionLoading(detail, true);
     try {
       activeJob = node.dataset.job; activeJobPinned = true; syncJobsHash('push');
+      mobileScreen('jobs', true, true);
       await showJob(node.dataset.job, true);
       if (window.matchMedia('(max-width: 900px)').matches) scrollNodeIntoView(detail, {block:'start'});
       detail.focus({preventScroll:true});
@@ -1419,6 +1420,7 @@ async function loadJobs() {
     : jobsInboxMode === 'unseen' ? 'No unseen jobs left.'
     : 'No jobs match these filters.';
   const jobList = $('#job-list');
+  if (mobileViewport.matches && !activeJob) mobileScreen('jobs', false);
   const listScroll = jobList ? jobList.scrollTop : 0;
   jobList.innerHTML = jobs.length ? jobs.map(renderJobCard).join('') : `<div class="empty">${emptyCopy}</div>`;
   bindJobCards(jobs);
@@ -2464,6 +2466,8 @@ async function showTab(name, historyMode = 'push') {
   const target = document.getElementById(name);
   $('#tab-loading').hidden = true;
   setProfileMenuOpen(false);
+  setMobileMenuOpen(false);
+  restoreMobileRoute(name);
   setJobFilterPopoverOpen(false);
   setApplicationFilterPopoverOpen(false);
   const nav = ['personal','experience','projects'].includes(name) ? 'profile' : name;
@@ -2474,7 +2478,7 @@ async function showTab(name, historyMode = 'push') {
     if (active) control.setAttribute('aria-current', 'page');
     else control.removeAttribute('aria-current');
   });
-  if (name === 'jobs' && routeInput.includes('?')) readJobsHashState();
+  if (name === 'jobs' && (routeInput.includes('?') || location.hash.startsWith('#jobs?'))) readJobsHashState();
   const title = ({home:'Home',guide:'How it works',queue:'Queue',jobs:'Jobs',applications:'Applications','application-history':'Application history',profile:'My profile',settings:'Settings',
     personal:'Personal details',experience:'Work history',projects:'GitHub projects',sources:'Job sources',employers:'Employers'})[name];
   $('#page-title').textContent = title;
@@ -2485,6 +2489,7 @@ async function showTab(name, historyMode = 'push') {
   const desiredHash = selectedDraft ? `#applications/${selectedDraft}` : name === 'jobs' ? jobsHash() : `#${name}`;
   if (historyMode === 'replace') history.replaceState({tab:name}, '', desiredHash);
   else if (historyMode === 'push' && location.hash !== desiredHash) history.pushState({tab:name}, '', desiredHash);
+  restoreMobileRoute(name);
   window.scrollTo(0, 0);
   if (!['home', 'settings', 'profile'].includes(name)) refreshSocialAuth().catch((error) => notice(error.message, true));
   const loader = ({home:loadHome,queue:loadQueue,jobs:loadJobs,applications:loadApplications,'application-history':loadApplicationHistory,personal:loadPersonalDetails,
@@ -2802,6 +2807,7 @@ function renderApplicationList(total = applicationsTotal) {
     const detail = $('#application-detail');
     const requestId = setRegionLoading(detail, true);
     try {
+      if (mobileViewport.matches) { history.pushState({tab:'applications'}, '', '#applications/' + node.dataset.application); mobileScreen('applications', true, true); }
       await showApplication(node.dataset.application, screen);
       if (window.matchMedia('(max-width: 900px)').matches) scrollNodeIntoView(detail, {block:'start'});
       detail.focus({preventScroll:true});
@@ -2811,8 +2817,9 @@ function renderApplicationList(total = applicationsTotal) {
   list.querySelectorAll('[data-preparation]').forEach((node) => node.addEventListener('click', () => {
     const item = applicationPreparations.find((entry) => entry.vacancy_id === node.dataset.preparation);
     if (item) {
+      if (mobileViewport.matches) mobileScreen('applications', true, true);
       showPreparationIssue(item);
-      if (window.matchMedia('(max-width: 900px)').matches) scrollNodeIntoView($('#application-detail'), {block:'start'});
+      if (!mobileViewport.matches) scrollNodeIntoView($('#application-detail'), {block:'start'});
     }
   }));
 }
@@ -3203,7 +3210,9 @@ async function openJobInJobs(jobId) {
   jobsPage = 1;
   activeJob = jobId;
   activeJobPinned = true;
+  mobileScreen('jobs', true);
   await showTab('jobs');
+  mobileScreen('jobs', true, true);
   $('#job-detail').focus({preventScroll:true});
 }
 
@@ -3212,7 +3221,7 @@ async function openApplicationJob(jobId) {
 }
 
 function showPreparationIssue(item) {
-  if ($('#applications').classList.contains('active') && location.hash !== '#applications') {
+  if ($('#applications').classList.contains('active') && location.hash !== '#applications' && !mobileViewport.matches) {
     history.replaceState({tab:'applications'}, '', '#applications');
   }
   activeApplicationId = null;
@@ -3297,7 +3306,7 @@ function showPreparationIssue(item) {
 let activeApplicationScreen = 'first-glance';
 
 async function showApplication(id, preferredScreen = null) {
-  if ($('#applications').classList.contains('active') && location.hash !== `#applications/${id}`) history.replaceState({tab:'applications'}, '', `#applications/${id}`);
+  if ($('#applications').classList.contains('active') && location.hash !== `#applications/${id}` && (!mobileViewport.matches || $('#applications').dataset.mobileScreen === 'detail')) history.replaceState({tab:'applications'}, '', `#applications/${id}`);
   activeApplicationId = id;
   activePreparationJobId = null;
   renderApplicationList();
@@ -4264,7 +4273,7 @@ function normalizeRepoUrl(value) {
 async function loadEvidence(focusId = null) {
   const [allCards, profile, setup] = await Promise.all([api('/api/evidence'), api('/api/profile'), api('/api/setup')]);
   projectCards = allCards.filter((card) => card.kind === 'project');
-  if (focusId) selectedProjectId = focusId;
+  if (focusId) { selectedProjectId = focusId; if (mobileViewport.matches) mobileScreen('projects', true); }
   if (!projectCards.some((card) => card.id === selectedProjectId)) selectedProjectId = projectCards.find((card) => !card.approved)?.id || projectCards[0]?.id || null;
   projectProviderAvailability = providerAvailability(setup);
   projectProcessing = setup.provider_processing || {};
@@ -4289,7 +4298,8 @@ async function loadEvidence(focusId = null) {
     const requestId = setRegionLoading(editor, true);
     try {
       await loadEvidence(selectedProjectId);
-      scrollNodeIntoView(editor, {block:'start'});
+      mobileScreen('projects', true, true);
+      if (!mobileViewport.matches) scrollNodeIntoView(editor, {block:'start'});
       editor.focus({preventScroll:true});
     } catch(error) { notice(error.message, true); }
     finally { setRegionLoading(editor, false, 'detail', requestId); }
@@ -4406,6 +4416,40 @@ async function loadEvidence(focusId = null) {
   renderRepositoryResults($('#repo-filter')?.value || '');
 }
 
+const mobileViewport = window.matchMedia('(max-width: 900px)');
+function setMobileMenuOpen(open) {
+  const expanded = Boolean(open && mobileViewport.matches);
+  $('#main-navigation').classList.toggle('mobile-nav-open', expanded);
+  $('#mobile-menu-toggle').setAttribute('aria-expanded', String(expanded));
+  $('#mobile-menu-toggle').setAttribute('aria-label', expanded ? 'Close navigation menu' : 'Open navigation menu');
+}
+function mobileScreen(tab, detail, scroll = false) {
+  document.getElementById(tab).dataset.mobileScreen = detail ? 'detail' : 'list';
+  if (scroll && mobileViewport.matches) window.scrollTo(0, 0);
+}
+function restoreMobileRoute(tab) {
+  if (tab === 'jobs') mobileScreen(tab, Boolean(new URLSearchParams(location.hash.split('?')[1] || '').get('job')));
+  if (tab === 'applications') mobileScreen(tab, /^#applications\/[^/?]+/.test(location.hash));
+  if (tab === 'projects') mobileScreen(tab, false);
+}
+function mobileReturnToList(tab) {
+  mobileScreen(tab, false, true);
+  if (tab === 'jobs') { activeJob = null; activeJobPinned = false; syncJobsHash('push'); }
+  if (tab === 'applications' && location.hash.startsWith('#applications/')) history.pushState({tab}, '', '#applications');
+}
+$('#mobile-menu-toggle').addEventListener('click', () => setMobileMenuOpen(!$('#main-navigation').classList.contains('mobile-nav-open')));
+for (const [tab, selector] of [['jobs','#jobs-back-to-list'],['applications','#applications-back-to-list'],['projects','#projects-back-to-list']]) {
+  $(selector).addEventListener('click', () => mobileReturnToList(tab));
+}
+document.addEventListener('click', (event) => {
+  if (event.target.closest('.app-header [data-tab]') || !event.target.closest('.app-header')) setMobileMenuOpen(false);
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && $('#main-navigation').classList.contains('mobile-nav-open')) {
+    setMobileMenuOpen(false); $('#mobile-menu-toggle').focus();
+  }
+});
+mobileViewport.addEventListener('change', () => setMobileMenuOpen(false));
 function setProfileMenuOpen(open) {
   $('#profile-menu').hidden = !open;
   $('#profile-menu-toggle').setAttribute('aria-expanded', String(open));
@@ -5157,7 +5201,7 @@ $('#zalo-template-form').addEventListener('submit', async (event) => {
   finally { endPending(button); }
 });
 
-window.addEventListener('popstate', () => showTab(location.hash.slice(1) || 'home', 'none'));
+window.addEventListener('popstate', () => { setMobileMenuOpen(false); showTab(location.hash.slice(1) || 'home', 'none'); });
 function refreshAfterReturn() {
   clearTimeout(window.returnRefresh);
   window.returnRefresh = setTimeout(() => {
