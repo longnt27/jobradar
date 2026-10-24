@@ -1,6 +1,6 @@
 """Mobile navigation behavior, covering list/detail history and desktop parity."""
 from playwright.sync_api import expect
-from tests.test_ui_regression_gate import ui_server, browser
+from test_ui_regression_gate import ui_server, browser
 
 
 def _mobile(browser):
